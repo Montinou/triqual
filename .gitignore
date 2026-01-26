@@ -49,3 +49,5 @@ playwright/.cache/
 
 # Temp execution files
 .temp-execution-*.js
+.docs
+
