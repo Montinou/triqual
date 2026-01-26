@@ -1,10 +1,10 @@
-# Quolar Unified - Architecture & Approach
+# Triqual - Architecture & Approach
 
 ## Overview
 
-Quolar Unified is a Claude Code plugin that enables **interactive test development** - the ability to navigate, observe, and interact with a live application via browser automation, then write or fix tests based on actual observed behavior.
+Triqual is a Claude Code plugin that enables **interactive test development** - the ability to navigate, observe, and interact with a live application via browser automation, then write or fix tests based on actual observed behavior.
 
-This is fundamentally different from traditional test generation which works from documentation alone. With Quolar Unified, Claude Code becomes a **competent test developer** that can:
+This is fundamentally different from traditional test generation which works from documentation alone. With Triqual, Claude Code becomes a **competent test developer** that can:
 
 1. **See** the actual application state via browser snapshots
 2. **Act** on the application via clicks, typing, navigation

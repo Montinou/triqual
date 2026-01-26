@@ -3,7 +3,7 @@ import path from "path"
 import matter from "gray-matter"
 
 // Path to docs relative to the project
-const DOCS_PATH = path.join(process.cwd(), "..", "quolar-plugin", "docs", "references")
+const DOCS_PATH = path.join(process.cwd(), "..", "triqual-plugin", "docs", "references")
 
 export interface DocMeta {
   slug: string

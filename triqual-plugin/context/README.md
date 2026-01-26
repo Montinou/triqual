@@ -1,10 +1,10 @@
 # Context Configuration
 
-Project-specific configuration overrides for Quolar Unified.
+Project-specific configuration overrides for Triqual.
 
 ## Overview
 
-The `context/` directory contains project-specific settings that customize how Quolar generates and heals tests. These files are optional - Quolar works with sensible defaults.
+The `context/` directory contains project-specific settings that customize how Triqual generates and heals tests. These files are optional - Triqual works with sensible defaults.
 
 ## Configuration Files
 
@@ -79,14 +79,14 @@ Define project-specific locator strategies.
 
 ### Usage
 
-When generating tests or healing failures, Quolar checks this file for:
+When generating tests or healing failures, Triqual checks this file for:
 - Preferred selectors for common components
 - Page-specific locators
 - Fallback strategies
 
 ## project.json
 
-Project metadata used by Quolar.
+Project metadata used by Triqual.
 
 ```json
 {
@@ -107,7 +107,7 @@ Project metadata used by Quolar.
 }
 ```
 
-## How Quolar Uses Context
+## How Triqual Uses Context
 
 ### 1. Pre-Spec Write Hook
 
@@ -151,7 +151,7 @@ Copy all three template files and customize for your project.
 
 Configuration is applied in this order (later overrides earlier):
 
-1. **Defaults** - Built-in Quolar defaults
+1. **Defaults** - Built-in Triqual defaults
 2. **Quoth Patterns** - Documented patterns from Quoth
 3. **Context Files** - This directory's configuration
 

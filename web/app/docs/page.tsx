@@ -41,10 +41,10 @@ export default function DocsPage() {
           Documentation
         </Badge>
         <h1 className="text-4xl font-extrabold tracking-tight mb-4">
-          Quolar Documentation
+          Triqual Documentation
         </h1>
         <p className="text-lg text-foreground-secondary">
-          Learn how to use Quolar for intelligent test automation. These guides cover
+          Learn how to use Triqual for intelligent test automation. These guides cover
           everything from basic patterns to advanced integrations.
         </p>
       </div>

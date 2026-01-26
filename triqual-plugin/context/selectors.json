@@ -1,6 +1,6 @@
 {
   "$schema": "./schemas/selectors.schema.json",
-  "_comment": "Project-specific locator preferences for Quolar",
+  "_comment": "Project-specific locator preferences for Triqual",
 
   "strategy": {
     "priority": [
@@ -66,7 +66,7 @@
   },
 
   "antiPatterns": {
-    "_comment": "Selectors to avoid - Quolar will warn if these are used",
+    "_comment": "Selectors to avoid - Triqual will warn if these are used",
     "patterns": [
       "nth\\(\\d+\\)(?!.*:visible)",
       "\\.\\w+\\s*>\\s*\\.\\w+\\s*>\\s*\\.\\w+",

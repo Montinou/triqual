@@ -15,7 +15,7 @@ const jetbrainsMono = JetBrains_Mono({
 })
 
 export const metadata: Metadata = {
-  title: "Quolar Unified | Intelligent Test Automation",
+  title: "Triqual | Intelligent Test Automation",
   description:
     "Unified test automation plugin combining Playwright execution, Quoth pattern documentation, and Exolar analytics into one self-learning system.",
   keywords: [
@@ -28,7 +28,7 @@ export const metadata: Metadata = {
   ],
   authors: [{ name: "Montinou" }],
   openGraph: {
-    title: "Quolar Unified | Intelligent Test Automation",
+    title: "Triqual | Intelligent Test Automation",
     description:
       "Unified test automation plugin combining Playwright execution, Quoth pattern documentation, and Exolar analytics into one self-learning system.",
     type: "website",

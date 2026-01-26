@@ -1,4 +1,4 @@
-# Quolar - Unified Test Automation Plugin
+# Triqual - Unified Test Automation Plugin
 
 Unified plugin for Playwright test automation with **seamless MCP integration**:
 - **Quoth** - Pattern documentation (auto-installed)
@@ -9,11 +9,11 @@ Unified plugin for Playwright test automation with **seamless MCP integration**:
 
 ```bash
 # From marketplace (when published)
-/plugin marketplace add Montinou/quolar-unified
-/plugin install quolar@quolar-marketplace
+/plugin marketplace add Montinou/triqual
+/plugin install triqual@triqual-marketplace
 
 # Or local development
-claude --plugin-dir /path/to/quolar-unified
+claude --plugin-dir /path/to/triqual
 ```
 
 **What gets installed automatically:**
@@ -77,17 +77,17 @@ The plugin automatically installs these MCP servers:
 
 **On SessionStart:**
 ```
-[Quolar] Test automation ready. Before writing tests: quoth_search_index({ query: "playwright patterns" })...
+[Triqual] Test automation ready. Before writing tests: quoth_search_index({ query: "playwright patterns" })...
 ```
 
 **Before writing .spec.ts:**
 ```
-[Quolar] Writing test file. BEFORE generating: quoth_search_index({ query: "playwright test patterns" })...
+[Triqual] Writing test file. BEFORE generating: quoth_search_index({ query: "playwright test patterns" })...
 ```
 
 **After running tests:**
 ```
-[Quolar] Test failures detected. Options: (1) Analyze with failure-classifier (2) Auto-heal with test-healer...
+[Triqual] Test failures detected. Options: (1) Analyze with failure-classifier (2) Auto-heal with test-healer...
 ```
 
 ## Skills
@@ -109,7 +109,7 @@ The plugin automatically installs these MCP servers:
 ## Directory Structure
 
 ```
-quolar-unified/
+triqual/
 ├── .mcp.json                    # MCP server auto-install config
 ├── .claude-plugin/              # Claude Code plugin
 │   ├── plugin.json
@@ -128,7 +128,7 @@ quolar-unified/
 │       ├── test-healer.md
 │       ├── failure-classifier.md
 │       └── pattern-learner.md
-├── quolar-plugin/               # Supporting files
+├── triqual-plugin/               # Supporting files
 │   ├── lib/                     # Playwright executor & helpers
 │   ├── docs/references/         # 12 comprehensive guides
 │   └── context/                 # Project configuration
@@ -156,14 +156,14 @@ quolar-unified/
 
 ## Session State
 
-Hooks maintain session state in `/tmp/quolar/`:
+Hooks maintain session state in `/tmp/triqual/`:
 - Tracks which hints have been delivered (once per session)
 - Counts tool usage for summary
 - Tracks test runs (passed/failed/healed)
 
 ## Project Configuration
 
-Create `quolar.config.json` or `quolar.config.ts` in your project root:
+Create `triqual.config.json` or `triqual.config.ts` in your project root:
 
 ```json
 {
@@ -180,11 +180,11 @@ Create `quolar.config.json` or `quolar.config.ts` in your project root:
 | Quoth search fails | Verify OAuth at quoth.ai-innovation.site |
 | Exolar query fails | Verify OAuth at exolar.ai-innovation.site |
 | Hooks not triggering | Check `hooks.json` syntax, verify scripts are executable |
-| Session state stale | Delete `/tmp/quolar/` directory |
+| Session state stale | Delete `/tmp/triqual/` directory |
 
 ## First Time Setup
 
-1. **Install plugin** - `claude --plugin-dir /path/to/quolar-unified`
+1. **Install plugin** - `claude --plugin-dir /path/to/triqual`
 2. **Authenticate MCPs** - Follow OAuth prompts for Quoth and Exolar
 3. **Start using** - `/quick-test` or `/test-ticket ENG-123`
 

@@ -20,7 +20,7 @@ const pluginCode: CodeLine[] = [
       <>
         <span className="text-primary">/plugin</span>{" "}
         <span className="text-secondary">marketplace add</span>{" "}
-        <span className="text-destructive">Montinou/quolar-unified</span>
+        <span className="text-destructive">Montinou/triqual</span>
       </>
     ),
   },
@@ -32,7 +32,7 @@ const pluginCode: CodeLine[] = [
       <>
         <span className="text-primary">/plugin</span>{" "}
         <span className="text-secondary">install</span>{" "}
-        <span className="text-destructive">quolar-unified@quolar-unified</span>
+        <span className="text-destructive">triqual@triqual</span>
       </>
     ),
   },
@@ -54,8 +54,8 @@ const manualCode: CodeLine[] = [
       <>
         <span className="text-accent">git</span>{" "}
         <span className="text-secondary">clone</span>{" "}
-        <span className="text-foreground-secondary">https://github.com/Montinou/quolar-unified</span>{" "}
-        <span className="text-destructive">~/.claude/plugins/quolar-unified</span>
+        <span className="text-foreground-secondary">https://github.com/Montinou/triqual</span>{" "}
+        <span className="text-destructive">~/.claude/plugins/triqual</span>
       </>
     ),
   },
@@ -66,7 +66,7 @@ const manualCode: CodeLine[] = [
     content: (
       <>
         <span className="text-accent">cd</span>{" "}
-        <span className="text-destructive">~/.claude/plugins/quolar-unified/lib</span>
+        <span className="text-destructive">~/.claude/plugins/triqual/lib</span>
       </>
     ),
   },
@@ -84,11 +84,11 @@ const manualCode: CodeLine[] = [
 ]
 
 const copyText = {
-  plugin: `/plugin marketplace add Montinou/quolar-unified
-/plugin install quolar-unified@quolar-unified
+  plugin: `/plugin marketplace add Montinou/triqual
+/plugin install triqual@triqual
 "Test if the login page loads correctly"`,
-  manual: `git clone https://github.com/Montinou/quolar-unified ~/.claude/plugins/quolar-unified
-cd ~/.claude/plugins/quolar-unified/lib
+  manual: `git clone https://github.com/Montinou/triqual ~/.claude/plugins/triqual
+cd ~/.claude/plugins/triqual/lib
 npm run setup`,
 }
 

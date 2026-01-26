@@ -1,6 +1,6 @@
 {
   "$schema": "./schemas/patterns.schema.json",
-  "_comment": "Project-specific test pattern overrides for Quolar",
+  "_comment": "Project-specific test pattern overrides for Triqual",
 
   "timeout": {
     "default": 30000,

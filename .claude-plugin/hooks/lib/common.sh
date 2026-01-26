@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Quolar Plugin - Shared Functions
+# Triqual Plugin - Shared Functions
 # Source this file from other hooks: source "${SCRIPT_DIR}/lib/common.sh"
 
 set -e
@@ -8,7 +8,7 @@ set -e
 # CONSTANTS
 # ============================================================================
 
-QUOLAR_SESSION_DIR="/tmp/quolar"
+TRIQUAL_SESSION_DIR="/tmp/triqual"
 QUOTH_MCP_NAME="quoth"
 EXOLAR_MCP_NAME="exolar-qa"
 
@@ -31,15 +31,15 @@ exolar_mcp_installed() {
 # PROJECT CONFIG
 # ============================================================================
 
-# Find Quolar config file in current directory
+# Find Triqual config file in current directory
 # Returns: path to config file, or empty string
-find_quolar_config() {
-    if [ -f ".quolar/config.json" ]; then
-        echo ".quolar/config.json"
-    elif [ -f "quolar.config.json" ]; then
-        echo "quolar.config.json"
-    elif [ -f "quolar.config.ts" ]; then
-        echo "quolar.config.ts"
+find_triqual_config() {
+    if [ -f ".triqual/config.json" ]; then
+        echo ".triqual/config.json"
+    elif [ -f "triqual.config.json" ]; then
+        echo "triqual.config.json"
+    elif [ -f "triqual.config.ts" ]; then
+        echo "triqual.config.ts"
     else
         echo ""
     fi
@@ -63,9 +63,9 @@ get_config_value() {
 # Get session marker file path
 # Uses CLAUDE_SESSION_ID if available, falls back to process-based ID
 get_session_file() {
-    mkdir -p "$QUOLAR_SESSION_DIR"
+    mkdir -p "$TRIQUAL_SESSION_DIR"
     local session_id="${CLAUDE_SESSION_ID:-$$}"
-    echo "$QUOLAR_SESSION_DIR/session_$session_id.json"
+    echo "$TRIQUAL_SESSION_DIR/session_$session_id.json"
 }
 
 # Initialize session state

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Quolar Plugin - PostToolUse Hook (Bash)
+# Triqual Plugin - PostToolUse Hook (Bash)
 # Reports test results to Exolar and offers healing options
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,10 +35,10 @@ main() {
 
     if [ "$has_failures" = true ]; then
         # Failures detected - offer Exolar reporting and healing
-        context="[Quolar] Test failures detected. Options: (1) Analyze with failure-classifier agent to classify as FLAKE/BUG/ENV (2) Auto-heal with test-healer agent (asks before fixing) (3) Report to Exolar: perform_exolar_action({ action: \"report_execution\", params: { failures: [...] } })"
+        context="[Triqual] Test failures detected. Options: (1) Analyze with failure-classifier agent to classify as FLAKE/BUG/ENV (2) Auto-heal with test-healer agent (asks before fixing) (3) Report to Exolar: perform_exolar_action({ action: \"report_execution\", params: { failures: [...] } })"
     else
         # All passed - brief confirmation with Exolar reporting hint
-        context="[Quolar] Tests passed. Report to Exolar: perform_exolar_action({ action: \"report_execution\", params: { passed: true } })"
+        context="[Triqual] Tests passed. Report to Exolar: perform_exolar_action({ action: \"report_execution\", params: { passed: true } })"
     fi
 
     output_context "$context"

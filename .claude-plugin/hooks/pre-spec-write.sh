@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Quolar Plugin - PreToolUse Hook (Edit|Write)
+# Triqual Plugin - PreToolUse Hook (Edit|Write)
 # Reminds to check Quoth patterns before writing test files
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -45,7 +45,7 @@ main() {
     mark_hint_delivered "pre_edit_spec"
 
     # Output Quoth + Exolar integration hint
-    local context="[Quolar] Writing test file. BEFORE generating: quoth_search_index({ query: \"playwright test patterns\" }) to find existing Page Objects and helpers. Check query_exolar_data({ dataset: \"test_search\" }) for similar tests."
+    local context="[Triqual] Writing test file. BEFORE generating: quoth_search_index({ query: \"playwright test patterns\" }) to find existing Page Objects and helpers. Check query_exolar_data({ dataset: \"test_search\" }) for similar tests."
 
     output_context "$context"
 }

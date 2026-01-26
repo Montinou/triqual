@@ -25,12 +25,12 @@ export async function generateMetadata({ params }: DocPageProps) {
 
   if (!doc) {
     return {
-      title: "Not Found | Quolar Docs",
+      title: "Not Found | Triqual Docs",
     }
   }
 
   return {
-    title: `${doc.title} | Quolar Docs`,
+    title: `${doc.title} | Triqual Docs`,
     description: doc.description,
   }
 }
@@ -210,7 +210,7 @@ export default async function DocPage({ params }: DocPageProps) {
       {/* Edit link */}
       <div className="mt-8 text-center">
         <a
-          href={`https://github.com/Montinou/quolar-unified/edit/main/quolar-plugin/docs/references/${slug}.md`}
+          href={`https://github.com/Montinou/triqual/edit/main/triqual-plugin/docs/references/${slug}.md`}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center gap-2 text-sm text-foreground-muted hover:text-foreground-secondary transition-colors"

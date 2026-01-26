@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Quolar Plugin - Stop Hook
+# Triqual Plugin - Stop Hook
 # Cleanup session and provide summary
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,7 +24,7 @@ main() {
 
     # Only output summary if tools were used
     if [ "$quoth_searches" -gt 0 ] || [ "$exolar_queries" -gt 0 ]; then
-        local context="[Quolar] Session ended. Quoth searches: $quoth_searches, Exolar queries: $exolar_queries"
+        local context="[Triqual] Session ended. Quoth searches: $quoth_searches, Exolar queries: $exolar_queries"
         output_context "$context"
     else
         output_empty

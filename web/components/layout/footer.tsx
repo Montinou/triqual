@@ -1,9 +1,9 @@
 import Link from "next/link"
 
 const footerLinks = [
-  { href: "https://github.com/Montinou/quolar-unified", label: "GitHub", external: true },
-  { href: "https://github.com/Montinou/quolar-unified/issues", label: "Issues", external: true },
-  { href: "https://github.com/Montinou/quolar-unified/blob/main/LICENSE", label: "MIT License", external: true },
+  { href: "https://github.com/Montinou/triqual", label: "GitHub", external: true },
+  { href: "https://github.com/Montinou/triqual/issues", label: "Issues", external: true },
+  { href: "https://github.com/Montinou/triqual/blob/main/LICENSE", label: "MIT License", external: true },
 ]
 
 export function Footer() {

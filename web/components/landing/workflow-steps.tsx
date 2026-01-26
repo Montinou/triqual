@@ -8,7 +8,7 @@ const steps = [
     number: 1,
     title: "Search Patterns",
     description:
-      "Before writing any test, Quolar searches Quoth for existing patterns, Page Objects, and anti-patterns to follow.",
+      "Before writing any test, Triqual searches Quoth for existing patterns, Page Objects, and anti-patterns to follow.",
   },
   {
     number: 2,

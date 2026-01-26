@@ -35,7 +35,7 @@ export function CTASection() {
                   className="bg-gradient-to-r from-primary to-secondary text-background font-semibold glow-cyan"
                 >
                   <a
-                    href="https://github.com/Montinou/quolar-unified"
+                    href="https://github.com/Montinou/triqual"
                     target="_blank"
                     rel="noopener noreferrer"
                   >
@@ -64,7 +64,7 @@ export function CTASection() {
                     className="bg-gradient-to-r from-primary to-secondary text-background font-semibold glow-cyan hover:shadow-[0_0_40px_rgba(0,240,255,0.6),0_0_80px_rgba(0,240,255,0.3)] transition-shadow"
                   >
                     <a
-                      href="https://github.com/Montinou/quolar-unified"
+                      href="https://github.com/Montinou/triqual"
                       target="_blank"
                       rel="noopener noreferrer"
                     >

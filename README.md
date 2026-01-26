@@ -1,4 +1,4 @@
-# Quolar Unified
+# Triqual
 
 **Unified test automation plugin for Claude Code**
 
@@ -13,20 +13,20 @@ Combines the power of:
 
 ```bash
 # Add marketplace
-/plugin marketplace add Montinou/quolar-unified
+/plugin marketplace add Montinou/triqual
 
 # Install
-/plugin install quolar-unified@quolar-unified
+/plugin install triqual@triqual
 ```
 
 ### Manual Installation
 
 ```bash
 # Clone to plugins directory
-git clone https://github.com/Montinou/quolar-unified ~/.claude/plugins/quolar-unified
+git clone https://github.com/Montinou/triqual ~/.claude/plugins/triqual
 
 # Install Playwright
-cd ~/.claude/plugins/quolar-unified/lib
+cd ~/.claude/plugins/triqual/lib
 npm run setup
 ```
 

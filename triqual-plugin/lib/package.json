@@ -1,7 +1,7 @@
 {
-  "name": "quolar-unified-lib",
+  "name": "triqual-lib",
   "version": "1.0.0",
-  "description": "Playwright execution library for quolar-unified plugin",
+  "description": "Playwright execution library for Triqual plugin",
   "main": "run.js",
   "scripts": {
     "setup": "npm install && npx playwright install chromium",
