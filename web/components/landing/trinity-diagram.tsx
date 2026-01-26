@@ -284,9 +284,16 @@ export function TrinityDiagram() {
         {/* Animated dashes overlay (loops after initial draw) */}
         {isInView && (
           <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 900 560">
+            <defs>
+              <linearGradient id="lineGradientOverlay" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#00f0ff" stopOpacity="0.8" />
+                <stop offset="50%" stopColor="#00ff88" stopOpacity="0.8" />
+                <stop offset="100%" stopColor="#a855f7" stopOpacity="0.8" />
+              </linearGradient>
+            </defs>
             <path
               d="M450,280 Q450,150 450,80"
-              stroke="url(#lineGradientAnimated)"
+              stroke="url(#lineGradientOverlay)"
               strokeWidth="2"
               fill="none"
               strokeDasharray="8 4"
@@ -294,7 +301,7 @@ export function TrinityDiagram() {
             />
             <path
               d="M450,280 Q300,350 170,420"
-              stroke="url(#lineGradientAnimated)"
+              stroke="url(#lineGradientOverlay)"
               strokeWidth="2"
               fill="none"
               strokeDasharray="8 4"
@@ -302,7 +309,7 @@ export function TrinityDiagram() {
             />
             <path
               d="M450,280 Q600,350 730,420"
-              stroke="url(#lineGradientAnimated)"
+              stroke="url(#lineGradientOverlay)"
               strokeWidth="2"
               fill="none"
               strokeDasharray="8 4"
