@@ -92,16 +92,16 @@ export function FeaturesGrid() {
             </h2>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 auto-rows-fr">
             {features.map((feature) => (
               <Card
                 key={feature.title}
-                className="bg-background-surface border-white/5 hover:border-primary/25 hover:bg-background-elevated transition-all group overflow-hidden relative"
+                className="bg-background-surface border-white/5 hover:border-primary/25 hover:bg-background-elevated transition-all duration-300 group overflow-hidden relative h-full shadow-[0_0_20px_rgba(0,240,255,0.08)] hover:shadow-[0_0_30px_rgba(0,240,255,0.25)] hover:scale-105"
               >
                 <div className="absolute top-0 left-0 right-0 h-[3px] bg-gradient-to-r from-primary to-secondary opacity-0 group-hover:opacity-100 transition-opacity" />
                 <CardContent className="p-6 sm:p-8">
                   <div className="w-14 h-14 rounded-xl bg-background-card border border-white/10 flex items-center justify-center mb-5">
-                    <feature.icon className="w-6 h-6 text-primary" />
+                    <feature.icon className="w-6 h-6 text-foreground-secondary group-hover:text-primary transition-colors" />
                   </div>
                   <h3 className="text-xl font-bold mb-3">{feature.title}</h3>
                   <p className="text-foreground-secondary leading-relaxed">
@@ -138,18 +138,19 @@ export function FeaturesGrid() {
         </motion.div>
 
         <motion.div
-          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
+          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 auto-rows-fr"
           initial="hidden"
           animate={isInView ? "visible" : "hidden"}
           variants={containerVariants}
         >
           {features.map((feature) => (
-            <motion.div key={feature.title} variants={itemVariants}>
+            <motion.div key={feature.title} variants={itemVariants} className="h-full">
               <motion.div
-                whileHover={{ y: -4 }}
+                whileHover={{ scale: 1.05 }}
                 transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] as const }}
+                className="h-full"
               >
-                <Card className="bg-background-surface border-white/5 hover:border-primary/25 hover:bg-background-elevated transition-all group overflow-hidden relative h-full">
+                <Card className="bg-background-surface border-white/5 hover:border-primary/25 hover:bg-background-elevated transition-all group overflow-hidden relative h-full shadow-[0_0_20px_rgba(0,240,255,0.08)] hover:shadow-[0_0_30px_rgba(0,240,255,0.25)]">
                   <motion.div
                     className="absolute top-0 left-0 right-0 h-[3px] bg-gradient-to-r from-primary to-secondary"
                     initial={{ scaleX: 0 }}
@@ -159,7 +160,7 @@ export function FeaturesGrid() {
                   />
                   <CardContent className="p-6 sm:p-8">
                     <div className="w-14 h-14 rounded-xl bg-background-card border border-white/10 flex items-center justify-center mb-5">
-                      <feature.icon className="w-6 h-6 text-primary" />
+                      <feature.icon className="w-6 h-6 text-foreground-secondary group-hover:text-primary transition-colors" />
                     </div>
                     <h3 className="text-xl font-bold mb-3">{feature.title}</h3>
                     <p className="text-foreground-secondary leading-relaxed">
