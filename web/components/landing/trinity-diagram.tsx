@@ -141,7 +141,7 @@ export function TrinityDiagram() {
               </linearGradient>
             </defs>
             <path
-              d="M450,280 Q450,150 450,80"
+              d="M450,220 Q450,150 450,80"
               stroke="url(#lineGradient)"
               strokeWidth="2"
               fill="none"
@@ -256,7 +256,7 @@ export function TrinityDiagram() {
 
           {/* Connection lines */}
           <motion.path
-            d="M450,280 Q450,150 450,80"
+            d="M450,220 Q450,150 450,80"
             stroke="url(#lineGradientAnimated)"
             strokeWidth="2"
             fill="none"
@@ -292,7 +292,7 @@ export function TrinityDiagram() {
               </linearGradient>
             </defs>
             <path
-              d="M450,280 Q450,150 450,80"
+              d="M450,220 Q450,150 450,80"
               stroke="url(#lineGradientOverlay)"
               strokeWidth="2"
               fill="none"
