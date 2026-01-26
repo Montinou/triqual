@@ -1,25 +1,27 @@
 {
-  "name": "triqual",
-  "description": "Unified test automation plugin integrating Playwright execution, Quoth patterns, and Exolar analytics",
+  "name": "triqual-marketplace",
   "owner": {
     "name": "Montinou",
-    "url": "https://github.com/Montinou"
+    "email": "montinou@ai-innovation.site"
   },
-  "repository": "https://github.com/Montinou/triqual",
-  "homepage": "https://github.com/Montinou/triqual",
+  "metadata": {
+    "description": "Triqual - Unified test automation plugin integrating Playwright execution, Quoth patterns, and Exolar analytics",
+    "version": "1.0.0"
+  },
   "plugins": [
     {
-      "name": "triqual",
+      "name": "triqual-plugin",
+      "source": "./triqual-plugin",
       "description": "Unified test automation plugin integrating Playwright execution, Quoth patterns, and Exolar analytics. Ad-hoc testing, ticket-to-test workflows, and self-healing tests.",
       "version": "1.0.0",
-      "source": "./",
       "author": {
-        "name": "Montinou",
-        "url": "https://github.com/Montinou"
+        "name": "Montinou"
       },
-      "category": "testing",
+      "homepage": "https://triqual.vercel.app/",
+      "repository": "https://github.com/Montinou/triqual",
+      "license": "MIT",
       "keywords": ["testing", "automation", "playwright", "e2e", "self-healing", "quoth", "exolar"],
-      "license": "MIT"
+      "category": "testing"
     }
   ]
 }
