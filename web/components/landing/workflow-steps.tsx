@@ -125,11 +125,13 @@ export function WorkflowSteps() {
         <div className="relative">
           {/* Animated timeline line */}
           <motion.div
-            className="absolute left-6 top-12 bottom-12 w-0.5 bg-gradient-to-b from-primary via-secondary to-accent origin-top"
+            className="absolute left-6 top-12 bottom-12 w-0.5 origin-top overflow-hidden"
             initial="hidden"
             animate={isInView ? "visible" : "hidden"}
             variants={lineVariants}
-          />
+          >
+            <div className="absolute inset-0 w-full h-[200%] bg-gradient-to-b from-primary via-secondary via-accent via-primary to-secondary animate-flow-line" />
+          </motion.div>
 
           <motion.div
             className="space-y-0"

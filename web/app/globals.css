@@ -291,6 +291,19 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════
+   FLOW LINE ANIMATION (for timeline)
+   ═══════════════════════════════════════════════════════════ */
+
+@keyframes flowLine {
+  0% { transform: translateY(-50%); }
+  100% { transform: translateY(0%); }
+}
+
+.animate-flow-line {
+  animation: flowLine 3s linear infinite;
+}
+
+/* ═══════════════════════════════════════════════════════════
    REDUCED MOTION
    ═══════════════════════════════════════════════════════════ */
 
