@@ -26,8 +26,15 @@ export function Navbar() {
     return (
       <nav className="fixed top-0 left-0 right-0 z-50 px-4 sm:px-6 lg:px-12 py-4 sm:py-6 flex justify-between items-center bg-gradient-to-b from-background to-transparent backdrop-blur-sm">
         <Link href="/" className="flex items-center gap-3 group">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-secondary flex items-center justify-center font-mono font-bold text-lg text-background glow-cyan">
-            T
+          <div className="w-10 h-10 flex items-center justify-center relative">
+            <img
+              src="/triqual_logo.png"
+              alt="Triqual Logo"
+              className="w-10 h-10"
+              style={{
+                filter: 'drop-shadow(0 0 8px rgba(0, 255, 136, 0.5)) drop-shadow(0 0 8px rgba(168, 85, 247, 0.5)) drop-shadow(0 0 8px rgba(0, 240, 255, 0.5))'
+              }}
+            />
           </div>
           <span className="font-extrabold text-xl tracking-tight">Triqual</span>
         </Link>
@@ -78,11 +85,18 @@ export function Navbar() {
     >
       <Link href="/" className="flex items-center gap-3 group">
         <motion.div
-          className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-secondary flex items-center justify-center font-mono font-bold text-lg text-background glow-cyan"
+          className="w-10 h-10 flex items-center justify-center relative"
           whileHover={{ scale: 1.05, rotate: 5 }}
           transition={{ duration: 0.3 }}
         >
-          T
+          <img
+            src="/triqual_logo.png"
+            alt="Triqual Logo"
+            className="w-10 h-10"
+            style={{
+              filter: 'drop-shadow(0 0 8px rgba(0, 255, 136, 0.5)) drop-shadow(0 0 8px rgba(168, 85, 247, 0.5)) drop-shadow(0 0 8px rgba(0, 240, 255, 0.5))'
+            }}
+          />
         </motion.div>
         <span className="font-extrabold text-xl tracking-tight">Triqual</span>
       </Link>

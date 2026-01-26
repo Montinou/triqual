@@ -38,6 +38,16 @@ export function Hero() {
   if (shouldReduceMotion) {
     return (
       <section className="min-h-screen flex flex-col justify-center items-center px-4 sm:px-6 lg:px-8 pt-32 pb-16 text-center">
+        <div className="mb-8 flex items-center justify-center">
+          <img
+            src="/triqual_logo.png"
+            alt="Triqual Logo"
+            className="w-20 h-20 sm:w-24 sm:h-24"
+            style={{
+              filter: 'drop-shadow(0 0 12px rgba(0, 255, 136, 0.6)) drop-shadow(0 0 12px rgba(168, 85, 247, 0.6)) drop-shadow(0 0 12px rgba(0, 240, 255, 0.6))'
+            }}
+          />
+        </div>
         <Badge
           variant="outline"
           className="mb-8 border-primary/40 bg-background-card text-primary font-mono"
@@ -88,6 +98,19 @@ export function Hero() {
       animate="visible"
       variants={containerVariants}
     >
+      <motion.div
+        variants={itemVariants}
+        className="mb-8 flex items-center justify-center"
+      >
+        <img
+          src="/triqual_logo.png"
+          alt="Triqual Logo"
+          className="w-20 h-20 sm:w-24 sm:h-24"
+          style={{
+            filter: 'drop-shadow(0 0 12px rgba(0, 255, 136, 0.6)) drop-shadow(0 0 12px rgba(168, 85, 247, 0.6)) drop-shadow(0 0 12px rgba(0, 240, 255, 0.6))'
+          }}
+        />
+      </motion.div>
       <motion.div variants={itemVariants}>
         <Badge
           variant="outline"

@@ -15,6 +15,7 @@ const jetbrainsMono = JetBrains_Mono({
 })
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || 'https://montinou.github.io/triqual'),
   title: "Triqual | Intelligent Test Automation",
   description:
     "Unified test automation plugin combining Playwright execution, Quoth pattern documentation, and Exolar analytics into one self-learning system.",
@@ -27,11 +28,16 @@ export const metadata: Metadata = {
     "exolar",
   ],
   authors: [{ name: "Montinou" }],
+  icons: {
+    icon: "/triqual_logo.png",
+    apple: "/triqual_logo.png",
+  },
   openGraph: {
     title: "Triqual | Intelligent Test Automation",
     description:
       "Unified test automation plugin combining Playwright execution, Quoth pattern documentation, and Exolar analytics into one self-learning system.",
     type: "website",
+    images: ["/triqual_logo.png"],
   },
 }
 

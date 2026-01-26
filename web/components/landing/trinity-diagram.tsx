@@ -2,7 +2,7 @@
 
 import { motion, useReducedMotion, useInView } from "framer-motion"
 import { useRef, type ReactNode } from "react"
-import { Zap, Globe, BookOpen, BarChart3 } from "lucide-react"
+import { Zap, Globe } from "lucide-react"
 
 const nodeVariants = {
   hidden: { opacity: 0, scale: 0.8 },
@@ -129,15 +129,46 @@ function PlaywrightIcon() {
 function QuothIcon() {
   return (
     <div className="w-11 h-11 sm:w-13 sm:h-13 rounded-xl bg-gradient-to-br from-accent/20 to-accent/5 border border-accent/30 flex items-center justify-center">
-      <BookOpen className="w-5 h-5 sm:w-6 sm:h-6 text-accent" />
+      <img src="/pluma-ciber.png" alt="Quoth" className="w-5 h-5 sm:w-6 sm:h-6" />
     </div>
   )
 }
 
 function ExolarIcon() {
+  // Exolar eclipse logo - circular with cyan/orange gradient border and glows
   return (
-    <div className="w-11 h-11 sm:w-13 sm:h-13 rounded-xl bg-gradient-to-br from-primary/20 to-primary/5 border border-primary/30 flex items-center justify-center">
-      <BarChart3 className="w-5 h-5 sm:w-6 sm:h-6 text-primary" />
+    <div className="relative w-11 h-11 sm:w-13 sm:h-13 flex items-center justify-center">
+      {/* Cyan glow - top left */}
+      <div
+        className="absolute w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-cyan-500/30 blur-md"
+        style={{ top: '-4px', left: '-4px' }}
+      />
+      {/* Orange glow - bottom right */}
+      <div
+        className="absolute w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-orange-500/30 blur-md"
+        style={{ bottom: '-4px', right: '-4px' }}
+      />
+      {/* Main eclipse circle */}
+      <div
+        className="relative w-9 h-9 sm:w-11 sm:h-11 rounded-full bg-black z-10"
+        style={{
+          boxShadow: 'inset 0 0 10px rgba(0,0,0,0.8)',
+        }}
+      >
+        {/* Gradient border */}
+        <div
+          className="absolute inset-0 rounded-full"
+          style={{
+            border: '2px solid transparent',
+            background: 'linear-gradient(135deg, #06b6d4, #000000 40%, #000000 60%, #f97316) border-box',
+            WebkitMask: 'linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0)',
+            WebkitMaskComposite: 'xor',
+            maskComposite: 'exclude',
+          }}
+        />
+        {/* Inner depth gradient */}
+        <div className="absolute inset-0 rounded-full bg-[radial-gradient(circle,transparent_20%,black_100%)]" />
+      </div>
     </div>
   )
 }
@@ -356,7 +387,7 @@ export function TrinityDiagram() {
           </div>
 
           <a
-            href="https://github.com/Montinou/quoth-mcp"
+            href="https://quoth.ai-innovation.site/"
             target="_blank"
             rel="noopener noreferrer"
             className="absolute bottom-[8%] left-[15%] w-44 sm:w-52 min-h-[150px] sm:min-h-[170px] p-4 sm:p-5 bg-background-surface rounded-2xl border border-accent/30 text-center cursor-pointer hover:scale-105 transition-transform"
@@ -369,7 +400,7 @@ export function TrinityDiagram() {
           </a>
 
           <a
-            href="https://github.com/Montinou/exolar"
+            href="https://exolar.ai-innovation.site/"
             target="_blank"
             rel="noopener noreferrer"
             className="absolute bottom-[8%] right-[15%] w-44 sm:w-52 min-h-[150px] sm:min-h-[170px] p-4 sm:p-5 bg-background-surface rounded-2xl border border-primary/30 text-center cursor-pointer hover:scale-105 transition-transform"
@@ -424,7 +455,7 @@ export function TrinityDiagram() {
           position="bottom-left"
           glowClass="glow-purple"
           borderColor="border-accent/30"
-          href="https://github.com/Montinou/quoth-mcp"
+          href="https://quoth.ai-innovation.site/"
         />
 
         <TrinityNode
@@ -434,7 +465,7 @@ export function TrinityDiagram() {
           position="bottom-right"
           glowClass="glow-cyan"
           borderColor="border-primary/30"
-          href="https://github.com/Montinou/exolar"
+          href="https://exolar.ai-innovation.site/"
         />
 
         {/* Center node - "UNIFIED" hub */}
