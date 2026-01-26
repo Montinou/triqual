@@ -25,7 +25,7 @@ main() {
     # Only output summary if tools were used
     if [ "$quoth_searches" -gt 0 ] || [ "$exolar_queries" -gt 0 ]; then
         local context="[Triqual] Session ended. Quoth searches: $quoth_searches, Exolar queries: $exolar_queries"
-        output_context "$context"
+        output_context "$context" "Stop"
     else
         output_empty
     fi

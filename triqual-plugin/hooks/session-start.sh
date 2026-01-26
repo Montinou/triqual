@@ -20,7 +20,7 @@ main() {
     # Startup hint with Quoth and Exolar integration
     local context="[Triqual] Test automation ready. Before writing tests: quoth_search_index({ query: \"playwright patterns\" }). After test runs: results auto-reported to Exolar. Skills: /quick-test, /test-ticket, /generate-test"
 
-    output_context "$context"
+    output_context "$context" "SessionStart"
 }
 
 main "$@"

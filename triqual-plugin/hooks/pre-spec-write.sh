@@ -47,7 +47,7 @@ main() {
     # Output Quoth + Exolar integration hint
     local context="[Triqual] Writing test file. BEFORE generating: quoth_search_index({ query: \"playwright test patterns\" }) to find existing Page Objects and helpers. Check query_exolar_data({ dataset: \"test_search\" }) for similar tests."
 
-    output_context "$context"
+    output_context "$context" "PreToolUse"
 }
 
 main "$@"

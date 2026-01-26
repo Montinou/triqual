@@ -41,7 +41,7 @@ main() {
         context="[Triqual] Tests passed. Report to Exolar: perform_exolar_action({ action: \"report_execution\", params: { passed: true } })"
     fi
 
-    output_context "$context"
+    output_context "$context" "PostToolUse"
 }
 
 main "$@"

@@ -264,13 +264,15 @@ json_escape() {
 }
 
 # Output hook response with additional context
-# Usage: output_context "Your context message here"
+# Usage: output_context "Your context message here" ["EventName"]
 output_context() {
     local context="$1"
+    local event_name="${2:-SessionStart}"
     local escaped=$(json_escape "$context")
     cat << EOF
 {
   "hookSpecificOutput": {
+    "hookEventName": "$event_name",
     "additionalContext": "$escaped"
   }
 }
