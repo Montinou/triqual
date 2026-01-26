@@ -38,7 +38,7 @@ const flowVariants = {
       opacity: { duration: 0.5, delay: 1.2 },
       strokeDashoffset: {
         duration: 0.8,
-        ease: "linear",
+        ease: "linear" as const,
         repeat: Infinity,
         delay: 1.2,
       },
