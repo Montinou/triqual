@@ -1,11 +1,6 @@
 ---
 name: generate-test
-description: |
-  Create permanent Playwright test files from exploration or description.
-  Use when user says "create a test for this", "make this a permanent test",
-  "generate a spec file", "turn this into a real test", or after using
-  quick-test and wanting to save the work.
-user-invocable: true
+description: Create permanent Playwright test files from exploration or description. Use when user says "create a test for this", "make this a permanent test", "generate a spec file".
 argument-hint: [feature-name]
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 ---

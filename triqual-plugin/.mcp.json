@@ -7,6 +7,10 @@
     "exolar-qa": {
       "type": "http",
       "url": "https://exolar.ai-innovation.site/api/mcp/mcp"
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"]
     }
   }
 }

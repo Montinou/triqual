@@ -1,10 +1,6 @@
 ---
 name: quick-test
-description: |
-  Quick ad-hoc browser testing with Playwright. Use when user says "test this page",
-  "check if X works", "take a screenshot", "test the login", or any quick browser
-  automation task. Executes custom Playwright code on-the-fly with visible browser.
-user-invocable: true
+description: Quick ad-hoc browser testing with Playwright. Use when user says "test this page", "check if X works", "take a screenshot", "test the login", or any quick browser automation task.
 allowed-tools: Read, Write, Bash, Glob, Grep
 ---
 

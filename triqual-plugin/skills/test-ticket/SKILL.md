@@ -1,11 +1,6 @@
 ---
 name: test-ticket
-description: |
-  Generate Playwright E2E tests from Linear tickets. Use when user says
-  "test ticket ENG-123", "automate ENG-456", "create e2e tests from ticket",
-  "generate playwright tests from ticket", "automate acceptance criteria",
-  or mentions Linear ticket IDs like ENG-123, LIN-456, PROJ-789.
-user-invocable: true
+description: Generate Playwright E2E tests from Linear tickets. Use when user says "test ticket ENG-123", "automate ENG-456", "create e2e tests from ticket", or mentions Linear ticket IDs.
 argument-hint: <ticket-id> [--dry-run] [--skip-pr]
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 ---
