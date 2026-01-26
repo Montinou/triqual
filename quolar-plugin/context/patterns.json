@@ -1,0 +1,65 @@
+{
+  "$schema": "./schemas/patterns.schema.json",
+  "_comment": "Project-specific test pattern overrides for Quolar",
+
+  "timeout": {
+    "default": 30000,
+    "ci": 60000,
+    "local": 15000,
+    "navigation": 45000,
+    "api": 10000
+  },
+
+  "retry": {
+    "maxAttempts": 3,
+    "backoffMs": 1000,
+    "backoffMultiplier": 2
+  },
+
+  "selectors": {
+    "preferDataTestId": true,
+    "fallbackToRole": true,
+    "useVisibleFilter": true,
+    "avoidNth": true
+  },
+
+  "assertions": {
+    "softAssertions": false,
+    "screenshotOnFailure": true,
+    "videoOnFailure": true
+  },
+
+  "healing": {
+    "autoHeal": false,
+    "askFirst": true,
+    "maxHealAttempts": 3,
+    "healableErrors": [
+      "locator resolved to .* elements",
+      "Timeout .* exceeded",
+      "strict mode violation",
+      "element is not visible",
+      "element is detached"
+    ],
+    "nonHealableErrors": [
+      "assertion failed",
+      "expected .* but got",
+      "TypeError",
+      "ReferenceError"
+    ]
+  },
+
+  "generation": {
+    "usePageObjects": true,
+    "useFixtures": true,
+    "addTags": true,
+    "defaultTags": ["@generated", "@e2e"],
+    "commentStyle": "jsdoc"
+  },
+
+  "naming": {
+    "testFiles": "{feature}.spec.ts",
+    "pageObjects": "{feature}.page.ts",
+    "fixtures": "{feature}.fixtures.ts",
+    "testNames": "should {action} when {condition}"
+  }
+}

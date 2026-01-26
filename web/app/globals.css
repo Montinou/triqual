@@ -1,0 +1,310 @@
+@import "tailwindcss";
+
+@plugin "@tailwindcss/typography";
+
+/* ═══════════════════════════════════════════════════════════
+   THEME VARIABLES - Command Center Aesthetic
+   ═══════════════════════════════════════════════════════════ */
+
+@theme inline {
+  /* Background hierarchy */
+  --color-background: #05080f;
+  --color-background-surface: #0a0f1a;
+  --color-background-elevated: #111827;
+  --color-background-card: #1a2235;
+
+  /* Foreground/text */
+  --color-foreground: #f0f4fc;
+  --color-foreground-secondary: #8b9dc3;
+  --color-foreground-muted: #4a5568;
+
+  /* Brand accents */
+  --color-primary: #00f0ff;
+  --color-primary-dim: rgba(0, 240, 255, 0.25);
+  --color-secondary: #00ff88;
+  --color-secondary-dim: rgba(0, 255, 136, 0.25);
+  --color-accent: #a855f7;
+  --color-accent-dim: rgba(168, 85, 247, 0.25);
+  --color-destructive: #ff6b35;
+
+  /* UI elements */
+  --color-muted: #0a0f1a;
+  --color-card: #1a2235;
+  --color-popover: #0a0f1a;
+  --color-border: #1f2937;
+  --color-input: #1f2937;
+  --color-ring: #00f0ff;
+
+  /* Typography */
+  --font-display: 'Outfit', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  /* Radius */
+  --radius-sm: 0.5rem;
+  --radius: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+  --radius-2xl: 1.5rem;
+}
+
+:root {
+  /* Glow effects */
+  --glow-cyan: 0 0 30px rgba(0, 240, 255, 0.5), 0 0 60px rgba(0, 240, 255, 0.2);
+  --glow-green: 0 0 30px rgba(0, 255, 136, 0.5), 0 0 60px rgba(0, 255, 136, 0.2);
+  --glow-purple: 0 0 30px rgba(168, 85, 247, 0.5), 0 0 60px rgba(168, 85, 247, 0.2);
+
+  /* Easing */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-back: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   BASE STYLES
+   ═══════════════════════════════════════════════════════════ */
+
+* {
+  border-color: var(--color-border);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-display);
+  background: var(--color-background);
+  color: var(--color-foreground);
+  line-height: 1.6;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ANIMATED BACKGROUND
+   ═══════════════════════════════════════════════════════════ */
+
+.bg-grid {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background-image:
+    linear-gradient(rgba(0, 240, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 240, 255, 0.03) 1px, transparent 1px);
+  background-size: 60px 60px;
+  animation: gridMove 20s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes gridMove {
+  0% { transform: translate(0, 0); }
+  100% { transform: translate(60px, 60px); }
+}
+
+.bg-glow {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.bg-glow::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background:
+    radial-gradient(ellipse at 30% 20%, rgba(0, 240, 255, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 70% 80%, rgba(168, 85, 247, 0.06) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 50%, rgba(0, 255, 136, 0.04) 0%, transparent 60%);
+  animation: glowPulse 8s ease-in-out infinite alternate;
+}
+
+@keyframes glowPulse {
+  0% { opacity: 0.6; transform: scale(1) rotate(0deg); }
+  100% { opacity: 1; transform: scale(1.1) rotate(5deg); }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   GRADIENT TEXT
+   ═══════════════════════════════════════════════════════════ */
+
+.gradient-text {
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 50%, var(--color-accent) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.gradient-text-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--color-primary) 0%,
+    var(--color-secondary) 25%,
+    var(--color-accent) 50%,
+    var(--color-secondary) 75%,
+    var(--color-primary) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: shimmer 3s linear infinite;
+}
+
+@keyframes shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   GLOW EFFECTS
+   ═══════════════════════════════════════════════════════════ */
+
+.glow-cyan {
+  box-shadow: var(--glow-cyan);
+}
+
+.glow-green {
+  box-shadow: var(--glow-green);
+}
+
+.glow-purple {
+  box-shadow: var(--glow-purple);
+}
+
+.glow-cyan-hover:hover {
+  box-shadow: var(--glow-cyan);
+}
+
+.glow-green-hover:hover {
+  box-shadow: var(--glow-green);
+}
+
+.glow-purple-hover:hover {
+  box-shadow: var(--glow-purple);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CODE SYNTAX HIGHLIGHTING
+   ═══════════════════════════════════════════════════════════ */
+
+.code-block .comment { color: var(--color-foreground-muted); }
+.code-block .keyword { color: var(--color-accent); }
+.code-block .string { color: var(--color-secondary); }
+.code-block .function { color: var(--color-primary); }
+.code-block .variable { color: var(--color-destructive); }
+
+/* ═══════════════════════════════════════════════════════════
+   TYPOGRAPHY PROSE (Documentation)
+   ═══════════════════════════════════════════════════════════ */
+
+.prose {
+  --tw-prose-body: var(--color-foreground-secondary);
+  --tw-prose-headings: var(--color-foreground);
+  --tw-prose-lead: var(--color-foreground-secondary);
+  --tw-prose-links: var(--color-primary);
+  --tw-prose-bold: var(--color-foreground);
+  --tw-prose-counters: var(--color-foreground-muted);
+  --tw-prose-bullets: var(--color-foreground-muted);
+  --tw-prose-hr: var(--color-border);
+  --tw-prose-quotes: var(--color-foreground);
+  --tw-prose-quote-borders: var(--color-primary);
+  --tw-prose-captions: var(--color-foreground-muted);
+  --tw-prose-code: var(--color-primary);
+  --tw-prose-pre-code: var(--color-foreground);
+  --tw-prose-pre-bg: var(--color-background-card);
+  --tw-prose-th-borders: var(--color-border);
+  --tw-prose-td-borders: var(--color-border);
+}
+
+.prose code:not(pre code) {
+  background: var(--color-background-card);
+  padding: 0.2em 0.4em;
+  border-radius: 0.25rem;
+  font-size: 0.875em;
+}
+
+.prose pre {
+  background: var(--color-background-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SCROLLBAR
+   ═══════════════════════════════════════════════════════════ */
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-background);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-foreground-muted);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SELECTION
+   ═══════════════════════════════════════════════════════════ */
+
+::selection {
+  background: rgba(0, 240, 255, 0.3);
+  color: var(--color-foreground);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   DASH ANIMATION (for SVG lines)
+   ═══════════════════════════════════════════════════════════ */
+
+@keyframes dashMove {
+  to { stroke-dashoffset: -12; }
+}
+
+.animate-dash {
+  animation: dashMove 1s linear infinite;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   PULSE ANIMATION
+   ═══════════════════════════════════════════════════════════ */
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.2); }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   REDUCED MOTION
+   ═══════════════════════════════════════════════════════════ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .bg-grid,
+  .bg-glow::before {
+    animation: none;
+  }
+}

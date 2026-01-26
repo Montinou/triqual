@@ -1,0 +1,16 @@
+{
+  "name": "quolar",
+  "version": "1.0.0",
+  "description": "Unified test automation plugin integrating Playwright execution, Quoth patterns, and Exolar analytics. Ad-hoc testing, ticket-to-test workflows, and self-healing tests.",
+  "author": {
+    "name": "Montinou",
+    "url": "https://github.com/Montinou"
+  },
+  "homepage": "https://github.com/Montinou/quolar-unified",
+  "repository": "https://github.com/Montinou/quolar-unified",
+  "license": "MIT",
+  "keywords": ["testing", "automation", "playwright", "e2e", "self-healing", "quoth", "exolar"],
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "agents": "./agents/"
+}

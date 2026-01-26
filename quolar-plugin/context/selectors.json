@@ -1,0 +1,85 @@
+{
+  "$schema": "./schemas/selectors.schema.json",
+  "_comment": "Project-specific locator preferences for Quolar",
+
+  "strategy": {
+    "priority": [
+      "data-testid",
+      "role",
+      "text",
+      "css-visible"
+    ],
+    "fallback": "css-visible"
+  },
+
+  "components": {
+    "button": {
+      "primary": "[data-testid='primary-btn'], button.btn-primary:visible",
+      "secondary": "[data-testid='secondary-btn'], button.btn-secondary:visible",
+      "submit": "[data-testid='submit-btn'], button[type='submit']:visible",
+      "cancel": "[data-testid='cancel-btn'], button:has-text('Cancel'):visible"
+    },
+    "input": {
+      "text": "input[type='text']:visible",
+      "email": "[data-testid='email-input'], input[type='email']:visible",
+      "password": "[data-testid='password-input'], input[type='password']:visible",
+      "search": "[data-testid='search-input'], input[type='search']:visible"
+    },
+    "modal": {
+      "container": "[role='dialog'], .modal:visible",
+      "close": "[data-testid='modal-close'], button[aria-label='Close']:visible",
+      "overlay": ".modal-overlay, [data-testid='modal-overlay']"
+    },
+    "navigation": {
+      "menu": "[data-testid='nav-menu'], nav:visible",
+      "link": "nav a:visible",
+      "dropdown": "[data-testid='nav-dropdown'], .dropdown-menu:visible"
+    },
+    "table": {
+      "container": "[data-testid='data-table'], table:visible",
+      "row": "tbody tr:visible",
+      "cell": "td:visible",
+      "header": "th:visible"
+    },
+    "form": {
+      "container": "form:visible",
+      "field": ".form-field:visible, .form-group:visible",
+      "error": ".error-message:visible, [role='alert']:visible",
+      "success": ".success-message:visible"
+    }
+  },
+
+  "pages": {
+    "_comment": "Add page-specific selectors below",
+    "login": {
+      "emailInput": "[data-testid='login-email'], #email",
+      "passwordInput": "[data-testid='login-password'], #password",
+      "submitButton": "[data-testid='login-submit'], button[type='submit']",
+      "errorMessage": "[data-testid='login-error'], .login-error:visible",
+      "forgotPassword": "a:has-text('Forgot password')"
+    },
+    "dashboard": {
+      "welcomeMessage": "[data-testid='welcome-msg'], .welcome-header",
+      "userMenu": "[data-testid='user-menu'], .user-dropdown",
+      "notifications": "[data-testid='notifications'], .notification-bell"
+    }
+  },
+
+  "antiPatterns": {
+    "_comment": "Selectors to avoid - Quolar will warn if these are used",
+    "patterns": [
+      "nth\\(\\d+\\)(?!.*:visible)",
+      "\\.\\w+\\s*>\\s*\\.\\w+\\s*>\\s*\\.\\w+",
+      "xpath=",
+      "\\[style=",
+      "#\\w{8,}"
+    ],
+    "reasons": {
+      "nth without visible": "Index-based selection is fragile with hidden elements",
+      "deep nesting": "Overly specific selectors break on minor DOM changes",
+      "xpath": "XPath is slower and harder to maintain than CSS",
+      "style attribute": "Inline styles are implementation details",
+      "long IDs": "Auto-generated IDs are not stable"
+    }
+  }
+}
