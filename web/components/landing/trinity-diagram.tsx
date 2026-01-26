@@ -46,31 +46,53 @@ interface TrinityNodeProps {
   position: "top" | "bottom-left" | "bottom-right"
   glowClass: string
   borderColor: string
+  href?: string
 }
 
-function TrinityNode({ title, description, icon, position, glowClass, borderColor }: TrinityNodeProps) {
+function TrinityNode({ title, description, icon, position, glowClass, borderColor, href }: TrinityNodeProps) {
   const positionClasses = {
     top: "top-[5%] left-1/2 -translate-x-1/2",
     "bottom-left": "bottom-[10%] left-[10%]",
     "bottom-right": "bottom-[10%] right-[10%]",
   }
 
-  return (
-    <motion.div
-      className={`absolute w-40 sm:w-44 p-4 sm:p-6 bg-background-surface rounded-2xl border text-center transition-all duration-400 ${positionClasses[position]} ${borderColor}`}
-      variants={nodeVariants}
-      whileHover={{
-        scale: 1.05,
-        boxShadow: glowClass === "glow-green"
-          ? "0 0 30px rgba(0, 255, 136, 0.5), 0 0 60px rgba(0, 255, 136, 0.2)"
-          : glowClass === "glow-purple"
-          ? "0 0 30px rgba(168, 85, 247, 0.5), 0 0 60px rgba(168, 85, 247, 0.2)"
-          : "0 0 30px rgba(0, 240, 255, 0.5), 0 0 60px rgba(0, 240, 255, 0.2)",
-      }}
-    >
+  const content = (
+    <>
       <div className="flex justify-center mb-3">{icon}</div>
       <h3 className="font-bold text-base sm:text-lg mb-1">{title}</h3>
       <p className="text-xs sm:text-sm text-foreground-secondary">{description}</p>
+    </>
+  )
+
+  const motionProps = {
+    className: `absolute w-40 sm:w-44 p-4 sm:p-6 bg-background-surface rounded-2xl border text-center transition-all duration-400 ${positionClasses[position]} ${borderColor} ${href ? "cursor-pointer" : ""}`,
+    variants: nodeVariants,
+    whileHover: {
+      scale: 1.05,
+      boxShadow: glowClass === "glow-green"
+        ? "0 0 30px rgba(0, 255, 136, 0.5), 0 0 60px rgba(0, 255, 136, 0.2)"
+        : glowClass === "glow-purple"
+        ? "0 0 30px rgba(168, 85, 247, 0.5), 0 0 60px rgba(168, 85, 247, 0.2)"
+        : "0 0 30px rgba(0, 240, 255, 0.5), 0 0 60px rgba(0, 240, 255, 0.2)",
+    },
+  }
+
+  if (href) {
+    return (
+      <motion.a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        {...motionProps}
+      >
+        {content}
+      </motion.a>
+    )
+  }
+
+  return (
+    <motion.div {...motionProps}>
+      {content}
     </motion.div>
   )
 }
@@ -162,21 +184,31 @@ export function TrinityDiagram() {
             <p className="text-sm text-foreground-secondary">Browser Automation</p>
           </div>
 
-          <div className="absolute bottom-[10%] left-[10%] w-44 p-6 bg-background-surface rounded-2xl border border-accent/25 text-center">
+          <a
+            href="https://github.com/Montinou/quoth-mcp"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="absolute bottom-[10%] left-[10%] w-44 p-6 bg-background-surface rounded-2xl border border-accent/25 text-center cursor-pointer hover:scale-105 transition-transform"
+          >
             <div className="flex justify-center mb-3">
               <QuothIcon />
             </div>
             <h3 className="font-bold text-lg mb-1">Quoth</h3>
             <p className="text-sm text-foreground-secondary">Pattern Documentation</p>
-          </div>
+          </a>
 
-          <div className="absolute bottom-[10%] right-[10%] w-44 p-6 bg-background-surface rounded-2xl border border-primary/25 text-center">
+          <a
+            href="https://github.com/Montinou/exolar"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="absolute bottom-[10%] right-[10%] w-44 p-6 bg-background-surface rounded-2xl border border-primary/25 text-center cursor-pointer hover:scale-105 transition-transform"
+          >
             <div className="flex justify-center mb-3">
               <ExolarIcon />
             </div>
             <h3 className="font-bold text-lg mb-1">Exolar</h3>
             <p className="text-sm text-foreground-secondary">Test Analytics</p>
-          </div>
+          </a>
 
           {/* Center node */}
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-32 h-32 bg-background-card border-2 border-primary rounded-full flex flex-col items-center justify-center glow-cyan z-10">
@@ -297,6 +329,7 @@ export function TrinityDiagram() {
           position="bottom-left"
           glowClass="glow-purple"
           borderColor="border-accent/25"
+          href="https://github.com/Montinou/quoth-mcp"
         />
 
         <TrinityNode
@@ -306,6 +339,7 @@ export function TrinityDiagram() {
           position="bottom-right"
           glowClass="glow-cyan"
           borderColor="border-primary/25"
+          href="https://github.com/Montinou/exolar"
         />
 
         {/* Center node */}
