@@ -6,8 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
 
 main() {
-    local input="${TOOL_INPUT:-$1}"
-    local output="${TOOL_OUTPUT:-}"
+    # Read JSON from stdin (Claude Code passes hook input this way)
+    local input=$(read_hook_input)
 
     # Extract command from input
     local command=$(extract_command "$input")
@@ -24,22 +24,29 @@ main() {
         exit 0
     fi
 
-    # Check for failures in output
-    local has_failures=false
-    if [[ "$output" =~ "failed" ]] || [[ "$output" =~ "Error:" ]] || [[ "$output" =~ "FAILED" ]]; then
-        has_failures=true
+    # Check if hint already delivered this session
+    if hint_delivered_for "post_test_run"; then
+        output_empty
+        exit 0
     fi
 
-    # Build response based on results
-    local context=""
+    # Mark hint as delivered
+    mark_hint_delivered "post_test_run"
 
-    if [ "$has_failures" = true ]; then
-        # Failures detected - offer Exolar reporting and healing
-        context="[Triqual] Test failures detected. Options: (1) Analyze with failure-classifier agent to classify as FLAKE/BUG/ENV (2) Auto-heal with test-healer agent (asks before fixing) (3) Report to Exolar: perform_exolar_action({ action: \"report_execution\", params: { failures: [...] } })"
-    else
-        # All passed - brief confirmation with Exolar reporting hint
-        context="[Triqual] Tests passed. Report to Exolar: perform_exolar_action({ action: \"report_execution\", params: { passed: true } })"
-    fi
+    # Note: PostToolUse hooks receive tool_result in the JSON, but we provide
+    # general guidance rather than parsing the specific output
+    local context="[Triqual] Test execution completed.
+
+MANDATORY POST-RUN ACTIONS:
+1. Report results to Exolar: perform_exolar_action({ action: \"report_execution\", params: { status: \"passed|failed\", test_count: N } })
+
+IF FAILURES DETECTED:
+2. FIRST classify the failure: Use failure-classifier agent OR query_exolar_data({ dataset: \"failure_patterns\" }) to determine if FLAKE/BUG/ENV
+3. For FLAKES: Use test-healer agent to auto-fix with retry logic or better selectors
+4. For BUGS: Create a Linear ticket, DO NOT modify tests to mask real bugs
+5. For ENV issues: Document in Quoth using quoth_propose_update()
+
+DO NOT retry failed tests blindly - always classify first to avoid masking real issues."
 
     output_context "$context" "PostToolUse"
 }

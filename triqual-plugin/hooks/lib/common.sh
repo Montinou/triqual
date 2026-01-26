@@ -12,6 +12,35 @@ TRIQUAL_SESSION_DIR="/tmp/triqual"
 QUOTH_MCP_NAME="quoth"
 EXOLAR_MCP_NAME="exolar-qa"
 
+# Global variable to cache stdin input (read once per hook execution)
+_HOOK_INPUT=""
+_HOOK_SESSION_ID=""
+
+# ============================================================================
+# STDIN INPUT HANDLING
+# ============================================================================
+
+# Read and cache stdin input (call this once at the start of each hook)
+# Claude Code passes hook input as JSON via stdin
+read_hook_input() {
+    if [ -z "$_HOOK_INPUT" ]; then
+        _HOOK_INPUT=$(cat)
+    fi
+    echo "$_HOOK_INPUT"
+}
+
+# Get the cached hook input (must call read_hook_input first)
+get_hook_input() {
+    echo "$_HOOK_INPUT"
+}
+
+# Extract session_id from hook input JSON
+# Returns: session_id string or empty
+get_session_id_from_input() {
+    local input="${1:-$_HOOK_INPUT}"
+    echo "$input" | grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/'
+}
+
 # ============================================================================
 # MCP DETECTION
 # ============================================================================
@@ -61,10 +90,24 @@ get_config_value() {
 # ============================================================================
 
 # Get session marker file path
-# Uses CLAUDE_SESSION_ID if available, falls back to process-based ID
+# Uses session_id from hook input JSON, falls back to a default
 get_session_file() {
     mkdir -p "$TRIQUAL_SESSION_DIR"
-    local session_id="${CLAUDE_SESSION_ID:-$$}"
+
+    # Try to get session_id from cached input
+    local session_id=""
+    if [ -n "$_HOOK_INPUT" ]; then
+        session_id=$(get_session_id_from_input "$_HOOK_INPUT")
+    fi
+
+    # Fallback to default if no session_id
+    if [ -z "$session_id" ]; then
+        session_id="default"
+    fi
+
+    # Cache for reuse
+    _HOOK_SESSION_ID="$session_id"
+
     echo "$TRIQUAL_SESSION_DIR/session_$session_id.json"
 }
 
@@ -190,7 +233,7 @@ is_spec_file() {
 is_temp_file() {
     local file_path="$1"
     case "$file_path" in
-        /tmp/*)
+        /tmp/* | /private/tmp/*)
             return 0
             ;;
         *)
@@ -238,18 +281,26 @@ has_dry_run_flag() {
 # JSON PARSING HELPERS
 # ============================================================================
 
-# Extract file_path from hook input JSON
+# Extract file_path from hook input JSON (from tool_input object)
 # Usage: extract_file_path "$INPUT"
 extract_file_path() {
     local input="$1"
+    # Match file_path within the JSON - handles both top-level and nested in tool_input
     echo "$input" | grep -o '"file_path"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/'
 }
 
-# Extract command from hook input JSON
+# Extract command from hook input JSON (from tool_input object)
 # Usage: extract_command "$INPUT"
 extract_command() {
     local input="$1"
     echo "$input" | grep -o '"command"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/'
+}
+
+# Extract tool_name from hook input JSON
+# Usage: extract_tool_name "$INPUT"
+extract_tool_name() {
+    local input="$1"
+    echo "$input" | grep -o '"tool_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/'
 }
 
 # ============================================================================
