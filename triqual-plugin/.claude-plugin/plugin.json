@@ -6,11 +6,8 @@
     "name": "Montinou",
     "url": "https://github.com/Montinou"
   },
-  "homepage": "https://github.com/Montinou/triqual/triqual-plugin",
+  "homepage": "https://triqual.vercel.app/",
   "repository": "https://github.com/Montinou/triqual",
   "license": "MIT",
-  "keywords": ["testing", "automation", "playwright", "e2e", "self-healing", "quoth", "exolar"],
-  "skills": "./skills/",
-  "agents": "./agents/",
-  "hooks": "./hooks/hooks.json"
+  "keywords": ["testing", "automation", "playwright", "e2e", "self-healing", "quoth", "exolar"]
 }

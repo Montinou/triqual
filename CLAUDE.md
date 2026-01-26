@@ -8,12 +8,12 @@ Unified plugin for Playwright test automation with **seamless MCP integration**:
 ## Installation
 
 ```bash
-# From marketplace (when published)
+# From marketplace
 /plugin marketplace add Montinou/triqual
-/plugin install triqual@triqual-plugin
+/plugin install triqual-plugin@triqual
 
 # Or local development
-claude --plugin-dir /path/to/triqual
+claude --plugin-dir /path/to/triqual/triqual-plugin
 ```
 
 **What gets installed automatically:**
@@ -110,30 +110,35 @@ The plugin automatically installs these MCP servers:
 
 ```
 triqual/
-├── .mcp.json                    # MCP server auto-install config
-├── .claude-plugin/              # Claude Code plugin
-│   ├── plugin.json
-│   ├── skills/
+├── .claude-plugin/
+│   └── marketplace.json         # Marketplace distribution config
+├── triqual-plugin/              # The actual plugin (source in marketplace.json)
+│   ├── .claude-plugin/
+│   │   └── plugin.json          # Plugin manifest only
+│   ├── .mcp.json                # MCP server auto-install (at plugin root)
+│   ├── skills/                  # Skills at plugin root (auto-discovered)
 │   │   ├── quick-test/SKILL.md
 │   │   ├── test-ticket/SKILL.md
 │   │   └── generate-test/SKILL.md
-│   ├── hooks/
-│   │   ├── hooks.json           # Hook definitions
-│   │   ├── lib/common.sh        # Shared functions
+│   ├── hooks/                   # Hooks at plugin root (auto-discovered)
+│   │   ├── hooks.json
+│   │   ├── lib/common.sh
 │   │   ├── session-start.sh
 │   │   ├── pre-spec-write.sh
 │   │   ├── post-test-run.sh
 │   │   └── stop.sh
-│   └── agents/
-│       ├── test-healer.md
-│       ├── failure-classifier.md
-│       └── pattern-learner.md
-├── triqual-plugin/               # Supporting files
+│   ├── agents/                  # Agents at plugin root (auto-discovered)
+│   │   ├── test-healer.md
+│   │   ├── failure-classifier.md
+│   │   └── pattern-learner.md
 │   ├── lib/                     # Playwright executor & helpers
-│   ├── docs/references/         # 12 comprehensive guides
+│   ├── docs/references/         # Comprehensive guides
 │   └── context/                 # Project configuration
-└── CLAUDE.md                    # This file
+├── web/                         # Landing page (triqual.vercel.app)
+└── CLAUDE.md
 ```
+
+**Important:** Claude Code uses auto-discovery. Components (skills, hooks, agents, .mcp.json) must be at the **plugin root level**, not inside `.claude-plugin/`.
 
 ## The Learning Loop
 

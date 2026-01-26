@@ -9,26 +9,38 @@ Combines the power of:
 
 ## Installation
 
-### As Plugin (Recommended)
+### From Marketplace (Recommended)
 
 ```bash
 # Add marketplace
 /plugin marketplace add Montinou/triqual
 
-# Install
-/plugin install triqual@triqual-plugin
+# Install plugin
+/plugin install triqual-plugin@triqual
 ```
 
-### Manual Installation
+### Local Development
 
 ```bash
-# Clone to plugins directory
-git clone https://github.com/Montinou/triqual ~/.claude/plugins/triqual
-
-# Install Playwright
-cd ~/.claude/plugins/triqual/lib
-npm run setup
+claude --plugin-dir /path/to/triqual/triqual-plugin
 ```
+
+## Plugin Structure
+
+```
+triqual-plugin/
+├── .claude-plugin/
+│   └── plugin.json      # Manifest only
+├── .mcp.json            # MCP servers (at root for auto-discovery)
+├── skills/              # At root for auto-discovery
+├── hooks/               # At root for auto-discovery
+├── agents/              # At root for auto-discovery
+├── lib/                 # Playwright helpers
+├── docs/                # Reference documentation
+└── context/             # Project configuration
+```
+
+**Note:** Claude Code uses auto-discovery. All components must be at the plugin root level, not inside `.claude-plugin/`.
 
 ## Usage
 

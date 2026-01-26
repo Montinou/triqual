@@ -32,7 +32,7 @@ const pluginCode: CodeLine[] = [
       <>
         <span className="text-primary">/plugin</span>{" "}
         <span className="text-secondary">install</span>{" "}
-        <span className="text-destructive">triqual@triqual-plugin</span>
+        <span className="text-destructive">triqual-plugin@triqual</span>
       </>
     ),
   },
@@ -47,26 +47,25 @@ const pluginCode: CodeLine[] = [
 ]
 
 const manualCode: CodeLine[] = [
-  { type: "comment", content: "# Clone to plugins directory" },
+  { type: "comment", content: "# Clone the repository" },
   {
     type: "command",
     content: (
       <>
         <span className="text-accent">git</span>{" "}
         <span className="text-secondary">clone</span>{" "}
-        <span className="text-foreground-secondary">https://github.com/Montinou/triqual</span>{" "}
-        <span className="text-destructive">~/.claude/plugins/triqual</span>
+        <span className="text-foreground-secondary">https://github.com/Montinou/triqual</span>
       </>
     ),
   },
   { type: "comment", content: "" },
-  { type: "comment", content: "# Install Playwright" },
+  { type: "comment", content: "# Load plugin in Claude Code" },
   {
     type: "command",
     content: (
       <>
         <span className="text-accent">cd</span>{" "}
-        <span className="text-destructive">~/.claude/plugins/triqual/lib</span>
+        <span className="text-destructive">triqual/triqual-plugin</span>
       </>
     ),
   },
@@ -74,8 +73,8 @@ const manualCode: CodeLine[] = [
     type: "command",
     content: (
       <>
-        <span className="text-accent">npm</span>{" "}
-        <span className="text-secondary">run setup</span>
+        <span className="text-accent">claude</span>{" "}
+        <span className="text-secondary">--plugin-dir .</span>
       </>
     ),
   },
@@ -84,12 +83,12 @@ const manualCode: CodeLine[] = [
 ]
 
 const copyText = {
-  plugin: `/plugin marketplace add Montinou/triqual/triqual-plugin
-/plugin install triqual@triqual-plugin
+  plugin: `/plugin marketplace add Montinou/triqual
+/plugin install triqual-plugin@triqual
 "Test if the login page loads correctly"`,
   manual: `git clone https://github.com/Montinou/triqual ~/.claude/plugins/triqual
-cd ~/.claude/plugins/triqual/lib
-npm run setup`,
+cd ~/.claude/plugins/triqual/triqual-plugin
+claude --plugin-dir .`,
 }
 
 function CodeBlock({ lines }: { lines: CodeLine[] }) {
