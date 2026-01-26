@@ -84,8 +84,8 @@ const manualCode: CodeLine[] = [
 ]
 
 const copyText = {
-  plugin: `/plugin marketplace add Montinou/triqual
-/plugin install triqual@triqual
+  plugin: `/plugin marketplace add Montinou/triqual/triqual-plugin
+/plugin install triqual@triqual-plugin
 "Test if the login page loads correctly"`,
   manual: `git clone https://github.com/Montinou/triqual ~/.claude/plugins/triqual
 cd ~/.claude/plugins/triqual/lib
