@@ -51,9 +51,9 @@ interface TrinityNodeProps {
 
 function TrinityNode({ title, description, icon, position, glowClass, borderColor, href }: TrinityNodeProps) {
   const positionClasses = {
-    top: "top-[5%] left-1/2 -translate-x-1/2",
-    "bottom-left": "bottom-[10%] left-[10%]",
-    "bottom-right": "bottom-[10%] right-[10%]",
+    top: "top-0 left-1/2 -translate-x-1/2",
+    "bottom-left": "bottom-[5%] left-[10%]",
+    "bottom-right": "bottom-[5%] right-[10%]",
   }
 
   const content = (
@@ -141,7 +141,7 @@ export function TrinityDiagram() {
               </linearGradient>
             </defs>
             <path
-              d="M450,220 Q450,150 450,80"
+              d="M450,280 Q450,150 450,30"
               stroke="url(#lineGradient)"
               strokeWidth="2"
               fill="none"
@@ -149,7 +149,7 @@ export function TrinityDiagram() {
               className="animate-dash"
             />
             <path
-              d="M450,280 Q300,350 170,420"
+              d="M450,280 Q300,380 170,480"
               stroke="url(#lineGradient)"
               strokeWidth="2"
               fill="none"
@@ -157,7 +157,7 @@ export function TrinityDiagram() {
               className="animate-dash"
             />
             <path
-              d="M450,280 Q600,350 730,420"
+              d="M450,280 Q600,380 730,480"
               stroke="url(#lineGradient)"
               strokeWidth="2"
               fill="none"
@@ -176,7 +176,7 @@ export function TrinityDiagram() {
           </svg>
 
           {/* Nodes */}
-          <div className="absolute top-[5%] left-1/2 -translate-x-1/2 w-44 p-6 bg-background-surface rounded-2xl border border-secondary/25 text-center">
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-44 p-6 bg-background-surface rounded-2xl border border-secondary/25 text-center">
             <div className="flex justify-center mb-3">
               <PlaywrightIcon />
             </div>
@@ -188,7 +188,7 @@ export function TrinityDiagram() {
             href="https://github.com/Montinou/quoth-mcp"
             target="_blank"
             rel="noopener noreferrer"
-            className="absolute bottom-[10%] left-[10%] w-44 p-6 bg-background-surface rounded-2xl border border-accent/25 text-center cursor-pointer hover:scale-105 transition-transform"
+            className="absolute bottom-[5%] left-[10%] w-44 p-6 bg-background-surface rounded-2xl border border-accent/25 text-center cursor-pointer hover:scale-105 transition-transform"
           >
             <div className="flex justify-center mb-3">
               <QuothIcon />
@@ -201,7 +201,7 @@ export function TrinityDiagram() {
             href="https://github.com/Montinou/exolar"
             target="_blank"
             rel="noopener noreferrer"
-            className="absolute bottom-[10%] right-[10%] w-44 p-6 bg-background-surface rounded-2xl border border-primary/25 text-center cursor-pointer hover:scale-105 transition-transform"
+            className="absolute bottom-[5%] right-[10%] w-44 p-6 bg-background-surface rounded-2xl border border-primary/25 text-center cursor-pointer hover:scale-105 transition-transform"
           >
             <div className="flex justify-center mb-3">
               <ExolarIcon />
@@ -256,7 +256,7 @@ export function TrinityDiagram() {
 
           {/* Connection lines */}
           <motion.path
-            d="M450,220 Q450,150 450,80"
+            d="M450,280 Q450,150 450,30"
             stroke="url(#lineGradientAnimated)"
             strokeWidth="2"
             fill="none"
@@ -264,7 +264,7 @@ export function TrinityDiagram() {
             variants={pathVariants}
           />
           <motion.path
-            d="M450,280 Q300,350 170,420"
+            d="M450,280 Q300,380 170,480"
             stroke="url(#lineGradientAnimated)"
             strokeWidth="2"
             fill="none"
@@ -272,7 +272,7 @@ export function TrinityDiagram() {
             variants={pathVariants}
           />
           <motion.path
-            d="M450,280 Q600,350 730,420"
+            d="M450,280 Q600,380 730,480"
             stroke="url(#lineGradientAnimated)"
             strokeWidth="2"
             fill="none"
@@ -292,7 +292,7 @@ export function TrinityDiagram() {
               </linearGradient>
             </defs>
             <path
-              d="M450,220 Q450,150 450,80"
+              d="M450,280 Q450,150 450,30"
               stroke="url(#lineGradientOverlay)"
               strokeWidth="2"
               fill="none"
@@ -300,7 +300,7 @@ export function TrinityDiagram() {
               className="animate-dash"
             />
             <path
-              d="M450,280 Q300,350 170,420"
+              d="M450,280 Q300,380 170,480"
               stroke="url(#lineGradientOverlay)"
               strokeWidth="2"
               fill="none"
@@ -308,7 +308,7 @@ export function TrinityDiagram() {
               className="animate-dash"
             />
             <path
-              d="M450,280 Q600,350 730,420"
+              d="M450,280 Q600,380 730,480"
               stroke="url(#lineGradientOverlay)"
               strokeWidth="2"
               fill="none"
