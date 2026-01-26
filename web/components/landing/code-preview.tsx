@@ -32,7 +32,7 @@ const pluginCode: CodeLine[] = [
       <>
         <span className="text-primary">/plugin</span>{" "}
         <span className="text-secondary">install</span>{" "}
-        <span className="text-destructive">triqual@triqual</span>
+        <span className="text-destructive">triqual@triqual-plugin</span>
       </>
     ),
   },
