@@ -9,8 +9,5 @@
   "homepage": "https://github.com/Montinou/triqual",
   "repository": "https://github.com/Montinou/triqual",
   "license": "MIT",
-  "keywords": ["testing", "automation", "playwright", "e2e", "self-healing", "quoth", "exolar"],
-  "skills": "./skills/",
-  "hooks": "./hooks/hooks.json",
-  "agents": "./agents/"
+  "keywords": ["testing", "automation", "playwright", "e2e", "self-healing", "quoth", "exolar"]
 }
