@@ -18,7 +18,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || 'https://montinou.github.io/triqual'),
   title: "Triqual | Intelligent Test Automation",
   description:
-    "Unified test automation plugin combining Playwright execution, Quoth pattern documentation, and Exolar analytics into one self-learning system.",
+    "Unified test automation plugin combining Playwright execution, Quoth knowledge base, and Exolar analytics into one self-learning system.",
   keywords: [
     "test automation",
     "playwright",
@@ -35,7 +35,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Triqual | Intelligent Test Automation",
     description:
-      "Unified test automation plugin combining Playwright execution, Quoth pattern documentation, and Exolar analytics into one self-learning system.",
+      "Unified test automation plugin combining Playwright execution, Quoth knowledge base, and Exolar analytics into one self-learning system.",
     type: "website",
     images: ["/triqual_logo.png"],
   },

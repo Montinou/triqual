@@ -2,7 +2,7 @@
 
 import { motion, useReducedMotion, useInView } from "framer-motion"
 import { useRef, type ReactNode } from "react"
-import { Zap, Globe } from "lucide-react"
+import { Zap } from "lucide-react"
 
 const nodeVariants = {
   hidden: { opacity: 0, scale: 0.8 },
@@ -120,17 +120,27 @@ function TrinityNode({ title, description, icon, position, glowClass, borderColo
 // Custom icon components with gradients
 function PlaywrightIcon() {
   return (
-    <div className="w-11 h-11 sm:w-13 sm:h-13 rounded-xl bg-gradient-to-br from-secondary/20 to-secondary/5 border border-secondary/30 flex items-center justify-center">
-      <Globe className="w-5 h-5 sm:w-6 sm:h-6 text-secondary" />
-    </div>
+    <img
+      src="/playwright-logo.svg"
+      alt="Playwright"
+      className="w-16 h-16 sm:w-18 sm:h-18"
+      style={{
+        filter: 'brightness(1.2) drop-shadow(0 0 6px rgba(0, 255, 136, 0.9))',
+      }}
+    />
   )
 }
 
 function QuothIcon() {
   return (
-    <div className="w-11 h-11 sm:w-13 sm:h-13 rounded-xl bg-gradient-to-br from-accent/20 to-accent/5 border border-accent/30 flex items-center justify-center">
-      <img src="/pluma-ciber.png" alt="Quoth" className="w-5 h-5 sm:w-6 sm:h-6" />
-    </div>
+    <img
+      src="/pluma-ciber.png"
+      alt="Quoth"
+      className="w-16 h-16 sm:w-18 sm:h-18"
+      style={{
+        filter: 'brightness(1.8) contrast(1.2) drop-shadow(0 0 6px rgba(168, 85, 247, 0.9))',
+      }}
+    />
   )
 }
 
@@ -396,7 +406,7 @@ export function TrinityDiagram() {
               <QuothIcon />
             </div>
             <h3 className="font-bold text-base sm:text-lg mb-1">Quoth</h3>
-            <p className="text-xs sm:text-sm text-foreground-secondary">Pattern Documentation</p>
+            <p className="text-xs sm:text-sm text-foreground-secondary">Knowledge Base</p>
           </a>
 
           <a
@@ -450,7 +460,7 @@ export function TrinityDiagram() {
 
         <TrinityNode
           title="Quoth"
-          description="Pattern Documentation"
+          description="Knowledge Base"
           icon={<QuothIcon />}
           position="bottom-left"
           glowClass="glow-purple"

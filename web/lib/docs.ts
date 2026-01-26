@@ -75,7 +75,7 @@ const docsMeta: Record<string, Omit<DocMeta, "slug">> = {
   },
   "quoth-integration": {
     title: "Quoth Integration",
-    description: "Integrating with Quoth for pattern documentation",
+    description: "Integrating with Quoth knowledge base",
     category: "Integrations",
     order: 10,
   },

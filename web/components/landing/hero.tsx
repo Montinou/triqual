@@ -63,7 +63,7 @@ export function Hero() {
         </h1>
 
         <p className="text-lg sm:text-xl text-foreground-secondary max-w-2xl mb-10 font-light">
-          Unified plugin combining Playwright execution, Quoth pattern documentation,
+          Unified plugin combining Playwright execution, Quoth knowledge base,
           and Exolar analytics into one self-learning test automation system.
         </p>
 
@@ -134,7 +134,7 @@ export function Hero() {
         className="text-lg sm:text-xl text-foreground-secondary max-w-2xl mb-10 font-light"
         variants={itemVariants}
       >
-        Unified plugin combining Playwright execution, Quoth pattern documentation,
+        Unified plugin combining Playwright execution, Quoth knowledge base,
         and Exolar analytics into one self-learning test automation system.
       </motion.p>
 
