@@ -1,11 +1,11 @@
 {
   "mcpServers": {
     "quoth": {
-      "type": "sse",
+      "type": "http",
       "url": "https://quoth.ai-innovation.site/api/mcp"
     },
     "exolar-qa": {
-      "type": "sse",
+      "type": "http",
       "url": "https://exolar.ai-innovation.site/api/mcp/mcp"
     }
   }
