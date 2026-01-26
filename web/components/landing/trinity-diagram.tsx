@@ -69,23 +69,22 @@ interface TrinityNodeProps {
 
 function TrinityNode({ title, description, icon, position, glowClass, borderColor, href }: TrinityNodeProps) {
   // Position nodes to form a balanced triangle - equal visual distance from center
-  // Mobile: smaller cards, adjusted positions to prevent overlap
   const positionClasses = {
-    top: "top-[2%] sm:top-[3%] left-1/2 -translate-x-1/2",
-    "bottom-left": "bottom-[5%] sm:bottom-[8%] left-[5%] sm:left-[15%]",
-    "bottom-right": "bottom-[5%] sm:bottom-[8%] right-[5%] sm:right-[15%]",
+    top: "top-[3%] left-1/2 -translate-x-1/2",
+    "bottom-left": "bottom-[8%] left-[15%]",
+    "bottom-right": "bottom-[8%] right-[15%]",
   }
 
   const content = (
     <>
-      <div className="flex justify-center mb-2 sm:mb-3">{icon}</div>
-      <h3 className="font-bold text-sm sm:text-lg mb-0.5 sm:mb-1">{title}</h3>
-      <p className="text-[10px] sm:text-sm text-foreground-secondary">{description}</p>
+      <div className="flex justify-center mb-3">{icon}</div>
+      <h3 className="font-bold text-lg mb-1">{title}</h3>
+      <p className="text-sm text-foreground-secondary">{description}</p>
     </>
   )
 
   const motionProps = {
-    className: `absolute w-28 sm:w-52 min-h-[100px] sm:min-h-[170px] p-2.5 sm:p-5 bg-background-surface rounded-xl sm:rounded-2xl border text-center transition-all duration-400 ${positionClasses[position]} ${borderColor} ${href ? "cursor-pointer" : ""}`,
+    className: `absolute w-52 min-h-[170px] p-5 bg-background-surface rounded-2xl border text-center transition-all duration-400 ${positionClasses[position]} ${borderColor} ${href ? "cursor-pointer" : ""}`,
     variants: nodeVariants,
     whileHover: {
       scale: 1.05,
@@ -123,7 +122,7 @@ function PlaywrightIcon() {
     <img
       src="/playwright-logo.svg"
       alt="Playwright"
-      className="w-10 h-10 sm:w-16 sm:h-16"
+      className="w-16 h-16"
       style={{
         filter: 'brightness(1.2) drop-shadow(0 0 6px rgba(0, 255, 136, 0.9))',
       }}
@@ -136,7 +135,7 @@ function QuothIcon() {
     <img
       src="/pluma-ciber.png"
       alt="Quoth"
-      className="w-10 h-10 sm:w-16 sm:h-16"
+      className="w-16 h-16"
       style={{
         filter: 'brightness(1.8) contrast(1.2) drop-shadow(0 0 6px rgba(168, 85, 247, 0.9))',
       }}
@@ -147,20 +146,20 @@ function QuothIcon() {
 function ExolarIcon() {
   // Exolar eclipse logo - circular with cyan/orange gradient border and glows
   return (
-    <div className="relative w-8 h-8 sm:w-11 sm:h-11 flex items-center justify-center">
+    <div className="relative w-11 h-11 flex items-center justify-center">
       {/* Cyan glow - top left */}
       <div
-        className="absolute w-6 h-6 sm:w-10 sm:h-10 rounded-full bg-cyan-500/30 blur-md"
+        className="absolute w-10 h-10 rounded-full bg-cyan-500/30 blur-md"
         style={{ top: '-4px', left: '-4px' }}
       />
       {/* Orange glow - bottom right */}
       <div
-        className="absolute w-6 h-6 sm:w-10 sm:h-10 rounded-full bg-orange-500/30 blur-md"
+        className="absolute w-10 h-10 rounded-full bg-orange-500/30 blur-md"
         style={{ bottom: '-4px', right: '-4px' }}
       />
       {/* Main eclipse circle */}
       <div
-        className="relative w-7 h-7 sm:w-11 sm:h-11 rounded-full bg-black z-10"
+        className="relative w-11 h-11 rounded-full bg-black z-10"
         style={{
           boxShadow: 'inset 0 0 10px rgba(0,0,0,0.8)',
         }}
@@ -183,54 +182,10 @@ function ExolarIcon() {
   )
 }
 
-// Connection line component with CSS-based positioning
-function ConnectionLine({
-  from,
-  to,
-  color,
-  delay = 0
-}: {
-  from: { x: string; y: string }
-  to: { x: string; y: string }
-  color: string
-  delay?: number
-}) {
-  return (
-    <motion.div
-      className="absolute pointer-events-none"
-      style={{
-        left: from.x,
-        top: from.y,
-        width: '2px',
-        height: '1px',
-        transformOrigin: 'top left',
-        background: `linear-gradient(to bottom, ${color}cc, ${color}40)`,
-      }}
-      initial={{ scaleY: 0, opacity: 0 }}
-      animate={{
-        scaleY: 1,
-        opacity: 1,
-      }}
-      transition={{
-        scaleY: { duration: 0.8, delay, ease: "easeOut" },
-        opacity: { duration: 0.3, delay },
-      }}
-    />
-  )
-}
-
 export function TrinityDiagram() {
   const shouldReduceMotion = useReducedMotion()
   const ref = useRef(null)
   const isInView = useInView(ref, { once: true, margin: "-50px" })
-
-  // SVG uses percentage-based viewBox matching CSS positions exactly
-  // Container: aspect-[4/3] so viewBox is 100x75
-  // CSS positions translate to SVG coordinates:
-  // - Center: (50, 50) of container = (50, 37.5) in viewBox
-  // - Playwright: top-[3%] left-1/2 = (50, ~20) bottom of card
-  // - Quoth: bottom-[8%] left-[15%] = (~25, ~52) top-right of card
-  // - Exolar: bottom-[8%] right-[15%] = (~75, ~52) top-left of card
 
   const svgContent = (animated: boolean) => (
     <svg
@@ -381,58 +336,139 @@ export function TrinityDiagram() {
     </svg>
   )
 
-  if (shouldReduceMotion) {
-    return (
-      <section className="py-8 sm:py-20 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-[320px] sm:max-w-3xl mx-auto relative aspect-[4/3]">
-          {svgContent(false)}
+  // Inner diagram content - fixed 768px width, scaled via transform
+  const diagramContent = (animated: boolean) => (
+    <div className="relative aspect-[4/3] w-[768px] origin-top-left">
+      {svgContent(animated)}
 
-          {/* Nodes */}
-          <div className="absolute top-[2%] sm:top-[3%] left-1/2 -translate-x-1/2 w-28 sm:w-52 min-h-[100px] sm:min-h-[170px] p-2.5 sm:p-5 bg-background-surface rounded-xl sm:rounded-2xl border border-secondary/30 text-center">
-            <div className="flex justify-center mb-2 sm:mb-3">
+      {animated ? (
+        <>
+          <TrinityNode
+            title="Playwright"
+            description="Browser Automation"
+            icon={<PlaywrightIcon />}
+            position="top"
+            glowClass="glow-green"
+            borderColor="border-secondary/30"
+          />
+
+          <TrinityNode
+            title="Quoth"
+            description="Knowledge Base"
+            icon={<QuothIcon />}
+            position="bottom-left"
+            glowClass="glow-purple"
+            borderColor="border-accent/30"
+            href="https://quoth.ai-innovation.site/"
+          />
+
+          <TrinityNode
+            title="Exolar"
+            description="Test Analytics"
+            icon={<ExolarIcon />}
+            position="bottom-right"
+            glowClass="glow-cyan"
+            borderColor="border-primary/30"
+            href="https://exolar.ai-innovation.site/"
+          />
+
+          <motion.div
+            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-28 h-28 bg-background-card border-2 border-primary/60 rounded-full flex flex-col items-center justify-center z-10"
+            style={{
+              boxShadow: "0 0 40px rgba(0, 240, 255, 0.3), 0 0 80px rgba(0, 240, 255, 0.1), inset 0 0 20px rgba(0, 240, 255, 0.05)"
+            }}
+            variants={{
+              hidden: { opacity: 0, scale: 0 },
+              visible: {
+                opacity: 1,
+                scale: 1,
+                transition: {
+                  delay: 0.6,
+                  duration: 0.5,
+                  ease: [0.34, 1.56, 0.64, 1] as const,
+                },
+              },
+            }}
+            whileHover={{ scale: 1.1 }}
+          >
+            <Zap className="w-7 h-7 text-primary mb-1" />
+            <span className="font-mono text-[10px] text-primary uppercase tracking-[0.15em]">Unified</span>
+          </motion.div>
+        </>
+      ) : (
+        <>
+          <div className="absolute top-[3%] left-1/2 -translate-x-1/2 w-52 min-h-[170px] p-5 bg-background-surface rounded-2xl border border-secondary/30 text-center">
+            <div className="flex justify-center mb-3">
               <PlaywrightIcon />
             </div>
-            <h3 className="font-bold text-sm sm:text-lg mb-0.5 sm:mb-1">Playwright</h3>
-            <p className="text-[10px] sm:text-sm text-foreground-secondary">Browser Automation</p>
+            <h3 className="font-bold text-lg mb-1">Playwright</h3>
+            <p className="text-sm text-foreground-secondary">Browser Automation</p>
           </div>
 
           <a
             href="https://quoth.ai-innovation.site/"
             target="_blank"
             rel="noopener noreferrer"
-            className="absolute bottom-[5%] sm:bottom-[8%] left-[5%] sm:left-[15%] w-28 sm:w-52 min-h-[100px] sm:min-h-[170px] p-2.5 sm:p-5 bg-background-surface rounded-xl sm:rounded-2xl border border-accent/30 text-center cursor-pointer hover:scale-105 transition-transform"
+            className="absolute bottom-[8%] left-[15%] w-52 min-h-[170px] p-5 bg-background-surface rounded-2xl border border-accent/30 text-center cursor-pointer hover:scale-105 transition-transform"
           >
-            <div className="flex justify-center mb-2 sm:mb-3">
+            <div className="flex justify-center mb-3">
               <QuothIcon />
             </div>
-            <h3 className="font-bold text-sm sm:text-lg mb-0.5 sm:mb-1">Quoth</h3>
-            <p className="text-[10px] sm:text-sm text-foreground-secondary">Knowledge Base</p>
+            <h3 className="font-bold text-lg mb-1">Quoth</h3>
+            <p className="text-sm text-foreground-secondary">Knowledge Base</p>
           </a>
 
           <a
             href="https://exolar.ai-innovation.site/"
             target="_blank"
             rel="noopener noreferrer"
-            className="absolute bottom-[5%] sm:bottom-[8%] right-[5%] sm:right-[15%] w-28 sm:w-52 min-h-[100px] sm:min-h-[170px] p-2.5 sm:p-5 bg-background-surface rounded-xl sm:rounded-2xl border border-primary/30 text-center cursor-pointer hover:scale-105 transition-transform"
+            className="absolute bottom-[8%] right-[15%] w-52 min-h-[170px] p-5 bg-background-surface rounded-2xl border border-primary/30 text-center cursor-pointer hover:scale-105 transition-transform"
           >
-            <div className="flex justify-center mb-2 sm:mb-3">
+            <div className="flex justify-center mb-3">
               <ExolarIcon />
             </div>
-            <h3 className="font-bold text-sm sm:text-lg mb-0.5 sm:mb-1">Exolar</h3>
-            <p className="text-[10px] sm:text-sm text-foreground-secondary">Test Analytics</p>
+            <h3 className="font-bold text-lg mb-1">Exolar</h3>
+            <p className="text-sm text-foreground-secondary">Test Analytics</p>
           </a>
 
-          {/* Center node */}
           <div
-            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 sm:w-28 sm:h-28 bg-background-card border-2 border-primary/60 rounded-full flex flex-col items-center justify-center z-10"
+            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-28 h-28 bg-background-card border-2 border-primary/60 rounded-full flex flex-col items-center justify-center z-10"
             style={{
               boxShadow: "0 0 40px rgba(0, 240, 255, 0.3), 0 0 80px rgba(0, 240, 255, 0.1), inset 0 0 20px rgba(0, 240, 255, 0.05)"
             }}
           >
-            <Zap className="w-4 h-4 sm:w-7 sm:h-7 text-primary mb-0.5 sm:mb-1" />
-            <span className="font-mono text-[7px] sm:text-[10px] text-primary uppercase tracking-[0.1em] sm:tracking-[0.15em]">Unified</span>
+            <Zap className="w-7 h-7 text-primary mb-1" />
+            <span className="font-mono text-[10px] text-primary uppercase tracking-[0.15em]">Unified</span>
+          </div>
+        </>
+      )}
+    </div>
+  )
+
+  if (shouldReduceMotion) {
+    return (
+      <section className="py-12 sm:py-20 px-4 sm:px-6 lg:px-8 overflow-hidden">
+        {/*
+          Scale approach:
+          - Mobile (<640px): scale(0.42) → ~320px effective width
+          - Tablet (640-768px): scale(0.8) → ~614px effective width
+          - Desktop (768px+): scale(1) → 768px full width
+        */}
+        <div className="mx-auto w-full max-w-3xl">
+          <div
+            className="origin-top-center scale-[0.42] sm:scale-[0.8] md:scale-100"
+            style={{
+              marginLeft: 'auto',
+              marginRight: 'auto',
+              width: '768px',
+              height: '576px', // 768 * 0.75 for 4:3 aspect
+            }}
+          >
+            {diagramContent(false)}
           </div>
         </div>
+        {/* Spacer to account for scaled height */}
+        <div className="mt-[-334px] sm:mt-[-115px] md:mt-0" />
       </section>
     )
   }
@@ -440,68 +476,28 @@ export function TrinityDiagram() {
   return (
     <motion.section
       ref={ref}
-      className="py-8 sm:py-20 px-4 sm:px-6 lg:px-8"
+      className="py-12 sm:py-20 px-4 sm:px-6 lg:px-8 overflow-hidden"
       initial="hidden"
       animate={isInView ? "visible" : "hidden"}
       variants={containerVariants}
     >
-      <div className="max-w-[320px] sm:max-w-3xl mx-auto relative aspect-[4/3]">
-        {svgContent(true)}
-
-        {/* Nodes */}
-        <TrinityNode
-          title="Playwright"
-          description="Browser Automation"
-          icon={<PlaywrightIcon />}
-          position="top"
-          glowClass="glow-green"
-          borderColor="border-secondary/30"
-        />
-
-        <TrinityNode
-          title="Quoth"
-          description="Knowledge Base"
-          icon={<QuothIcon />}
-          position="bottom-left"
-          glowClass="glow-purple"
-          borderColor="border-accent/30"
-          href="https://quoth.ai-innovation.site/"
-        />
-
-        <TrinityNode
-          title="Exolar"
-          description="Test Analytics"
-          icon={<ExolarIcon />}
-          position="bottom-right"
-          glowClass="glow-cyan"
-          borderColor="border-primary/30"
-          href="https://exolar.ai-innovation.site/"
-        />
-
-        {/* Center node - "UNIFIED" hub */}
-        <motion.div
-          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 sm:w-28 sm:h-28 bg-background-card border-2 border-primary/60 rounded-full flex flex-col items-center justify-center z-10"
-          style={{
-            boxShadow: "0 0 40px rgba(0, 240, 255, 0.3), 0 0 80px rgba(0, 240, 255, 0.1), inset 0 0 20px rgba(0, 240, 255, 0.05)"
-          }}
-          variants={{
-            hidden: { opacity: 0, scale: 0 },
-            visible: {
-              opacity: 1,
-              scale: 1,
-              transition: {
-                delay: 0.6,
-                duration: 0.5,
-                ease: [0.34, 1.56, 0.64, 1] as const,
-              },
-            },
-          }}
-          whileHover={{ scale: 1.1 }}
+      {/*
+        Scale approach:
+        - Mobile (<640px): scale(0.42) → ~320px effective width
+        - Tablet (640-768px): scale(0.8) → ~614px effective width
+        - Desktop (768px+): scale(1) → 768px full width
+      */}
+      <div className="mx-auto flex justify-center">
+        <div
+          className="origin-top scale-[0.42] sm:scale-[0.8] md:scale-100 transition-transform duration-300"
         >
-          <Zap className="w-4 h-4 sm:w-7 sm:h-7 text-primary mb-0.5 sm:mb-1" />
-          <span className="font-mono text-[7px] sm:text-[10px] text-primary uppercase tracking-[0.1em] sm:tracking-[0.15em]">Unified</span>
-        </motion.div>
+          <div style={{ width: '768px', height: '576px' }}>
+            {diagramContent(true)}
+          </div>
+        </div>
       </div>
+      {/* Negative margin to compensate for scaled height difference */}
+      <div className="mt-[-334px] sm:mt-[-115px] md:mt-0" />
     </motion.section>
   )
 }
