@@ -262,7 +262,6 @@ export function TrinityDiagram() {
             fill="none"
             strokeDasharray="8 4"
             variants={pathVariants}
-            style={{ strokeDashoffset: 0 }}
           />
           <motion.path
             d="M450,280 Q300,350 170,420"
