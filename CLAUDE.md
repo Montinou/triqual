@@ -10,7 +10,7 @@ Unified plugin for Playwright test automation with **seamless MCP integration**:
 ```bash
 # From marketplace
 /plugin marketplace add Montinou/triqual
-/plugin install triqual@triqual
+/plugin install triqual-plugin@triqual
 
 # Or local development
 claude --plugin-dir /path/to/triqual/triqual-plugin

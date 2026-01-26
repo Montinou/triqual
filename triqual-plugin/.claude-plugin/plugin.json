@@ -1,5 +1,5 @@
 {
-  "name": "triqual",
+  "name": "triqual-plugin",
   "version": "1.0.0",
   "description": "Unified test automation plugin integrating Playwright execution, Quoth patterns, and Exolar analytics. Ad-hoc testing, ticket-to-test workflows, and self-healing tests.",
   "author": {
