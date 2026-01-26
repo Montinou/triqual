@@ -1,11 +1,11 @@
 ---
-name: init
+name: triqual-init
 description: Initialize Triqual for this project. Analyzes project structure, detects existing tests, and generates personalized configuration. Run on first use or after major project changes.
 argument-hint: [--force]
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
-# Init - Triqual Project Genesis
+# Triqual Init - Project Genesis
 
 Configure Triqual for the current project by analyzing its structure and generating personalized configuration files.
 
@@ -19,8 +19,8 @@ Configure Triqual for the current project by analyzing its structure and generat
 ## Quick Start
 
 ```bash
-/init                    # Interactive - analyzes and generates config
-/init --force            # Regenerate even if config exists
+/triqual-init                    # Interactive - analyzes and generates config
+/triqual-init --force            # Regenerate even if config exists
 ```
 
 ## Workflow Overview

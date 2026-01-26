@@ -19,7 +19,7 @@ claude --plugin-dir /path/to/triqual/triqual-plugin
 **What gets installed automatically:**
 - MCP servers: `quoth` and `exolar-qa` (via `.mcp.json`)
 - 4 hooks: SessionStart, PreToolUse, PostToolUse, Stop
-- 4 skills: `/init`, `/quick-test`, `/test-ticket`, `/generate-test`
+- 4 skills: `/triqual-init`, `/quick-test`, `/test-ticket`, `/generate-test`
 - 3 agents: test-healer, failure-classifier, pattern-learner
 
 ## Quick Start
@@ -27,7 +27,7 @@ claude --plugin-dir /path/to/triqual/triqual-plugin
 ### Initialize Triqual (First Time)
 
 ```bash
-/init                          # Analyze project & generate config
+/triqual-init                         # Analyze project & generate config
 ```
 
 ### Ad-hoc Testing
@@ -100,7 +100,7 @@ The plugin automatically installs these MCP servers:
 
 | Skill | Command | Purpose |
 |-------|---------|---------|
-| init | `/init` | Initialize Triqual for project (first-time setup, generates config) |
+| triqual-init | `/triqual-init` | Initialize Triqual for project (first-time setup, generates config) |
 | quick-test | `/quick-test` | Ad-hoc browser testing with visible browser |
 | test-ticket | `/test-ticket ENG-123` | Full Linear ticket → test file workflow |
 | generate-test | `/generate-test` | Create production .spec.ts files |
@@ -124,7 +124,7 @@ triqual/
 │   │   └── plugin.json          # Plugin manifest only
 │   ├── .mcp.json                # MCP server auto-install (at plugin root)
 │   ├── skills/                  # Skills at plugin root (auto-discovered)
-│   │   ├── init/SKILL.md
+│   │   ├── triqual-init/SKILL.md
 │   │   ├── quick-test/SKILL.md
 │   │   ├── test-ticket/SKILL.md
 │   │   └── generate-test/SKILL.md
@@ -198,11 +198,11 @@ Create `triqual.config.json` or `triqual.config.ts` in your project root:
 ## First Time Setup
 
 1. **Install plugin** - `claude --plugin-dir /path/to/triqual`
-2. **Initialize Triqual** - Run `/init` to analyze your project and generate personalized configuration
+2. **Initialize Triqual** - Run `/triqual-init` to analyze your project and generate personalized configuration
 3. **Authenticate MCPs** - Follow OAuth prompts for Quoth and Exolar
 4. **Start using** - `/quick-test` or `/test-ticket ENG-123`
 
-The `/init` skill detects your project structure, existing tests, and generates:
+The `/triqual-init` skill detects your project structure, existing tests, and generates:
 - `triqual.config.json` - Main configuration
 - `Docs/context/project.json` - Project metadata
 - `Docs/context/patterns.json` - Test patterns & conventions
