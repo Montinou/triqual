@@ -1,5 +1,5 @@
 {
-  "name": "triqual-marketplace",
+  "name": "triqual",
   "owner": {
     "name": "Montinou",
     "email": "montinou@ai-innovation.site"
@@ -10,7 +10,7 @@
   },
   "plugins": [
     {
-      "name": "triqual-plugin",
+      "name": "triqual",
       "source": "./triqual-plugin",
       "description": "Unified test automation plugin integrating Playwright execution, Quoth patterns, and Exolar analytics. Ad-hoc testing, ticket-to-test workflows, and self-healing tests.",
       "version": "1.0.0",
