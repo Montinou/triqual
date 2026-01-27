@@ -456,7 +456,7 @@ export function TrinityDiagram() {
         */}
         <div className="mx-auto w-full max-w-3xl">
           <div
-            className="origin-top-center scale-[0.42] sm:scale-[0.8] md:scale-100"
+            className="origin-top-center scale-[0.52] sm:scale-[0.85] md:scale-100"
             style={{
               marginLeft: 'auto',
               marginRight: 'auto',
@@ -468,7 +468,7 @@ export function TrinityDiagram() {
           </div>
         </div>
         {/* Spacer to account for scaled height */}
-        <div className="mt-[-334px] sm:mt-[-115px] md:mt-0" />
+        <div className="mt-[-276px] sm:mt-[-86px] md:mt-0" />
       </section>
     )
   }
@@ -489,7 +489,7 @@ export function TrinityDiagram() {
       */}
       <div className="mx-auto flex justify-center">
         <div
-          className="origin-top scale-[0.42] sm:scale-[0.8] md:scale-100 transition-transform duration-300"
+          className="origin-top scale-[0.52] sm:scale-[0.85] md:scale-100 transition-transform duration-300"
         >
           <div style={{ width: '768px', height: '576px' }}>
             {diagramContent(true)}
@@ -497,7 +497,7 @@ export function TrinityDiagram() {
         </div>
       </div>
       {/* Negative margin to compensate for scaled height difference */}
-      <div className="mt-[-334px] sm:mt-[-115px] md:mt-0" />
+      <div className="mt-[-276px] sm:mt-[-86px] md:mt-0" />
     </motion.section>
   )
 }
