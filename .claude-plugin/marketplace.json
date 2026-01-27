@@ -13,19 +13,7 @@
       "name": "triqual-plugin",
       "source": "./triqual-plugin",
       "description": "Unified test automation plugin integrating Playwright execution, Quoth patterns, and Exolar analytics. Ad-hoc testing, ticket-to-test workflows, and self-healing tests.",
-      "version": "1.0.0",
-      "skills": [
-        "./skills/triqual-init",
-        "./skills/quick-test",
-        "./skills/test-ticket",
-        "./skills/generate-test"
-      ],
-      "agents": [
-        "./agents/test-healer.md",
-        "./agents/failure-classifier.md",
-        "./agents/pattern-learner.md"
-      ],
-      "hooks": "./hooks/hooks.json",
+      "version": "1.0.1",
       "author": {
         "name": "Montinou"
       },
