@@ -83,8 +83,8 @@ export function WorkflowSteps() {
           </div>
 
           <div className="relative">
-            {/* Timeline line - extends to last step */}
-            <div className="absolute left-6 top-12 bottom-6 w-0.5 bg-gradient-to-b from-primary via-secondary to-accent" />
+            {/* Timeline line - stops at center of last step circle */}
+            <div className="absolute left-6 top-12 h-[calc(100%-96px)] w-0.5 bg-gradient-to-b from-primary via-secondary to-accent" />
 
             <div className="space-y-0">
               {steps.map((step) => (
@@ -123,9 +123,9 @@ export function WorkflowSteps() {
         </motion.div>
 
         <div className="relative">
-          {/* Animated timeline line - extends to last step */}
+          {/* Animated timeline line - stops at center of last step circle */}
           <motion.div
-            className="absolute left-6 top-12 bottom-6 w-0.5 origin-top overflow-hidden"
+            className="absolute left-6 top-12 h-[calc(100%-96px)] w-0.5 origin-top overflow-hidden"
             initial="hidden"
             animate={isInView ? "visible" : "hidden"}
             variants={lineVariants}
