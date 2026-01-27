@@ -4,7 +4,7 @@ description: |
   Adapted from Playwright's generator agent. Generates test code from plans
   created by test-planner. Reads run log PLAN stage, project knowledge, and
   seed files to create well-structured tests. Documents WRITE stage in run log.
-model: sonnet
+model: opus
 color: green
 tools:
   - Read

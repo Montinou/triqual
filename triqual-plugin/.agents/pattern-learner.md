@@ -6,7 +6,7 @@ description: |
   failures, when a fix works repeatedly, or when user asks to "document this
   pattern" or "add to Quoth". Part of the learning loop: failures → patterns
   → better tests. Integrates with run logs.
-model: haiku
+model: opus
 color: blue
 tools:
   - Read

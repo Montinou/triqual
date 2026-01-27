@@ -5,7 +5,7 @@ description: |
   "analyze flaky tests", "is this a flake or bug", "investigate test failures",
   or wants to understand why tests are failing. Uses Exolar analytics to classify
   failures and provide actionable insights. Integrates with run logs.
-model: haiku
+model: opus
 color: yellow
 tools:
   - Read

@@ -5,7 +5,7 @@ description: |
   comprehensive test plans by analyzing requirements, searching Quoth/Exolar,
   and documenting ANALYZE/RESEARCH/PLAN stages in run logs. Use when starting
   test development for a new feature, from a Linear ticket, or user description.
-model: sonnet
+model: opus
 color: purple
 tools:
   - Read
