@@ -1,21 +1,36 @@
 # Triqual
 
-**Unified test automation plugin for Claude Code**
+> **Version 1.0.4** | Opus 4.5 Agents | macOS & Linux Compatible
 
-Combines the power of:
-- **Playwright** - Browser automation
-- **Quoth** - Documentation patterns (semantic search)
-- **Exolar** - Test analytics (failure clustering, dashboards)
+**Autonomous Test Automation for Claude Code**
+
+Triqual is a powerful Claude Code plugin that brings **autonomous, self-healing test generation** with enforced documentation and learning loops. It combines three MCP integrations:
+
+- **Playwright MCP** - Browser automation and app exploration
+- **Quoth** - Semantic pattern documentation search
+- **Exolar** - Test analytics and failure clustering
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Claude Code Plugin](https://img.shields.io/badge/Claude%20Code-Plugin-blue)](https://claude.ai/claude-code)
+
+## Why Triqual?
+
+Traditional test automation is brittle. Triqual solves this with:
+
+1. **Enforced Documentation** - Hooks BLOCK actions until you document your approach
+2. **Autonomous Healing** - Up to 25 fix attempts with deep analysis at attempt 12
+3. **Persistent Learning** - Patterns survive session compaction in run logs
+4. **Draft-First Development** - Tests live in `.draft/` until passing, then get promoted
 
 ## Installation
 
-### From Marketplace (Recommended)
+### From Marketplace
 
 ```bash
-# Add marketplace
+# Add the Triqual marketplace
 /plugin marketplace add Montinou/triqual
 
-# Install plugin
+# Install the plugin (scoped to current project)
 /plugin install triqual-plugin@triqual
 ```
 
@@ -25,126 +40,469 @@ Combines the power of:
 claude --plugin-dir /path/to/triqual/triqual-plugin
 ```
 
-## Plugin Structure
+## What Gets Installed
+
+| Component | Count | Description |
+|-----------|-------|-------------|
+| MCP Servers | 2 | `quoth` (patterns), `exolar-qa` (analytics) |
+| Hooks | 7 | Blocking enforcement for documentation |
+| Skills | 5 | `/init`, `/test`, `/check`, `/rules`, `/help` |
+| Agents | 5 | All powered by Opus 4.5 |
+| Rules | 31 | Playwright best practices (8 categories) |
+
+## Quick Start
+
+### 1. Initialize Your Project
+
+```bash
+/init
+```
+
+This creates:
+- `.triqual/runs/` - Directory for run logs
+- `.triqual/knowledge.md` - Project-specific patterns
+- `triqual.config.ts` - Configuration file
+
+### 2. Generate Tests
+
+```bash
+# Full autonomous loop
+/test login
+
+# From Linear ticket
+/test --ticket ENG-123
+
+# From description
+/test --describe "User can filter search results by date"
+
+# Interactive exploration only
+/test --explore checkout
+```
+
+### 3. Check Test Quality
+
+```bash
+/check
+```
+
+### 4. View Best Practices
+
+```bash
+/rules
+```
+
+## The Documented Learning Loop
+
+Triqual enforces a **documented learning loop** that prevents erratic AI behavior:
+
+```
+ANALYZE → RESEARCH → PLAN → WRITE → RUN → FIX → LEARN
+```
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         TRIQUAL WORKFLOW                             │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  User: "/test login"                                                 │
+│         │                                                            │
+│         ▼                                                            │
+│  ┌─────────────────┐                                                 │
+│  │  TEST-PLANNER   │  ANALYZE: Review requirements                   │
+│  │    (Opus 4.5)   │  RESEARCH: Search Quoth + Exolar                │
+│  │                 │  PLAN: Document test strategy                   │
+│  └────────┬────────┘                                                 │
+│           │ Creates: .triqual/runs/login.md                          │
+│           ▼                                                          │
+│  ┌─────────────────┐                                                 │
+│  │ TEST-GENERATOR  │  WRITE: Generate code in .draft/                │
+│  │    (Opus 4.5)   │  Creates: .draft/tests/login.spec.ts            │
+│  └────────┬────────┘                                                 │
+│           ▼                                                          │
+│  ┌─────────────────┐                                                 │
+│  │  TEST-HEALER    │  AUTONOMOUS LOOP (up to 25 attempts)            │
+│  │    (Opus 4.5)   │                                                 │
+│  │                 │  ┌──────────────────────────────┐               │
+│  │                 │  │  RUN → FAIL → FIX → RUN ...  │               │
+│  │                 │  │                              │               │
+│  │                 │  │  Attempt 12: DEEP ANALYSIS   │               │
+│  │                 │  │  Attempt 25: Mark .fixme()   │               │
+│  │                 │  └──────────────────────────────┘               │
+│  └────────┬────────┘                                                 │
+│           │ On SUCCESS: mv .draft/tests/* → tests/                   │
+│           ▼                                                          │
+│  ┌─────────────────┐                                                 │
+│  │ PATTERN-LEARNER │  LEARN: Extract patterns                        │
+│  │    (Opus 4.5)   │  Update: .triqual/knowledge.md                  │
+│  └─────────────────┘                                                 │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Gate-Based Enforcement
+
+Hooks **BLOCK** actions until documentation is complete:
+
+| Gate | Trigger | Block Condition | Resolution |
+|------|---------|-----------------|------------|
+| **Pre-Write** | Write `.spec.ts` | No run log or missing stages | Create run log with ANALYZE/RESEARCH/PLAN/WRITE |
+| **Post-Run** | After `playwright test` | Results not documented | Add RUN stage to log |
+| **Retry Limit** | 2+ same-category fails | No external research | Search Quoth/Exolar, document findings |
+| **Deep Analysis** | 12+ attempts | No deep analysis | Expand research, explore app, try new approaches |
+| **Max Attempts** | 25+ attempts | No resolution | Mark as `.fixme()` with justification |
+
+### Example: Blocked Action
+
+```
+🚫 BLOCKED: No run log found for "login"
+
+Before writing test code, you MUST create a run log at:
+.triqual/runs/login.md
+
+Required stages:
+1. ANALYZE - Review requirements, identify test cases
+2. RESEARCH - Search Quoth for patterns, check Exolar for similar tests
+3. PLAN - Document test strategy, tools/helpers to use
+4. WRITE - Document hypothesis
+
+Then retry this write operation.
+```
+
+## The Five Agents
+
+All agents run on **Opus 4.5** for maximum intelligence:
+
+### 1. TEST-PLANNER
+
+**Role:** Creates the test plan from requirements
+
+- Searches Quoth for existing patterns
+- Queries Exolar for similar tests
+- Explores app with Playwright MCP
+- Fetches Linear ticket details (if provided)
+- Creates comprehensive run log with ANALYZE/RESEARCH/PLAN stages
+
+### 2. TEST-GENERATOR
+
+**Role:** Generates test code from the plan
+
+- Reads PLAN stage from run log
+- Applies patterns from `knowledge.md`
+- Generates tests in `.draft/` folder
+- Creates Page Objects if needed
+- Documents WRITE stage with hypothesis
+
+### 3. TEST-HEALER (Autonomous Loop)
+
+**Role:** Runs tests and fixes failures autonomously
+
+- Executes up to **25 fix attempts**
+- Deep analysis phase at **attempt 12**
+- Works on files in `.draft/` folder
+- Promotes to `tests/` on SUCCESS
+- Documents every RUN and FIX stage
+
+### 4. FAILURE-CLASSIFIER
+
+**Role:** Categorizes failures for appropriate action
+
+- Classifies as: `FLAKE` | `BUG` | `ENV_ISSUE` | `TEST_ISSUE`
+- Queries Exolar for historical patterns
+- Recommends appropriate next action
+- Prevents wasting time on non-test issues
+
+### 5. PATTERN-LEARNER
+
+**Role:** Extracts and persists learnings
+
+- Reviews all run logs for patterns
+- Updates `.triqual/knowledge.md`
+- Proposes patterns to Quoth for global sharing
+- Ensures learnings survive sessions
+
+## Directory Structure
+
+### Plugin Structure
 
 ```
 triqual-plugin/
 ├── .claude-plugin/
-│   └── plugin.json      # Manifest only
-├── .mcp.json            # MCP servers (at root for auto-discovery)
-├── skills/              # At root for auto-discovery
-├── hooks/               # At root for auto-discovery
-├── agents/              # At root for auto-discovery
-├── lib/                 # Playwright helpers
-├── docs/                # Reference documentation
-└── context/             # Project configuration
+│   └── plugin.json           # Plugin manifest
+├── .mcp.json                  # MCP server definitions
+├── skills/                    # Slash commands
+│   ├── init/SKILL.md
+│   ├── test/SKILL.md
+│   ├── check/SKILL.md
+│   ├── rules/SKILL.md
+│   └── help/SKILL.md
+├── hooks/                     # Blocking enforcement
+│   ├── hooks.json
+│   ├── lib/common.sh          # 800+ lines of helpers
+│   ├── session-start.sh
+│   ├── pre-spec-write.sh      # BLOCKS without documentation
+│   ├── pre-retry-gate.sh      # BLOCKS without research
+│   ├── post-test-run.sh
+│   ├── subagent-start.sh      # Injects context to agents
+│   ├── subagent-stop.sh       # Guides next steps
+│   ├── pre-compact.sh
+│   └── stop.sh
+├── .agents/                   # Opus 4.5 agents
+│   ├── test-planner.md
+│   ├── test-generator.md
+│   ├── test-healer.md
+│   ├── failure-classifier.md
+│   └── pattern-learner.md
+├── context/                   # Templates
+│   ├── run-log.template.md
+│   ├── knowledge.template.md
+│   └── config.template.ts
+└── docs/
+    ├── playwright-rules/      # 31 best practice rules
+    └── references/
 ```
 
-**Note:** Claude Code uses auto-discovery. All components must be at the plugin root level, not inside `.claude-plugin/`.
+### Project Structure (After `/init`)
 
-## Usage
+```
+your-project/
+├── .triqual/
+│   ├── runs/                  # Run logs (one per feature)
+│   │   ├── login.md
+│   │   ├── checkout.md
+│   │   └── dashboard.md
+│   └── knowledge.md           # Accumulated patterns
+├── .draft/                    # Work in progress
+│   ├── tests/
+│   │   └── feature.spec.ts    # Until passing
+│   └── pages/
+│       └── NewPage.ts         # New Page Objects
+├── tests/                     # Production tests
+│   └── feature.spec.ts        # After promotion
+└── triqual.config.ts          # Configuration
+```
 
-### Quick Start
+## Run Log Format
+
+Each feature gets a detailed run log at `.triqual/runs/{feature}.md`:
+
+```markdown
+# Test Run Log: login
+
+## Session: 2026-01-27T10:30:00Z
+
+### Stage: ANALYZE
+**Feature:** login
+**Objective:** Verify user authentication flow
+
+**Acceptance Criteria:**
+1. User can log in with email/password
+2. Error shown for invalid credentials
+3. Redirects to dashboard on success
+
+**User Flows:**
+1. Happy path - successful login
+2. Error case - invalid password
+3. Edge case - empty fields
+
+---
+
+### Stage: RESEARCH
+
+**Quoth Search:** "login playwright patterns"
+**Patterns Found:**
+- `auth-storagestate`: Save auth state for reuse
+- `visibility-filter`: Use :visible for buttons
+
+**Exolar Query:** Similar tests in project
+**Found:** 3 auth-related tests, all use storageState
+
+**Available Resources:**
+| Resource | Path | Purpose |
+|----------|------|---------|
+| LoginPage | pages/LoginPage.ts | Login actions |
+| testUsers | fixtures/users.ts | Test credentials |
+
+---
+
+### Stage: PLAN
+**Test Strategy:** Use storageState, test all 3 flows
+
+| Test Case | Priority | Dependencies |
+|-----------|----------|--------------|
+| should login with valid credentials | High | LoginPage |
+| should show error for invalid password | High | LoginPage |
+| should require email field | Medium | LoginPage |
+
+---
+
+### Stage: WRITE
+**Hypothesis:** Using LoginPage with storageState for speed.
+Testing error states with invalid credentials fixture.
+
+**Files:**
+- .draft/tests/login.spec.ts
+
+---
+
+### Stage: RUN (Attempt 1)
+**Command:** `npx playwright test .draft/tests/login.spec.ts`
+**Result:** FAILED
+
+**Error Type:** LOCATOR
+**Error:** locator resolved to 3 elements at line 23
+**Analysis:** Multiple submit buttons on page
+
+---
+
+### Stage: FIX (Attempt 1)
+**Hypothesis:** Add :visible filter per Quoth pattern
+**Pattern:** visibility-filter
+**Change:** Line 23: `button` → `button:visible`
+
+---
+
+### Stage: RUN (Attempt 2)
+**Result:** PASSED
+
+---
+
+### Stage: SUCCESS
+**Attempts Required:** 2
+**Files Promoted:**
+- .draft/tests/login.spec.ts → tests/login.spec.ts
+
+---
+
+### Stage: LEARN
+**Pattern Discovered:** This project has multiple hidden buttons
+**Added to knowledge.md:** Yes
+
+## Accumulated Learnings
+1. Login page has duplicate hidden buttons - use :visible
+2. storageState works well for this auth flow
+```
+
+## MCP Servers
+
+### Auto-Installed Servers
+
+| Server | URL | Purpose |
+|--------|-----|---------|
+| `quoth` | `https://quoth.ai-innovation.site/api/mcp` | Pattern documentation |
+| `exolar-qa` | `https://exolar.ai-innovation.site/api/mcp/mcp` | Test analytics |
+
+### Quoth Tools
+
+```typescript
+// Search for patterns
+quoth_search_index({ query: "login playwright patterns" })
+
+// Read full documentation
+quoth_read_doc({ docId: "auth-patterns" })
+
+// Get coding guidelines
+quoth_guidelines({ mode: "playwright" })
+```
+
+### Exolar Tools
+
+```typescript
+// Search existing tests
+query_exolar_data({
+  dataset: "test_search",
+  filters: { search: "login" }
+})
+
+// Get failure history
+query_exolar_data({
+  dataset: "test_history",
+  filters: { test_signature: "login" }
+})
+
+// Analyze failure patterns
+query_exolar_data({
+  dataset: "failure_patterns",
+  filters: { error_type: "LOCATOR" }
+})
+```
+
+## Configuration
+
+### triqual.config.ts
+
+```typescript
+import { defineConfig } from 'triqual';
+
+export default defineConfig({
+  project_id: 'my-project',
+  testDir: './tests',
+  baseUrl: process.env.BASE_URL || 'http://localhost:3000',
+
+  auth: {
+    strategy: 'storageState', // 'uiLogin' | 'setupProject' | 'none'
+    storageState: { path: '.auth/user.json' },
+  },
+
+  // Optional: Custom test patterns
+  patterns: {
+    selectors: 'data-testid', // 'role' | 'text' | 'css'
+    waitStrategy: 'networkidle', // 'domcontentloaded' | 'load'
+  },
+});
+```
+
+## Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| Hooks not blocking | Check Claude Code version, restart session |
+| MCP auth fails | Visit quoth.ai-innovation.site, complete OAuth |
+| Run logs not created | Run `/init` first |
+| Tests not promoting | Ensure tests PASS before promotion |
+| Action blocked | Read error message, document required stages |
+| Session state stale | Delete `~/.cache/triqual/` |
+
+### Debug Mode
+
+Enable verbose logging:
 
 ```bash
-/test login              # Full autonomous test generation
-/test --explore login    # Interactive browser exploration
-/test --ticket ENG-123   # Generate from Linear ticket
-/test --describe "..."   # Generate from description
+export TRIQUAL_DEBUG=true
 ```
 
-### Skills Overview
+## Skills Reference
 
-| Skill | Command | Description |
-|-------|---------|-------------|
-| Test | `/test login` | Full autonomous loop (explore → plan → generate → heal → learn) |
-| Test Explore | `/test --explore` | Interactive browser exploration only |
-| Test Ticket | `/test --ticket ENG-123` | Generate from Linear acceptance criteria |
-| Test Describe | `/test --describe "..."` | Generate from text description |
-| Check | `/check` | Lint tests for best practice violations |
-| Rules | `/rules` | View Playwright best practices (31 rules) |
-| Init | `/init` | Initialize Triqual for project |
-| Help | `/help` | Get help with Triqual features |
+| Command | Description |
+|---------|-------------|
+| `/init` | Initialize Triqual for project |
+| `/test {feature}` | Full autonomous test generation |
+| `/test --explore {feature}` | Interactive browser exploration |
+| `/test --ticket ENG-123` | Generate from Linear ticket |
+| `/test --describe "..."` | Generate from description |
+| `/check` | Lint tests for violations |
+| `/rules` | View 31 Playwright best practices |
+| `/help` | Get help and troubleshooting |
 
-### Autonomous Test Generation
+## Version History
 
-The default `/test` mode runs the complete autonomous loop:
+| Version | Date | Changes |
+|---------|------|---------|
+| **1.0.4** | 2026-01-27 | All agents on Opus 4.5, comprehensive documentation update |
+| **1.0.3** | 2026-01-26 | macOS stdin compatibility fix for hooks |
+| **1.0.2** | 2026-01-25 | SubagentStart/Stop hooks, 25 attempt limit |
+| **1.0.1** | 2026-01-24 | Initial documented learning loop |
+| **1.0.0** | 2026-01-23 | Initial release |
 
-```bash
-/test login
-```
+## Architecture
 
-This runs:
-1. **SETUP** - Auto-config, load credentials and existing patterns
-2. **EXPLORE** - Use Playwright MCP to explore the feature
-3. **PLAN** - Create test plan with Quoth patterns
-4. **GENERATE** - Produce .spec.ts in draft folder
-5. **HEAL LOOP** - Run tests, fix failures (max 5 iterations)
-6. **PROMOTE** - Move passing tests to production location
-7. **LEARN** - Save patterns and anti-patterns for future runs
-
-### From Linear Tickets
-
-Generate tests directly from acceptance criteria:
-
-```bash
-/test --ticket ENG-123
-```
-
-This will:
-1. Fetch ticket from Linear
-2. Parse acceptance criteria
-3. Search Quoth for patterns
-4. Generate proper test files with Page Objects
-5. Execute with auto-healing
-6. Provide PR instructions
-
-### Interactive Exploration
-
-For exploring the app before writing tests:
-
-```bash
-/test --explore login
-```
-
-Opens a visible browser for real-time exploration without generating tests.
-
-## How It Works
-
-### Automatic Pattern Lookup
-
-When you write `.spec.ts` files, the plugin automatically:
-1. Searches Quoth for relevant test patterns
-2. Checks Exolar for similar existing tests
-3. Applies project-specific best practices
-
-### Autonomous Learning
-
-When tests fail, the AI:
-1. Fetches historic failures from Exolar to find similar issues
-2. Uses Playwright MCP to explore the app and verify actual behavior
-3. Compares expected vs actual to classify the failure
-4. Proposes fixes or creates tickets based on classification
-
-### Learning Loop
-
-Repeated failures trigger the `pattern-learner` agent, which:
-1. Analyzes failure clusters in Exolar
-2. Proposes new documentation to Quoth
-3. Improves future test generation
-
-## Requirements
-
-- Claude Code
-- Node.js 18+
-- Playwright (installed automatically)
-
-### Optional MCPs
-
-For full functionality, connect these MCP servers:
-- `quoth` - Pattern documentation
-- `exolar-qa` - Test analytics
-- `linear` - Ticket management
+For detailed architecture documentation, see the [CLAUDE.md](../CLAUDE.md) file which includes:
+- Component interaction diagrams
+- Hook communication protocol
+- Agent orchestration flow
+- API reference
+- Configuration schema
 
 ## License
 

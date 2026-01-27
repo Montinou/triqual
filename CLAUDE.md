@@ -1,9 +1,12 @@
-# Triqual - Unified Test Automation Plugin
+# Triqual - Autonomous Test Automation Plugin
 
-Unified plugin for Playwright test automation with **seamless MCP integration**:
-- **Quoth** - Pattern documentation (auto-installed)
-- **Exolar** - Test analytics (auto-installed)
-- **Playwright** - Test execution (ad-hoc and production)
+> **Version 1.0.4** | Opus 4.5 Agents | macOS & Linux Compatible
+
+Triqual is a **Claude Code plugin** that brings autonomous, self-healing test generation with enforced documentation and persistent learning. It combines three MCP integrations:
+
+- **Quoth** - Semantic pattern documentation (auto-installed)
+- **Exolar** - Test analytics and failure clustering (auto-installed)
+- **Playwright MCP** - Browser automation for app exploration
 
 ## Installation
 
@@ -422,8 +425,8 @@ Triqual is an **autonomous learning loop** - AI learns and improves from past mi
 8. **2+ same failures** → Hook requires external research (Quoth/Exolar)
 9. **12+ attempts** → Hook requires deep analysis phase
 10. **25+ attempts** → Hook requires .fixme() or justification
-10. **Success** → Document learnings, update knowledge.md
-11. **SessionStop** → Check for missing accumulated learnings
+11. **Success** → Document learnings, update knowledge.md
+12. **SessionStop** → Check for missing accumulated learnings
 
 ## Session State
 
@@ -495,3 +498,231 @@ export TRIQUAL_DEBUG=true
 ```
 
 Debug messages will appear in stderr.
+
+## Architecture Overview
+
+### Core Principles
+
+1. **Documentation-First Development** - No test code is written until requirements are documented
+2. **Blocking Enforcement** - Hooks use exit code 2 to BLOCK actions and message Claude
+3. **Draft-First Pattern** - Tests live in `.draft/` until passing, preventing broken commits
+4. **Persistent Learning** - Knowledge survives sessions via file-based storage
+5. **Autonomous Healing** - Up to 25 fix attempts with escalating analysis phases
+
+### Component Interactions
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           TRIQUAL ARCHITECTURE                           │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│   USER INPUT                                                             │
+│   ├── /test login                                                        │
+│   ├── /test --ticket ENG-123                                             │
+│   └── /test --describe "..."                                             │
+│         │                                                                │
+│         ▼                                                                │
+│   ┌─────────────────────────────────────────────────────────────────┐   │
+│   │                        SKILL LAYER                               │   │
+│   │  /init  │  /test  │  /check  │  /rules  │  /help                │   │
+│   └────────────────────────┬────────────────────────────────────────┘   │
+│                            │                                             │
+│         ┌──────────────────┼──────────────────┐                         │
+│         ▼                  ▼                  ▼                          │
+│   ┌───────────┐     ┌───────────┐     ┌───────────┐                     │
+│   │   HOOKS   │     │  AGENTS   │     │    MCP    │                     │
+│   │           │     │           │     │  SERVERS  │                     │
+│   │ session   │     │ planner   │     │           │                     │
+│   │ pre-write │◄────│ generator │────►│ quoth     │                     │
+│   │ post-run  │     │ healer    │     │ exolar    │                     │
+│   │ subagent  │     │ classifier│     │ playwright│                     │
+│   │ compact   │     │ learner   │     │           │                     │
+│   └─────┬─────┘     └─────┬─────┘     └─────┬─────┘                     │
+│         │                 │                 │                            │
+│         └────────────┬────┴─────────────────┘                           │
+│                      ▼                                                   │
+│   ┌─────────────────────────────────────────────────────────────────┐   │
+│   │                      FILE SYSTEM LAYER                           │   │
+│   │                                                                  │   │
+│   │  .triqual/                    .draft/                            │   │
+│   │  ├── runs/                    ├── tests/                         │   │
+│   │  │   └── {feature}.md         │   └── {feature}.spec.ts          │   │
+│   │  └── knowledge.md             └── pages/                         │   │
+│   │                                   └── {Page}.ts                  │   │
+│   │                                                                  │   │
+│   │  ~/.cache/triqual/            tests/                             │   │
+│   │  └── session-state.json       └── {feature}.spec.ts (promoted)   │   │
+│   └─────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Hook Communication Protocol
+
+Hooks communicate with Claude using a stdin/stdout/stderr protocol:
+
+```
+┌──────────┐    JSON stdin    ┌──────────┐
+│  Claude  │─────────────────►│   Hook   │
+│   Code   │                  │  Script  │
+│          │◄─────────────────│          │
+└──────────┘   exit code +    └──────────┘
+               stderr message
+```
+
+| Input | Description |
+|-------|-------------|
+| `stdin` | JSON with event details (tool name, parameters, etc.) |
+| Environment | `TRIQUAL_DEBUG`, session variables |
+
+| Output | Description |
+|--------|-------------|
+| Exit 0 | Allow action to proceed |
+| Exit 1 | Block action silently |
+| Exit 2 | Block action + send stderr to Claude |
+| `stderr` | Message displayed to Claude (with exit 2) |
+
+### Agent Orchestration
+
+The `/test` skill orchestrates agents in sequence:
+
+```
+/test login
+    │
+    ├─► test-planner
+    │       │
+    │       ├── Search Quoth patterns
+    │       ├── Query Exolar similar tests
+    │       ├── Explore app with Playwright MCP
+    │       └── Create .triqual/runs/login.md
+    │
+    ├─► test-generator
+    │       │
+    │       ├── Read run log PLAN stage
+    │       ├── Apply knowledge.md patterns
+    │       └── Write .draft/tests/login.spec.ts
+    │
+    └─► test-healer (AUTONOMOUS LOOP)
+            │
+            ├── Run: npx playwright test
+            │       │
+            │       ├─ PASS ──► Promote to tests/
+            │       │           └─► pattern-learner
+            │       │
+            │       └─ FAIL ──► failure-classifier
+            │                   └─► Apply fix
+            │                   └─► Loop (max 25)
+            │
+            ├── Attempt 12: Deep analysis phase
+            └── Attempt 25: Mark .fixme() or justify
+```
+
+## API Reference
+
+### Skills (Slash Commands)
+
+| Command | Arguments | Description |
+|---------|-----------|-------------|
+| `/init` | none | Initialize `.triqual/` directory and config |
+| `/test` | `{feature}` | Full autonomous test generation |
+| `/test` | `--explore {feature}` | Interactive browser exploration only |
+| `/test` | `--ticket {id}` | Generate from Linear ticket |
+| `/test` | `--describe "{text}"` | Generate from description |
+| `/check` | `[--severity {level}]` | Lint tests for violations |
+| `/rules` | `[{category}]` | View Playwright best practices |
+| `/help` | `[{topic}]` | Get help and troubleshooting |
+
+### MCP Tools Available
+
+**Quoth (Pattern Documentation):**
+```typescript
+quoth_search_index({ query: string })     // Search patterns
+quoth_read_doc({ docId: string })         // Read full doc
+quoth_guidelines({ mode: string })        // Get guidelines
+```
+
+**Exolar (Test Analytics):**
+```typescript
+query_exolar_data({
+  dataset: "test_search" | "test_history" | "failure_patterns",
+  filters: { search?: string, test_signature?: string, error_type?: string }
+})
+```
+
+**Playwright MCP (Browser):**
+```typescript
+browser_navigate({ url: string })
+browser_snapshot()
+browser_click({ element: string, ref: string })
+browser_type({ element: string, ref: string, text: string })
+```
+
+### Configuration Schema
+
+```typescript
+// triqual.config.ts
+import { defineConfig } from 'triqual';
+
+export default defineConfig({
+  // Required
+  project_id: string,           // Unique project identifier
+  testDir: string,              // Test directory path
+  baseUrl: string,              // Application base URL
+
+  // Authentication (optional)
+  auth: {
+    strategy: 'storageState' | 'uiLogin' | 'setupProject' | 'none',
+    storageState?: { path: string },
+    credentials?: { username: string, password: string },
+  },
+
+  // Patterns (optional)
+  patterns: {
+    selectors: 'data-testid' | 'role' | 'text' | 'css',
+    waitStrategy: 'networkidle' | 'domcontentloaded' | 'load',
+  },
+
+  // MCP Configuration (optional)
+  mcp: {
+    quoth: { enabled: boolean },
+    exolar: { enabled: boolean, projectId?: string },
+  },
+});
+```
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| **1.0.4** | 2026-01-27 | All agents on Opus 4.5, comprehensive documentation |
+| **1.0.3** | 2026-01-26 | macOS stdin compatibility fix for hooks |
+| **1.0.2** | 2026-01-25 | SubagentStart/Stop hooks, 25 attempt limit |
+| **1.0.1** | 2026-01-24 | Initial documented learning loop |
+| **1.0.0** | 2026-01-23 | Initial release |
+
+## Contributing
+
+### Adding New Rules
+
+1. Create rule file in `docs/playwright-rules/rules/{category}-{name}.md`
+2. Follow template in `_template.md`
+3. Add to `_sections.md` index
+4. Run `/check` to verify integration
+
+### Adding New Agents
+
+1. Create agent in `.agents/{name}.md`
+2. Define frontmatter with `model: opus`, `color`, `tools`
+3. Add trigger conditions in `description`
+4. Document in README.md agent reference
+
+### Adding New Hooks
+
+1. Create script in `hooks/{event}-{name}.sh`
+2. Add entry to `hooks/hooks.json`
+3. Use `lib/common.sh` helpers
+4. Test with `TRIQUAL_DEBUG=true`
+
+## License
+
+MIT - See LICENSE file

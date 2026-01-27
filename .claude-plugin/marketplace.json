@@ -5,22 +5,22 @@
     "email": "montinou@ai-innovation.site"
   },
   "metadata": {
-    "description": "Triqual - Unified test automation plugin integrating Playwright execution, Quoth patterns, and Exolar analytics",
-    "version": "1.0.0"
+    "description": "Triqual - Autonomous test automation with documented learning loops, self-healing tests, and MCP-powered pattern learning",
+    "version": "1.0.4"
   },
   "plugins": [
     {
       "name": "triqual-plugin",
       "source": "./triqual-plugin",
-      "description": "Unified test automation plugin integrating Playwright execution, Quoth patterns, and Exolar analytics. Ad-hoc testing, ticket-to-test workflows, and self-healing tests.",
-      "version": "1.0.2",
+      "description": "Autonomous test automation plugin with enforced documentation loops, 5 Opus 4.5 agents (planner, generator, healer, classifier, learner), and seamless MCP integration (Quoth patterns + Exolar analytics). Features blocking hooks, draft-first development, and persistent learning.",
+      "version": "1.0.4",
       "author": {
         "name": "Montinou"
       },
       "homepage": "https://triqual.vercel.app/",
       "repository": "https://github.com/Montinou/triqual",
       "license": "MIT",
-      "keywords": ["testing", "automation", "playwright", "e2e", "self-healing", "quoth", "exolar"],
+      "keywords": ["testing", "automation", "playwright", "e2e", "self-healing", "quoth", "exolar", "mcp", "agents", "opus"],
       "category": "testing"
     }
   ]
