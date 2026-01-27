@@ -1,0 +1,84 @@
+{
+  "$schema": "./selectors.schema.json",
+  "_comment": "This is a template file. Triqual init generates a project-specific version by analyzing existing tests.",
+  "strategy": {
+    "priority": ["data-testid", "role", "text", "css"],
+    "custom": {
+      "testIdAttribute": "data-testid"
+    }
+  },
+  "components": {
+    "button": {
+      "primary": "[data-testid=\"btn-primary\"]",
+      "secondary": "[data-testid=\"btn-secondary\"]",
+      "submit": "button[type=\"submit\"]:visible",
+      "cancel": "[data-testid=\"btn-cancel\"]"
+    },
+    "input": {
+      "text": "input[type=\"text\"]:visible",
+      "email": "input[type=\"email\"]:visible",
+      "password": "input[type=\"password\"]:visible",
+      "search": "[data-testid=\"input-search\"]"
+    },
+    "modal": {
+      "container": "[role=\"dialog\"]:visible",
+      "close": "[data-testid=\"modal-close\"]",
+      "confirm": "[data-testid=\"modal-confirm\"]",
+      "cancel": "[data-testid=\"modal-cancel\"]"
+    },
+    "navigation": {
+      "header": "header:visible",
+      "sidebar": "[data-testid=\"sidebar\"]",
+      "breadcrumb": "[data-testid=\"breadcrumb\"]"
+    },
+    "table": {
+      "container": "table:visible",
+      "row": "tbody tr",
+      "cell": "td",
+      "header": "thead th"
+    },
+    "form": {
+      "container": "form:visible",
+      "field": "[data-testid^=\"form-field-\"]",
+      "error": "[data-testid=\"form-error\"]",
+      "success": "[data-testid=\"form-success\"]"
+    }
+  },
+  "pages": {
+    "_example_login": {
+      "emailInput": "[data-testid=\"login-email\"]",
+      "passwordInput": "[data-testid=\"login-password\"]",
+      "submitButton": "[data-testid=\"login-submit\"]",
+      "errorMessage": "[data-testid=\"login-error\"]",
+      "forgotPasswordLink": "[data-testid=\"forgot-password\"]"
+    },
+    "_example_dashboard": {
+      "welcomeMessage": "[data-testid=\"welcome-message\"]",
+      "userMenu": "[data-testid=\"user-menu\"]",
+      "logoutButton": "[data-testid=\"logout\"]",
+      "mainContent": "[data-testid=\"dashboard-content\"]"
+    }
+  },
+  "antiPatterns": [
+    {
+      "pattern": ".nth(0) without :visible",
+      "reason": "Hidden elements shift indices",
+      "fix": "Use :visible filter first: .locator('selector:visible').first()"
+    },
+    {
+      "pattern": "Complex XPath (//div[@class='x']/parent::...)",
+      "reason": "Brittle and hard to maintain",
+      "fix": "Use data-testid or role-based selectors"
+    },
+    {
+      "pattern": "Chained CSS (div > div > div > span)",
+      "reason": "Breaks when DOM structure changes",
+      "fix": "Add data-testid to target element"
+    },
+    {
+      "pattern": "Text selectors with dynamic content",
+      "reason": "Fails when text changes (i18n, A/B tests)",
+      "fix": "Use data-testid for stable identification"
+    }
+  ]
+}

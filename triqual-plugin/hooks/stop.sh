@@ -7,10 +7,15 @@ source "${SCRIPT_DIR}/lib/common.sh"
 
 main() {
     # Read JSON from stdin (Claude Code passes hook input this way)
-    read_hook_input > /dev/null
+    if ! read_hook_input > /dev/null; then
+        log_debug "Failed to read hook input"
+        output_empty
+        exit 0
+    fi
 
     # Check if session exists
     if ! session_exists; then
+        log_debug "No session exists, skipping"
         output_empty
         exit 0
     fi
@@ -18,27 +23,39 @@ main() {
     # Read session data for summary
     local session=$(read_session)
 
-    # Extract tool usage counts (simple grep)
-    local quoth_searches=$(echo "$session" | grep -o '"quoth_search_index"[[:space:]]*:[[:space:]]*[0-9]*' | grep -o '[0-9]*' || echo "0")
-    local exolar_queries=$(echo "$session" | grep -o '"query_exolar_data"[[:space:]]*:[[:space:]]*[0-9]*' | grep -o '[0-9]*' || echo "0")
+    # Extract tool usage counts
+    local quoth_searches="0"
+    local exolar_queries="0"
+
+    if has_jq; then
+        quoth_searches=$(echo "$session" | jq -r '.tools_used.quoth_search_index // 0' 2>/dev/null || echo "0")
+        exolar_queries=$(echo "$session" | jq -r '.tools_used.query_exolar_data // 0' 2>/dev/null || echo "0")
+    else
+        quoth_searches=$(echo "$session" | grep -o '"quoth_search_index"[[:space:]]*:[[:space:]]*[0-9]*' | grep -o '[0-9]*' || echo "0")
+        exolar_queries=$(echo "$session" | grep -o '"query_exolar_data"[[:space:]]*:[[:space:]]*[0-9]*' | grep -o '[0-9]*' || echo "0")
+    fi
+
+    # Ensure we have numeric values
+    quoth_searches="${quoth_searches:-0}"
+    exolar_queries="${exolar_queries:-0}"
 
     # Cleanup session
     cleanup_session
 
-    # Output summary - warn if mandatory tools weren't used
-    if [ "$quoth_searches" -eq 0 ] && [ "$exolar_queries" -eq 0 ]; then
-        local message="[Triqual] Session ended. WARNING: No Quoth searches or Exolar queries were made this session. If you wrote or modified tests, you may have missed existing patterns. Consider reviewing Quoth documentation before your next session."
-        output_system_message "$message"
-    elif [ "$quoth_searches" -eq 0 ]; then
-        local message="[Triqual] Session ended. Exolar queries: $exolar_queries. Note: No Quoth pattern searches were made - ensure you're reusing existing Page Objects and helpers."
-        output_system_message "$message"
-    elif [ "$exolar_queries" -eq 0 ]; then
-        local message="[Triqual] Session ended. Quoth searches: $quoth_searches. Note: No Exolar queries were made - remember to report test results and check for similar tests."
-        output_system_message "$message"
+    # Output summary - provide helpful reminders without being prescriptive
+    local message=""
+
+    if [ "$quoth_searches" = "0" ] && [ "$exolar_queries" = "0" ]; then
+        message="[Triqual] Session ended. Tip: If you wrote or modified tests, searching Quoth patterns and checking Exolar for similar tests can help maintain consistency."
+    elif [ "$quoth_searches" = "0" ]; then
+        message="[Triqual] Session ended. Exolar queries: $exolar_queries. Tip: Quoth pattern searches can help discover reusable Page Objects and helpers."
+    elif [ "$exolar_queries" = "0" ]; then
+        message="[Triqual] Session ended. Quoth searches: $quoth_searches. Tip: Reporting test results to Exolar helps track reliability trends."
     else
-        local message="[Triqual] Session ended. Quoth searches: $quoth_searches, Exolar queries: $exolar_queries. Good job following the workflow!"
-        output_system_message "$message"
+        message="[Triqual] Session ended. Quoth searches: $quoth_searches, Exolar queries: $exolar_queries."
     fi
+
+    output_system_message "$message"
 }
 
 main "$@"
