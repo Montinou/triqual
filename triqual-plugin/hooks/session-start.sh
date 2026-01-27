@@ -79,13 +79,27 @@ Read this file to apply project-specific patterns and conventions."
 
 Before writing any test code, you MUST:
 1. **ANALYZE** - Review requirements, identify test cases, acceptance criteria
-2. **RESEARCH** - Search Quoth for patterns, check Exolar for similar tests
+2. **RESEARCH** - **MANDATORY: Search Quoth FIRST**, then check Exolar for similar tests
 3. **PLAN** - Document test strategy, tools/helpers/data to use, new artifacts to create
 4. **WRITE** - Document hypothesis, then write test code
 5. **RUN** - Execute and document results
 6. **LEARN** - Extract patterns, update knowledge
 
 All stages must be documented in run logs at: .triqual/runs/{feature}.md
+
+## ⚠️ MANDATORY: Quoth Pattern Search
+
+**BEFORE writing ANY test code, you MUST search Quoth for patterns:**
+
+\`\`\`
+mcp__quoth__quoth_search_index({
+  query: \"{feature} playwright patterns\"
+})
+\`\`\`
+
+This is ENFORCED - writing tests will be BLOCKED until Quoth search is documented.
+
+**Why:** Quoth contains proven patterns from past successes and failures. Searching first prevents reinventing solutions and avoids common mistakes.
 
 ## Available Skills
 - /test login        (full autonomous: analyze → research → plan → write → run → learn)
@@ -97,6 +111,8 @@ All stages must be documented in run logs at: .triqual/runs/{feature}.md
 - /init              (initialize project config)
 
 ## Available Agents
+- test-planner       (creates test plan - searches Quoth FIRST)
+- test-generator     (generates code from plan)
 - test-healer        (auto-fix failing tests)
 - failure-classifier (classify failures: FLAKE/BUG/ENV/TEST_ISSUE)
 - pattern-learner    (learn and document patterns)

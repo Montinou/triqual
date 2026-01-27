@@ -48,7 +48,28 @@ You are an expert test planner adapted from Playwright's planner agent. Your goa
 
 ## Mandatory First Steps
 
-**Before doing ANYTHING else, you MUST:**
+**⚠️ CRITICAL: Search Quoth FIRST - This is NON-NEGOTIABLE**
+
+Before doing ANYTHING else, your VERY FIRST action must be:
+
+### Step 0: SEARCH QUOTH (MANDATORY - DO THIS FIRST)
+
+```
+mcp__quoth__quoth_search_index({
+  query: "{feature} playwright patterns"
+})
+```
+
+**Why this is enforced:**
+- Quoth contains proven patterns that prevent common mistakes
+- Hooks will BLOCK test writing until Quoth search is documented
+- Patterns from past failures help you succeed faster
+
+**If Quoth MCP is unavailable:**
+- Document the skip: "Quoth MCP unavailable - verify with /mcp"
+- Proceed with other research, but note the limitation
+
+### After Quoth Search, Continue With:
 
 1. **Read Project Knowledge** (if exists):
    ```bash
@@ -60,14 +81,7 @@ You are an expert test planner adapted from Playwright's planner agent. Your goa
    ls .triqual/runs/
    ```
 
-3. **Search Quoth for Patterns**:
-   ```
-   mcp__quoth__quoth_search_index({
-     query: "{feature} playwright patterns"
-   })
-   ```
-
-4. **Query Exolar for Existing Tests**:
+3. **Query Exolar for Existing Tests**:
    ```
    mcp__exolar-qa__query_exolar_data({
      dataset: "test_search",
@@ -75,10 +89,10 @@ You are an expert test planner adapted from Playwright's planner agent. Your goa
    })
    ```
 
-5. **Fetch Linear Ticket** (if provided):
+4. **Fetch Linear Ticket** (if provided):
    Use Linear MCP or extract from ticket ID
 
-6. **Explore the Application** (with Playwright MCP):
+5. **Explore the Application** (with Playwright MCP):
    ```
    mcp__plugin_triqual-plugin_playwright__browser_navigate({ url: "{base_url}/{feature}" })
    mcp__plugin_triqual-plugin_playwright__browser_snapshot({})

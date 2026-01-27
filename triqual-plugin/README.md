@@ -1,6 +1,6 @@
 # Triqual
 
-> **Version 1.0.4** | Opus 4.5 Agents | macOS & Linux Compatible
+> **Version 1.0.5** | Opus 4.5 Agents | Mandatory Quoth Search | macOS & Linux
 
 **Autonomous Test Automation for Claude Code**
 
@@ -148,10 +148,25 @@ Hooks **BLOCK** actions until documentation is complete:
 | Gate | Trigger | Block Condition | Resolution |
 |------|---------|-----------------|------------|
 | **Pre-Write** | Write `.spec.ts` | No run log or missing stages | Create run log with ANALYZE/RESEARCH/PLAN/WRITE |
+| **Quoth Search** | Write `.spec.ts` | **No Quoth search documented** | **Search Quoth FIRST, document results** |
 | **Post-Run** | After `playwright test` | Results not documented | Add RUN stage to log |
 | **Retry Limit** | 2+ same-category fails | No external research | Search Quoth/Exolar, document findings |
 | **Deep Analysis** | 12+ attempts | No deep analysis | Expand research, explore app, try new approaches |
 | **Max Attempts** | 25+ attempts | No resolution | Mark as `.fixme()` with justification |
+
+### Mandatory Quoth Pattern Search
+
+**BEFORE writing ANY test code**, you MUST search Quoth:
+
+```typescript
+mcp__quoth__quoth_search_index({
+  query: "{feature} playwright patterns"
+})
+```
+
+This is **ENFORCED** - test writing will be **BLOCKED** until Quoth search is documented.
+
+**Why:** Quoth contains proven patterns from past successes and failures. Searching first prevents reinventing solutions and avoids common mistakes.
 
 ### Example: Blocked Action
 
@@ -489,6 +504,7 @@ export TRIQUAL_DEBUG=true
 
 | Version | Date | Changes |
 |---------|------|---------|
+| **1.0.5** | 2026-01-27 | **Mandatory Quoth pattern search enforcement** |
 | **1.0.4** | 2026-01-27 | All agents on Opus 4.5, comprehensive documentation update |
 | **1.0.3** | 2026-01-26 | macOS stdin compatibility fix for hooks |
 | **1.0.2** | 2026-01-25 | SubagentStart/Stop hooks, 25 attempt limit |

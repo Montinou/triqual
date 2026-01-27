@@ -1,6 +1,6 @@
 # Triqual - Autonomous Test Automation Plugin
 
-> **Version 1.0.4** | Opus 4.5 Agents | macOS & Linux Compatible
+> **Version 1.0.5** | Opus 4.5 Agents | Mandatory Quoth Search | macOS & Linux
 
 Triqual is a **Claude Code plugin** that brings autonomous, self-healing test generation with enforced documentation and persistent learning. It combines three MCP integrations:
 
@@ -82,11 +82,29 @@ ANALYZE → RESEARCH → PLAN → WRITE → RUN → LEARN
 | Gate | Trigger | Block Condition | Unblock Action |
 |------|---------|-----------------|----------------|
 | Pre-Write | Write .spec.ts | No run log or missing ANALYZE/RESEARCH/PLAN | Create log, document stages |
+| **Quoth Search** | Write .spec.ts | **No Quoth search documented** | **Search Quoth, document results** |
 | Post-Run | After playwright test | Log not updated with results | Add RUN stage with results |
 | Retry Limit | 2+ same-category fails | No Quoth/Exolar search | Document external research |
 | Deep Analysis | 12+ attempts | No deep analysis documented | Perform expanded Quoth/Exolar research |
 | Max Attempts | 25+ total attempts | No .fixme() or justification | Mark fixme or justify |
 | Session End | Stop hook | No learnings section | Add accumulated learnings |
+
+### Mandatory Quoth Pattern Search
+
+**BEFORE writing ANY test code**, you MUST search Quoth for patterns:
+
+```
+mcp__quoth__quoth_search_index({
+  query: "{feature} playwright patterns"
+})
+```
+
+This is **ENFORCED by hooks** - test writing will be BLOCKED until Quoth search is documented in the run log.
+
+**Why this is mandatory:**
+- Quoth contains proven patterns from past successes and failures
+- Searching first prevents reinventing existing solutions
+- Patterns learned from past failures help you succeed faster
 
 ### Run Log Structure
 
@@ -694,6 +712,7 @@ export default defineConfig({
 
 | Version | Date | Changes |
 |---------|------|---------|
+| **1.0.5** | 2026-01-27 | **Mandatory Quoth pattern search enforcement** |
 | **1.0.4** | 2026-01-27 | All agents on Opus 4.5, comprehensive documentation |
 | **1.0.3** | 2026-01-26 | macOS stdin compatibility fix for hooks |
 | **1.0.2** | 2026-01-25 | SubagentStart/Stop hooks, 25 attempt limit |

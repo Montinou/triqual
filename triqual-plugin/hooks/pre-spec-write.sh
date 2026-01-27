@@ -218,6 +218,53 @@ EOF
     fi
 
     # =========================================================================
+    # GATE 4.5: QUOTH SEARCH MUST BE DOCUMENTED (Mandatory Pattern Search)
+    # =========================================================================
+    if ! quoth_search_documented "$feature" && ! quoth_search_skipped_justified "$feature"; then
+        cat >&2 << EOF
+🚫 BLOCKED: Quoth pattern search not documented
+
+**MANDATORY:** You MUST search Quoth for patterns BEFORE writing test code.
+
+The RESEARCH stage exists but doesn't show evidence of Quoth search results.
+
+**Required Actions:**
+
+1. **Search Quoth NOW:**
+   \`\`\`
+   mcp__quoth__quoth_search_index({
+     query: "$feature playwright patterns"
+   })
+   \`\`\`
+
+2. **Document results in $run_log** under RESEARCH stage:
+
+   #### Quoth Search Results
+
+   **Query:** \`$feature playwright patterns\`
+   **Patterns Found:**
+   - pattern-name: description of what it does
+   - another-pattern: description
+
+   **Relevant Docs:**
+   - doc-id-1: Title of pattern
+   - doc-id-2: Another useful pattern
+
+3. **If Quoth MCP is unavailable**, document the skip:
+   - "Quoth MCP unavailable - proceeding without pattern search"
+   - Or verify MCP connection with /mcp
+
+**Why this matters:**
+- Quoth contains proven patterns that prevent common mistakes
+- Searching first avoids reinventing existing solutions
+- Patterns learned from past failures help you succeed faster
+
+Search Quoth, document results, then retry this write operation.
+EOF
+        exit 2
+    fi
+
+    # =========================================================================
     # GATE 5: PLAN stage must exist
     # =========================================================================
     if ! plan_stage_exists "$feature"; then

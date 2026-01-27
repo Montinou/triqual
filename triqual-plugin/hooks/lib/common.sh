@@ -611,6 +611,49 @@ external_research_exists() {
     return 1
 }
 
+# Check if Quoth pattern search was performed and documented in RESEARCH stage
+# This verifies that the run log contains evidence of Quoth MCP usage
+# Returns: 0 if Quoth search documented, 1 otherwise
+quoth_search_documented() {
+    local feature="$1"
+    local log_path=$(get_run_log_path "$feature")
+
+    if [ ! -f "$log_path" ]; then
+        return 1
+    fi
+
+    # Check for evidence of Quoth search in the RESEARCH stage
+    # Must have at least one of these patterns indicating Quoth was actually used
+    if grep -qE "(Quoth Search|quoth_search_index|Quoth Patterns|Patterns Found)" "$log_path" && \
+       grep -qE "(Query.*:|Results:|\- \[?[A-Za-z])" "$log_path"; then
+        return 0
+    fi
+
+    # Alternative: Check for explicit Quoth documentation section
+    if grep -q "#### Quoth Search Results" "$log_path"; then
+        return 0
+    fi
+
+    return 1
+}
+
+# Check if Quoth search was skipped with valid justification
+quoth_search_skipped_justified() {
+    local feature="$1"
+    local log_path=$(get_run_log_path "$feature")
+
+    if [ ! -f "$log_path" ]; then
+        return 1
+    fi
+
+    # Check for explicit skip justification
+    if grep -qEi "(Quoth.*skip|MCP.*unavailable|Quoth.*offline|skip.*Quoth)" "$log_path"; then
+        return 0
+    fi
+
+    return 1
+}
+
 # Count failures by category in run log
 # Usage: count_failures_by_category "login" "LOCATOR"
 count_failures_by_category() {

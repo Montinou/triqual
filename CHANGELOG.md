@@ -5,6 +5,19 @@ All notable changes to Triqual are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.5] - 2026-01-27
+
+### Added
+- **Mandatory Quoth pattern search enforcement** - Hooks now BLOCK test writing until Quoth search is documented
+- New `quoth_search_documented()` helper function in common.sh
+- New GATE 4.5 in pre-spec-write hook that verifies Quoth search
+- Skip justification support if MCP is unavailable
+
+### Changed
+- Session start now emphasizes Quoth search as mandatory first step
+- test-planner agent updated to make Quoth search "Step 0" (non-negotiable first action)
+- Documentation updated to reflect mandatory Quoth pattern search
+
 ## [1.0.4] - 2026-01-27
 
 ### Changed
