@@ -6,12 +6,12 @@ How to set up a new test project with Triqual.
 
 1. **Initialize Triqual**
    ```bash
-   /triqual-init
+   /init
    ```
    This analyzes your project and generates configuration.
 
 2. **Review generated config**
-   - `triqual.config.json` - Main settings
+   - `triqual.config.ts` - Main TypeScript configuration
    - `context/project.json` - Project metadata
    - `context/patterns.json` - Test patterns & conventions
    - `context/selectors.json` - Locator strategies
@@ -20,13 +20,14 @@ How to set up a new test project with Triqual.
 
 | Skill | Purpose |
 |-------|---------|
-| `/triqual-init` | Initialize project configuration |
-| `/quick-test` | Ad-hoc browser testing |
-| `/test-ticket ENG-123` | Generate tests from Linear tickets |
-| `/generate-test` | Create production test files |
-| `/check-rules` | Lint tests for best practice violations |
-| `/playwright-rules` | View Playwright best practices (31 rules) |
-| `/triqual-help` | Get help and troubleshooting |
+| `/init` | Initialize project configuration |
+| `/test login` | Full autonomous test generation |
+| `/test --explore` | Interactive browser exploration |
+| `/test --ticket ENG-123` | Generate tests from Linear tickets |
+| `/test --describe "..."` | Generate tests from description |
+| `/check` | Lint tests for best practice violations |
+| `/rules` | View Playwright best practices (31 rules) |
+| `/help` | Get help and troubleshooting |
 
 ## Project Structure
 
@@ -76,22 +77,22 @@ npx playwright test smoke.spec.ts
 npx playwright test --debug
 ```
 
-## Ad-hoc Testing with /quick-test
+## Interactive Exploration with /test --explore
 
 For quick testing without writing files:
 
 ```bash
-/quick-test
+/test --explore login
 ```
 
-Just describe what you want to test, and Triqual will execute it with a visible browser.
+Just describe what you want to test, and Triqual will open a visible browser for exploration.
 
 ## Checking Test Quality
 
 Lint your tests against 31 Playwright best practices:
 
 ```bash
-/check-rules
+/check
 ```
 
 This scans your test files for violations across 8 categories:

@@ -1,10 +1,10 @@
 ---
-name: playwright-rules
+name: rules
 description: Comprehensive Playwright best practices and rules. Use when writing, reviewing, or debugging Playwright tests. Covers locators, waits, assertions, Page Objects, test organization, network mocking, debugging, and parallelization.
 allowed-tools: Read, Glob, Grep
 ---
 
-# Playwright Rules - Best Practices Guide
+# /rules - Playwright Best Practices Guide
 
 Comprehensive rules and best practices for writing reliable, maintainable Playwright tests. 31 documented rules across 8 categories.
 
@@ -228,9 +228,9 @@ grep -r "auto-fix" ${CLAUDE_PLUGIN_ROOT}/docs/playwright-rules/rules/
 
 ## Integration with Other Skills
 
-- `/quick-test` - Apply rules when writing ad-hoc tests
-- `/generate-test` - Use patterns when creating production tests
-- `/test-ticket` - Reference rules when generating from tickets
+- `/test --explore` - Apply rules when writing ad-hoc tests
+- `/test` - Use patterns when creating production tests
+- `/test --ticket` - Reference rules when generating from tickets
 
 ## Severity Levels
 
@@ -247,6 +247,6 @@ grep -r "auto-fix" ${CLAUDE_PLUGIN_ROOT}/docs/playwright-rules/rules/
 
 ## What This Skill Does NOT Do
 
-- Auto-fix code (read rules and apply manually)
-- Run tests (use `/quick-test` or `/generate-test`)
-- Create Page Objects (use `/generate-test`)
+- Auto-fix code (use `/check --fix` for auto-fixes)
+- Run tests (use `/test` or `/test --explore`)
+- Create Page Objects (use `/test`)

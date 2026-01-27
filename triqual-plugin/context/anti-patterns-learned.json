@@ -1,0 +1,39 @@
+{
+  "$schema": "./anti-patterns-learned.schema.json",
+  "version": "1.0.0",
+  "description": "Error to fix mappings learned from heal loops. Updated automatically when tests are healed.",
+  "antiPatterns": [
+    {
+      "id": "strict-mode-example",
+      "error": "strict mode violation: getByRole('button') resolved to multiple elements",
+      "errorCategory": "LOCATOR",
+      "fix": "Use more specific selector: getByRole('button', { name: 'Submit' }) or add :visible",
+      "feature": "example",
+      "date": "2025-01-27",
+      "healIterations": 1,
+      "notes": "This is a placeholder. Delete after first real anti-pattern is learned."
+    },
+    {
+      "id": "timeout-example",
+      "error": "Timeout exceeded while waiting for element",
+      "errorCategory": "WAIT",
+      "fix": "Add explicit waitForSelector or increase timeout with getTimeout()",
+      "feature": "example",
+      "date": "2025-01-27",
+      "healIterations": 2,
+      "notes": "This is a placeholder. Delete after first real anti-pattern is learned."
+    }
+  ],
+  "errorCategories": {
+    "LOCATOR": "Selector/locator issues (strict mode, not found, multiple elements)",
+    "WAIT": "Timing issues (timeout, race conditions)",
+    "ASSERTION": "Assertion failures (wrong value, missing element)",
+    "AUTH": "Authentication issues (session expired, wrong credentials)",
+    "ENV": "Environment issues (server down, network error)"
+  },
+  "metadata": {
+    "lastUpdated": "2025-01-27T00:00:00.000Z",
+    "totalAntiPatterns": 2,
+    "projectId": null
+  }
+}

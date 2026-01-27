@@ -98,21 +98,29 @@ Claude: [Uses browser_navigate, browser_snapshot, browser_fill_form, browser_cli
 - **Production test files**: `.spec.ts` files
 
 ```bash
-# Use /quick-test or /generate-test for script-based testing
+# Use /test for script-based testing
 cd ${CLAUDE_PLUGIN_ROOT}/lib && node run.js /tmp/test.js
 ```
 
 ## Integration with Triqual Skills
 
-### /quick-test
+### /test (Default Mode)
 
-Uses **script execution** (Playwright library) for:
+Uses **Playwright MCP** for exploration and **script execution** for:
+- Autonomous test generation
 - Running custom test code
 - Consistent, repeatable automation
 - Screenshot workflows
 - Local development testing
 
-### /test-ticket
+### /test --explore
+
+Uses **Playwright MCP** directly for:
+- Interactive browser exploration
+- Real-time debugging
+- Understanding UI before writing tests
+
+### /test --ticket
 
 Uses **script execution** to:
 - Generate production test files

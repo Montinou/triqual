@@ -44,31 +44,70 @@ triqual-plugin/
 
 ## Usage
 
-### Quick Testing
+### Quick Start
 
-Just ask Claude to test something:
-
+```bash
+/test login              # Full autonomous test generation
+/test --explore login    # Interactive browser exploration
+/test --ticket ENG-123   # Generate from Linear ticket
+/test --describe "..."   # Generate from description
 ```
-"Test if the homepage loads"
-"Check if the login form works"
-"Take screenshots at different viewport sizes"
+
+### Skills Overview
+
+| Skill | Command | Description |
+|-------|---------|-------------|
+| Test | `/test login` | Full autonomous loop (explore → plan → generate → heal → learn) |
+| Test Explore | `/test --explore` | Interactive browser exploration only |
+| Test Ticket | `/test --ticket ENG-123` | Generate from Linear acceptance criteria |
+| Test Describe | `/test --describe "..."` | Generate from text description |
+| Check | `/check` | Lint tests for best practice violations |
+| Rules | `/rules` | View Playwright best practices (31 rules) |
+| Init | `/init` | Initialize Triqual for project |
+| Help | `/help` | Get help with Triqual features |
+
+### Autonomous Test Generation
+
+The default `/test` mode runs the complete autonomous loop:
+
+```bash
+/test login
 ```
 
-### Production Test Generation
+This runs:
+1. **SETUP** - Auto-config, load credentials and existing patterns
+2. **EXPLORE** - Use Playwright MCP to explore the feature
+3. **PLAN** - Create test plan with Quoth patterns
+4. **GENERATE** - Produce .spec.ts in draft folder
+5. **HEAL LOOP** - Run tests, fix failures (max 5 iterations)
+6. **PROMOTE** - Move passing tests to production location
+7. **LEARN** - Save patterns and anti-patterns for future runs
 
-Use the full workflow:
+### From Linear Tickets
 
-```
-/test-ticket ENG-123
+Generate tests directly from acceptance criteria:
+
+```bash
+/test --ticket ENG-123
 ```
 
 This will:
 1. Fetch ticket from Linear
-2. Search Quoth for patterns
-3. Generate proper test files with Page Objects
-4. Execute with auto-healing
-5. Learn from failures (Exolar history + Playwright MCP verification)
-6. Create PR
+2. Parse acceptance criteria
+3. Search Quoth for patterns
+4. Generate proper test files with Page Objects
+5. Execute with auto-healing
+6. Provide PR instructions
+
+### Interactive Exploration
+
+For exploring the app before writing tests:
+
+```bash
+/test --explore login
+```
+
+Opens a visible browser for real-time exploration without generating tests.
 
 ## How It Works
 

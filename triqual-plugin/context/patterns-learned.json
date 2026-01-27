@@ -1,0 +1,31 @@
+{
+  "$schema": "./patterns-learned.schema.json",
+  "version": "1.0.0",
+  "description": "Accumulated successful patterns from auto-test runs. Updated automatically after each successful test generation.",
+  "patterns": [
+    {
+      "id": "example-pattern",
+      "feature": "example",
+      "date": "2025-01-27",
+      "description": "Example pattern - replace with real patterns as they're learned",
+      "selectors": {
+        "submitButton": "[data-testid='submit']",
+        "cancelButton": "[data-testid='cancel']"
+      },
+      "waits": [
+        "waitForURL('**/dashboard')",
+        "waitForSelector('.success-message')"
+      ],
+      "assertions": [
+        "expect(element).toBeVisible()",
+        "expect(page).toHaveURL(/.*dashboard/)"
+      ],
+      "notes": "This is a placeholder. Delete after first real pattern is learned."
+    }
+  ],
+  "metadata": {
+    "lastUpdated": "2025-01-27T00:00:00.000Z",
+    "totalPatterns": 1,
+    "projectId": null
+  }
+}

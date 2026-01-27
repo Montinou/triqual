@@ -19,47 +19,44 @@ claude --plugin-dir /path/to/triqual/triqual-plugin
 **What gets installed automatically:**
 - MCP servers: `quoth` and `exolar-qa` (via `.mcp.json`)
 - 4 hooks: SessionStart, PreToolUse, PostToolUse, Stop
-- 7 skills: `/triqual-init`, `/quick-test`, `/test-ticket`, `/generate-test`, `/check-rules`, `/playwright-rules`, `/triqual-help`
+- 5 skills: `/init`, `/test`, `/check`, `/rules`, `/help`
 - 3 agents: test-healer, failure-classifier, pattern-learner
 - 31 Playwright best practice rules (8 categories)
 - Context templates for project configuration
 
 ## Quick Start
 
-### Initialize Triqual (First Time)
+### Initialize (First Time)
 
 ```bash
-/triqual-init                         # Analyze project & generate config
+/init                          # Analyze project & generate config
 ```
 
-### Ad-hoc Testing
+### Unified Test Generation
 
 ```bash
-/quick-test                    # Interactive browser testing
-```
-
-### Generate Tests from Tickets
-
-```bash
-/test-ticket ENG-123           # Full Linear → test workflow
-```
-
-### Create Permanent Tests
-
-```bash
-/generate-test login           # Create production test file
+/test login              # Full autonomous (explore → plan → generate → heal → learn)
+/test --explore login    # Interactive exploration only
+/test --ticket ENG-123   # From Linear ticket
+/test --describe "..."   # From user description
 ```
 
 ### Check Test Quality
 
 ```bash
-/check-rules                   # Lint tests for best practice violations
+/check                   # Lint tests for best practice violations
+```
+
+### View Best Practices
+
+```bash
+/rules                   # View Playwright best practices (31 rules)
 ```
 
 ### Get Help
 
 ```bash
-/triqual-help                  # Show available commands and guidance
+/help                    # Show available commands and guidance
 ```
 
 ## MCP Servers (Auto-Installed)
@@ -140,13 +137,14 @@ Would you like me to run the failure-classifier agent?
 
 | Skill | Command | Purpose |
 |-------|---------|---------|
-| triqual-init | `/triqual-init` | Initialize Triqual for project (first-time setup, generates config) |
-| quick-test | `/quick-test` | Ad-hoc browser testing with visible browser |
-| test-ticket | `/test-ticket ENG-123` | Full Linear ticket → test file workflow |
-| generate-test | `/generate-test` | Create production .spec.ts files |
-| check-rules | `/check-rules` | Lint tests for Playwright best practice violations |
-| playwright-rules | `/playwright-rules` | Comprehensive Playwright best practices (31 rules, 8 categories) |
-| triqual-help | `/triqual-help` | Get help with Triqual features and troubleshooting |
+| init | `/init` | Initialize Triqual for project (first-time setup, generates config) |
+| test | `/test login` | Full autonomous test generation (explore → plan → generate → heal → learn) |
+| test (explore) | `/test --explore login` | Interactive browser exploration only |
+| test (ticket) | `/test --ticket ENG-123` | Generate tests from Linear ticket acceptance criteria |
+| test (describe) | `/test --describe "..."` | Generate tests from user text description |
+| check | `/check` | Lint tests for Playwright best practice violations |
+| rules | `/rules` | Comprehensive Playwright best practices (31 rules, 8 categories) |
+| help | `/help` | Get help with Triqual features and troubleshooting |
 
 ## Agents
 
@@ -167,13 +165,11 @@ triqual/
 │   │   └── plugin.json          # Plugin manifest only
 │   ├── .mcp.json                # MCP server auto-install (at plugin root)
 │   ├── skills/                  # Skills at plugin root (auto-discovered)
-│   │   ├── triqual-init/SKILL.md
-│   │   ├── quick-test/SKILL.md
-│   │   ├── test-ticket/SKILL.md
-│   │   ├── generate-test/SKILL.md
-│   │   ├── check-rules/SKILL.md     # NEW: Rule linting
-│   │   ├── triqual-help/SKILL.md    # NEW: Help system
-│   │   └── playwright-rules/SKILL.md
+│   │   ├── init/SKILL.md        # /init - project initialization
+│   │   ├── test/SKILL.md        # /test - unified test generation
+│   │   ├── check/SKILL.md       # /check - best practice linting
+│   │   ├── rules/SKILL.md       # /rules - best practice docs
+│   │   └── help/SKILL.md        # /help - plugin guidance
 │   ├── hooks/                   # Hooks at plugin root (auto-discovered)
 │   │   ├── hooks.json
 │   │   ├── lib/common.sh        # Shared functions with error handling
@@ -185,15 +181,18 @@ triqual/
 │   │   ├── test-healer.md
 │   │   ├── failure-classifier.md
 │   │   └── pattern-learner.md
-│   ├── context/                 # NEW: Configuration templates
+│   ├── context/                 # Configuration templates & learned patterns
+│   │   ├── config.template.ts   # TypeScript config template
 │   │   ├── project.template.json
 │   │   ├── patterns.template.json
-│   │   └── selectors.template.json
-│   ├── lib/                     # Playwright executor & helpers
+│   │   ├── selectors.template.json
+│   │   ├── patterns-learned.json
+│   │   └── anti-patterns-learned.json
+│   ├── lib/                     # TypeScript types & helpers
+│   │   └── config.ts            # defineConfig and type definitions
 │   └── docs/
 │       ├── references/          # Comprehensive guides
 │       └── playwright-rules/    # 31 best practice rules (8 categories)
-│           ├── SKILL.md
 │           └── rules/           # Individual rule files
 ├── web/                         # Landing page (triqual.vercel.app)
 └── CLAUDE.md
@@ -246,17 +245,28 @@ Hooks maintain session state in `~/.cache/triqual/`:
 
 ## Project Configuration
 
-Create `triqual.config.json` or `triqual.config.ts` in your project root:
+Create `triqual.config.ts` in your project root:
 
-```json
-{
-  "testDir": "./automation/playwright/tests",
-  "project_id": "your-project-id",
-  "baseUrl": "http://localhost:3000"
-}
+```typescript
+import { defineConfig } from 'triqual';
+
+export default defineConfig({
+  project_id: 'your-project-id',
+  testDir: './automation/playwright/tests',
+  baseUrl: process.env.BASE_URL || 'http://localhost:3000',
+
+  auth: {
+    strategy: 'storageState', // or 'uiLogin' | 'setupProject' | 'none'
+    storageState: { path: '.auth/user.json' },
+  },
+});
 ```
 
-Or run `/triqual-init` to auto-generate based on your project structure.
+Or run `/init` to auto-generate based on your project structure. The TypeScript config provides:
+- Full type safety with `defineConfig`
+- Import credentials from separate files
+- Environment variable support
+- IDE autocomplete for all options
 
 ## Troubleshooting
 
@@ -267,17 +277,17 @@ Or run `/triqual-init` to auto-generate based on your project structure.
 | Exolar query fails | Verify OAuth at exolar.ai-innovation.site |
 | Hooks not triggering | Check `hooks.json` syntax, verify scripts are executable |
 | Session state stale | Delete `~/.cache/triqual/` directory |
-| Need help | Run `/triqual-help` for guidance |
+| Need help | Run `/help` for guidance |
 
 ## First Time Setup
 
 1. **Install plugin** - `claude --plugin-dir /path/to/triqual`
-2. **Initialize Triqual** - Run `/triqual-init` to analyze your project and generate personalized configuration
+2. **Initialize Triqual** - Run `/init` to analyze your project and generate personalized configuration
 3. **Authenticate MCPs** - Follow OAuth prompts for Quoth and Exolar
-4. **Start using** - `/quick-test` or `/test-ticket ENG-123`
+4. **Start using** - `/test login` or `/test --ticket ENG-123`
 
-The `/triqual-init` skill detects your project structure, existing tests, and generates:
-- `triqual.config.json` - Main configuration
+The `/init` skill detects your project structure, existing tests, and generates:
+- `triqual.config.ts` - Main configuration with TypeScript types
 - `Docs/context/project.json` - Project metadata
 - `Docs/context/patterns.json` - Test patterns & conventions
 - `Docs/context/selectors.json` - Locator strategies

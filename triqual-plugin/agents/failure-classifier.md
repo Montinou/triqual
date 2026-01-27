@@ -209,7 +209,7 @@ mcp__quoth__quoth_search_index({
 ## What This Agent Does NOT Do
 
 - Fix failing tests (use test-healer agent)
-- Create tests (use `/generate-test`)
-- Run tests (use `/quick-test`)
+- Create tests (use `/test`)
+- Run tests (use `/test --explore`)
 
 This agent is for **classification and analysis** only.

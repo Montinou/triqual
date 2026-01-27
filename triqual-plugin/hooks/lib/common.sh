@@ -226,13 +226,14 @@ exolar_mcp_installed() {
 
 # Find Triqual config file in current directory
 # Returns: path to config file, or empty string
+# Priority: .ts (preferred) > .json (legacy)
 find_triqual_config() {
-    if [ -f ".triqual/config.json" ]; then
-        echo ".triqual/config.json"
+    if [ -f "triqual.config.ts" ]; then
+        echo "triqual.config.ts"
     elif [ -f "triqual.config.json" ]; then
         echo "triqual.config.json"
-    elif [ -f "triqual.config.ts" ]; then
-        echo "triqual.config.ts"
+    elif [ -f ".triqual/config.json" ]; then
+        echo ".triqual/config.json"
     else
         echo ""
     fi

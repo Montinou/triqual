@@ -56,7 +56,7 @@ This skill is automatically consulted when:
 ### Manual Invocation
 
 ```
-/playwright-rules
+/rules
 ```
 
 ### In Code Reviews

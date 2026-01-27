@@ -232,9 +232,9 @@ mcp__exolar-qa__query_exolar_data({
 
 ## What This Agent Does NOT Do
 
-- Create new tests (use `/generate-test`)
-- Fetch tickets (use `/test-ticket`)
+- Create new tests (use `/test`)
+- Fetch tickets (use `/test --ticket`)
 - Classify failures (use failure-classifier agent)
-- Run arbitrary Playwright code (use `/quick-test`)
+- Run arbitrary Playwright code (use `/test --explore`)
 
 This agent is for **healing failing tests** only.

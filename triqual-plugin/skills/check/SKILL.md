@@ -1,11 +1,11 @@
 ---
-name: check-rules
+name: check
 description: Scan test files for Playwright best practice violations. Use when user says "check my tests", "lint tests", "validate tests", "check for violations", or "audit test code".
 argument-hint: [path/to/tests] [--fix] [--severity=error|warn|all]
 allowed-tools: Read, Edit, Glob, Grep
 ---
 
-# Check Rules - Playwright Best Practice Linting
+# /check - Playwright Best Practice Linting
 
 Scan your test files for violations of the 31 Playwright best practice rules and get actionable fix suggestions.
 
@@ -13,17 +13,17 @@ Scan your test files for violations of the 31 Playwright best practice rules and
 
 - Before committing new tests
 - During code review
-- After generating tests with `/generate-test` or `/test-ticket`
+- After generating tests with `/test` or `/test --ticket`
 - When experiencing flaky tests
 - As part of test maintenance
 
 ## Quick Start
 
 ```bash
-/check-rules                           # Check all test files in project
-/check-rules ./tests/auth              # Check specific directory
-/check-rules --severity=error          # Only show errors (not warnings)
-/check-rules --fix                     # Show and offer to apply auto-fixes
+/check                           # Check all test files in project
+/check ./tests/auth              # Check specific directory
+/check --severity=error          # Only show errors (not warnings)
+/check --fix                     # Show and offer to apply auto-fixes
 ```
 
 ## Rule Categories
@@ -228,18 +228,18 @@ await expect(element).toBeVisible({ timeout: getTimeout() });
 
 ## Integration with Other Tools
 
-### After Check-Rules
+### After /check
 
 If violations found:
 1. Use **Edit** tool to apply simple fixes
 2. For complex fixes, explain what needs to change
-3. Re-run `/check-rules` to verify fixes
+3. Re-run `/check` to verify fixes
 
 ### With Test-Healer
 
 If tests are failing due to rule violations:
 ```
-/check-rules --severity=error  # Find violations
+/check --severity=error  # Find violations
 # Apply fixes
 npx playwright test            # Re-run tests
 ```
@@ -254,8 +254,8 @@ mcp__quoth__quoth_search_index({ query: "wait-no-timeout pattern" })
 ## What This Skill Does NOT Do
 
 - Run tests (use `npx playwright test`)
-- Generate new tests (use `/generate-test`)
-- Fetch tickets (use `/test-ticket`)
+- Generate new tests (use `/test`)
+- Fetch tickets (use `/test --ticket`)
 - Heal failing tests (use test-healer agent)
 
 This skill is for **static analysis and linting** only.
@@ -310,7 +310,7 @@ Check:
 
 Start with:
 ```bash
-/check-rules --severity=error  # Fix critical issues first
+/check --severity=error  # Fix critical issues first
 ```
 
 ### "False positive detected"

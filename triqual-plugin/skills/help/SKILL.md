@@ -1,23 +1,23 @@
 ---
-name: triqual-help
+name: help
 description: Get help with Triqual plugin features, workflows, and troubleshooting. Use when user asks "how do I use triqual", "triqual help", "what skills are available", or needs guidance on test automation workflow.
 argument-hint: [topic]
 allowed-tools: Read, Glob
 ---
 
-# Triqual Help - Plugin Guide & Troubleshooting
+# /help - Triqual Plugin Guide & Troubleshooting
 
 Get guidance on using Triqual's test automation features, understand the workflow, and troubleshoot common issues.
 
 ## Quick Start
 
 ```bash
-/triqual-help                    # Show overview and available commands
-/triqual-help skills             # List all skills with descriptions
-/triqual-help agents             # List all agents and when to use them
-/triqual-help workflow           # Explain the recommended workflow
-/triqual-help mcp                # MCP server setup and troubleshooting
-/triqual-help troubleshooting    # Common issues and fixes
+/help                    # Show overview and available commands
+/help skills             # List all skills with descriptions
+/help agents             # List all agents and when to use them
+/help workflow           # Explain the recommended workflow
+/help mcp                # MCP server setup and troubleshooting
+/help troubleshooting    # Common issues and fixes
 ```
 
 ## Topics
@@ -36,13 +36,14 @@ pattern documentation (Quoth) and test analytics (Exolar).
 
 | Skill | Command | Description |
 |-------|---------|-------------|
-| Initialize | `/triqual-init` | Set up Triqual for your project |
-| Quick Test | `/quick-test` | Ad-hoc browser testing |
-| Test Ticket | `/test-ticket ENG-123` | Generate tests from Linear tickets |
-| Generate Test | `/generate-test` | Create production test files |
-| Check Rules | `/check-rules` | Lint tests for best practices |
-| Playwright Rules | `/playwright-rules` | View best practice documentation |
-| Help | `/triqual-help` | This help guide |
+| Initialize | `/init` | Set up Triqual for your project |
+| Test (default) | `/test login` | Full autonomous explore → plan → generate → heal |
+| Test (explore) | `/test --explore login` | Interactive browser exploration only |
+| Test (ticket) | `/test --ticket ENG-123` | Generate tests from Linear tickets |
+| Test (describe) | `/test --describe "..."` | Generate from user description |
+| Check | `/check` | Lint tests for best practices |
+| Rules | `/rules` | View best practice documentation |
+| Help | `/help` | This help guide |
 
 ## Available Agents
 
@@ -61,10 +62,11 @@ pattern documentation (Quoth) and test analytics (Exolar).
 
 ## Quick Commands
 
-- Start fresh: `/triqual-init`
-- Explore a feature: `/quick-test`
-- Generate from ticket: `/test-ticket ENG-123`
-- Check code quality: `/check-rules`
+- Start fresh: `/init`
+- Explore a feature: `/test --explore login`
+- Full autonomous: `/test login`
+- Generate from ticket: `/test --ticket ENG-123`
+- Check code quality: `/check`
 ```
 
 ### Skills Topic
@@ -72,7 +74,7 @@ pattern documentation (Quoth) and test analytics (Exolar).
 ```markdown
 ## Triqual Skills Reference
 
-### /triqual-init
+### /init
 
 **Purpose**: Initialize Triqual for a new project or after major changes.
 
@@ -84,14 +86,33 @@ pattern documentation (Quoth) and test analytics (Exolar).
 **What it does**:
 1. Analyzes project structure
 2. Detects existing tests and patterns
-3. Generates `triqual.config.json`
+3. Generates `triqual.config.ts` with type-safe configuration
 4. Creates context files for personalized behavior
 
 ---
 
-### /quick-test
+### /test {feature} (Unified Test Skill)
 
-**Purpose**: Fast, visible browser testing for exploration and debugging.
+The unified `/test` skill combines exploration, ticket-based, description-based, and autonomous test generation.
+
+#### Default Mode: `/test login`
+
+**Purpose**: Full autonomous test generation with pattern learning.
+
+**What it does**:
+1. **SETUP**: Auto-config, load patterns, discover credentials
+2. **EXPLORE**: Uses Playwright MCP to explore the feature
+3. **PLAN**: Creates test plan using Quoth patterns
+4. **GENERATE**: Produces .spec.ts in draft folder
+5. **HEAL LOOP**: Runs tests, fixes failures (max 5 iterations)
+6. **PROMOTE**: Moves passing tests to production location
+7. **LEARN**: Saves patterns and anti-patterns for future runs
+
+---
+
+#### Explore Mode: `/test --explore login`
+
+**Purpose**: Interactive browser exploration only.
 
 **When to use**:
 - Testing if a page loads correctly
@@ -100,51 +121,47 @@ pattern documentation (Quoth) and test analytics (Exolar).
 - Taking screenshots for documentation
 
 **What it does**:
-1. Detects running dev servers
-2. Writes script to /tmp
-3. Executes with visible browser (headless: false)
-4. Shows results in real-time
+- Opens visible browser (headless: false)
+- Uses Playwright MCP for real-time exploration
+- Does NOT generate test files
 
 ---
 
-### /test-ticket ENG-123
+#### Ticket Mode: `/test --ticket ENG-123`
 
-**Purpose**: Convert Linear tickets to comprehensive E2E tests.
+**Purpose**: Generate tests from Linear ticket acceptance criteria.
 
 **When to use**:
 - Implementing tests for a new feature ticket
 - Creating regression tests for a bug fix
-- Following the ticket-driven development workflow
+- Following ticket-driven development
 
 **What it does**:
 1. Fetches ticket from Linear
-2. Searches Quoth for existing patterns
-3. Generates test scenarios from acceptance criteria
-4. Creates test file with Page Objects
-5. Runs with 3 auto-healing attempts
-6. Provides PR instructions
+2. Parses acceptance criteria
+3. Creates test plan
+4. Generates and heals tests
+5. Provides PR instructions
 
 ---
 
-### /generate-test
+#### Describe Mode: `/test --describe "user resets password"`
 
-**Purpose**: Create production-ready test files from exploration or description.
+**Purpose**: Generate tests from a text description.
 
 **When to use**:
-- After using /quick-test to explore
 - When you have clear test requirements
-- Creating regression tests manually
+- No Linear ticket exists
+- Quick test generation from description
 
 **What it does**:
-1. Gathers context (from quick-test or user)
-2. Searches Quoth for patterns
-3. Creates properly structured test file
-4. Creates Page Objects if needed
-5. Runs and verifies tests pass
+1. Uses the description as test requirements
+2. Creates test plan
+3. Generates and heals tests
 
 ---
 
-### /check-rules
+### /check
 
 **Purpose**: Lint test files for Playwright best practice violations.
 
@@ -162,7 +179,7 @@ pattern documentation (Quoth) and test analytics (Exolar).
 
 ---
 
-### /playwright-rules
+### /rules
 
 **Purpose**: View comprehensive Playwright best practice documentation.
 
@@ -254,14 +271,14 @@ pattern documentation (Quoth) and test analytics (Exolar).
 
 ### For New Projects
 
-1. **Initialize**: `/triqual-init`
-2. **Explore**: `/quick-test` to understand the app
-3. **Generate**: `/generate-test` or `/test-ticket` for permanent tests
-4. **Verify**: `/check-rules` before committing
+1. **Initialize**: `/init`
+2. **Explore**: `/test --explore login` to understand the app
+3. **Generate**: `/test login` or `/test --ticket ENG-123` for permanent tests
+4. **Verify**: `/check` before committing
 
 ### For Existing Projects
 
-1. **Audit**: `/check-rules` to find violations
+1. **Audit**: `/check` to find violations
 2. **Fix**: Address ERROR-level issues first
 3. **Standardize**: Search Quoth for patterns to follow
 
@@ -388,7 +405,7 @@ mcp__exolar-qa__query_exolar_data({
 3. Try broader search terms
 
 **"Exolar query fails"**:
-1. Check project_id in triqual.config.json
+1. Check project_id in triqual.config.ts
 2. Verify Exolar OAuth completed
 3. Check dataset name is correct
 ```
@@ -431,7 +448,7 @@ mcp__exolar-qa__query_exolar_data({
 **Symptoms**: Tests fail despite fixes
 
 **Steps**:
-1. Run `/check-rules` to find violations
+1. Run `/check` to find violations
 2. Run failure-classifier to understand why
 3. Check if dev server is running
 4. Verify auth state is fresh
@@ -455,8 +472,8 @@ mcp__exolar-qa__query_exolar_data({
 **Symptoms**: Wrong paths, missing settings
 
 **Solutions**:
-1. Re-run `/triqual-init --force`
-2. Manually edit `triqual.config.json`
+1. Re-run `/init --force`
+2. Manually edit `triqual.config.ts`
 3. Check paths are relative to project root
 
 ---

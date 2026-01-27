@@ -277,8 +277,8 @@ If user approves, submit to Quoth for review.
 
 - Fix failing tests (use test-healer)
 - Classify failures (use failure-classifier)
-- Create tests (use `/generate-test`)
-- Run tests (use `/quick-test`)
+- Create tests (use `/test`)
+- Run tests (use `/test --explore`)
 
 This agent is for **pattern discovery and documentation** only.
 
