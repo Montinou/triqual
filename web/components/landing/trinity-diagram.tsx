@@ -2,6 +2,7 @@
 
 import { motion, useReducedMotion, useInView } from "framer-motion"
 import { useRef, type ReactNode } from "react"
+import Image from "next/image"
 import { Zap } from "lucide-react"
 
 const nodeVariants = {
@@ -119,9 +120,11 @@ function TrinityNode({ title, description, icon, position, glowClass, borderColo
 // Custom icon components with gradients
 function PlaywrightIcon() {
   return (
-    <img
+    <Image
       src="/playwright-logo.svg"
       alt="Playwright"
+      width={64}
+      height={64}
       className="w-16 h-16"
       style={{
         filter: 'brightness(1.2) drop-shadow(0 0 6px rgba(0, 255, 136, 0.9))',
@@ -132,9 +135,11 @@ function PlaywrightIcon() {
 
 function QuothIcon() {
   return (
-    <img
+    <Image
       src="/pluma-ciber.png"
       alt="Quoth"
+      width={64}
+      height={64}
       className="w-16 h-16"
       style={{
         filter: 'brightness(1.8) contrast(1.2) drop-shadow(0 0 6px rgba(168, 85, 247, 0.9))',

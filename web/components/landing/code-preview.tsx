@@ -1,8 +1,7 @@
 "use client"
 
-import { useState, type ReactNode } from "react"
+import { useState, useRef, useEffect, type ReactNode } from "react"
 import { motion, useReducedMotion, useInView, AnimatePresence } from "framer-motion"
-import { useRef } from "react"
 import { Check, Copy } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -111,12 +110,26 @@ export function CodePreview() {
   const isInView = useInView(ref, { once: true, margin: "-100px" })
   const [copied, setCopied] = useState(false)
   const [activeTab, setActiveTab] = useState("plugin")
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Cleanup timeout on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+      }
+    }
+  }, [])
 
   const copyToClipboard = async () => {
     const text = copyText[activeTab as keyof typeof copyText]
     await navigator.clipboard.writeText(text)
     setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    // Clear any existing timeout before setting a new one
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current)
+    }
+    timeoutRef.current = setTimeout(() => setCopied(false), 2000)
   }
 
   const content = (

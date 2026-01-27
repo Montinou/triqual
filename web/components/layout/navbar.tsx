@@ -3,6 +3,7 @@
 import { motion, useScroll, useTransform, useReducedMotion } from "framer-motion"
 import { Github } from "lucide-react"
 import Link from "next/link"
+import Image from "next/image"
 import { Button } from "@/components/ui/button"
 
 const navLinks = [
@@ -27,9 +28,11 @@ export function Navbar() {
       <nav className="fixed top-0 left-0 right-0 z-50 px-4 sm:px-6 lg:px-12 py-4 sm:py-6 flex justify-between items-center bg-gradient-to-b from-background to-transparent backdrop-blur-sm">
         <Link href="/" className="flex items-center gap-3 group">
           <div className="w-10 h-10 flex items-center justify-center relative">
-            <img
+            <Image
               src="/triqual_logo.png"
               alt="Triqual Logo"
+              width={40}
+              height={40}
               className="w-10 h-10"
               style={{
                 filter: 'drop-shadow(0 0 8px rgba(0, 255, 136, 0.5)) drop-shadow(0 0 8px rgba(168, 85, 247, 0.5)) drop-shadow(0 0 8px rgba(0, 240, 255, 0.5))'
@@ -89,9 +92,11 @@ export function Navbar() {
           whileHover={{ scale: 1.05, rotate: 5 }}
           transition={{ duration: 0.3 }}
         >
-          <img
+          <Image
             src="/triqual_logo.png"
             alt="Triqual Logo"
+            width={40}
+            height={40}
             className="w-10 h-10"
             style={{
               filter: 'drop-shadow(0 0 8px rgba(0, 255, 136, 0.5)) drop-shadow(0 0 8px rgba(168, 85, 247, 0.5)) drop-shadow(0 0 8px rgba(0, 240, 255, 0.5))'

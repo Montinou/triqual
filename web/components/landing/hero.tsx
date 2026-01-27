@@ -2,6 +2,7 @@
 
 import { motion, useReducedMotion } from "framer-motion"
 import { ArrowRight, BookOpen } from "lucide-react"
+import Image from "next/image"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import Link from "next/link"
@@ -39,9 +40,12 @@ export function Hero() {
     return (
       <section className="min-h-screen flex flex-col justify-center items-center px-4 sm:px-6 lg:px-8 pt-32 pb-16 text-center">
         <div className="mb-8 flex items-center justify-center">
-          <img
+          <Image
             src="/triqual_logo.png"
             alt="Triqual Logo"
+            width={96}
+            height={96}
+            priority
             className="w-20 h-20 sm:w-24 sm:h-24"
             style={{
               filter: 'drop-shadow(0 0 12px rgba(0, 255, 136, 0.6)) drop-shadow(0 0 12px rgba(168, 85, 247, 0.6)) drop-shadow(0 0 12px rgba(0, 240, 255, 0.6))'
@@ -117,9 +121,12 @@ export function Hero() {
         variants={itemVariants}
         className="mb-8 flex items-center justify-center"
       >
-        <img
+        <Image
           src="/triqual_logo.png"
           alt="Triqual Logo"
+          width={96}
+          height={96}
+          priority
           className="w-20 h-20 sm:w-24 sm:h-24"
           style={{
             filter: 'drop-shadow(0 0 12px rgba(0, 255, 136, 0.6)) drop-shadow(0 0 12px rgba(168, 85, 247, 0.6)) drop-shadow(0 0 12px rgba(0, 240, 255, 0.6))'
