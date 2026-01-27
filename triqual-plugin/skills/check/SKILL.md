@@ -1,8 +1,6 @@
 ---
 name: check
-description: Scan test files for Playwright best practice violations. Use when user says "check my tests", "lint tests", "validate tests", "check for violations", or "audit test code".
-argument-hint: [path/to/tests] [--fix] [--severity=error|warn|all]
-allowed-tools: Read, Edit, Glob, Grep
+description: "Scan test files for Playwright best practice violations. Use when user says check my tests, lint tests, validate tests, or audit test code."
 ---
 
 # /check - Playwright Best Practice Linting

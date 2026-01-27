@@ -1,8 +1,6 @@
 ---
 name: help
-description: Get help with Triqual plugin features, workflows, and troubleshooting. Use when user asks "how do I use triqual", "triqual help", "what skills are available", or needs guidance on test automation workflow.
-argument-hint: [topic]
-allowed-tools: Read, Glob
+description: "Get help with Triqual plugin features, workflows, and troubleshooting. Use when user asks how do I use triqual or needs guidance."
 ---
 
 # /help - Triqual Plugin Guide & Troubleshooting

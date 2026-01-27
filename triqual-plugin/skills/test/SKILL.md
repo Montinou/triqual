@@ -1,11 +1,6 @@
 ---
 name: test
-description: |
-  Unified Playwright test automation. Default mode runs full autonomous loop (explore → plan → generate → heal → learn).
-  Use --explore for interactive exploration, --ticket ENG-123 for Linear tickets, --describe "..." for text descriptions.
-user-invocable: true
-argument-hint: [feature] [--explore] [--ticket <id>] [--describe "description"]
-allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Task, mcp__plugin_triqual-plugin_playwright__*, mcp__linear__*, mcp__quoth__*, mcp__exolar-qa__*
+description: "Unified Playwright test automation. Default runs full autonomous loop. Use --explore for interactive, --ticket ENG-123 for Linear tickets, --describe for text descriptions."
 ---
 
 # /test - Unified Test Automation

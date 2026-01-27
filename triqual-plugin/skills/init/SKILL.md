@@ -1,8 +1,6 @@
 ---
 name: init
-description: Initialize Triqual for this project. Analyzes project structure, detects existing tests, and generates personalized configuration. Run on first use or after major project changes.
-argument-hint: [--force]
-allowed-tools: Read, Write, Edit, Bash, Glob, Grep
+description: "Initialize Triqual for this project. Analyzes project structure, detects existing tests, generates config. Run on first use or after major changes."
 ---
 
 # /init - Project Genesis

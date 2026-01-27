@@ -1,7 +1,6 @@
 ---
 name: rules
-description: Comprehensive Playwright best practices and rules. Use when writing, reviewing, or debugging Playwright tests. Covers locators, waits, assertions, Page Objects, test organization, network mocking, debugging, and parallelization.
-allowed-tools: Read, Glob, Grep
+description: "Comprehensive Playwright best practices and rules. Use when writing, reviewing, or debugging Playwright tests. 31 rules across 8 categories."
 ---
 
 # /rules - Playwright Best Practices Guide
