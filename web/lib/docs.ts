@@ -19,71 +19,41 @@ export interface Doc extends DocMeta {
 
 // Define document metadata (since the markdown files may not have frontmatter)
 const docsMeta: Record<string, Omit<DocMeta, "slug">> = {
+  "bootstrap-workflow": {
+    title: "Getting Started",
+    description: "Set up Triqual and learn available skills",
+    category: "Workflows",
+    order: 1,
+  },
   "standard-patterns": {
     title: "Standard Patterns",
     description: "Core patterns for writing reliable Playwright tests",
     category: "Patterns",
-    order: 1,
-  },
-  "escalation-triggers": {
-    title: "Escalation Triggers",
-    description: "When and how to escalate test failures",
-    category: "Patterns",
     order: 2,
+  },
+  "quoth-integration": {
+    title: "Quoth Integration",
+    description: "Pattern documentation and knowledge base",
+    category: "Integrations",
+    order: 3,
+  },
+  "exolar-integration": {
+    title: "Exolar Integration",
+    description: "Test analytics, failure classification, and healing",
+    category: "Integrations",
+    order: 4,
   },
   "playwright-mcp": {
     title: "Playwright MCP",
-    description: "Using the Playwright MCP server for browser automation",
-    category: "Tools",
-    order: 3,
-  },
-  "bootstrap-workflow": {
-    title: "Bootstrap Workflow",
-    description: "How to bootstrap new test projects",
-    category: "Workflows",
-    order: 4,
-  },
-  "debug-workflow": {
-    title: "Debug Workflow",
-    description: "Systematic approach to debugging test failures",
-    category: "Workflows",
+    description: "Browser automation via Model Context Protocol",
+    category: "Integrations",
     order: 5,
-  },
-  "explore-workflow": {
-    title: "Explore Workflow",
-    description: "How to explore and understand web applications",
-    category: "Workflows",
-    order: 6,
-  },
-  "verification-workflow": {
-    title: "Verification Workflow",
-    description: "Verifying test results and assertions",
-    category: "Workflows",
-    order: 7,
-  },
-  "error-patterns": {
-    title: "Error Patterns",
-    description: "Common error patterns and how to handle them",
-    category: "Reference",
-    order: 8,
   },
   "locator-strategies": {
     title: "Locator Strategies",
     description: "Best practices for element locators",
     category: "Reference",
-    order: 9,
-  },
-  "quoth-integration": {
-    title: "Quoth Integration",
-    description: "Integrating with Quoth knowledge base",
-    category: "Integrations",
-    order: 10,
-  },
-  "exolar-integration": {
-    title: "Exolar Integration",
-    description: "Integrating with Exolar for test analytics",
-    category: "Integrations",
-    order: 11,
+    order: 6,
   },
 }
 

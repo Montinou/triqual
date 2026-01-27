@@ -45,19 +45,34 @@ quoth_guidelines({ mode: "playwright" })
 
 ## Automatic Integration
 
-Triqual's hooks automatically:
+Triqual's hooks provide recommendations (not mandates):
 
-1. **Before writing tests**: Search Quoth for relevant patterns
-2. **After failures**: Look up error handling strategies
-3. **Pattern learning**: Propose new documentation from repeated patterns
+1. **Before writing tests**: Recommends searching Quoth for relevant patterns
+2. **After failures**: Suggests looking up error handling strategies
+3. **Pattern learning**: The `pattern-learner` agent proposes documentation updates
+
+### Hook Behavior
+
+When you write a `.spec.ts` file, you'll see:
+
+```
+[Triqual] Writing test file detected.
+
+Recommended steps before proceeding:
+1. Search for existing patterns
+2. Check for similar tests
+3. Review results and reuse existing Page Objects
+```
+
+These are suggestions - you decide whether to follow them.
 
 ## Manual Usage
 
-Search for patterns before writing tests:
+Search for patterns anytime:
 
-```bash
-# Search for existing patterns
-/quick-test "search quoth for authentication patterns"
+```typescript
+// In your workflow
+quoth_search_index({ query: "login form validation" })
 ```
 
 ## Best Practices
@@ -65,3 +80,4 @@ Search for patterns before writing tests:
 - Document successful patterns in Quoth
 - Update anti-patterns when you find fragile tests
 - Use Quoth search before writing new Page Objects
+- Let the `pattern-learner` agent propose updates from repeated failures

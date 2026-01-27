@@ -31,7 +31,7 @@ const pluginCode: CodeLine[] = [
       <>
         <span className="text-primary">/plugin</span>{" "}
         <span className="text-secondary">install</span>{" "}
-        <span className="text-destructive">triqual-plugin@triqual</span>
+        <span className="text-destructive">triqual@triqual</span>
       </>
     ),
   },
@@ -83,7 +83,7 @@ const manualCode: CodeLine[] = [
 
 const copyText = {
   plugin: `/plugin marketplace add Montinou/triqual
-/plugin install triqual-plugin@triqual
+/plugin install triqual@triqual
 "Test if the login page loads correctly"`,
   manual: `git clone https://github.com/Montinou/triqual ~/.claude/plugins/triqual
 cd ~/.claude/plugins/triqual/triqual-plugin

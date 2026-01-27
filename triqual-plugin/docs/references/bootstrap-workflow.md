@@ -12,8 +12,21 @@ How to set up a new test project with Triqual.
 
 2. **Review generated config**
    - `triqual.config.json` - Main settings
-   - `Docs/context/project.json` - Project metadata
-   - `Docs/context/patterns.json` - Test patterns
+   - `context/project.json` - Project metadata
+   - `context/patterns.json` - Test patterns & conventions
+   - `context/selectors.json` - Locator strategies
+
+## Available Skills
+
+| Skill | Purpose |
+|-------|---------|
+| `/triqual-init` | Initialize project configuration |
+| `/quick-test` | Ad-hoc browser testing |
+| `/test-ticket ENG-123` | Generate tests from Linear tickets |
+| `/generate-test` | Create production test files |
+| `/check-rules` | Lint tests for best practice violations |
+| `/playwright-rules` | View Playwright best practices (31 rules) |
+| `/triqual-help` | Get help and troubleshooting |
 
 ## Project Structure
 
@@ -63,12 +76,30 @@ npx playwright test smoke.spec.ts
 npx playwright test --debug
 ```
 
-## Using /quick-test
+## Ad-hoc Testing with /quick-test
 
-For ad-hoc testing without writing files:
+For quick testing without writing files:
 
 ```bash
 /quick-test
 ```
 
 Just describe what you want to test, and Triqual will execute it with a visible browser.
+
+## Checking Test Quality
+
+Lint your tests against 31 Playwright best practices:
+
+```bash
+/check-rules
+```
+
+This scans your test files for violations across 8 categories:
+- Locators & selectors
+- Waits & timing
+- Assertions
+- Page Objects
+- Test organization
+- Network mocking
+- Parallelization
+- Debugging

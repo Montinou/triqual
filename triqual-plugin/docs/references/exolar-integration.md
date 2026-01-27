@@ -55,11 +55,26 @@ perform_exolar_action({
 
 ## Automatic Integration
 
-Triqual's post-test hook:
+After running tests, Triqual's post-test hook provides recommendations:
 
-1. **Reports results** to Exolar automatically
-2. **Offers classification** for failures
-3. **Triggers healing** when patterns are detected
+```
+[Triqual] Test execution completed with failures.
+
+Recommended next steps:
+1. Classify the failure: Use failure-classifier agent
+2. For FLAKE or TEST_ISSUE: Consider using test-healer agent
+3. For BUG: Create a Linear ticket
+```
+
+### Available Agents
+
+| Agent | Purpose |
+|-------|---------|
+| `failure-classifier` | Classify failures as BUG/FLAKE/ENV/TEST_ISSUE |
+| `test-healer` | Auto-heal flaky or broken tests |
+| `pattern-learner` | Propose Quoth documentation updates |
+
+The hooks recommend but don't mandate - you control when to use agents.
 
 ## Analytics Dashboard
 

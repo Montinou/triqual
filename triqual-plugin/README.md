@@ -16,7 +16,7 @@ Combines the power of:
 /plugin marketplace add Montinou/triqual
 
 # Install plugin
-/plugin install triqual-plugin@triqual
+/plugin install triqual@triqual
 ```
 
 ### Local Development
