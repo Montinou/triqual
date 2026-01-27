@@ -7,7 +7,7 @@ source "${SCRIPT_DIR}/lib/common.sh"
 
 main() {
     # Read JSON from stdin (Claude Code passes hook input this way)
-    local input=$(read_hook_input)
+    read_hook_input > /dev/null
 
     # Check if session exists
     if ! session_exists; then
@@ -27,17 +27,17 @@ main() {
 
     # Output summary - warn if mandatory tools weren't used
     if [ "$quoth_searches" -eq 0 ] && [ "$exolar_queries" -eq 0 ]; then
-        local context="[Triqual] Session ended. WARNING: No Quoth searches or Exolar queries were made this session. If you wrote or modified tests, you may have missed existing patterns. Consider reviewing Quoth documentation before your next session."
-        output_context "$context" "Stop"
+        local message="[Triqual] Session ended. WARNING: No Quoth searches or Exolar queries were made this session. If you wrote or modified tests, you may have missed existing patterns. Consider reviewing Quoth documentation before your next session."
+        output_system_message "$message"
     elif [ "$quoth_searches" -eq 0 ]; then
-        local context="[Triqual] Session ended. Exolar queries: $exolar_queries. Note: No Quoth pattern searches were made - ensure you're reusing existing Page Objects and helpers."
-        output_context "$context" "Stop"
+        local message="[Triqual] Session ended. Exolar queries: $exolar_queries. Note: No Quoth pattern searches were made - ensure you're reusing existing Page Objects and helpers."
+        output_system_message "$message"
     elif [ "$exolar_queries" -eq 0 ]; then
-        local context="[Triqual] Session ended. Quoth searches: $quoth_searches. Note: No Exolar queries were made - remember to report test results and check for similar tests."
-        output_context "$context" "Stop"
+        local message="[Triqual] Session ended. Quoth searches: $quoth_searches. Note: No Exolar queries were made - remember to report test results and check for similar tests."
+        output_system_message "$message"
     else
-        local context="[Triqual] Session ended. Quoth searches: $quoth_searches, Exolar queries: $exolar_queries. Good job following the workflow!"
-        output_context "$context" "Stop"
+        local message="[Triqual] Session ended. Quoth searches: $quoth_searches, Exolar queries: $exolar_queries. Good job following the workflow!"
+        output_system_message "$message"
     fi
 }
 

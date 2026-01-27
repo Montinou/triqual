@@ -330,6 +330,18 @@ output_context() {
 EOF
 }
 
+# Output system message (for Stop hooks and other hooks without hookSpecificOutput)
+# Usage: output_system_message "Your message here"
+output_system_message() {
+    local message="$1"
+    local escaped=$(json_escape "$message")
+    cat << EOF
+{
+  "systemMessage": "$escaped"
+}
+EOF
+}
+
 # Output empty response (hook has nothing to add)
 output_empty() {
     echo '{}'

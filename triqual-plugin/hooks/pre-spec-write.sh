@@ -7,7 +7,8 @@ source "${SCRIPT_DIR}/lib/common.sh"
 
 main() {
     # Read JSON from stdin (Claude Code passes hook input this way)
-    local input=$(read_hook_input)
+    read_hook_input > /dev/null
+    local input="$_HOOK_INPUT"
 
     # Extract file path from input
     local file_path=$(extract_file_path "$input")

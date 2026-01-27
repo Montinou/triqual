@@ -19,8 +19,9 @@ claude --plugin-dir /path/to/triqual/triqual-plugin
 **What gets installed automatically:**
 - MCP servers: `quoth` and `exolar-qa` (via `.mcp.json`)
 - 4 hooks: SessionStart, PreToolUse, PostToolUse, Stop
-- 4 skills: `/triqual-init`, `/quick-test`, `/test-ticket`, `/generate-test`
+- 5 skills: `/triqual-init`, `/quick-test`, `/test-ticket`, `/generate-test`, `/playwright-rules`
 - 3 agents: test-healer, failure-classifier, pattern-learner
+- 31 Playwright best practice rules (8 categories)
 
 ## Quick Start
 
@@ -104,6 +105,7 @@ The plugin automatically installs these MCP servers:
 | quick-test | `/quick-test` | Ad-hoc browser testing with visible browser |
 | test-ticket | `/test-ticket ENG-123` | Full Linear ticket → test file workflow |
 | generate-test | `/generate-test` | Create production .spec.ts files |
+| playwright-rules | `/playwright-rules` | Comprehensive Playwright best practices (31 rules, 8 categories) |
 
 ## Agents
 
@@ -127,7 +129,8 @@ triqual/
 │   │   ├── triqual-init/SKILL.md
 │   │   ├── quick-test/SKILL.md
 │   │   ├── test-ticket/SKILL.md
-│   │   └── generate-test/SKILL.md
+│   │   ├── generate-test/SKILL.md
+│   │   └── playwright-rules/SKILL.md
 │   ├── hooks/                   # Hooks at plugin root (auto-discovered)
 │   │   ├── hooks.json
 │   │   ├── lib/common.sh
@@ -140,7 +143,11 @@ triqual/
 │   │   ├── failure-classifier.md
 │   │   └── pattern-learner.md
 │   ├── lib/                     # Playwright executor & helpers
-│   ├── docs/references/         # Comprehensive guides
+│   ├── docs/
+│   │   ├── references/          # Comprehensive guides
+│   │   └── playwright-rules/    # 31 best practice rules (8 categories)
+│   │       ├── SKILL.md
+│   │       └── rules/           # Individual rule files
 │   └── context/                 # Project configuration
 ├── web/                         # Landing page (triqual.vercel.app)
 └── CLAUDE.md
