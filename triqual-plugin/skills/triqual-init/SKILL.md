@@ -145,7 +145,7 @@ Read a sample of test files and identify selector patterns:
 
 ```bash
 # Find most common selector patterns
-grep -rh "locator\|getByRole\|getByTestId\|data-testid" --include="*.spec.ts" . 2>/dev/null | head -50
+grep -Erh "locator|getByRole|getByTestId|data-testid" --include="*.spec.ts" . 2>/dev/null | head -50
 ```
 
 Identify:
