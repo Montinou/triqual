@@ -49,10 +49,13 @@ log_warn() {
 # Returns: 0 on success, 1 on failure
 read_hook_input() {
     if [ -z "$_HOOK_INPUT" ]; then
-        # Read with timeout to prevent hanging
-        if ! _HOOK_INPUT=$(timeout 5 cat 2>/dev/null); then
-            log_debug "Failed to read stdin (timeout or error)"
-            _HOOK_INPUT=""
+        # Read stdin - Claude Code sends JSON and closes stdin
+        # Use cat directly (no timeout needed - Claude Code properly closes stdin)
+        # On macOS, 'timeout' command doesn't exist, so we avoid it
+        _HOOK_INPUT=$(cat 2>/dev/null) || true
+
+        if [ -z "$_HOOK_INPUT" ]; then
+            log_debug "Failed to read stdin or empty input"
             return 1
         fi
     fi
