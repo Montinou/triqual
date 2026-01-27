@@ -68,11 +68,11 @@ interface TrinityNodeProps {
 }
 
 function TrinityNode({ title, description, icon, position, glowClass, borderColor, href }: TrinityNodeProps) {
-  // Position nodes to form a balanced triangle - equal visual distance from center
+  // Position nodes to form a balanced triangle - more spacing for mobile
   const positionClasses = {
-    top: "top-[3%] left-1/2 -translate-x-1/2",
-    "bottom-left": "bottom-[8%] left-[15%]",
-    "bottom-right": "bottom-[8%] right-[15%]",
+    top: "top-[1%] left-1/2 -translate-x-1/2",
+    "bottom-left": "bottom-[5%] left-[10%]",
+    "bottom-right": "bottom-[5%] right-[10%]",
   }
 
   const content = (
@@ -397,7 +397,7 @@ export function TrinityDiagram() {
         </>
       ) : (
         <>
-          <div className="absolute top-[3%] left-1/2 -translate-x-1/2 w-52 min-h-[170px] p-5 bg-background-surface rounded-2xl border border-secondary/30 text-center">
+          <div className="absolute top-[1%] left-1/2 -translate-x-1/2 w-52 min-h-[170px] p-5 bg-background-surface rounded-2xl border border-secondary/30 text-center">
             <div className="flex justify-center mb-3">
               <PlaywrightIcon />
             </div>
@@ -409,7 +409,7 @@ export function TrinityDiagram() {
             href="https://quoth.ai-innovation.site/"
             target="_blank"
             rel="noopener noreferrer"
-            className="absolute bottom-[8%] left-[15%] w-52 min-h-[170px] p-5 bg-background-surface rounded-2xl border border-accent/30 text-center cursor-pointer hover:scale-105 transition-transform"
+            className="absolute bottom-[5%] left-[10%] w-52 min-h-[170px] p-5 bg-background-surface rounded-2xl border border-accent/30 text-center cursor-pointer hover:scale-105 transition-transform"
           >
             <div className="flex justify-center mb-3">
               <QuothIcon />
@@ -422,7 +422,7 @@ export function TrinityDiagram() {
             href="https://exolar.ai-innovation.site/"
             target="_blank"
             rel="noopener noreferrer"
-            className="absolute bottom-[8%] right-[15%] w-52 min-h-[170px] p-5 bg-background-surface rounded-2xl border border-primary/30 text-center cursor-pointer hover:scale-105 transition-transform"
+            className="absolute bottom-[5%] right-[10%] w-52 min-h-[170px] p-5 bg-background-surface rounded-2xl border border-primary/30 text-center cursor-pointer hover:scale-105 transition-transform"
           >
             <div className="flex justify-center mb-3">
               <ExolarIcon />
@@ -456,7 +456,7 @@ export function TrinityDiagram() {
         */}
         <div className="mx-auto w-full max-w-3xl">
           <div
-            className="origin-top-center scale-[0.52] sm:scale-[0.85] md:scale-100"
+            className="origin-top-center scale-[0.58] sm:scale-[0.85] md:scale-100"
             style={{
               marginLeft: 'auto',
               marginRight: 'auto',
@@ -468,7 +468,7 @@ export function TrinityDiagram() {
           </div>
         </div>
         {/* Spacer to account for scaled height */}
-        <div className="mt-[-276px] sm:mt-[-86px] md:mt-0" />
+        <div className="mt-[-242px] sm:mt-[-86px] md:mt-0" />
       </section>
     )
   }
@@ -489,7 +489,7 @@ export function TrinityDiagram() {
       */}
       <div className="mx-auto flex justify-center">
         <div
-          className="origin-top scale-[0.52] sm:scale-[0.85] md:scale-100 transition-transform duration-300"
+          className="origin-top scale-[0.58] sm:scale-[0.85] md:scale-100 transition-transform duration-300"
         >
           <div style={{ width: '768px', height: '576px' }}>
             {diagramContent(true)}
@@ -497,7 +497,7 @@ export function TrinityDiagram() {
         </div>
       </div>
       {/* Negative margin to compensate for scaled height difference */}
-      <div className="mt-[-276px] sm:mt-[-86px] md:mt-0" />
+      <div className="mt-[-242px] sm:mt-[-86px] md:mt-0" />
     </motion.section>
   )
 }
