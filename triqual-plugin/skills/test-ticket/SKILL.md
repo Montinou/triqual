@@ -282,14 +282,32 @@ Attempt 3: Final attempt
 
 ### 5.4 If Still Failing After 3 Attempts
 
+**Before marking as fixme, try the test-healer agent:**
+
+```
+Invoke the test-healer agent with:
+- The failing test file path
+- The error message from the last attempt
+- Context about what was already tried
+
+The test-healer agent has additional healing strategies beyond
+the basic fixes applied in the execution loop.
+```
+
+**If test-healer also fails:**
+
 ```typescript
 test.fixme('should login with valid credentials', async ({ page }) => {
   // TODO: Manual fix required - ENG-123
   // Error: {last-error-message}
+  // Healing attempts: 3 (execution loop) + 3 (test-healer agent)
 });
 ```
 
-Ask user how to proceed.
+Ask user how to proceed:
+1. Keep test.fixme() and create a follow-up ticket
+2. Delete the test and document why
+3. Investigate the underlying issue manually
 
 ---
 

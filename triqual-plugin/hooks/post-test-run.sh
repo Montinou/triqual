@@ -1,32 +1,47 @@
 #!/usr/bin/env bash
 # Triqual Plugin - PostToolUse Hook (Bash)
-# Reports test results to Exolar and offers healing options
+# Analyzes test results and offers next steps
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
 
 main() {
     # Read JSON from stdin (Claude Code passes hook input this way)
-    read_hook_input > /dev/null
+    if ! read_hook_input > /dev/null; then
+        log_debug "Failed to read hook input"
+        output_empty
+        exit 0
+    fi
+
     local input="$_HOOK_INPUT"
+
+    # Validate input
+    if ! validate_hook_input "$input"; then
+        log_debug "Invalid hook input, skipping"
+        output_empty
+        exit 0
+    fi
 
     # Extract command from input
     local command=$(extract_command "$input")
 
     # Skip if not a playwright test command
     if ! is_playwright_test_command "$command"; then
+        log_debug "Not a playwright command: $command"
         output_empty
         exit 0
     fi
 
     # Skip dry-run commands
     if has_dry_run_flag "$command"; then
+        log_debug "Dry-run command, skipping"
         output_empty
         exit 0
     fi
 
     # Check if hint already delivered this session
     if hint_delivered_for "post_test_run"; then
+        log_debug "post_test_run hint already delivered"
         output_empty
         exit 0
     fi
@@ -34,20 +49,44 @@ main() {
     # Mark hint as delivered
     mark_hint_delivered "post_test_run"
 
-    # Note: PostToolUse hooks receive tool_result in the JSON, but we provide
-    # general guidance rather than parsing the specific output
-    local context="[Triqual] Test execution completed.
+    # Try to extract and parse test results from tool_result
+    local tool_result=$(extract_tool_result "$input")
+    local test_stats=$(parse_test_results "$tool_result")
+    local has_failures=false
 
-MANDATORY POST-RUN ACTIONS:
-1. Report results to Exolar: perform_exolar_action({ action: \"report_execution\", params: { status: \"passed|failed\", test_count: N } })
+    if has_test_failures "$tool_result"; then
+        has_failures=true
+    fi
 
-IF FAILURES DETECTED:
-2. FIRST classify the failure: Use failure-classifier agent OR query_exolar_data({ dataset: \"failure_patterns\" }) to determine if FLAKE/BUG/ENV
-3. For FLAKES: Use test-healer agent to auto-fix with retry logic or better selectors
-4. For BUGS: Create a Linear ticket, DO NOT modify tests to mask real bugs
-5. For ENV issues: Document in Quoth using quoth_propose_update()
+    # Build context message based on results
+    local context=""
 
-DO NOT retry failed tests blindly - always classify first to avoid masking real issues."
+    if [ "$has_failures" = "true" ]; then
+        # Failures detected - recommend failure-classifier
+        local stats_msg=""
+        if [ -n "$test_stats" ]; then
+            stats_msg=" ($test_stats)"
+        fi
+
+        context="[Triqual] Test execution completed with failures${stats_msg}.
+
+Recommended next steps:
+1. Classify the failure: Use failure-classifier agent to determine if FLAKE/BUG/ENV/TEST_ISSUE
+   - This helps decide whether to auto-heal or report a bug
+
+2. For FLAKE or TEST_ISSUE: Consider using test-healer agent to apply fixes
+3. For BUG: Create a Linear ticket - do not modify tests to mask real bugs
+4. Report to Exolar: perform_exolar_action({ action: \"report_execution\", params: { status: \"failed\" } })
+
+Would you like me to run the failure-classifier agent to analyze these failures?"
+    else
+        # Tests passed or no result info
+        context="[Triqual] Test execution completed.
+
+Recommended next steps:
+1. Report results to Exolar: perform_exolar_action({ action: \"report_execution\", params: { status: \"passed\" } })
+2. If any tests were flaky, consider documenting patterns in Quoth"
+    fi
 
     output_context "$context" "PostToolUse"
 }

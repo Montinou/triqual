@@ -1,0 +1,30 @@
+{
+  "$schema": "./project.schema.json",
+  "_comment": "This is a template file. Triqual init generates a project-specific version.",
+  "name": "{{project_name}}",
+  "description": "{{project_description}}",
+  "testDir": "{{test_directory}}",
+  "pagesDir": "{{pages_directory}}",
+  "helpersDir": "{{helpers_directory}}",
+  "baseUrl": "{{base_url}}",
+  "playwrightConfig": "{{playwright_config_path}}",
+  "environments": {
+    "local": "http://localhost:3000",
+    "staging": "{{staging_url}}",
+    "production": "{{production_url}}"
+  },
+  "auth": {
+    "storageState": "{{auth_storage_state}}",
+    "setupProject": "{{auth_setup_project}}"
+  },
+  "scripts": {
+    "test": "npx playwright test",
+    "test:headed": "npx playwright test --headed",
+    "test:ui": "npx playwright test --ui",
+    "test:debug": "npx playwright test --debug"
+  },
+  "ci": {
+    "provider": "{{ci_provider}}",
+    "configFile": "{{ci_config_file}}"
+  }
+}

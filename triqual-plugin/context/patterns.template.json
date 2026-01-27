@@ -1,0 +1,62 @@
+{
+  "$schema": "./patterns.schema.json",
+  "_comment": "This is a template file. Triqual init generates a project-specific version based on detected patterns.",
+  "timeout": {
+    "default": 30000,
+    "ci": 60000,
+    "local": 15000,
+    "navigation": 30000,
+    "assertion": 5000
+  },
+  "retry": {
+    "maxAttempts": 3,
+    "backoffMs": 1000,
+    "retryOnFailure": true
+  },
+  "selectors": {
+    "preferDataTestId": true,
+    "fallbackToRole": true,
+    "customTestIdAttribute": "data-testid",
+    "priority": ["data-testid", "role", "text", "css"],
+    "antiPatterns": [
+      "nth(0) without :visible filter",
+      "complex XPath expressions",
+      "fragile CSS chains (> 3 levels)",
+      "hardcoded indices without context"
+    ]
+  },
+  "assertions": {
+    "defaultTimeout": 5000,
+    "preferSoftAssertions": false,
+    "useWebFirstAssertions": true
+  },
+  "healing": {
+    "enabled": true,
+    "maxAttempts": 3,
+    "strategies": [
+      "add-visibility-filter",
+      "use-role-fallback",
+      "text-content-match",
+      "dynamic-timeout"
+    ],
+    "autoTrigger": false
+  },
+  "generation": {
+    "includeComments": true,
+    "usePageObjects": true,
+    "arrangeActAssert": true,
+    "includeTicketReference": true
+  },
+  "naming": {
+    "testFiles": "{feature}.spec.ts",
+    "ticketTestFiles": "{ticket-id}-{feature}.spec.ts",
+    "pageObjects": "{Feature}Page.ts",
+    "helpers": "{name}.helper.ts",
+    "fixtures": "{name}.fixture.ts"
+  },
+  "reporting": {
+    "reportToExolar": true,
+    "includeScreenshots": true,
+    "includeTrace": "on-first-retry"
+  }
+}
