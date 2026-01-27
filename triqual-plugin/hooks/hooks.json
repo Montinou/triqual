@@ -33,6 +33,28 @@
         ]
       }
     ],
+    "SubagentStop": [
+      {
+        "matcher": "test-healer|failure-classifier|pattern-learner",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/subagent-stop.sh"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pre-compact.sh"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "matcher": "*",

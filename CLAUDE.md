@@ -87,9 +87,11 @@ The plugin automatically installs these MCP servers:
 
 | Hook | Trigger | Action |
 |------|---------|--------|
-| SessionStart | Session begins | Initialize session, show startup guidance |
+| SessionStart | Session begins + after compaction | Initialize session, show startup guidance |
 | PreToolUse (Edit/Write) | Writing .spec.ts | Recommend checking Quoth patterns |
 | PostToolUse (Bash) | After playwright test | Suggest fetching Exolar data & failure analysis |
+| SubagentStop | After agent completes | Provide follow-up guidance based on agent type |
+| PreCompact | Before context compaction | Preserve critical patterns and session state |
 | Stop | Session ends | Cleanup, show summary tips |
 
 ### Hook Behavior
@@ -176,6 +178,8 @@ triqual/
 │   │   ├── session-start.sh
 │   │   ├── pre-spec-write.sh
 │   │   ├── post-test-run.sh
+│   │   ├── subagent-stop.sh     # After agent completes
+│   │   ├── pre-compact.sh       # Before context compaction
 │   │   └── stop.sh
 │   ├── agents/                  # Agents at plugin root (auto-discovered)
 │   │   ├── test-healer.md

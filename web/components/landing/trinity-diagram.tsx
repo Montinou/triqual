@@ -4,6 +4,7 @@ import { motion, useReducedMotion, useInView } from "framer-motion"
 import { useRef, type ReactNode } from "react"
 import Image from "next/image"
 import { Zap } from "lucide-react"
+import { ExolarAnimatedLogo } from "@/components/ui/exolar-animated-logo"
 
 const nodeVariants = {
   hidden: { opacity: 0, scale: 0.8 },
@@ -149,42 +150,8 @@ function QuothIcon() {
 }
 
 function ExolarIcon() {
-  // Exolar eclipse logo - circular with cyan/orange gradient border and glows
-  return (
-    <div className="relative w-11 h-11 flex items-center justify-center">
-      {/* Cyan glow - top left */}
-      <div
-        className="absolute w-10 h-10 rounded-full bg-cyan-500/30 blur-md"
-        style={{ top: '-4px', left: '-4px' }}
-      />
-      {/* Orange glow - bottom right */}
-      <div
-        className="absolute w-10 h-10 rounded-full bg-orange-500/30 blur-md"
-        style={{ bottom: '-4px', right: '-4px' }}
-      />
-      {/* Main eclipse circle */}
-      <div
-        className="relative w-11 h-11 rounded-full bg-black z-10"
-        style={{
-          boxShadow: 'inset 0 0 10px rgba(0,0,0,0.8)',
-        }}
-      >
-        {/* Gradient border */}
-        <div
-          className="absolute inset-0 rounded-full"
-          style={{
-            border: '2px solid transparent',
-            background: 'linear-gradient(135deg, #06b6d4, #000000 40%, #000000 60%, #f97316) border-box',
-            WebkitMask: 'linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0)',
-            WebkitMaskComposite: 'xor',
-            maskComposite: 'exclude',
-          }}
-        />
-        {/* Inner depth gradient */}
-        <div className="absolute inset-0 rounded-full bg-[radial-gradient(circle,transparent_20%,black_100%)]" />
-      </div>
-    </div>
-  )
+  // Exolar animated eclipse logo with lightning - same as dashboard sidebar
+  return <ExolarAnimatedLogo size={44} animated={true} />
 }
 
 export function TrinityDiagram() {
