@@ -50,7 +50,7 @@ main() {
     elif [ "$quoth_searches" = "0" ]; then
         message="[Triqual] Session ended. Exolar queries: $exolar_queries. Tip: Quoth pattern searches can help discover reusable Page Objects and helpers."
     elif [ "$exolar_queries" = "0" ]; then
-        message="[Triqual] Session ended. Quoth searches: $quoth_searches. Tip: Reporting test results to Exolar helps track reliability trends."
+        message="[Triqual] Session ended. Quoth searches: $quoth_searches. Tip: Fetching Exolar history on failures helps identify patterns."
     else
         message="[Triqual] Session ended. Quoth searches: $quoth_searches, Exolar queries: $exolar_queries."
     fi

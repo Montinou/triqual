@@ -359,7 +359,7 @@ export function TrinityDiagram() {
 
           <TrinityNode
             title="Quoth"
-            description="Knowledge Base"
+            description="Live Pattern Docs"
             icon={<QuothIcon />}
             position="bottom-left"
             glowClass="glow-purple"
@@ -369,7 +369,7 @@ export function TrinityDiagram() {
 
           <TrinityNode
             title="Exolar"
-            description="Test Analytics"
+            description="CI Analytics"
             icon={<ExolarIcon />}
             position="bottom-right"
             glowClass="glow-cyan"
@@ -420,7 +420,7 @@ export function TrinityDiagram() {
               <QuothIcon />
             </div>
             <h3 className="font-bold text-lg mb-1">Quoth</h3>
-            <p className="text-sm text-foreground-secondary">Knowledge Base</p>
+            <p className="text-sm text-foreground-secondary">Live Pattern Docs</p>
           </a>
 
           <a
@@ -433,7 +433,7 @@ export function TrinityDiagram() {
               <ExolarIcon />
             </div>
             <h3 className="font-bold text-lg mb-1">Exolar</h3>
-            <p className="text-sm text-foreground-secondary">Test Analytics</p>
+            <p className="text-sm text-foreground-secondary">CI Analytics</p>
           </a>
 
           <div

@@ -71,12 +71,17 @@ main() {
         context="[Triqual] Test execution completed with failures${stats_msg}.
 
 Recommended next steps:
-1. Classify the failure: Use failure-classifier agent to determine if FLAKE/BUG/ENV/TEST_ISSUE
+1. Fetch similar failures from Exolar: query_exolar_data({ dataset: \"failures\", filters: { error_pattern: \"...\" } })
+   - This reveals if this is a known flake or recurring issue
+
+2. Use Playwright MCP to explore the app and verify actual behavior
+   - Navigate to the failing page, inspect state, compare expected vs actual
+
+3. Classify the failure: Use failure-classifier agent to determine if FLAKE/BUG/ENV/TEST_ISSUE
    - This helps decide whether to auto-heal or report a bug
 
-2. For FLAKE or TEST_ISSUE: Consider using test-healer agent to apply fixes
-3. For BUG: Create a Linear ticket - do not modify tests to mask real bugs
-4. Report to Exolar: perform_exolar_action({ action: \"report_execution\", params: { status: \"failed\" } })
+4. For FLAKE or TEST_ISSUE: Consider using test-healer agent to apply fixes
+5. For BUG: Create a Linear ticket - do not modify tests to mask real bugs
 
 Would you like me to run the failure-classifier agent to analyze these failures?"
     else
@@ -84,8 +89,8 @@ Would you like me to run the failure-classifier agent to analyze these failures?
         context="[Triqual] Test execution completed.
 
 Recommended next steps:
-1. Report results to Exolar: perform_exolar_action({ action: \"report_execution\", params: { status: \"passed\" } })
-2. If any tests were flaky, consider documenting patterns in Quoth"
+1. If any tests were flaky, check Exolar for patterns: query_exolar_data({ dataset: \"flaky_tests\", filters: { test_file: \"...\" } })
+2. Document successful patterns in Quoth for future reuse"
     fi
 
     output_context "$context" "PostToolUse"

@@ -291,9 +291,12 @@ Run tests: npx playwright test                       │
     ▼                                                │
 [Triqual] Post-run hook offers next steps            │
     │                                                │
-    ├── Tests passed? ── Report to Exolar ──────────┤
+    ├── Tests passed? ── Done ─────────────────────┤
     │                                                │
-    └── Tests failed? ── failure-classifier ────────┤
+    └── Tests failed? ── Fetch Exolar history ─────┤
+                              │                      │
+                              ▼                      │
+                        failure-classifier ─────────┤
                               │                      │
                               ▼                      │
                         test-healer (if FLAKE)       │
@@ -306,17 +309,19 @@ End Session ◄─────────────────────�
 
 ```
 ┌─────────────┐         ┌─────────────┐         ┌─────────────┐
-│   QUOTH     │────────▶│  PLAYWRIGHT │────────▶│   EXOLAR    │
-│  (Patterns) │         │  (Execute)  │         │ (Analytics) │
+│   QUOTH     │         │  PLAYWRIGHT │         │   EXOLAR    │
+│             │         │     MCP     │         │             │
+│ Persisting  │◀────────│ AI verifies │────────▶│ AI fetches  │
+│ live docs   │         │ app behavior│         │ CI results  │
 └─────────────┘         └─────────────┘         └─────────────┘
-      ▲                                                │
-      │                                                │
-      └──────────── pattern-learner agent ─────────────┘
+      ▲                       │                       │
+      │                       │                       │
+      └───────── pattern-learner (learns from both) ──┘
 ```
 
 1. Search **Quoth** for patterns before writing
-2. Execute tests with **Playwright**
-3. Report results to **Exolar**
+2. Execute tests with **Playwright MCP**
+3. Fetch history from **Exolar** on failures
 4. **pattern-learner** proposes updates to Quoth
 5. Cycle continues, improving over time
 ```

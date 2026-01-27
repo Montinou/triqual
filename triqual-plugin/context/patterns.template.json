@@ -55,7 +55,7 @@
     "fixtures": "{name}.fixture.ts"
   },
   "reporting": {
-    "reportToExolar": true,
+    "ciPipelineReports": true,
     "includeScreenshots": true,
     "includeTrace": "on-first-retry"
   }

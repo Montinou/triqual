@@ -67,7 +67,7 @@ This will:
 2. Search Quoth for patterns
 3. Generate proper test files with Page Objects
 4. Execute with auto-healing
-5. Report to Exolar
+5. Learn from failures (Exolar history + Playwright MCP verification)
 6. Create PR
 
 ## How It Works
@@ -79,13 +79,13 @@ When you write `.spec.ts` files, the plugin automatically:
 2. Checks Exolar for similar existing tests
 3. Applies project-specific best practices
 
-### Automatic Analytics
+### Autonomous Learning
 
-After running tests:
-1. Results are reported to Exolar dashboard
-2. Failures are analyzed for patterns
-3. Similar past failures are surfaced
-4. Healing suggestions are offered
+When tests fail, the AI:
+1. Fetches historic failures from Exolar to find similar issues
+2. Uses Playwright MCP to explore the app and verify actual behavior
+3. Compares expected vs actual to classify the failure
+4. Proposes fixes or creates tickets based on classification
 
 ### Learning Loop
 

@@ -33,19 +33,19 @@ const docsMeta: Record<string, Omit<DocMeta, "slug">> = {
   },
   "quoth-integration": {
     title: "Quoth Integration",
-    description: "Pattern documentation and knowledge base",
+    description: "Persisting live docs for learned patterns",
     category: "Integrations",
     order: 3,
   },
   "exolar-integration": {
     title: "Exolar Integration",
-    description: "Test analytics, failure classification, and healing",
+    description: "Fetch CI analytics, failure history, and test trends",
     category: "Integrations",
     order: 4,
   },
   "playwright-mcp": {
     title: "Playwright MCP",
-    description: "Browser automation via Model Context Protocol",
+    description: "Autonomous app verification and exploration",
     category: "Integrations",
     order: 5,
   },

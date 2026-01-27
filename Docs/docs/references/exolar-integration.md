@@ -1,15 +1,17 @@
-# Exolar Integration - Analytics and Reporting
+# Exolar Integration - CI Analytics Database
 
-This document describes how to integrate with Exolar for test analytics, failure analysis, and reporting.
+This document describes how to integrate with Exolar to **fetch** CI analytics, failure history, and test trends.
 
 ## Overview
 
-Exolar is a test analytics dashboard that provides:
+Exolar is a **CI analytics database** that stores test results from your CI/CD pipeline. The AI uses Exolar to:
 
-1. **Test execution tracking** - Results, timing, trends
-2. **Failure clustering** - Group similar failures
-3. **Flakiness detection** - Identify unstable tests
-4. **Historical analysis** - Patterns over time
+1. **Fetch** historical test results and trends
+2. **Query** failure patterns and clusters
+3. **Analyze** flake rates and test reliability
+4. **Compare** current failures against past occurrences
+
+**Important:** Data flows FROM your CI pipeline TO Exolar. The AI READS from Exolar to make informed decisions - it does not report to Exolar.
 
 ## MCP Tools
 
@@ -248,36 +250,33 @@ Check current state:
 
 ### After Test Run
 
-Report and analyze:
+Fetch history and investigate:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    AFTER TEST RUN                                            │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
-│   1. Report results                                                         │
-│      perform_exolar_action({                                                │
-│        action: "report_results",                                            │
-│        payload: { results: [...] }                                          │
-│      })                                                                     │
-│                                                                              │
-│   2. If failures exist, analyze                                             │
-│      perform_exolar_action({                                                │
-│        action: "analyze_failures",                                          │
-│        payload: { execution_id: "..." }                                     │
-│      })                                                                     │
-│                                                                              │
-│   3. Check if failures match known patterns                                 │
+│   1. If failures exist, fetch similar failures                              │
 │      query_exolar_data({                                                    │
 │        dataset: "failures/clustered",                                       │
 │        filters: { error_pattern: "Timeout" }                                │
 │      })                                                                     │
 │                                                                              │
-│   4. Update flaky markers if applicable                                     │
-│      perform_exolar_action({                                                │
-│        action: "mark_flaky",                                                │
-│        payload: { test_name: "...", reason: "..." }                         │
+│   2. Check if known flake                                                   │
+│      query_exolar_data({                                                    │
+│        dataset: "failures/flaky",                                           │
+│        filters: { test_name: "failing-test.spec.ts" }                       │
 │      })                                                                     │
+│                                                                              │
+│   3. Use Playwright MCP to explore app and verify actual behavior           │
+│      browser_navigate({ url: "http://localhost:3000/failing-page" })        │
+│      browser_snapshot({})                                                   │
+│                                                                              │
+│   4. Classify failure based on evidence                                     │
+│      - BUG: App behavior differs from spec                                  │
+│      - FLAKE: Inconsistent results, timing-related                          │
+│      - ENV: Works locally, fails in CI                                      │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -581,19 +580,19 @@ if (isHealable) {
 │                    HEALING FEEDBACK LOOP                                     │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
-│   1. Test fails in Exolar                                                   │
+│   1. Test fails, AI fetches history from Exolar                             │
 │      ↓                                                                      │
-│   2. Analyze failure pattern                                                │
+│   2. AI uses Playwright MCP to verify actual behavior                       │
 │      ↓                                                                      │
-│   3. Request healing (if locator/timing issue)                              │
+│   3. AI classifies: FLAKE, BUG, ENV, or TEST_ISSUE                          │
 │      ↓                                                                      │
-│   4. Test healer agent attempts fix                                         │
+│   4. If FLAKE/TEST_ISSUE: test-healer agent attempts fix                    │
 │      ↓                                                                      │
 │   5. Run fixed test                                                         │
 │      ↓                                                                      │
-│   6. Report result to Exolar                                                │
+│   6. CI pipeline sends new results to Exolar                                │
 │      ↓                                                                      │
-│   7. If successful: close failure                                           │
+│   7. If successful: pattern-learner proposes Quoth update                   │
 │      If failed: escalate for manual review                                  │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘

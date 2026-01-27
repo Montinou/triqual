@@ -35,13 +35,14 @@ main() {
         log_debug "Failed to initialize session"
     fi
 
-    # Startup guidance with Quoth and Exolar integration
+    # Startup guidance with Quoth, Exolar, and Playwright MCP integration
     local context="[Triqual] Test automation initialized.
 
 Recommended workflow:
 1. Before writing test code: Search for existing patterns with quoth_search_index({ query: \"relevant pattern\" })
-2. After test runs: Report results to Exolar using perform_exolar_action({ action: \"report_execution\" })
-3. If tests fail: Use failure-classifier agent to determine if FLAKE/BUG/ENV before attempting fixes
+2. When tests fail: Fetch historic results from Exolar to find similar failures: query_exolar_data({ dataset: \"failures\", filters: { error_pattern: \"...\" } })
+3. Use Playwright MCP to explore the app and verify actual behavior vs expected
+4. Use failure-classifier agent to determine if FLAKE/BUG/ENV before attempting fixes
 
 Available skills: /quick-test (ad-hoc browser testing), /test-ticket ENG-XXX (generate from Linear), /generate-test (create permanent spec files)
 

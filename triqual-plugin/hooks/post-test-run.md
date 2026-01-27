@@ -1,6 +1,6 @@
 ---
 name: post-test-run
-description: After running Playwright tests, report results to Exolar
+description: After running Playwright tests, fetch Exolar history and investigate failures
 trigger: PostToolUse
 tools: [Bash]
 ---
@@ -30,13 +30,13 @@ Extract from the command output:
 
 ### 2. Check for Dashboard Reporter
 
-If `DASHBOARD_URL` environment variable is set, the `dashboard-reporter.ts` already handles reporting to Exolar automatically.
+If `DASHBOARD_URL` environment variable is set, the `dashboard-reporter.ts` sends results to the CI pipeline automatically.
 
 In this case, just summarize results for the user.
 
-### 3. Manual Reporting (if no dashboard-reporter)
+### 3. Fetch Similar Failures from Exolar
 
-If results weren't auto-reported, offer to report manually:
+If results have failures, offer to fetch similar failures:
 
 ```
 The test run completed:
@@ -48,7 +48,7 @@ Failed tests:
 1. login.spec.ts > should redirect after login
 2. proposal.spec.ts > should show error on invalid input
 
-Would you like me to report these results to Exolar?
+Would you like me to check Exolar for similar past failures?
 ```
 
 ### 4. On Failures - Offer Healing

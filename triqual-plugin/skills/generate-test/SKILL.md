@@ -328,7 +328,7 @@ test('should display user list', async ({ page }) => {
 
 - Fetch tickets from Linear (use `/test-ticket` for that)
 - Auto-heal failing tests (that's the test-healer agent)
-- Report to Exolar (that's automatic via hooks)
+- Fetch Exolar history (that's recommended by hooks on failure)
 
 This skill is for **creating production test files** only.
 

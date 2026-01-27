@@ -18,9 +18,9 @@ const steps = [
   },
   {
     number: 3,
-    title: "Analyze Results",
+    title: "Investigate Failures",
     description:
-      "Results flow to Exolar for failure clustering, flake detection, and pattern recognition across test runs.",
+      "AI fetches similar failures from Exolar, explores the app with Playwright MCP, and classifies as BUG/FLAKE/ENV.",
   },
   {
     number: 4,

@@ -33,9 +33,9 @@ const features = [
   },
   {
     icon: BarChart3,
-    title: "Analytics Dashboard",
+    title: "CI Analytics",
     description:
-      "Results flow to Exolar for failure clustering, flake detection, and historical trend analysis.",
+      "AI fetches results from Exolar to find similar failures, check flake history, and compare against past runs.",
   },
   {
     icon: Ticket,

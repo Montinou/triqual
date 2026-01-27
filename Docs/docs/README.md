@@ -33,12 +33,12 @@ Claude Code should behave like a skilled test developer who:
 │                                                                              │
 │   ┌─────────────┐                                      ┌─────────────┐      │
 │   │   QUOTH     │◄─────── Learning ──────────────────┤   EXOLAR    │      │
-│   │  Knowledge  │                                      │  Analytics  │      │
-│   │    Base     │                                      │             │      │
+│   │  Live Docs  │                                      │ CI Database │      │
+│   │  (Patterns) │                                      │             │      │
 │   └──────┬──────┘                                      └──────▲──────┘      │
 │          │                                                    │              │
-│          │ Search patterns                      Report results│              │
-│          │ before acting                        after testing │              │
+│          │ Search patterns                      Fetch history │              │
+│          │ before acting                        for diagnosis │              │
 │          ▼                                                    │              │
 │   ┌─────────────────────────────────────────────────────────────┐           │
 │   │                    CLAUDE CODE                               │           │
@@ -184,7 +184,7 @@ See: [references/verification-workflow.md](references/verification-workflow.md)
 - [Error Patterns](references/error-patterns.md) - Common failures and fixes
 - [Locator Strategies](references/locator-strategies.md) - Finding elements reliably
 - [Quoth Integration](references/quoth-integration.md) - Knowledge base interaction
-- [Exolar Integration](references/exolar-integration.md) - Analytics and reporting
+- [Exolar Integration](references/exolar-integration.md) - CI analytics database (fetch history)
 
 ## Design Principles
 

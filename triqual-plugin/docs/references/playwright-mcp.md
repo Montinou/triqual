@@ -4,8 +4,10 @@ Browser automation via Model Context Protocol for Claude Code.
 
 ## Overview
 
-Playwright MCP provides browser automation tools directly to Claude through the Model Context Protocol. Unlike traditional Playwright scripts, MCP tools allow Claude to:
+Playwright MCP provides browser automation tools directly to Claude through the Model Context Protocol. The AI uses Playwright MCP to **autonomously explore and verify application behavior** - not just run scripts, but actively investigate and understand the app.
 
+Key capabilities:
+- **Autonomous verification** - AI explores the app to understand failures
 - Control browsers conversationally
 - Take screenshots and inspect pages
 - Fill forms and click elements
@@ -128,6 +130,93 @@ User: Navigate to localhost:3000 and take a screenshot
 Claude: [Uses browser_navigate to localhost:3000]
         [Uses browser_take_screenshot]
         Here's the screenshot of your homepage...
+```
+
+## Autonomous Verification
+
+The most powerful use of Playwright MCP is **autonomous app exploration** for failure diagnosis.
+
+### Failure Investigation Workflow
+
+When a test fails, the AI can autonomously:
+
+1. **Navigate to the failing page:**
+   ```typescript
+   browser_navigate({ url: "http://localhost:3000/login" })
+   ```
+
+2. **Inspect the current state:**
+   ```typescript
+   browser_snapshot({})
+   // See what elements are actually present
+   ```
+
+3. **Compare expected vs actual:**
+   - Is the element present but with different text?
+   - Is the page in an unexpected state?
+   - Are there error messages visible?
+
+4. **Test the actual behavior:**
+   ```typescript
+   browser_fill_form({
+     fields: [
+       { name: "Email", type: "textbox", ref: "ref_1", value: "test@example.com" }
+     ]
+   })
+   browser_click({ ref: "ref_2", element: "Submit button" })
+   ```
+
+5. **Verify the outcome:**
+   ```typescript
+   browser_snapshot({})
+   // Did it navigate? Show error? Succeed?
+   ```
+
+### Test Credentials
+
+For authenticated flows, the AI uses test credentials to:
+- Log in as test users
+- Access protected pages
+- Verify user-specific behavior
+- Test permission boundaries
+
+**Note:** Store test credentials in environment variables or Quoth patterns, not in code.
+
+### Integration with Failure Diagnosis
+
+```
+┌─────────────┐         ┌─────────────┐         ┌─────────────┐
+│   Test      │         │  Playwright │         │   Exolar    │
+│  Failure    │────────▶│    MCP      │◀────────│  History    │
+│             │         │  (Verify)   │         │  (Context)  │
+└─────────────┘         └─────────────┘         └─────────────┘
+        │                      │
+        │                      ▼
+        │               ┌─────────────┐
+        └──────────────▶│ Diagnosis   │
+                        │ (BUG/FLAKE) │
+                        └─────────────┘
+```
+
+1. **Fetch history from Exolar** - Is this a known issue?
+2. **Explore with Playwright MCP** - What's the actual state?
+3. **Compare and classify** - BUG, FLAKE, ENV, or TEST_ISSUE?
+4. **Take action** - Fix test or create ticket
+
+### Example: Debugging a Timeout
+
+```
+AI: The test failed with "Timeout waiting for selector '#submit-btn'"
+
+Let me investigate...
+
+[browser_navigate to the page]
+[browser_snapshot to see current state]
+
+I can see the page loaded, but the button has id="submitBtn" not "#submit-btn".
+This appears to be a TEST_BUG - the selector is incorrect.
+
+Recommendation: Update the test to use the correct selector.
 ```
 
 ## Best Practices

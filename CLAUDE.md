@@ -75,14 +75,16 @@ The plugin automatically installs these MCP servers:
 
 ### Available MCP Tools
 
-**Quoth Tools:**
+**Quoth Tools (Persisting Live Docs):**
 - `quoth_search_index({ query })` - Search documentation patterns
 - `quoth_read_doc({ docId })` - Read full document
 - `quoth_guidelines({ mode })` - Get coding guidelines
 
-**Exolar Tools:**
-- `query_exolar_data({ dataset, filters })` - Query test data
-- `perform_exolar_action({ action, params })` - Report/classify
+**Exolar Tools (CI Analytics Database):**
+- `query_exolar_data({ dataset, filters })` - Fetch test results, failures, trends
+
+**Playwright MCP (Autonomous App Verification):**
+- `browser_navigate`, `browser_snapshot`, `browser_click`, etc. - Explore app behavior
 
 ## Hooks (Automatic)
 
@@ -90,7 +92,7 @@ The plugin automatically installs these MCP servers:
 |------|---------|--------|
 | SessionStart | Session begins | Initialize session, show startup guidance |
 | PreToolUse (Edit/Write) | Writing .spec.ts | Recommend checking Quoth patterns |
-| PostToolUse (Bash) | After playwright test | Offer Exolar reporting & suggest failure analysis |
+| PostToolUse (Bash) | After playwright test | Suggest fetching Exolar data & failure analysis |
 | Stop | Session ends | Cleanup, show summary tips |
 
 ### Hook Behavior
@@ -103,8 +105,9 @@ Hooks provide **recommendations** (not mandates) and respect user autonomy:
 
 Recommended workflow:
 1. Before writing test code: Search for existing patterns with quoth_search_index(...)
-2. After test runs: Report results to Exolar
-3. If tests fail: Use failure-classifier agent
+2. When tests fail: Fetch historic results from Exolar to find similar failures
+3. Use Playwright MCP to explore the app and verify actual behavior
+4. Use failure-classifier agent to determine if FLAKE/BUG/ENV
 
 Tip: If Quoth/Exolar searches fail, verify MCP is connected with /mcp
 ```
@@ -200,20 +203,35 @@ triqual/
 
 ## The Learning Loop
 
+Triqual is an **autonomous learning loop** - AI learns and improves from past mistakes automatically:
+
 ```
 ┌─────────────┐         ┌─────────────┐         ┌─────────────┐
-│   QUOTH     │────────▶│  PLAYWRIGHT │────────▶│   EXOLAR    │
-│  (Patterns) │         │  (Execute)  │         │ (Analytics) │
+│   QUOTH     │         │  PLAYWRIGHT │         │   EXOLAR    │
+│             │         │     MCP     │         │             │
+│ Persisting  │◀────────│ AI verifies │────────▶│ AI fetches  │
+│ live docs   │         │ app behavior│         │ CI results, │
+│ for patterns│         │ autonomously│         │ logs, trends│
 └─────────────┘         └─────────────┘         └─────────────┘
-      ▲                                                │
-      │                                                │
-      └────────── PATTERN LEARNER AGENT ───────────────┘
+      ▲                       │                       │
+      │                       │                       │
+      └───────── PATTERN LEARNER (learns from both) ──┘
 ```
+
+### MCP Server Purposes
+
+| Server | Purpose | AI Action |
+|--------|---------|-----------|
+| **Quoth** | Persisting yet live documentation | AI stores & retrieves learned patterns |
+| **Exolar** | CI analytics database | AI **fetches** results, logs, history |
+| **Playwright MCP** | App verification | AI **autonomously explores** app with test creds |
+
+### Workflow
 
 1. **SessionStart** → Initialize session, suggest using Quoth
 2. **Writing tests** → pre-spec-write hook recommends searching Quoth
-3. **Running tests** → post-test-run hook offers Exolar reporting
-4. **Failures** → Recommend failure-classifier, then test-healer
+3. **Running tests** → post-test-run hook suggests fetching Exolar data
+4. **Failures** → Fetch history, explore with Playwright MCP, classify
 5. **Patterns** → pattern-learner proposes Quoth updates
 6. **SessionStop** → Cleanup, show usage tips
 

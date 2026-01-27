@@ -195,7 +195,7 @@ Add wait: `await page.waitForSelector('.element', { timeout: 10000 })`
 
 - Generate production test files (use `/generate-test` for that)
 - Create Page Objects (use `/test-ticket` workflow)
-- Report to Exolar (that's automatic via hooks)
+- Fetch Exolar history (that's recommended by hooks on failure)
 - Search Quoth patterns (that's automatic via hooks)
 
 This skill is for **quick exploration and debugging** only.
