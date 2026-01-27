@@ -487,6 +487,309 @@ update_test_stats() {
 }
 
 # ============================================================================
+# RUN LOG MANAGEMENT
+# ============================================================================
+
+# Get the .triqual directory path (project root)
+# Searches upward from current directory for triqual.config.ts or .triqual/
+get_triqual_dir() {
+    local dir="$PWD"
+    while [ "$dir" != "/" ]; do
+        if [ -f "$dir/triqual.config.ts" ] || [ -d "$dir/.triqual" ]; then
+            echo "$dir/.triqual"
+            return 0
+        fi
+        dir=$(dirname "$dir")
+    done
+    # Default to current directory
+    echo "$PWD/.triqual"
+}
+
+# Get the runs directory path
+get_runs_dir() {
+    echo "$(get_triqual_dir)/runs"
+}
+
+# Extract feature name from a file path
+# e.g., /path/to/login.spec.ts -> login
+# e.g., /path/to/user-dashboard.spec.ts -> user-dashboard
+extract_feature_name() {
+    local file_path="$1"
+
+    if [ -z "$file_path" ]; then
+        return 0
+    fi
+
+    # Get basename, remove .spec.ts/.test.ts extension
+    local basename=$(basename "$file_path")
+    echo "$basename" | sed -E 's/\.(spec|test)\.(ts|js)$//'
+}
+
+# Get run log path for a feature
+get_run_log_path() {
+    local feature="$1"
+
+    if [ -z "$feature" ]; then
+        return 0
+    fi
+
+    echo "$(get_runs_dir)/${feature}.md"
+}
+
+# Check if run log exists for a feature
+run_log_exists() {
+    local feature="$1"
+    local log_path=$(get_run_log_path "$feature")
+
+    [ -f "$log_path" ]
+}
+
+# Check if a specific stage exists in run log
+# Usage: stage_exists "login" "RESEARCH"
+stage_exists() {
+    local feature="$1"
+    local stage="$2"
+    local log_path=$(get_run_log_path "$feature")
+
+    if [ ! -f "$log_path" ]; then
+        return 1
+    fi
+
+    grep -q "### Stage: $stage" "$log_path"
+}
+
+# Check if ANALYZE stage exists
+analyze_stage_exists() {
+    local feature="$1"
+    stage_exists "$feature" "ANALYZE"
+}
+
+# Check if RESEARCH stage exists
+research_stage_exists() {
+    local feature="$1"
+    stage_exists "$feature" "RESEARCH"
+}
+
+# Check if PLAN stage exists
+plan_stage_exists() {
+    local feature="$1"
+    stage_exists "$feature" "PLAN"
+}
+
+# Check if WRITE stage with hypothesis exists
+write_stage_exists() {
+    local feature="$1"
+    local log_path=$(get_run_log_path "$feature")
+
+    if [ ! -f "$log_path" ]; then
+        return 1
+    fi
+
+    # Check for WRITE stage AND Hypothesis
+    if grep -q "### Stage: WRITE" "$log_path" && grep -q "Hypothesis:" "$log_path"; then
+        return 0
+    fi
+    return 1
+}
+
+# Check if external research was done (Quoth/Exolar searches)
+external_research_exists() {
+    local feature="$1"
+    local log_path=$(get_run_log_path "$feature")
+
+    if [ ! -f "$log_path" ]; then
+        return 1
+    fi
+
+    # Check for external research section with content
+    if grep -q "## External Research" "$log_path" && grep -q "Quoth Search" "$log_path"; then
+        return 0
+    fi
+    return 1
+}
+
+# Count failures by category in run log
+# Usage: count_failures_by_category "login" "LOCATOR"
+count_failures_by_category() {
+    local feature="$1"
+    local category="$2"
+    local log_path=$(get_run_log_path "$feature")
+
+    if [ ! -f "$log_path" ]; then
+        echo "0"
+        return 0
+    fi
+
+    local count=$(grep -c "Category: $category" "$log_path" 2>/dev/null || echo "0")
+    echo "$count"
+}
+
+# Count total RUN attempts in run log
+count_run_attempts() {
+    local feature="$1"
+    local log_path=$(get_run_log_path "$feature")
+
+    if [ ! -f "$log_path" ]; then
+        echo "0"
+        return 0
+    fi
+
+    local count=$(grep -c "### Stage: RUN" "$log_path" 2>/dev/null || echo "0")
+    echo "$count"
+}
+
+# Check if .fixme() is documented
+fixme_documented() {
+    local feature="$1"
+    local log_path=$(get_run_log_path "$feature")
+
+    if [ ! -f "$log_path" ]; then
+        return 1
+    fi
+
+    grep -q "\.fixme()" "$log_path"
+}
+
+# Check if accumulated learnings section exists
+has_accumulated_learnings() {
+    local feature="$1"
+    local log_path=$(get_run_log_path "$feature")
+
+    if [ ! -f "$log_path" ]; then
+        return 1
+    fi
+
+    grep -q "## Accumulated Learnings" "$log_path"
+}
+
+# Get the most recent run log file
+get_latest_run_log() {
+    local runs_dir=$(get_runs_dir)
+
+    if [ ! -d "$runs_dir" ]; then
+        return 0
+    fi
+
+    ls -t "$runs_dir"/*.md 2>/dev/null | head -1
+}
+
+# List all active run logs (modified in last 24 hours)
+list_active_run_logs() {
+    local runs_dir=$(get_runs_dir)
+
+    if [ ! -d "$runs_dir" ]; then
+        return 0
+    fi
+
+    find "$runs_dir" -name "*.md" -mtime -1 2>/dev/null | head -5
+}
+
+# ============================================================================
+# AWAITING LOG UPDATE FLAG
+# ============================================================================
+
+# Get the awaiting log update flag file path
+get_awaiting_update_file() {
+    echo "$TRIQUAL_SESSION_DIR/awaiting_log_update"
+}
+
+# Set awaiting log update flag
+set_awaiting_log_update() {
+    ensure_session_dir || return 1
+    local flag_file=$(get_awaiting_update_file)
+    echo "true" > "$flag_file"
+}
+
+# Clear awaiting log update flag
+clear_awaiting_log_update() {
+    local flag_file=$(get_awaiting_update_file)
+    rm -f "$flag_file" 2>/dev/null || true
+}
+
+# Check if awaiting log update
+is_awaiting_log_update() {
+    local flag_file=$(get_awaiting_update_file)
+
+    if [ -f "$flag_file" ] && [ "$(cat "$flag_file" 2>/dev/null)" = "true" ]; then
+        return 0
+    fi
+    return 1
+}
+
+# Check if run log was recently updated (within N seconds)
+# Usage: run_log_recently_updated "login" 60
+run_log_recently_updated() {
+    local feature="$1"
+    local seconds="${2:-60}"
+    local log_path=$(get_run_log_path "$feature")
+
+    if [ ! -f "$log_path" ]; then
+        return 1
+    fi
+
+    # Get file modification time
+    local log_mtime
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        log_mtime=$(stat -f %m "$log_path" 2>/dev/null)
+    else
+        log_mtime=$(stat -c %Y "$log_path" 2>/dev/null)
+    fi
+
+    if [ -z "$log_mtime" ]; then
+        return 1
+    fi
+
+    local now=$(date +%s)
+    if (( now - log_mtime < seconds )); then
+        return 0
+    fi
+    return 1
+}
+
+# Check if any run log was recently updated
+any_run_log_recently_updated() {
+    local seconds="${1:-60}"
+    local runs_dir=$(get_runs_dir)
+
+    if [ ! -d "$runs_dir" ]; then
+        return 1
+    fi
+
+    local latest_log=$(get_latest_run_log)
+    if [ -z "$latest_log" ]; then
+        return 1
+    fi
+
+    local log_mtime
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        log_mtime=$(stat -f %m "$latest_log" 2>/dev/null)
+    else
+        log_mtime=$(stat -c %Y "$latest_log" 2>/dev/null)
+    fi
+
+    if [ -z "$log_mtime" ]; then
+        return 1
+    fi
+
+    local now=$(date +%s)
+    if (( now - log_mtime < seconds )); then
+        return 0
+    fi
+    return 1
+}
+
+# Get the knowledge.md file path
+get_knowledge_file() {
+    echo "$(get_triqual_dir)/knowledge.md"
+}
+
+# Check if knowledge.md exists
+knowledge_file_exists() {
+    local knowledge_file=$(get_knowledge_file)
+    [ -f "$knowledge_file" ]
+}
+
+# ============================================================================
 # FILE CATEGORY DETECTION
 # ============================================================================
 

@@ -20,6 +20,15 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pre-spec-write.sh"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pre-retry-gate.sh"
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -33,9 +42,20 @@
         ]
       }
     ],
+    "SubagentStart": [
+      {
+        "matcher": "test-planner|test-generator|test-healer|failure-classifier|pattern-learner",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/subagent-start.sh"
+          }
+        ]
+      }
+    ],
     "SubagentStop": [
       {
-        "matcher": "test-healer|failure-classifier|pattern-learner",
+        "matcher": "test-planner|test-generator|test-healer|failure-classifier|pattern-learner",
         "hooks": [
           {
             "type": "command",

@@ -18,9 +18,9 @@ claude --plugin-dir /path/to/triqual/triqual-plugin
 
 **What gets installed automatically:**
 - MCP servers: `quoth` and `exolar-qa` (via `.mcp.json`)
-- 4 hooks: SessionStart, PreToolUse, PostToolUse, Stop
+- 7 hooks: SessionStart, PreToolUse (2), PostToolUse, SubagentStart, SubagentStop, PreCompact, Stop
 - 5 skills: `/init`, `/test`, `/check`, `/rules`, `/help`
-- 3 agents: test-healer, failure-classifier, pattern-learner
+- 5 agents: test-planner, test-generator, test-healer, failure-classifier, pattern-learner
 - 31 Playwright best practice rules (8 categories)
 - Context templates for project configuration
 
@@ -29,13 +29,13 @@ claude --plugin-dir /path/to/triqual/triqual-plugin
 ### Initialize (First Time)
 
 ```bash
-/init                          # Analyze project & generate config
+/init                          # Analyze project & generate config + .triqual/ directory
 ```
 
 ### Unified Test Generation
 
 ```bash
-/test login              # Full autonomous (explore → plan → generate → heal → learn)
+/test login              # Full autonomous (analyze → research → plan → write → run → learn)
 /test --explore login    # Interactive exploration only
 /test --ticket ENG-123   # From Linear ticket
 /test --describe "..."   # From user description
@@ -57,6 +57,78 @@ claude --plugin-dir /path/to/triqual/triqual-plugin
 
 ```bash
 /help                    # Show available commands and guidance
+```
+
+## Documented Learning Loop (NEW)
+
+Triqual enforces a **documented learning loop** that prevents erratic workflows and ensures context survives compaction:
+
+```
+ANALYZE → RESEARCH → PLAN → WRITE → RUN → LEARN
+```
+
+### How It Works
+
+1. **Hooks use exit codes to BLOCK actions** until documentation is complete
+2. **Run logs** at `.triqual/runs/{feature}.md` track each stage
+3. **Knowledge file** at `.triqual/knowledge.md` accumulates project-specific patterns
+4. **Context survives compaction** because it's in files, not just memory
+
+### Gate-Based Enforcement
+
+| Gate | Trigger | Block Condition | Unblock Action |
+|------|---------|-----------------|----------------|
+| Pre-Write | Write .spec.ts | No run log or missing ANALYZE/RESEARCH/PLAN | Create log, document stages |
+| Post-Run | After playwright test | Log not updated with results | Add RUN stage with results |
+| Retry Limit | 2+ same-category fails | No Quoth/Exolar search | Document external research |
+| Deep Analysis | 12+ attempts | No deep analysis documented | Perform expanded Quoth/Exolar research |
+| Max Attempts | 25+ total attempts | No .fixme() or justification | Mark fixme or justify |
+| Session End | Stop hook | No learnings section | Add accumulated learnings |
+
+### Run Log Structure
+
+Each feature gets a run log at `.triqual/runs/{feature}.md`:
+
+```markdown
+# Test Run Log: login-flow
+
+## Session: 2026-01-27T10:30:00Z
+
+### Stage: ANALYZE
+- Acceptance criteria from requirements
+- User flows to test
+- Test cases identified
+
+### Stage: RESEARCH
+- Quoth patterns found
+- Exolar similar tests
+- Available Page Objects, helpers, fixtures, test data
+
+### Stage: PLAN
+- Test strategy and priorities
+- Tools/resources to use
+- New artifacts to create
+
+### Stage: WRITE
+**Hypothesis:** [Approach and rationale]
+
+### Stage: RUN (Attempt 1)
+**Result:** FAILED
+**Category:** WAIT
+**Analysis:** Dashboard loads async, URL changes before content ready
+
+### Stage: FIX (Attempt 1)
+**Hypothesis:** Add networkidle wait after login
+
+### Stage: RUN (Attempt 2)
+**Result:** PASSED
+
+### Stage: LEARN
+**Pattern:** This project requires networkidle wait after auth redirects
+
+## Accumulated Learnings
+1. Login buttons use data-testid="login-submit"
+2. Dashboard requires networkidle wait after redirect
 ```
 
 ## MCP Servers (Auto-Installed)
@@ -83,64 +155,52 @@ The plugin automatically installs these MCP servers:
 **Playwright MCP (Autonomous App Verification):**
 - `browser_navigate`, `browser_snapshot`, `browser_click`, etc. - Explore app behavior
 
-## Hooks (Automatic)
+## Hooks (BLOCKING Enforcement)
 
 | Hook | Trigger | Action |
 |------|---------|--------|
-| SessionStart | Session begins + after compaction | Initialize session, show startup guidance |
-| PreToolUse (Edit/Write) | Writing .spec.ts | Recommend checking Quoth patterns |
-| PostToolUse (Bash) | After playwright test | Suggest fetching Exolar data & failure analysis |
-| SubagentStop | After agent completes | Provide follow-up guidance based on agent type |
-| PreCompact | Before context compaction | Preserve critical patterns and session state |
-| Stop | Session ends | Cleanup, show summary tips |
+| SessionStart | Session begins + after compaction | Initialize session, detect active run logs, show guidance |
+| PreToolUse (Edit/Write) | Writing .spec.ts | **BLOCK** if ANALYZE/RESEARCH/PLAN/WRITE stages not documented |
+| PreToolUse (Bash) | Before playwright test | **BLOCK** if retry limits exceeded without external research |
+| PostToolUse (Bash) | After playwright test | Set flag requiring run log update before next action |
+| **SubagentStart** | Before agent runs | **INJECT CONTEXT** - tells agent what to read (run log, knowledge, Quoth) |
+| SubagentStop | After agent completes | Instruct to update run log with agent findings, suggest next step |
+| PreCompact | Before context compaction | Preserve run log state and critical context |
+| Stop | Session ends | Check for missing accumulated learnings |
 
-### Hook Behavior
+### Hook Exit Codes
 
-Hooks provide **recommendations** (not mandates) and respect user autonomy:
+| Exit Code | Effect |
+|-----------|--------|
+| 0 | Continue - action proceeds |
+| 1 | Block silently |
+| **2** | **Block + stderr message sent to Claude** |
 
-**On SessionStart:**
+Hooks use exit code 2 to block actions AND tell Claude what documentation is needed.
+
+### Example: Blocked Action
+
 ```
-[Triqual] Test automation initialized.
+🚫 BLOCKED: No run log found for "login"
 
-Recommended workflow:
-1. Before writing test code: Search for existing patterns with quoth_search_index(...)
-2. When tests fail: Fetch historic results from Exolar to find similar failures
-3. Use Playwright MCP to explore the app and verify actual behavior
-4. Use failure-classifier agent to determine if FLAKE/BUG/ENV
+Before writing test code, you MUST create a run log at:
+.triqual/runs/login.md
 
-Tip: If Quoth/Exolar searches fail, verify MCP is connected with /mcp
-```
+Required stages:
+1. ANALYZE - Review requirements, identify test cases
+2. RESEARCH - Search Quoth for patterns, check Exolar for similar tests
+3. PLAN - Document test strategy, tools/helpers to use
+4. WRITE - Document hypothesis
 
-**Before writing .spec.ts:**
-```
-[Triqual] Writing test file detected.
-
-Recommended steps before proceeding:
-1. Search for existing patterns
-2. Check for similar tests
-3. Review results and reuse existing Page Objects
-
-Following existing patterns reduces maintenance debt.
-```
-
-**After running tests (with failures):**
-```
-[Triqual] Test execution completed with failures.
-
-Recommended next steps:
-1. Classify the failure: Use failure-classifier agent
-2. For FLAKE or TEST_ISSUE: Consider using test-healer agent
-3. For BUG: Create a Linear ticket
-
-Would you like me to run the failure-classifier agent?
+Then retry this write operation.
 ```
 
 ## Skills
 
 | Skill | Command | Purpose |
 |-------|---------|---------|
-| init | `/init` | Initialize Triqual for project (first-time setup, generates config) |
-| test | `/test login` | Full autonomous test generation (explore → plan → generate → heal → learn) |
+| init | `/init` | Initialize Triqual (creates .triqual/ directory, generates config) |
+| test | `/test login` | Full autonomous test generation with documented loop |
 | test (explore) | `/test --explore login` | Interactive browser exploration only |
 | test (ticket) | `/test --ticket ENG-123` | Generate tests from Linear ticket acceptance criteria |
 | test (describe) | `/test --describe "..."` | Generate tests from user text description |
@@ -150,11 +210,95 @@ Would you like me to run the failure-classifier agent?
 
 ## Agents
 
-| Agent | Triggers On | Action |
-|-------|-------------|--------|
-| test-healer | "fix failing tests" | Auto-heal with attempts (always asks before applying) |
-| failure-classifier | "is this a flake?" | Classify as FLAKE/BUG/ENV/TEST_ISSUE |
-| pattern-learner | Repeated failures | Propose Quoth documentation updates |
+Triqual includes 5 specialized agents that work together in the documented learning loop:
+
+### The Agentic Loop
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    TRIQUAL AGENT LOOP                           │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  User Request (ticket, description, feature name)               │
+│        ↓                                                         │
+│  ┌──────────────┐                                                │
+│  │ TEST-PLANNER │ ← ANALYZE/RESEARCH/PLAN stages                 │
+│  │   (purple)   │   Creates run log with test plan               │
+│  └──────┬───────┘                                                │
+│         ↓                                                        │
+│  ┌──────────────┐                                                │
+│  │TEST-GENERATOR│ ← WRITE stage                                  │
+│  │   (green)    │   Generates test code from plan                │
+│  └──────┬───────┘                                                │
+│         ↓                                                        │
+│  ┌──────────────┐                                                │
+│  │   RUN TEST   │ ← RUN stage                                    │
+│  │   (bash)     │   npx playwright test                          │
+│  └──────┬───────┘                                                │
+│         │                                                        │
+│    ┌────┴────┐                                                   │
+│   PASS      FAIL                                                 │
+│    ↓         ↓                                                   │
+│  LEARN   ┌──────────────────┐                                    │
+│    ↓     │FAILURE-CLASSIFIER│ ← Categorizes the failure          │
+│ pattern- │    (orange)      │                                    │
+│ learner  └────────┬─────────┘                                    │
+│                   ↓                                              │
+│            ┌──────────────┐                                      │
+│            │ TEST-HEALER  │ ← FIX stage (up to 3 attempts)       │
+│            │    (blue)    │   Then back to RUN                   │
+│            └──────┬───────┘                                      │
+│                   ↓                                              │
+│              RUN TEST (loop)                                     │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Agent Reference
+
+| Agent | Role | Triggers On | Action |
+|-------|------|-------------|--------|
+| **test-planner** | 🎯 Plan | "plan tests for X", Linear ticket, `/test` start | Creates run log with ANALYZE/RESEARCH/PLAN stages |
+| **test-generator** | 🔨 Generate | After test-planner, "generate from plan" | Reads PLAN, generates test code, documents WRITE stage |
+| **test-healer** | 🔧 Fix | Test failure, "fix failing tests" | Analyzes failure, applies fix, documents FIX stage |
+| **failure-classifier** | 📊 Classify | "is this a flake?", unclear failures | Classifies as FLAKE/BUG/ENV/TEST_ISSUE |
+| **pattern-learner** | 📚 Learn | Repeated fixes, session end, explicit request | Extracts patterns, updates knowledge.md |
+
+### Agent Details
+
+**test-planner (purple)**
+- Searches Quoth for patterns
+- Queries Exolar for similar tests
+- Explores app with Playwright MCP
+- Fetches Linear ticket details (if provided)
+- Creates run log with comprehensive plan
+
+**test-generator (green)**
+- Reads PLAN stage from run log
+- Reads project knowledge.md
+- Generates Playwright test code
+- Creates Page Objects if needed
+- Documents WRITE stage with hypothesis
+
+**test-healer (blue)** - Autonomous Loop Agent
+- Runs tests, analyzes failures, applies fixes autonomously
+- Loops until tests PASS or 25 attempts reached
+- Deep analysis phase at attempt 12
+- Works on files in `.draft/` folder
+- Promotes to final location on SUCCESS
+- Documents every RUN and FIX stage
+
+**failure-classifier (orange)**
+- Analyzes failure patterns
+- Queries Exolar for historical data
+- Classifies failure type
+- Recommends next action
+
+**pattern-learner (purple)**
+- Reviews all run logs
+- Identifies recurring patterns
+- Updates knowledge.md
+- Proposes patterns to Quoth
 
 ## Directory Structure
 
@@ -167,42 +311,79 @@ triqual/
 │   │   └── plugin.json          # Plugin manifest only
 │   ├── .mcp.json                # MCP server auto-install (at plugin root)
 │   ├── skills/                  # Skills at plugin root (auto-discovered)
-│   │   ├── init/SKILL.md        # /init - project initialization
-│   │   ├── test/SKILL.md        # /test - unified test generation
-│   │   ├── check/SKILL.md       # /check - best practice linting
-│   │   ├── rules/SKILL.md       # /rules - best practice docs
-│   │   └── help/SKILL.md        # /help - plugin guidance
+│   │   ├── init/SKILL.md
+│   │   ├── test/SKILL.md
+│   │   ├── check/SKILL.md
+│   │   ├── rules/SKILL.md
+│   │   └── help/SKILL.md
 │   ├── hooks/                   # Hooks at plugin root (auto-discovered)
 │   │   ├── hooks.json
-│   │   ├── lib/common.sh        # Shared functions with error handling
+│   │   ├── lib/common.sh        # Shared functions (run log helpers, etc.)
 │   │   ├── session-start.sh
-│   │   ├── pre-spec-write.sh
+│   │   ├── pre-spec-write.sh    # BLOCKING: enforces documentation
+│   │   ├── pre-retry-gate.sh    # BLOCKING: enforces retry limits
 │   │   ├── post-test-run.sh
-│   │   ├── subagent-stop.sh     # After agent completes
-│   │   ├── pre-compact.sh       # Before context compaction
+│   │   ├── subagent-start.sh    # INJECT: context before agents run
+│   │   ├── subagent-stop.sh     # GUIDE: next steps after agents complete
+│   │   ├── pre-compact.sh
 │   │   └── stop.sh
-│   ├── agents/                  # Agents at plugin root (auto-discovered)
-│   │   ├── test-healer.md
-│   │   ├── failure-classifier.md
-│   │   └── pattern-learner.md
-│   ├── context/                 # Configuration templates & learned patterns
-│   │   ├── config.template.ts   # TypeScript config template
+│   ├── agents/
+│   │   ├── test-planner.md       # ANALYZE/RESEARCH/PLAN stages
+│   │   ├── test-generator.md     # WRITE stage - generates code from plan
+│   │   ├── test-healer.md        # FIX stage - auto-heal failures
+│   │   ├── failure-classifier.md # Classify failures (FLAKE/BUG/ENV/TEST)
+│   │   └── pattern-learner.md    # LEARN stage - extract patterns
+│   ├── context/                 # Templates & learned patterns
+│   │   ├── run-log.template.md  # Template for run logs
+│   │   ├── knowledge.template.md # Template for project knowledge
+│   │   ├── config.template.ts
 │   │   ├── project.template.json
 │   │   ├── patterns.template.json
 │   │   ├── selectors.template.json
 │   │   ├── patterns-learned.json
 │   │   └── anti-patterns-learned.json
-│   ├── lib/                     # TypeScript types & helpers
-│   │   └── config.ts            # defineConfig and type definitions
+│   ├── lib/
+│   │   └── config.ts
 │   └── docs/
-│       ├── references/          # Comprehensive guides
-│       └── playwright-rules/    # 31 best practice rules (8 categories)
-│           └── rules/           # Individual rule files
-├── web/                         # Landing page (triqual.vercel.app)
+│       ├── references/
+│       └── playwright-rules/
+├── web/
 └── CLAUDE.md
 ```
 
-**Important:** Claude Code uses auto-discovery. Components (skills, hooks, agents, .mcp.json) must be at the **plugin root level**, not inside `.claude-plugin/`.
+### Project .triqual Directory
+
+Created by `/init`, required for the documented learning loop:
+
+```
+your-project/
+├── .triqual/
+│   ├── runs/                    # Run logs (one per feature)
+│   │   ├── login.md
+│   │   ├── dashboard.md
+│   │   └── checkout.md
+│   └── knowledge.md             # Accumulated project-specific patterns
+├── triqual.config.ts            # Main configuration
+└── ...
+```
+
+### Draft Folder Pattern
+
+Tests are developed in `.draft/` folder first, then promoted on success:
+
+```
+.draft/
+├── tests/
+│   └── login.spec.ts            # Work in progress (test-generator creates here)
+└── pages/
+    └── LoginPage.ts             # New Page Objects (if created)
+
+tests/
+└── login.spec.ts                # Only after test-healer confirms PASSING
+```
+
+- **test-generator** → Creates files in `.draft/`
+- **test-healer** → Works on `.draft/` files, promotes to `tests/` on SUCCESS
 
 ## The Learning Loop
 
@@ -221,22 +402,28 @@ Triqual is an **autonomous learning loop** - AI learns and improves from past mi
       └───────── PATTERN LEARNER (learns from both) ──┘
 ```
 
-### MCP Server Purposes
+### What Persists
 
-| Server | Purpose | AI Action |
-|--------|---------|-----------|
-| **Quoth** | Persisting yet live documentation | AI stores & retrieves learned patterns |
-| **Exolar** | CI analytics database | AI **fetches** results, logs, history |
-| **Playwright MCP** | App verification | AI **autonomously explores** app with test creds |
+| Location | Content | Survives |
+|----------|---------|----------|
+| `.triqual/runs/*.md` | Run logs (per feature) | Sessions, compaction |
+| `.triqual/knowledge.md` | Project patterns | Sessions, compaction |
+| `~/.cache/triqual/` | Session state | Current session only |
 
-### Workflow
+### Workflow with Documentation
 
-1. **SessionStart** → Initialize session, suggest using Quoth
-2. **Writing tests** → pre-spec-write hook recommends searching Quoth
-3. **Running tests** → post-test-run hook suggests fetching Exolar data
-4. **Failures** → Fetch history, explore with Playwright MCP, classify
-5. **Patterns** → pattern-learner proposes Quoth updates
-6. **SessionStop** → Cleanup, show usage tips
+1. **SessionStart** → Initialize session, detect active run logs, suggest reading them
+2. **ANALYZE** → Review requirements, document test cases in run log
+3. **RESEARCH** → Search Quoth/Exolar, document findings in run log
+4. **PLAN** → Document test strategy, tools to use, artifacts to create
+5. **Writing tests** → Hook checks run log has all stages, blocks if missing
+6. **Running tests** → Hook sets flag requiring log update
+7. **Failures** → Document in run log, classify, fix with hypothesis
+8. **2+ same failures** → Hook requires external research (Quoth/Exolar)
+9. **12+ attempts** → Hook requires deep analysis phase
+10. **25+ attempts** → Hook requires .fixme() or justification
+10. **Success** → Document learnings, update knowledge.md
+11. **SessionStop** → Check for missing accumulated learnings
 
 ## Session State
 
@@ -244,6 +431,7 @@ Hooks maintain session state in `~/.cache/triqual/`:
 - Tracks which hints have been delivered (once per session)
 - Counts tool usage for summary
 - Tracks test runs (passed/failed/healed)
+- Tracks `awaiting_log_update` flag
 - Uses file locking to prevent race conditions
 - Supports jq for reliable JSON parsing (with fallback)
 
@@ -281,20 +469,22 @@ Or run `/init` to auto-generate based on your project structure. The TypeScript 
 | Exolar query fails | Verify OAuth at exolar.ai-innovation.site |
 | Hooks not triggering | Check `hooks.json` syntax, verify scripts are executable |
 | Session state stale | Delete `~/.cache/triqual/` directory |
+| Action blocked | Read the error message, create/update run log as instructed |
+| Run logs not found | Run `/init` to create `.triqual/` directory |
 | Need help | Run `/help` for guidance |
 
 ## First Time Setup
 
 1. **Install plugin** - `claude --plugin-dir /path/to/triqual`
-2. **Initialize Triqual** - Run `/init` to analyze your project and generate personalized configuration
+2. **Initialize Triqual** - Run `/init` to create `.triqual/` directory and generate config
 3. **Authenticate MCPs** - Follow OAuth prompts for Quoth and Exolar
 4. **Start using** - `/test login` or `/test --ticket ENG-123`
 
-The `/init` skill detects your project structure, existing tests, and generates:
-- `triqual.config.ts` - Main configuration with TypeScript types
-- `Docs/context/project.json` - Project metadata
-- `Docs/context/patterns.json` - Test patterns & conventions
-- `Docs/context/selectors.json` - Locator strategies
+The `/init` skill:
+- Creates `.triqual/runs/` directory for run logs
+- Creates `.triqual/knowledge.md` for project patterns
+- Creates `triqual.config.ts` with detected settings
+- Optionally creates `Docs/context/` files
 
 ## Debugging Hooks
 

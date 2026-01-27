@@ -27,6 +27,10 @@ Configure Triqual for the current project by analyzing its structure and generat
 ┌─────────────────────────────────────────────────────────────────┐
 │                     TRIQUAL INIT PROCESS                        │
 ├─────────────────────────────────────────────────────────────────┤
+│  0. CREATE .TRIQUAL DIRECTORY                                   │
+│     ├── mkdir -p .triqual/runs                                  │
+│     └── Create knowledge.md from template                       │
+│                                                                 │
 │  1. CHECK EXISTING CONFIG                                       │
 │     └── Skip if triqual.config.ts exists (unless --force)       │
 │                                                                 │
@@ -66,6 +70,37 @@ Configure Triqual for the current project by analyzing its structure and generat
 │     └── Show what was detected and generated                    │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Step 0: Create .triqual Directory Structure
+
+Before anything else, ensure the .triqual directory structure exists:
+
+```bash
+# Create .triqual directory structure
+mkdir -p .triqual/runs
+
+# Check if knowledge.md exists, create from template if not
+ls .triqual/knowledge.md 2>/dev/null
+```
+
+If `.triqual/knowledge.md` doesn't exist, create it from the template at `${PLUGIN_ROOT}/context/knowledge.template.md`:
+
+```bash
+# Get plugin root (where Triqual is installed)
+# Copy knowledge template
+cp "${PLUGIN_ROOT}/context/knowledge.template.md" .triqual/knowledge.md
+```
+
+The `.triqual/` directory structure:
+```
+.triqual/
+├── runs/           # Run logs for each feature (e.g., login.md, dashboard.md)
+└── knowledge.md    # Project-specific test knowledge (accumulated learnings)
+```
+
+**Important:** Run logs in `.triqual/runs/` are required by hooks before writing test files.
 
 ---
 
@@ -798,12 +833,38 @@ Based on detection, `/test` will:
    → Proceed directly to feature testing
    ```
 
+### Documented Learning Loop
+
+Triqual enforces a documented learning loop for all test development:
+
+```
+ANALYZE → RESEARCH → PLAN → WRITE → RUN → LEARN
+```
+
+Each stage must be documented in run logs at `.triqual/runs/{feature}.md` before proceeding.
+
+**Hooks enforce this by blocking actions until documentation is complete:**
+- Cannot write test code without ANALYZE, RESEARCH, PLAN stages
+- Cannot retry tests without documenting results
+- Cannot exceed 2 same-category failures without external research (Quoth/Exolar)
+- Cannot exceed 3 attempts without .fixme() or justification
+
+### Directory Structure Created
+
+```
+.triqual/
+├── runs/           # Run logs for each feature
+│   └── {feature}.md  # Documents: analyze, research, plan, write, run, learn
+└── knowledge.md    # Accumulated project-specific patterns
+```
+
 ### Next Steps
 
 1. **Review generated configs** - Adjust auth settings if needed
-2. **Verify auth works**: `/test --explore login` - Test the login flow
-3. **Generate tests**: `/test dashboard` - Full autonomous test generation
-4. **From tickets**: `/test --ticket ENG-123` - Generate from Linear
+2. **Create your first run log** - Required before writing any test
+3. **Verify auth works**: `/test --explore login` - Test the login flow
+4. **Generate tests**: `/test dashboard` - Full autonomous test generation
+5. **From tickets**: `/test --ticket ENG-123` - Generate from Linear
 
 ### MCP Servers
 

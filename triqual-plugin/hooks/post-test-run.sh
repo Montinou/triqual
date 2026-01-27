@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Triqual Plugin - PostToolUse Hook (Bash)
-# Analyzes test results and offers next steps
+# Analyzes test results and sets awaiting_log_update flag
+#
+# This hook fires AFTER a playwright test command completes.
+# It instructs Claude to document results before continuing.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
@@ -39,58 +42,133 @@ main() {
         exit 0
     fi
 
-    # Check if hint already delivered this session
-    if hint_delivered_for "post_test_run"; then
-        log_debug "post_test_run hint already delivered"
-        output_empty
-        exit 0
-    fi
+    # Try to extract test file name from command to identify feature
+    local test_file=""
+    local feature=""
 
-    # Mark hint as delivered
-    mark_hint_delivered "post_test_run"
+    # Extract file from command (e.g., "npx playwright test login.spec.ts")
+    test_file=$(echo "$command" | grep -oE '[a-zA-Z0-9_-]+\.spec\.(ts|js)' | head -1)
+    if [ -n "$test_file" ]; then
+        feature=$(extract_feature_name "$test_file")
+    fi
 
     # Try to extract and parse test results from tool_result
     local tool_result=$(extract_tool_result "$input")
     local test_stats=$(parse_test_results "$tool_result")
     local has_failures=false
+    local fail_count="0"
 
     if has_test_failures "$tool_result"; then
         has_failures=true
+        fail_count=$(echo "$tool_result" | grep -oE '[0-9]+[[:space:]]+failed' | head -1 | grep -oE '[0-9]+' || echo "?")
+    fi
+
+    # Set awaiting_log_update flag - next action will be blocked until log is updated
+    set_awaiting_log_update
+    log_debug "Set awaiting_log_update flag"
+
+    # Determine run log path
+    local run_log=""
+    if [ -n "$feature" ]; then
+        run_log=$(get_run_log_path "$feature")
+    else
+        run_log=".triqual/runs/{feature}.md"
+    fi
+
+    # Get current attempt number if we can
+    local attempt_num="N"
+    if [ -n "$feature" ] && run_log_exists "$feature"; then
+        attempt_num=$(count_run_attempts "$feature")
+        attempt_num=$((attempt_num + 1))
     fi
 
     # Build context message based on results
     local context=""
 
     if [ "$has_failures" = "true" ]; then
-        # Failures detected - recommend failure-classifier
+        # Failures detected
         local stats_msg=""
         if [ -n "$test_stats" ]; then
             stats_msg=" ($test_stats)"
         fi
 
-        context="[Triqual] Test execution completed with failures${stats_msg}.
+        context="[Triqual] ⚠️ Test execution completed with failures${stats_msg}.
 
-Recommended next steps:
-1. Fetch similar failures from Exolar: query_exolar_data({ dataset: \"failures\", filters: { error_pattern: \"...\" } })
-   - This reveals if this is a known flake or recurring issue
+=== MANDATORY: UPDATE RUN LOG ===
 
-2. Use Playwright MCP to explore the app and verify actual behavior
-   - Navigate to the failing page, inspect state, compare expected vs actual
+You MUST document these results before any other action.
+The next action will be BLOCKED until the run log is updated.
 
-3. Classify the failure: Use failure-classifier agent to determine if FLAKE/BUG/ENV/TEST_ISSUE
-   - This helps decide whether to auto-heal or report a bug
+Add to $run_log:
 
-4. For FLAKE or TEST_ISSUE: Consider using test-healer agent to apply fixes
-5. For BUG: Create a Linear ticket - do not modify tests to mask real bugs
+### Stage: RUN (Attempt $attempt_num)
+**Command:** \`$command\`
+**Result:** FAILED
 
-Would you like me to run the failure-classifier agent to analyze these failures?"
+| Test | Error Type | Error Message |
+|------|------------|---------------|
+| [test-name] | [category] | [message from output] |
+
+**Category:** [Choose one: LOCATOR | WAIT | ASSERTION | AUTH | ENV | NETWORK]
+
+**Analysis:**
+- Root cause: [explanation of why it failed]
+- Similar errors in Exolar: [yes/no]
+
+---
+
+### Stage: FIX (Attempt $attempt_num)
+**Hypothesis:** [What fix will you try and WHY?]
+
+**Changes:**
+- [What you will change]
+
+---
+
+## Error Categories
+
+| Category | Description | Common Fixes |
+|----------|-------------|--------------|
+| LOCATOR | Element not found | Check selector, add :visible, use data-testid |
+| WAIT | Timeout waiting | Add proper wait, use networkidle, increase timeout |
+| ASSERTION | Value mismatch | Check expected value, verify test data |
+| AUTH | Login/session issue | Refresh storageState, check credentials |
+| ENV | Environment problem | Check BASE_URL, verify test environment |
+| NETWORK | API/request failed | Check if API is running, mock if needed |
+
+After documenting, if this is the 2nd+ failure of the same category,
+you MUST search Quoth and Exolar before retrying."
     else
-        # Tests passed or no result info
-        context="[Triqual] Test execution completed.
+        # Tests passed
+        context="[Triqual] ✓ Test execution completed successfully${test_stats:+ ($test_stats)}.
 
-Recommended next steps:
-1. If any tests were flaky, check Exolar for patterns: query_exolar_data({ dataset: \"flaky_tests\", filters: { test_file: \"...\" } })
-2. Document successful patterns in Quoth for future reuse"
+=== UPDATE RUN LOG ===
+
+Document the successful run in $run_log:
+
+### Stage: RUN (Attempt $attempt_num)
+**Command:** \`$command\`
+**Result:** PASSED
+
+---
+
+### Stage: LEARN
+**Pattern discovered:**
+- [What worked well?]
+- [Any selector patterns to remember?]
+- [Any wait patterns that helped?]
+
+**Added to local knowledge:** [Yes | No]
+**Proposed to Quoth:** [Yes - if generalizable | No - if project-specific]
+
+---
+
+## Accumulated Learnings (This Feature)
+1. [Key learning from this test development]
+2. [Selector pattern that worked]
+3. [Wait pattern that worked]
+
+Consider running the pattern-learner agent if you discovered reusable patterns."
     fi
 
     output_context "$context" "PostToolUse"

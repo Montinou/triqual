@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Triqual Plugin - Stop Hook
-# Cleanup session and provide summary
+# Cleanup session and enforce final documentation requirements
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
@@ -39,21 +39,96 @@ main() {
     quoth_searches="${quoth_searches:-0}"
     exolar_queries="${exolar_queries:-0}"
 
-    # Cleanup session
-    cleanup_session
+    # Clear any awaiting flags
+    clear_awaiting_log_update
 
-    # Output summary - provide helpful reminders without being prescriptive
+    # Check for run logs that need final documentation
+    local latest_log=$(get_latest_run_log)
+    local needs_learnings=false
+    local feature=""
+
+    if [ -n "$latest_log" ]; then
+        feature=$(basename "$latest_log" .md)
+        if ! has_accumulated_learnings "$feature"; then
+            needs_learnings=true
+        fi
+    fi
+
+    # Build message
     local message=""
 
-    if [ "$quoth_searches" = "0" ] && [ "$exolar_queries" = "0" ]; then
-        message="[Triqual] Session ended. Tip: If you wrote or modified tests, searching Quoth patterns and checking Exolar for similar tests can help maintain consistency."
-    elif [ "$quoth_searches" = "0" ]; then
-        message="[Triqual] Session ended. Exolar queries: $exolar_queries. Tip: Quoth pattern searches can help discover reusable Page Objects and helpers."
-    elif [ "$exolar_queries" = "0" ]; then
-        message="[Triqual] Session ended. Quoth searches: $quoth_searches. Tip: Fetching Exolar history on failures helps identify patterns."
+    if [ "$needs_learnings" = "true" ]; then
+        message="[Triqual] ⚠️ Session ending - documentation incomplete
+
+=== FINAL DOCUMENTATION REQUIRED ===
+
+The run log at: $latest_log
+is missing the Accumulated Learnings section.
+
+Before ending, please add:
+
+## Accumulated Learnings (This Feature)
+
+### Selectors
+1. [What selector patterns worked?]
+2. [What selector patterns to avoid?]
+
+### Waits
+1. [What wait patterns were needed?]
+2. [Known slow operations?]
+
+### Auth
+1. [Any auth discoveries?]
+
+### Gotchas
+1. [Unexpected behaviors discovered?]
+2. [Things that might trip up future tests?]
+
+---
+
+Also consider:
+- Update .triqual/knowledge.md with generalizable patterns
+- Run pattern-learner agent if patterns should be in Quoth
+
+---
+
+Session stats: Quoth searches: $quoth_searches, Exolar queries: $exolar_queries"
     else
-        message="[Triqual] Session ended. Quoth searches: $quoth_searches, Exolar queries: $exolar_queries."
+        # All documentation complete
+        message="[Triqual] Session ended.
+
+"
+        if [ -n "$latest_log" ]; then
+            message="${message}✓ Run log documented: $latest_log
+"
+        fi
+
+        message="${message}Session stats: Quoth searches: $quoth_searches, Exolar queries: $exolar_queries
+
+"
+
+        if [ "$quoth_searches" = "0" ] && [ "$exolar_queries" = "0" ]; then
+            message="${message}Tip: Use Quoth and Exolar searches to leverage existing patterns and historical data."
+        elif [ "$quoth_searches" = "0" ]; then
+            message="${message}Tip: Quoth pattern searches can help discover reusable Page Objects and helpers."
+        elif [ "$exolar_queries" = "0" ]; then
+            message="${message}Tip: Exolar queries help identify flaky tests and historical fix patterns."
+        fi
+
+        # Check knowledge.md status
+        if knowledge_file_exists; then
+            message="${message}
+
+✓ Project knowledge file exists. Consider updating it with session learnings."
+        else
+            message="${message}
+
+💡 Consider creating .triqual/knowledge.md to persist project-specific patterns."
+        fi
     fi
+
+    # Cleanup session state (but keep run logs - they're persistent)
+    cleanup_session
 
     output_system_message "$message"
 }
