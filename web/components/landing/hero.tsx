@@ -1,7 +1,7 @@
 "use client"
 
 import { motion, useReducedMotion } from "framer-motion"
-import { ArrowRight } from "lucide-react"
+import { ArrowRight, BookOpen } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import Link from "next/link"
@@ -87,6 +87,21 @@ export function Hero() {
             <Link href="#workflow">See How It Works</Link>
           </Button>
         </div>
+
+        {/* Documentation link */}
+        <div className="mt-6">
+          <Button
+            asChild
+            variant="ghost"
+            size="sm"
+            className="text-foreground-secondary hover:text-primary transition-colors"
+          >
+            <Link href="/docs">
+              <BookOpen className="mr-2 h-4 w-4" />
+              Read the Documentation
+            </Link>
+          </Button>
+        </div>
       </section>
     )
   }
@@ -168,6 +183,29 @@ export function Hero() {
             className="border-white/20 hover:bg-background-card hover:border-primary/40 transition-all"
           >
             <Link href="#workflow">See How It Works</Link>
+          </Button>
+        </motion.div>
+      </motion.div>
+
+      {/* Documentation link - visible on all devices */}
+      <motion.div
+        className="mt-6"
+        variants={itemVariants}
+      >
+        <motion.div
+          whileHover={{ y: -2 }}
+          whileTap={{ scale: 0.98 }}
+        >
+          <Button
+            asChild
+            variant="ghost"
+            size="sm"
+            className="text-foreground-secondary hover:text-primary transition-colors"
+          >
+            <Link href="/docs">
+              <BookOpen className="mr-2 h-4 w-4" />
+              Read the Documentation
+            </Link>
           </Button>
         </motion.div>
       </motion.div>

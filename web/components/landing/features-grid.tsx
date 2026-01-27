@@ -147,8 +147,9 @@ export function FeaturesGrid() {
             <motion.div key={feature.title} variants={itemVariants} className="h-full">
               <motion.div
                 whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 1.02 }}
                 transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] as const }}
-                className="h-full"
+                className="h-full cursor-pointer"
               >
                 <Card className="bg-background-surface border-white/5 hover:border-primary/25 hover:bg-background-elevated transition-all group overflow-hidden relative h-full shadow-[0_0_20px_rgba(0,240,255,0.08)] hover:shadow-[0_0_30px_rgba(0,240,255,0.25)]">
                   <motion.div
