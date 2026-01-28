@@ -1,7 +1,7 @@
 {
   "name": "triqual-plugin",
-  "version": "1.0.5",
-  "description": "Unified test automation plugin integrating Playwright execution, Quoth patterns, and Exolar analytics. Ad-hoc testing, ticket-to-test workflows, and self-healing tests.",
+  "version": "1.0.6",
+  "description": "Unified test automation plugin integrating Playwright execution, Quoth v2 AI Memory (bidirectional learning), and Exolar analytics. Ad-hoc testing, ticket-to-test workflows, and self-healing tests.",
   "author": {
     "name": "Montinou",
     "url": "https://github.com/Montinou"

@@ -281,15 +281,36 @@ Suggest adding to: `testing-patterns.md`
 - Source: Run logs ({features})
 ```
 
-**For Quoth**:
+**For Quoth** (using `quoth_propose_update` from v2):
 
 ```
-mcp__quoth__quoth_genesis({
-  category: "testing-patterns",
+mcp__quoth__quoth_propose_update({
+  type: "pattern",
   title: "{pattern-title}",
-  content: "{pattern-content}"
+  content: "{pattern-content-as-markdown}",
+  evidence: {
+    successCount: {N},
+    sourceFiles: ["{run-log-1}", "{run-log-2}"],
+    description: "Pattern discovered from {N} successful fixes across {M} features"
+  },
+  tags: ["playwright", "{error-category}", "{pattern-type}"]
 })
 ```
+
+**Evidence format for Quoth v2:**
+
+The `evidence` object proves the pattern works:
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `successCount` | Times pattern worked | `5` |
+| `sourceFiles` | Run logs with evidence | `[".triqual/runs/login.md"]` |
+| `description` | Why this pattern matters | `"Fixed LOCATOR errors in 5 tests"` |
+
+**Tags** help with search:
+- Category: `playwright`, `testing`, `automation`
+- Error type: `locator`, `wait`, `assertion`, `auth`
+- Pattern type: `best-practice`, `anti-pattern`, `helper`
 
 ### Step 7: Update Run Logs
 
@@ -353,11 +374,24 @@ await page.locator('button:visible').click();
 - Add new project-specific patterns
 - Update anti-patterns section
 
-### With Quoth (Optional)
+### With Quoth (Required for generalizable patterns)
 
-- Search for existing patterns
-- Propose generalizable patterns
-- Reference Quoth docs in knowledge.md
+- **Search** for existing patterns before proposing new ones
+- **Propose** generalizable patterns using `quoth_propose_update`
+- **Reference** Quoth docs in knowledge.md
+
+**Quoth v2 Tools:**
+```
+mcp__quoth__quoth_search_index({ query: "..." })     // Search existing patterns
+mcp__quoth__quoth_read_doc({ docId: "..." })         // Read full pattern doc
+mcp__quoth__quoth_propose_update({                   // Propose new pattern (v2)
+  type: "pattern",
+  title: "...",
+  content: "...",
+  evidence: { successCount: N, sourceFiles: [], description: "..." },
+  tags: ["playwright", "..."]
+})
+```
 
 ### With Exolar (Optional)
 

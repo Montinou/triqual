@@ -1,17 +1,25 @@
-# Quoth Integration
+# Quoth Integration (v2.0 - AI Memory)
 
-Persisting and retrieving learned patterns through the Quoth knowledge base.
+Bidirectional learning: retrieving AND proposing patterns through the Quoth AI Memory system.
 
 ## Overview
 
-Quoth is **live documentation** that the AI reads from AND writes to. Unlike static docs, Quoth evolves as the AI learns from failures and discoveries:
+Quoth v2 is **AI Memory** - not just documentation, but a bidirectional learning system:
 
-- Test patterns and best practices (retrieved before writing tests)
-- Page Object definitions (reused across tests)
-- Common selectors and anti-patterns (learned from failures)
-- Project-specific conventions (accumulated knowledge)
+```
+RAG (Basic)           → Query → Vectors → Context → LLM
+Agentic RAG (v1)      → Query → LLM → Tools → Context → LLM
+AI Memory (v2)        → Query → LLM → Memory ⟷ Tools → Context → LLM
+                                        ↑___↓
+                                    Bidirectional
+```
 
-**Key concept:** Patterns persist across sessions. What the AI learns today helps it write better tests tomorrow.
+Triqual uses Quoth v2 for:
+- **Search** patterns before writing tests (mandatory, enforced by hooks)
+- **Propose** new patterns after discovering fixes (via `quoth_propose_update`)
+- **Bootstrap** project documentation (via `quoth_genesis`)
+
+**Key concept:** The learning loop is now CLOSED - patterns discovered during test healing are automatically proposed back to Quoth.
 
 ## Authentication
 
@@ -22,15 +30,17 @@ https://quoth.ai-innovation.site/
 
 ## Available Tools
 
-### quoth_search_index
+### quoth_search_index (READ)
 
-Search for patterns and documentation:
+Semantic search with Jina embeddings + Cohere reranking:
 
 ```typescript
 quoth_search_index({ query: "login form patterns" })
 ```
 
-### quoth_read_doc
+**Enforced by hooks:** Test writing is BLOCKED until Quoth search is documented in the run log.
+
+### quoth_read_doc (READ)
 
 Read a specific document:
 
@@ -38,7 +48,7 @@ Read a specific document:
 quoth_read_doc({ docId: "login-patterns" })
 ```
 
-### quoth_guidelines
+### quoth_guidelines (READ)
 
 Get coding guidelines:
 
@@ -46,74 +56,177 @@ Get coding guidelines:
 quoth_guidelines({ mode: "playwright" })
 ```
 
-## Automatic Integration
+### quoth_propose_update (WRITE - NEW in v2)
 
-Triqual's hooks provide recommendations (not mandates):
-
-1. **Before writing tests**: Recommends searching Quoth for relevant patterns
-2. **After failures**: Suggests looking up error handling strategies
-3. **Pattern learning**: The `pattern-learner` agent proposes documentation updates
-
-### Hook Behavior
-
-When you write a `.spec.ts` file, you'll see:
-
-```
-[Triqual] Writing test file detected.
-
-Recommended steps before proceeding:
-1. Search for existing patterns
-2. Check for similar tests
-3. Review results and reuse existing Page Objects
-```
-
-These are suggestions - you decide whether to follow them.
-
-## Manual Usage
-
-Search for patterns anytime:
+Submit patterns with evidence - closes the learning loop:
 
 ```typescript
-// In your workflow
-quoth_search_index({ query: "login form validation" })
+quoth_propose_update({
+  type: "pattern",                        // or "decision", "error", "knowledge"
+  title: "Use :visible for button disambiguation",
+  content: `## Problem
+Button selector matches multiple elements (hidden duplicates in menus).
+
+## Solution
+\`\`\`typescript
+await page.locator('button:visible').click();
+\`\`\`
+
+## Rationale
+Hidden duplicates in dropdown menus cause strict mode violations.`,
+  evidence: {
+    successCount: 5,                      // Pattern worked 5 times
+    sourceFiles: [                        // Evidence from run logs
+      ".triqual/runs/login.md",
+      ".triqual/runs/checkout.md",
+      ".triqual/runs/dashboard.md"
+    ],
+    description: "Fixed LOCATOR errors in 5 different features across 3 sessions"
+  },
+  tags: ["playwright", "locator", "best-practice", "visibility"]
+})
 ```
 
-## The Learning Loop
+**Used by:** `pattern-learner` agent and `test-healer` agent (for quick pattern promotion)
 
-Quoth is the **memory** of the autonomous learning loop:
+### quoth_genesis (WRITE - NEW in v2)
 
-```
-┌─────────────┐         ┌─────────────┐         ┌─────────────┐
-│   QUOTH     │         │  PLAYWRIGHT │         │   EXOLAR    │
-│             │         │     MCP     │         │             │
-│ Persisting  │◀────────│ AI verifies │────────▶│ AI fetches  │
-│ live docs   │         │ app behavior│         │ CI results, │
-│ for patterns│         │ autonomously│         │ logs, trends│
-└─────────────┘         └─────────────┘         └─────────────┘
-      ▲                       │                       │
-      │                       │                       │
-      └───────── PATTERN LEARNER (learns from both) ──┘
+Bootstrap project documentation:
+
+```typescript
+quoth_genesis({
+  depth: "standard"  // "minimal" | "standard" | "comprehensive"
+})
 ```
 
-### How Patterns Accumulate
+| Depth | Documents | Time | Use Case |
+|-------|-----------|------|----------|
+| `minimal` | 3 | ~3 min | Quick overview |
+| `standard` | 5 | ~7 min | Team onboarding |
+| `comprehensive` | 11 | ~20 min | Enterprise audit |
 
-1. **Test fails** → AI investigates with Playwright MCP
-2. **Root cause found** → AI checks Exolar for similar issues
-3. **Pattern identified** → pattern-learner proposes Quoth update
-4. **Pattern stored** → Future tests benefit from learned knowledge
+**Used by:** `/init` skill (optional, user can request it)
 
-### Pattern Persistence
+## Automatic Integration
 
-Unlike ephemeral session context, Quoth patterns:
-- **Persist across sessions** - Knowledge isn't lost
-- **Improve over time** - Each failure teaches something
-- **Share across team** - Everyone benefits from discoveries
-- **Version controlled** - Changes are trackable
+### Mandatory Search (Enforced by hooks)
+
+The `pre-spec-write.sh` hook BLOCKS test writing until:
+
+1. Run log exists at `.triqual/runs/{feature}.md`
+2. RESEARCH stage contains Quoth search results
+
+Example block message:
+```
+🚫 BLOCKED: Quoth pattern search not documented
+
+**MANDATORY:** You MUST search Quoth for patterns BEFORE writing test code.
+
+1. Search Quoth:
+   mcp__quoth__quoth_search_index({ query: "{feature} playwright patterns" })
+
+2. Document results in run log under RESEARCH stage
+
+3. Retry this write operation
+```
+
+### Pattern Proposal (Automatic with evidence)
+
+When `pattern-learner` or `test-healer` discovers a generalizable pattern:
+
+1. **Evidence gathered** from run logs (3+ successful uses)
+2. **Pattern formatted** with problem/solution/rationale
+3. **Proposed to Quoth** via `quoth_propose_update`
+4. **Awaits approval** (if Quoth is configured with approval workflows)
+
+## The Closed Learning Loop
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    QUOTH v2 BIDIRECTIONAL LOOP                           │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │                         QUOTH (AI Memory)                         │   │
+│  │                                                                    │   │
+│  │   ┌─────────────┐                      ┌─────────────┐           │   │
+│  │   │   SEARCH    │                      │   PROPOSE   │           │   │
+│  │   │  (before)   │                      │   (after)   │           │   │
+│  │   └──────┬──────┘                      └──────▲──────┘           │   │
+│  │          │                                    │                   │   │
+│  └──────────┼────────────────────────────────────┼───────────────────┘   │
+│             │                                    │                       │
+│             ▼                                    │                       │
+│    ┌─────────────────────────────────────────────┴─────┐                │
+│    │                   TRIQUAL AGENTS                   │                │
+│    │                                                    │                │
+│    │  test-planner → test-generator → test-healer      │                │
+│    │                                        │          │                │
+│    │                              ┌─────────┴────────┐ │                │
+│    │                              │ pattern-learner  │ │                │
+│    │                              │ (proposes back)  │ │                │
+│    │                              └──────────────────┘ │                │
+│    └────────────────────────────────────────────────────┘                │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### How Patterns Flow
+
+1. **SEARCH before writing:**
+   - test-planner searches Quoth
+   - Documents patterns in run log RESEARCH stage
+   - Hooks enforce this is done
+
+2. **APPLY during writing:**
+   - test-generator applies patterns from Quoth
+   - Documents patterns used in WRITE stage
+
+3. **DISCOVER during healing:**
+   - test-healer finds fixes that work
+   - Documents fixes in FIX stages
+   - Tracks success count
+
+4. **PROPOSE after learning:**
+   - pattern-learner analyzes run logs
+   - Identifies patterns with 3+ successes
+   - Proposes to Quoth with evidence
+   - Updates local knowledge.md too
+
+## Local vs Remote Storage
+
+| Location | Content | Purpose |
+|----------|---------|---------|
+| `.triqual/knowledge.md` | Project-specific patterns | Fast local access, survives compaction |
+| `.triqual/runs/*.md` | Per-feature run logs | Evidence for pattern proposals |
+| **Quoth (remote)** | Generalizable patterns | Shared across projects, teams |
+
+**Note:** Triqual does NOT use Quoth's `.quoth/` folder. If you have both plugins:
+- `.triqual/` - Triqual's testing workflow (run logs, knowledge)
+- `.quoth/` - Quoth's general AI memory (if Quoth plugin is installed separately)
+
+They serve different purposes and don't conflict.
 
 ## Best Practices
 
-- Search Quoth before writing any new test code
-- Document successful patterns immediately
-- Update anti-patterns when you find fragile tests
-- Let the `pattern-learner` agent propose updates from repeated failures
-- Review pattern-learner proposals before accepting
+### Before Writing Tests
+- **Always** search Quoth first (hooks enforce this)
+- Document found patterns in run log
+- Check if similar tests exist in Exolar
+
+### During Healing
+- Track fix patterns in FIX stages
+- Note when the same fix works multiple times
+- Consider quick promotion for obvious patterns
+
+### After Success
+- Let pattern-learner analyze run logs
+- Review pattern proposals before accepting
+- Update local knowledge.md with project-specific patterns
+- Propose generalizable patterns to Quoth
+
+### Pattern Quality
+- Include problem/solution/rationale
+- Add evidence (success count, source files)
+- Use consistent tags for searchability
+- Link to specific run logs for context

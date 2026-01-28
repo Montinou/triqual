@@ -1,10 +1,10 @@
 # Triqual - Autonomous Test Automation Plugin
 
-> **Version 1.0.5** | Opus 4.5 Agents | Mandatory Quoth Search | macOS & Linux
+> **Version 1.0.6** | Opus 4.5 Agents | Quoth v2 AI Memory | macOS & Linux
 
 Triqual is a **Claude Code plugin** that brings autonomous, self-healing test generation with enforced documentation and persistent learning. It combines three MCP integrations:
 
-- **Quoth** - Semantic pattern documentation (auto-installed)
+- **Quoth v2** - AI Memory with bidirectional learning (search + propose patterns)
 - **Exolar** - Test analytics and failure clustering (auto-installed)
 - **Playwright MCP** - Browser automation for app exploration
 
@@ -165,10 +165,12 @@ The plugin automatically installs these MCP servers:
 
 ### Available MCP Tools
 
-**Quoth Tools (Persisting Live Docs):**
-- `quoth_search_index({ query })` - Search documentation patterns
+**Quoth Tools (AI Memory v2.0 - Bidirectional Learning):**
+- `quoth_search_index({ query })` - Semantic search with Jina embeddings + Cohere reranking
 - `quoth_read_doc({ docId })` - Read full document
 - `quoth_guidelines({ mode })` - Get coding guidelines
+- `quoth_propose_update({ type, title, content, evidence, tags })` - **NEW:** Submit patterns with evidence
+- `quoth_genesis({ depth })` - **NEW:** Bootstrap project documentation (minimal/standard/comprehensive)
 
 **Exolar Tools (CI Analytics Database):**
 - `query_exolar_data({ dataset, filters })` - Fetch test results, failures, trends
@@ -319,7 +321,7 @@ Triqual includes 5 specialized agents that work together in the documented learn
 - Reviews all run logs
 - Identifies recurring patterns
 - Updates knowledge.md
-- Proposes patterns to Quoth
+- **Proposes patterns to Quoth via `quoth_propose_update`** (v2 bidirectional learning)
 
 ## Directory Structure
 
@@ -652,11 +654,28 @@ The `/test` skill orchestrates agents in sequence:
 
 ### MCP Tools Available
 
-**Quoth (Pattern Documentation):**
+**Quoth (AI Memory v2.0):**
 ```typescript
-quoth_search_index({ query: string })     // Search patterns
+quoth_search_index({ query: string })     // Search patterns (semantic + reranking)
 quoth_read_doc({ docId: string })         // Read full doc
 quoth_guidelines({ mode: string })        // Get guidelines
+
+// NEW in v2.0 - Bidirectional learning
+quoth_propose_update({
+  type: "pattern",                        // or "decision", "error", "knowledge"
+  title: string,
+  content: string,                        // Markdown content
+  evidence: {
+    successCount: number,                 // How many times pattern worked
+    sourceFiles: string[],                // Run logs with evidence
+    description: string                   // Why this matters
+  },
+  tags: string[]                          // ["playwright", "locator", "best-practice"]
+})
+
+quoth_genesis({
+  depth: "minimal" | "standard" | "comprehensive"
+})
 ```
 
 **Exolar (Test Analytics):**
@@ -712,6 +731,7 @@ export default defineConfig({
 
 | Version | Date | Changes |
 |---------|------|---------|
+| **1.0.6** | 2026-01-28 | **Quoth v2 integration:** `quoth_propose_update` for bidirectional learning, `quoth_genesis` available |
 | **1.0.5** | 2026-01-27 | **Mandatory Quoth pattern search enforcement** |
 | **1.0.4** | 2026-01-27 | All agents on Opus 4.5, comprehensive documentation |
 | **1.0.3** | 2026-01-26 | macOS stdin compatibility fix for hooks |

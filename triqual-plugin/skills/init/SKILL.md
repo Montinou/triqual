@@ -380,6 +380,33 @@ export default defineConfig({
 
 Check what MCP tools are available and configure accordingly.
 
+### 5.0 Optional: Bootstrap with Quoth Genesis (v2)
+
+If this is a new project or the user requests comprehensive documentation, offer to run Quoth Genesis:
+
+```
+Would you like to bootstrap project documentation with Quoth Genesis?
+This will create comprehensive documentation in Quoth for team sharing.
+
+Options:
+- minimal   (~3 min) - Quick overview, 3 documents
+- standard  (~7 min) - Team onboarding, 5 documents
+- comprehensive (~20 min) - Enterprise audit, 11 documents
+- skip      - Just create local .triqual/ config
+
+[Choose: minimal/standard/comprehensive/skip]
+```
+
+If user selects a depth:
+
+```typescript
+mcp__quoth__quoth_genesis({
+  depth: "{selected-depth}"
+})
+```
+
+**Note:** Genesis creates documentation IN Quoth (remote), while `/init` creates local `.triqual/` config. They complement each other.
+
 ### 5.1 Check Playwright MCP
 
 The `/test` skill uses Playwright MCP for browser automation. Verify it's available:

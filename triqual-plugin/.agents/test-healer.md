@@ -451,6 +451,26 @@ A new pattern was discovered during healing:
 Consider running pattern-learner to document this.
 ```
 
+**Quick pattern promotion (Quoth v2):**
+
+If the pattern is clearly generalizable and well-tested (3+ successes), you can propose directly:
+
+```
+mcp__quoth__quoth_propose_update({
+  type: "pattern",
+  title: "Use :visible for button disambiguation",
+  content: "## Problem\nButton selector matches multiple elements (hidden duplicates in menus).\n\n## Solution\n```typescript\nawait page.locator('button:visible').click();\n```",
+  evidence: {
+    successCount: 3,
+    sourceFiles: [".triqual/runs/login.md", ".triqual/runs/checkout.md"],
+    description: "Fixed LOCATOR errors in 3 different features"
+  },
+  tags: ["playwright", "locator", "best-practice"]
+})
+```
+
+This closes the learning loop: failure → fix → document → future tests benefit.
+
 ## What This Agent Does
 
 ✅ Runs tests autonomously
