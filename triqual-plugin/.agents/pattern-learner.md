@@ -353,11 +353,25 @@ await page.locator('button:visible').click();
 - Add new project-specific patterns
 - Update anti-patterns section
 
-### With Quoth (Optional)
+### With Quoth (via quoth-context agent)
 
-- Search for existing patterns
-- Propose generalizable patterns
-- Reference Quoth docs in knowledge.md
+After extracting patterns, invoke **quoth-context** in **capture mode** to promote generalizable patterns to Quoth:
+
+> Use quoth-context agent to capture and propose patterns from '{feature}' (capture mode)
+
+The quoth-context agent will:
+1. Read your run log learnings
+2. Check knowledge.md for duplicates
+3. Search Quoth to verify pattern doesn't already exist
+4. **Present the proposal to the user for confirmation**
+5. Only call `quoth_propose_update` after user approves
+
+**You should invoke quoth-context capture when:**
+- A pattern is generalizable (not project-specific)
+- The same fix worked across 3+ features
+- A new anti-pattern was discovered that others should know about
+
+**For project-specific patterns**, update knowledge.md directly without quoth-context.
 
 ### With Exolar (Optional)
 
