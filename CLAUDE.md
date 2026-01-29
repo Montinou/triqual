@@ -1,6 +1,6 @@
 # Triqual - Autonomous Test Automation Plugin
 
-> **Version 1.0.5** | Opus 4.5 Agents | Mandatory Quoth Search | macOS & Linux
+> **Version 1.1.0** | Opus 4.5 Agents | Quoth v2 Context Agent | macOS & Linux
 
 Triqual is a **Claude Code plugin** that brings autonomous, self-healing test generation with enforced documentation and persistent learning. It combines three MCP integrations:
 
@@ -243,6 +243,11 @@ Triqual includes 5 specialized agents that work together in the documented learn
 │  User Request (ticket, description, feature name)               │
 │        ↓                                                         │
 │  ┌──────────────┐                                                │
+│  │QUOTH-CONTEXT │ ← Searches Quoth, loads patterns (MANDATORY)   │
+│  │  (magenta)   │   Returns context summary for test-planner    │
+│  └──────┬───────┘                                                │
+│         ↓                                                        │
+│  ┌──────────────┐                                                │
 │  │ TEST-PLANNER │ ← ANALYZE/RESEARCH/PLAN stages                 │
 │  │   (purple)   │   Creates run log with test plan               │
 │  └──────┬───────┘                                                │
@@ -284,6 +289,7 @@ Triqual includes 5 specialized agents that work together in the documented learn
 | **test-healer** | 🔧 Fix | Test failure, "fix failing tests" | Analyzes failure, applies fix, documents FIX stage |
 | **failure-classifier** | 📊 Classify | "is this a flake?", unclear failures | Classifies as FLAKE/BUG/ENV/TEST_ISSUE |
 | **pattern-learner** | 📚 Learn | Repeated fixes, session end, explicit request | Extracts patterns, updates knowledge.md |
+| **quoth-context** | 🔮 Context | Session start, before test-planner, after pattern-learner | Searches Quoth, loads context, proposes patterns |
 
 ### Agent Details
 
@@ -712,6 +718,7 @@ export default defineConfig({
 
 | Version | Date | Changes |
 |---------|------|---------|
+| **1.1.0** | 2026-01-29 | **Quoth v2 integration: quoth-context agent, session context injection, enhanced hooks** |
 | **1.0.5** | 2026-01-27 | **Mandatory Quoth pattern search enforcement** |
 | **1.0.4** | 2026-01-27 | All agents on Opus 4.5, comprehensive documentation |
 | **1.0.3** | 2026-01-26 | macOS stdin compatibility fix for hooks |
