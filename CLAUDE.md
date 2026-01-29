@@ -23,7 +23,7 @@ claude --plugin-dir /path/to/triqual/triqual-plugin
 - MCP servers: `quoth` and `exolar-qa` (via `.mcp.json`)
 - 7 hooks: SessionStart, PreToolUse (2), PostToolUse, SubagentStart, SubagentStop, PreCompact, Stop
 - 5 skills: `/init`, `/test`, `/check`, `/rules`, `/help`
-- 5 agents: test-planner, test-generator, test-healer, failure-classifier, pattern-learner
+- 6 agents: test-planner, test-generator, test-healer, failure-classifier, pattern-learner, quoth-context
 - 31 Playwright best practice rules (8 categories)
 - Context templates for project configuration
 
@@ -82,28 +82,31 @@ ANALYZE → RESEARCH → PLAN → WRITE → RUN → LEARN
 | Gate | Trigger | Block Condition | Unblock Action |
 |------|---------|-----------------|----------------|
 | Pre-Write | Write .spec.ts | No run log or missing ANALYZE/RESEARCH/PLAN | Create log, document stages |
-| **Quoth Search** | Write .spec.ts | **No Quoth search documented** | **Search Quoth, document results** |
+| **Quoth Context** | Write .spec.ts | **No Quoth context loaded** | **Invoke quoth-context agent or search Quoth manually** |
 | Post-Run | After playwright test | Log not updated with results | Add RUN stage with results |
 | Retry Limit | 2+ same-category fails | No Quoth/Exolar search | Document external research |
 | Deep Analysis | 12+ attempts | No deep analysis documented | Perform expanded Quoth/Exolar research |
 | Max Attempts | 25+ total attempts | No .fixme() or justification | Mark fixme or justify |
 | Session End | Stop hook | No learnings section | Add accumulated learnings |
 
-### Mandatory Quoth Pattern Search
+### Mandatory Quoth Context Loading
 
-**BEFORE writing ANY test code**, you MUST search Quoth for patterns:
+**BEFORE writing ANY test code**, invoke the **quoth-context** agent to load patterns:
 
+> Use the quoth-context agent in **session inject** or **pre-agent research** mode.
+
+The quoth-context agent will search Quoth, read knowledge.md, and return a structured summary. This is **ENFORCED by hooks** — test writing will be BLOCKED until Quoth context is loaded or search is documented.
+
+If quoth-context is unavailable, fall back to manual search:
 ```
 mcp__quoth__quoth_search_index({
   query: "{feature} playwright patterns"
 })
 ```
 
-This is **ENFORCED by hooks** - test writing will be BLOCKED until Quoth search is documented in the run log.
-
 **Why this is mandatory:**
 - Quoth contains proven patterns from past successes and failures
-- Searching first prevents reinventing existing solutions
+- The quoth-context agent searches comprehensively without consuming main context
 - Patterns learned from past failures help you succeed faster
 
 ### Run Log Structure
@@ -359,7 +362,8 @@ triqual/
 │   │   ├── test-generator.md     # WRITE stage - generates code from plan
 │   │   ├── test-healer.md        # FIX stage - auto-heal failures
 │   │   ├── failure-classifier.md # Classify failures (FLAKE/BUG/ENV/TEST)
-│   │   └── pattern-learner.md    # LEARN stage - extract patterns
+│   │   ├── pattern-learner.md    # LEARN stage - extract patterns
+│   │   └── quoth-context.md     # Quoth MCP interactions (Sonnet)
 │   ├── context/                 # Templates & learned patterns
 │   │   ├── run-log.template.md  # Template for run logs
 │   │   ├── knowledge.template.md # Template for project knowledge

@@ -62,7 +62,7 @@ Knowledge survives sessions through file-based storage:
 │   │  /check     │  │  post-run   │  │  healer     │                 │
 │   │  /rules     │  │  subagent   │  │  classifier │                 │
 │   │  /help      │  │  compact    │  │  learner    │                 │
-│   │             │  │  stop       │  │             │                 │
+│   │             │  │  stop       │  │  quoth-ctx  │                 │
 │   └─────────────┘  └─────────────┘  └─────────────┘                 │
 │          │                │                │                         │
 │          └────────────────┼────────────────┘                        │
@@ -286,7 +286,7 @@ get_test_dir()         # Get configured test directory
 
 ## Agents Layer
 
-All agents run on **Opus 4.5** for maximum capability.
+Five agents run on **Opus 4.5** for maximum capability. The **quoth-context** agent runs on **Sonnet** for fast, cheap Quoth interactions.
 
 ### Agent Frontmatter Format
 
@@ -404,7 +404,30 @@ tools:
 1. Review all run logs
 2. Identify recurring patterns
 3. Update `.triqual/knowledge.md`
-4. Propose patterns to Quoth (optional)
+4. Invoke quoth-context in capture mode to propose patterns to Quoth
+
+### quoth-context
+
+**Color:** Magenta
+**Model:** Sonnet (fast, cheap)
+**Role:** Handle all Quoth MCP interactions outside the main context window
+
+**Exempt from:** ALL Triqual hooks (prevents infinite loops)
+
+**Three modes:**
+
+| Mode | When | Output |
+|------|------|--------|
+| Session inject | Session start | ~500 token project context summary |
+| Pre-agent research | Before test-planner | Feature-specific patterns + doc IDs |
+| Capture | After pattern-learner | Proposes patterns to Quoth (user confirms) |
+
+**Workflow (pre-agent research):**
+1. Search Quoth for "{feature} playwright test patterns"
+2. Search Quoth for "{feature} common failures"
+3. Read top matching docs
+4. Read `.triqual/knowledge.md`
+5. Return structured research summary
 
 ## MCP Integration
 
