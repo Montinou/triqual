@@ -22,6 +22,23 @@
       "license": "MIT",
       "keywords": ["testing", "automation", "playwright", "e2e", "self-healing", "quoth", "exolar", "mcp", "agents", "opus"],
       "category": "testing"
+    },
+    {
+      "name": "quoth",
+      "source": {
+        "source": "github",
+        "repo": "Montinou/quoth-mcp"
+      },
+      "description": "AI Memory system that gives Claude persistent memory across sessions. Local-first .quoth/ storage, quoth-memory subagent, configurable strictness modes, session logging, and knowledge promotion.",
+      "version": "2.0.0",
+      "author": {
+        "name": "Montinou"
+      },
+      "homepage": "https://quoth.ai-innovation.site",
+      "repository": "https://github.com/Montinou/quoth-mcp",
+      "license": "MIT",
+      "keywords": ["memory", "mcp", "documentation", "knowledge", "rag", "ai-memory", "quoth"],
+      "category": "memory"
     }
   ]
 }
