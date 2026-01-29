@@ -332,6 +332,11 @@ init_session() {
     "passed": 0,
     "failed": 0,
     "healed": 0
+  },
+  "quoth_context": {
+    "invoked": false,
+    "mode": null,
+    "last_feature": null
   }
 }
 EOF
@@ -458,6 +463,62 @@ increment_tool_counter() {
                 sed -i '' "s/\"$tool_name\"[[:space:]]*:[[:space:]]*[0-9]*/\"$tool_name\": $new/" "$session_file"
             else
                 sed -i "s/\"$tool_name\"[[:space:]]*:[[:space:]]*[0-9]*/\"$tool_name\": $new/" "$session_file"
+            fi
+        fi
+    ) 200>"$session_file.lock"
+
+    rm -f "$session_file.lock" 2>/dev/null || true
+}
+
+# ============================================================================
+# QUOTH-CONTEXT AGENT TRACKING
+# ============================================================================
+
+# Check if quoth-context agent was invoked this session
+# Returns: 0 if invoked, 1 if not
+quoth_context_invoked() {
+    local session_file
+    session_file=$(get_session_file) || return 1
+
+    if [ -f "$session_file" ]; then
+        if has_jq; then
+            local invoked=$(jq -r '.quoth_context.invoked // false' "$session_file" 2>/dev/null)
+            [ "$invoked" = "true" ] && return 0
+        else
+            if grep -q '"invoked"[[:space:]]*:[[:space:]]*true' "$session_file" 2>/dev/null; then
+                return 0
+            fi
+        fi
+    fi
+    return 1
+}
+
+# Mark quoth-context agent as invoked with mode
+# Usage: mark_quoth_context_invoked "session_inject" "login"
+mark_quoth_context_invoked() {
+    local mode="$1"
+    local feature="${2:-}"
+    local session_file
+
+    session_file=$(get_session_file) || return 1
+
+    if [ ! -f "$session_file" ]; then
+        return 1
+    fi
+
+    (
+        flock -x 200 2>/dev/null || true
+
+        if has_jq; then
+            local temp_file="${session_file}.tmp"
+            jq ".quoth_context.invoked = true | .quoth_context.mode = \"$mode\" | .quoth_context.last_feature = \"$feature\"" \
+                "$session_file" > "$temp_file" 2>/dev/null && \
+                mv "$temp_file" "$session_file"
+        else
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                sed -i '' 's/"invoked"[[:space:]]*:[[:space:]]*false/"invoked": true/' "$session_file"
+            else
+                sed -i 's/"invoked"[[:space:]]*:[[:space:]]*false/"invoked": true/' "$session_file"
             fi
         fi
     ) 200>"$session_file.lock"
