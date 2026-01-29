@@ -220,24 +220,27 @@ EOF
     # =========================================================================
     # GATE 4.5: QUOTH SEARCH MUST BE DOCUMENTED (Mandatory Pattern Search)
     # =========================================================================
-    if ! quoth_search_documented "$feature" && ! quoth_search_skipped_justified "$feature"; then
+    if ! quoth_context_invoked && ! quoth_search_documented "$feature" && ! quoth_search_skipped_justified "$feature"; then
         cat >&2 << EOF
 🚫 BLOCKED: Quoth pattern search not documented
 
-**MANDATORY:** You MUST search Quoth for patterns BEFORE writing test code.
+**MANDATORY:** You MUST load Quoth context BEFORE writing test code.
 
 The RESEARCH stage exists but doesn't show evidence of Quoth search results.
 
 **Required Actions:**
 
-1. **Search Quoth NOW:**
+1. **Invoke quoth-context agent** (RECOMMENDED):
+   > Use quoth-context agent to research patterns for '$feature' (pre-agent research mode)
+
+2. **Or search Quoth manually:**
    \`\`\`
    mcp__quoth__quoth_search_index({
      query: "$feature playwright patterns"
    })
    \`\`\`
 
-2. **Document results in $run_log** under RESEARCH stage:
+3. **Document results in $run_log** under RESEARCH stage:
 
    #### Quoth Search Results
 
@@ -250,7 +253,7 @@ The RESEARCH stage exists but doesn't show evidence of Quoth search results.
    - doc-id-1: Title of pattern
    - doc-id-2: Another useful pattern
 
-3. **If Quoth MCP is unavailable**, document the skip:
+4. **If Quoth MCP is unavailable**, document the skip:
    - "Quoth MCP unavailable - proceeding without pattern search"
    - Or verify MCP connection with /mcp
 
@@ -259,7 +262,7 @@ The RESEARCH stage exists but doesn't show evidence of Quoth search results.
 - Searching first avoids reinventing existing solutions
 - Patterns learned from past failures help you succeed faster
 
-Search Quoth, document results, then retry this write operation.
+Load Quoth context, document results, then retry this write operation.
 EOF
         exit 2
     fi

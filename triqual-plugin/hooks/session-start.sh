@@ -87,19 +87,20 @@ Before writing any test code, you MUST:
 
 All stages must be documented in run logs at: .triqual/runs/{feature}.md
 
-## ⚠️ MANDATORY: Quoth Pattern Search
+## ⚠️ MANDATORY: Quoth Context Loading
 
-**BEFORE writing ANY test code, you MUST search Quoth for patterns:**
+**Invoke the quoth-context agent** to load project patterns from Quoth and local knowledge:
 
-\`\`\`
-mcp__quoth__quoth_search_index({
-  query: \"{feature} playwright patterns\"
-})
-\`\`\`
+> Use the quoth-context agent in **session inject** mode to load project context.
 
-This is ENFORCED - writing tests will be BLOCKED until Quoth search is documented.
+The quoth-context agent will:
+1. Search Quoth for project-relevant patterns
+2. Read .triqual/knowledge.md for local conventions
+3. Return a ~500 token context summary
 
-**Why:** Quoth contains proven patterns from past successes and failures. Searching first prevents reinventing solutions and avoids common mistakes.
+This is the **recommended first action** in every session. During /test, quoth-context is **mandatory** before test-planner.
+
+**Why:** Quoth contains proven patterns from past successes and failures. Loading context first prevents reinventing solutions and avoids common mistakes.
 
 ## Available Skills
 - /test login        (full autonomous: analyze → research → plan → write → run → learn)
@@ -116,6 +117,7 @@ This is ENFORCED - writing tests will be BLOCKED until Quoth search is documente
 - test-healer        (auto-fix failing tests)
 - failure-classifier (classify failures: FLAKE/BUG/ENV/TEST_ISSUE)
 - pattern-learner    (learn and document patterns)
+- quoth-context      (searches Quoth, loads context, proposes patterns)
 
 Tip: If Quoth/Exolar searches fail, verify MCP is connected with /mcp"
 

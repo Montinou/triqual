@@ -244,9 +244,12 @@ If tests fail, test-healer agent will analyze and fix issues." "SubagentStop"
 - test-healer will apply documented fixes
 - Anti-patterns will be avoided
 
-**If pattern was proposed to Quoth:**
-- It will be available via quoth_search_index
-- Other projects can benefit
+**Promote patterns to Quoth:**
+- Invoke **quoth-context** agent in **capture mode** to propose patterns to Quoth:
+  > Use quoth-context agent to capture and propose patterns from $FEATURE (capture mode)
+- quoth-context will read run log learnings and propose updates
+- You will be asked to confirm before anything is sent to Quoth
+- Promoted patterns will be available via quoth_search_index for all projects
 
 **Session learnings are now persisted!**" "SubagentStop"
         else

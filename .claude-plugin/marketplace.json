@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Triqual - Autonomous test automation with documented learning loops, self-healing tests, and MCP-powered pattern learning",
-    "version": "1.0.5"
+    "version": "1.1.0"
   },
   "plugins": [
     {
       "name": "triqual-plugin",
       "source": "./triqual-plugin",
-      "description": "Autonomous test automation plugin with enforced documentation loops, 5 Opus 4.5 agents (planner, generator, healer, classifier, learner), and seamless MCP integration (Quoth patterns + Exolar analytics). Features blocking hooks, mandatory Quoth pattern search, draft-first development, and persistent learning.",
-      "version": "1.0.5",
+      "description": "Autonomous test automation plugin with enforced documentation loops, 6 agents (5 Opus 4.5 + 1 Sonnet quoth-context), and seamless MCP integration (Quoth patterns + Exolar analytics). Features blocking hooks, quoth-context agent for automatic pattern loading, draft-first development, and persistent learning.",
+      "version": "1.1.0",
       "author": {
         "name": "Montinou"
       },

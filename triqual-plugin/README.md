@@ -1,6 +1,6 @@
 # Triqual
 
-> **Version 1.0.5** | Opus 4.5 Agents | Mandatory Quoth Search | macOS & Linux
+> **Version 1.1.0** | Opus 4.5 + Sonnet Agents | Quoth v2 Context Agent | macOS & Linux
 
 **Autonomous Test Automation for Claude Code**
 
@@ -47,7 +47,7 @@ claude --plugin-dir /path/to/triqual/triqual-plugin
 | MCP Servers | 2 | `quoth` (patterns), `exolar-qa` (analytics) |
 | Hooks | 7 | Blocking enforcement for documentation |
 | Skills | 5 | `/init`, `/test`, `/check`, `/rules`, `/help` |
-| Agents | 5 | All powered by Opus 4.5 |
+| Agents | 6 | 5 Opus 4.5 + 1 Sonnet (quoth-context) |
 | Rules | 31 | Playwright best practices (8 categories) |
 
 ## Quick Start
@@ -148,25 +148,28 @@ Hooks **BLOCK** actions until documentation is complete:
 | Gate | Trigger | Block Condition | Resolution |
 |------|---------|-----------------|------------|
 | **Pre-Write** | Write `.spec.ts` | No run log or missing stages | Create run log with ANALYZE/RESEARCH/PLAN/WRITE |
-| **Quoth Search** | Write `.spec.ts` | **No Quoth search documented** | **Search Quoth FIRST, document results** |
+| **Quoth Context** | Write `.spec.ts` | **No Quoth context loaded** | **Invoke quoth-context agent or search Quoth manually** |
 | **Post-Run** | After `playwright test` | Results not documented | Add RUN stage to log |
 | **Retry Limit** | 2+ same-category fails | No external research | Search Quoth/Exolar, document findings |
 | **Deep Analysis** | 12+ attempts | No deep analysis | Expand research, explore app, try new approaches |
 | **Max Attempts** | 25+ attempts | No resolution | Mark as `.fixme()` with justification |
 
-### Mandatory Quoth Pattern Search
+### Mandatory Quoth Context Loading
 
-**BEFORE writing ANY test code**, you MUST search Quoth:
+**BEFORE writing ANY test code**, invoke the **quoth-context** agent:
 
+> Use quoth-context agent in **pre-agent research** mode to load patterns for '{feature}'.
+
+The quoth-context agent searches Quoth, reads knowledge.md, and returns structured patterns. This is **ENFORCED** — test writing will be **BLOCKED** until Quoth context is loaded.
+
+If quoth-context is unavailable, fall back to manual search:
 ```typescript
 mcp__quoth__quoth_search_index({
   query: "{feature} playwright patterns"
 })
 ```
 
-This is **ENFORCED** - test writing will be **BLOCKED** until Quoth search is documented.
-
-**Why:** Quoth contains proven patterns from past successes and failures. Searching first prevents reinventing solutions and avoids common mistakes.
+**Why:** Quoth contains proven patterns from past successes and failures. The quoth-context agent searches comprehensively without consuming main context.
 
 ### Example: Blocked Action
 
@@ -185,9 +188,9 @@ Required stages:
 Then retry this write operation.
 ```
 
-## The Five Agents
+## The Six Agents
 
-All agents run on **Opus 4.5** for maximum intelligence:
+Five agents run on **Opus 4.5** for maximum intelligence, plus one **Sonnet** agent for fast Quoth interactions:
 
 ### 1. TEST-PLANNER
 
@@ -234,8 +237,17 @@ All agents run on **Opus 4.5** for maximum intelligence:
 
 - Reviews all run logs for patterns
 - Updates `.triqual/knowledge.md`
-- Proposes patterns to Quoth for global sharing
+- Invokes quoth-context in capture mode to propose patterns to Quoth
 - Ensures learnings survive sessions
+
+### 6. QUOTH-CONTEXT (Sonnet)
+
+**Role:** Handles all Quoth MCP interactions outside the main context window
+
+- **Session inject:** Loads project patterns at session start (~500 token summary)
+- **Pre-agent research:** Searches Quoth for feature-specific patterns before test-planner
+- **Capture:** Proposes learned patterns to Quoth after pattern-learner (requires user confirmation)
+- Exempt from all Triqual hooks (prevents infinite loops)
 
 ## Directory Structure
 
@@ -263,12 +275,13 @@ triqual-plugin/
 │   ├── subagent-stop.sh       # Guides next steps
 │   ├── pre-compact.sh
 │   └── stop.sh
-├── .agents/                   # Opus 4.5 agents
+├── .agents/                   # Opus 4.5 + Sonnet agents
 │   ├── test-planner.md
 │   ├── test-generator.md
 │   ├── test-healer.md
 │   ├── failure-classifier.md
-│   └── pattern-learner.md
+│   ├── pattern-learner.md
+│   └── quoth-context.md       # Sonnet - Quoth MCP interactions
 ├── context/                   # Templates
 │   ├── run-log.template.md
 │   ├── knowledge.template.md

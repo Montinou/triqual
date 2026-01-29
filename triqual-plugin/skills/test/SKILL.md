@@ -43,7 +43,8 @@ Generate production-ready Playwright tests with multiple input modes. Default mo
 │  PHASES:                                                                     │
 │  0. SETUP → Auto-config, load patterns, discover credentials                │
 │  1. EXPLORE → Playwright MCP (skip with --ticket/--describe)                │
-│  2. PLAN → Quoth patterns + input source                                    │
+│  1.5 QUOTH CONTEXT → quoth-context agent loads patterns (MANDATORY)        │
+│  2. PLAN → Quoth context output + input source                              │
 │  3. GENERATE → .spec.ts in tests/.draft/                                    │
 │  4. HEAL LOOP → Run → Fix → Re-run (max 5 iterations)                       │
 │  5. PROMOTE → Move to production test directory                             │
@@ -257,21 +258,38 @@ Use the provided description as test requirements. Skip exploration phase.
 
 ---
 
-## Phase 2: PLAN
+## Phase 1.5: QUOTH CONTEXT (MANDATORY)
 
-### Query Quoth for Patterns
+**Before dispatching test-planner**, invoke the quoth-context agent:
 
+> Use quoth-context agent to research patterns for '{feature}' (pre-agent research mode)
+
+This is **mandatory** during `/test`. The quoth-context agent will:
+1. Search Quoth for "{feature} playwright test patterns"
+2. Search Quoth for "{feature} common failures"
+3. Read top matching docs and local knowledge.md
+4. Return structured patterns summary
+
+**The output feeds directly into test-planner's RESEARCH stage.**
+
+If quoth-context fails (MCP unavailable), fall back to manual search:
 ```
 mcp__quoth__quoth_search_index({
   query: "{feature} playwright test pattern"
 })
 ```
 
-Look for:
-- Existing Page Objects
-- Similar test files
-- Assertion patterns
-- Locator strategies
+---
+
+## Phase 2: PLAN
+
+### Using Quoth Context Output
+
+test-planner receives the quoth-context output and uses it for:
+- Existing Page Objects (from Quoth patterns)
+- Similar test files (from Quoth search results)
+- Assertion patterns (from matched docs)
+- Locator strategies (from knowledge.md)
 
 ### Create Test Plan
 

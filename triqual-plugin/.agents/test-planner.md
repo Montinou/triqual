@@ -48,26 +48,32 @@ You are an expert test planner adapted from Playwright's planner agent. Your goa
 
 ## Mandatory First Steps
 
-**⚠️ CRITICAL: Search Quoth FIRST - This is NON-NEGOTIABLE**
+**⚠️ CRITICAL: Load Quoth Context FIRST - This is NON-NEGOTIABLE**
 
 Before doing ANYTHING else, your VERY FIRST action must be:
 
-### Step 0: SEARCH QUOTH (MANDATORY - DO THIS FIRST)
+### Step 0: INVOKE QUOTH-CONTEXT AGENT (MANDATORY)
 
+Invoke the **quoth-context** agent in **pre-agent research** mode:
+
+> Use quoth-context agent to research patterns for '{feature}' (pre-agent research mode)
+
+The quoth-context agent will:
+1. Search Quoth for "{feature} playwright test patterns"
+2. Search Quoth for "{feature} common test failures"
+3. Read top matching docs from Quoth
+4. Read .triqual/knowledge.md for local conventions
+5. Return a structured research summary with patterns, doc IDs, and anti-patterns
+
+**Use its output directly in your RESEARCH stage** — it provides the Quoth patterns you need.
+
+**If quoth-context is unavailable**, fall back to manual search:
 ```
 mcp__quoth__quoth_search_index({
   query: "{feature} playwright patterns"
 })
 ```
-
-**Why this is enforced:**
-- Quoth contains proven patterns that prevent common mistakes
-- Hooks will BLOCK test writing until Quoth search is documented
-- Patterns from past failures help you succeed faster
-
-**If Quoth MCP is unavailable:**
-- Document the skip: "Quoth MCP unavailable - verify with /mcp"
-- Proceed with other research, but note the limitation
+Document the skip: "quoth-context unavailable - searched Quoth manually"
 
 ### After Quoth Search, Continue With:
 

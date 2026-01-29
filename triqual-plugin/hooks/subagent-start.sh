@@ -64,9 +64,15 @@ You MUST read the following before creating the test plan:
    - Path: $RUNS_DIR/
    - Action: \`ls $RUNS_DIR/\` then read relevant ones
 
-3. **Quoth Patterns** (REQUIRED):
-   - Search: \`quoth_search_index({ query: \"{feature} playwright patterns\" })\`
-   - This finds reusable patterns and Page Objects
+3. **Quoth Context** (MANDATORY FIRST STEP):
+   - **BEFORE doing anything else**, invoke the **quoth-context** agent:
+     > Use quoth-context agent to research patterns for '{feature}' (pre-agent research mode)
+   - quoth-context will search Quoth for '{feature} playwright patterns'
+   - quoth-context will read .triqual/knowledge.md
+   - quoth-context will return structured research output
+   - Use its output to populate your RESEARCH stage
+   - If quoth-context is unavailable, search Quoth manually:
+     \`quoth_search_index({ query: \"$FEATURE playwright patterns\" })\`
 
 4. **Exolar Tests** (REQUIRED):
    - Search: \`query_exolar_data({ dataset: \"test_search\", filters: { search: \"{feature}\" } })\`
