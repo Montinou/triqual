@@ -517,8 +517,12 @@ mark_quoth_context_invoked() {
         else
             if [[ "$OSTYPE" == "darwin"* ]]; then
                 sed -i '' 's/"invoked"[[:space:]]*:[[:space:]]*false/"invoked": true/' "$session_file"
+                sed -i '' "s/\"mode\"[[:space:]]*:[[:space:]]*null/\"mode\": \"$mode\"/" "$session_file"
+                sed -i '' "s/\"last_feature\"[[:space:]]*:[[:space:]]*null/\"last_feature\": \"$feature\"/" "$session_file"
             else
                 sed -i 's/"invoked"[[:space:]]*:[[:space:]]*false/"invoked": true/' "$session_file"
+                sed -i "s/\"mode\"[[:space:]]*:[[:space:]]*null/\"mode\": \"$mode\"/" "$session_file"
+                sed -i "s/\"last_feature\"[[:space:]]*:[[:space:]]*null/\"last_feature\": \"$feature\"/" "$session_file"
             fi
         fi
     ) 200>"$session_file.lock"
