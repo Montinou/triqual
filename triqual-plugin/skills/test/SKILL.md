@@ -42,8 +42,8 @@ Generate production-ready Playwright tests with multiple input modes. Default mo
 │                                                                              │
 │  PHASES:                                                                     │
 │  0. SETUP → Auto-config, load patterns, discover credentials                │
+│  0.6 QUOTH CONTEXT → quoth-context agent loads patterns (MANDATORY, BLOCKING)│
 │  1. EXPLORE → Playwright MCP (skip with --ticket/--describe)                │
-│  1.5 QUOTH CONTEXT → quoth-context agent loads patterns (MANDATORY)        │
 │  2. PLAN → Quoth context output + input source                              │
 │  3. GENERATE → .spec.ts in tests/.draft/                                    │
 │  4. HEAL LOOP → Run → Fix → Re-run (max 5 iterations)                       │
@@ -216,6 +216,31 @@ mcp__plugin_triqual-plugin_playwright__browser_run_code({
 
 ---
 
+## Phase 0.6: QUOTH CONTEXT (EXECUTE IMMEDIATELY AFTER SETUP)
+
+**This is a blocking gate.** The Task hook will BLOCK dispatching test-planner until this completes.
+
+**Execute now:**
+
+> Use quoth-context agent to research patterns for '{feature}' (pre-agent research mode)
+
+Wait for the agent to complete before proceeding to Phase 1.
+
+The quoth-context agent will:
+1. Search Quoth for "{feature} playwright test patterns"
+2. Search Quoth for "{feature} common failures"
+3. Read local knowledge.md
+4. Return structured patterns summary (~500 tokens)
+5. Set session flag `quoth_context.invoked = true`
+
+**If quoth-context fails** (MCP unavailable), fall back to manual search:
+```
+mcp__quoth__quoth_search_index({ query: "{feature} playwright test pattern" })
+```
+Document results in the run log RESEARCH stage. This satisfies Gate 4.5 but not the Task gate — you will need to retry test-planner dispatch.
+
+---
+
 ## Phase 1: EXPLORE
 
 ### Default Mode (Autonomous)
@@ -255,44 +280,6 @@ Parse acceptance criteria as test requirements. Skip exploration phase.
 ### --describe Mode (Skip Explore)
 
 Use the provided description as test requirements. Skip exploration phase.
-
----
-
-## Phase 1.5: QUOTH CONTEXT (MANDATORY — ENFORCED BY HOOKS)
-
-**Before dispatching test-planner**, invoke the quoth-context agent:
-
-> Use quoth-context agent to research patterns for '{feature}' (pre-agent research mode)
-
-This is **mandatory** during `/test`. The quoth-context agent will:
-1. Search Quoth for "{feature} playwright test patterns"
-2. Search Quoth for "{feature} common failures"
-3. Read top matching docs and local knowledge.md
-4. Return structured patterns summary
-5. **Set the `quoth_context.invoked` session flag** (via `subagent-stop.sh`)
-
-**The output feeds directly into test-planner's RESEARCH stage.**
-
-### Hook Enforcement — This Is NOT Optional
-
-Two blocking gates enforce quoth-context invocation:
-
-| Gate | Hook | Blocks | Unblocked By |
-|------|------|--------|--------------|
-| **Gate 4.5** | `pre-spec-write.sh` | Writing any `.spec.ts` file | `quoth_context_invoked()` OR documented Quoth search in run log |
-| **Gate 0** | `pre-retry-gate.sh` | Running `playwright test` (when run log exists) | `quoth_context_invoked()` session flag |
-
-If quoth-context is skipped, **both writing tests and running tests will be BLOCKED with exit code 2**.
-
-Additionally, `subagent-start.sh` warns the test-planner agent with a STOP advisory if quoth-context has not been invoked yet.
-
-If quoth-context fails (MCP unavailable), fall back to manual search and document results in the run log:
-```
-mcp__quoth__quoth_search_index({
-  query: "{feature} playwright test pattern"
-})
-```
-Manual search results documented in the run log will satisfy Gate 4.5 (but not Gate 0 — only the agent sets the session flag).
 
 ---
 

@@ -28,33 +28,43 @@ ANALYZE → RESEARCH → PLAN → WRITE → RUN → LEARN
 
 "
 
-# Check for active run logs and their state
+# Check for run logs - split into incomplete (needs context) and completed
 RUNS_DIR=$(get_runs_dir)
 if [ -d "$RUNS_DIR" ]; then
-    ACTIVE_LOGS=$(list_active_run_logs)
-    if [ -n "$ACTIVE_LOGS" ]; then
-        CONTEXT="${CONTEXT}## Active Run Logs
+    INCOMPLETE_SECTION=""
+    COMPLETED_SECTION=""
 
-READ THESE LOGS TO RESTORE CONTEXT:
-"
-        while read -r log; do
-            if [ -n "$log" ]; then
-                FEATURE=$(basename "$log" .md)
-                LAST_STAGE=$(grep -E "^### Stage:" "$log" 2>/dev/null | tail -1 | sed 's/### Stage: //')
+    for log in "$RUNS_DIR"/*.md; do
+        [ -f "$log" ] || continue
+        FEATURE=$(basename "$log" .md)
+        STATUS=$(get_run_log_status "$FEATURE")
+
+        case "$STATUS" in
+            COMPLETED|COMPLETED_NO_LEARNINGS)
+                COMPLETED_SECTION="${COMPLETED_SECTION}
+- ✅ **$FEATURE** ($STATUS)"
+                ;;
+            IN_PROGRESS:*)
+                STAGE="${STATUS#IN_PROGRESS:}"
                 ATTEMPTS=$(count_run_attempts "$FEATURE")
-                CONTEXT="${CONTEXT}
-- **$FEATURE** ($log)
-  - Last stage: $LAST_STAGE
+                INCOMPLETE_SECTION="${INCOMPLETE_SECTION}
+- ⏳ **$FEATURE** ($log)
+  - Last stage: $STAGE
   - Run attempts: $ATTEMPTS"
+                ;;
+        esac
+    done
 
-                # Check for pending documentation
-                if ! has_accumulated_learnings "$FEATURE"; then
-                    CONTEXT="${CONTEXT}
-  - ⚠️ Missing: Accumulated Learnings section"
-                fi
-            fi
-        done <<< "$ACTIVE_LOGS"
-        CONTEXT="${CONTEXT}
+    if [ -n "$INCOMPLETE_SECTION" ]; then
+        CONTEXT="${CONTEXT}## Incomplete Run Logs — READ TO RESTORE CONTEXT
+${INCOMPLETE_SECTION}
+
+"
+    fi
+
+    if [ -n "$COMPLETED_SECTION" ]; then
+        CONTEXT="${CONTEXT}## Completed Runs (reference only)
+${COMPLETED_SECTION}
 
 "
     fi

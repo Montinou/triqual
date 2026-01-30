@@ -41,88 +41,68 @@ main() {
     # Build context message
     local context="[Triqual] Test automation initialized."
 
-    # Check for existing run logs
+    # Check for run logs - split into incomplete and completed
     local runs_dir=$(get_runs_dir)
-    local active_logs=""
 
     if [ -d "$runs_dir" ]; then
-        active_logs=$(list_active_run_logs)
-    fi
+        local incomplete_logs=""
+        local completed_logs=""
 
-    if [ -n "$active_logs" ]; then
-        context="$context
+        for log in "$runs_dir"/*.md; do
+            [ -f "$log" ] || continue
+            local feature=$(basename "$log" .md)
+            local status=$(get_run_log_status "$feature")
 
-=== ACTIVE RUN LOGS DETECTED ===
-$(echo "$active_logs" | while read log; do
-    local feature=$(basename "$log" .md)
-    local last_stage=$(grep -E "^### Stage:" "$log" 2>/dev/null | tail -1 | sed 's/### Stage: //')
-    echo "- $feature: Last stage was $last_stage"
-done)
+            case "$status" in
+                COMPLETED)
+                    completed_logs="${completed_logs}  ✅ ${feature}
+"
+                    ;;
+                COMPLETED_NO_LEARNINGS)
+                    completed_logs="${completed_logs}  ✅ ${feature} (missing Accumulated Learnings)
+"
+                    ;;
+                IN_PROGRESS:*)
+                    local stage="${status#IN_PROGRESS:}"
+                    incomplete_logs="${incomplete_logs}  ⏳ ${feature} → last stage: ${stage}
+"
+                    ;;
+            esac
+        done
 
-**ACTION REQUIRED:** Read the most recent run log to restore context before continuing.
-Use: Read tool on the run log file path above."
+        if [ -n "$incomplete_logs" ]; then
+            context="$context
+
+=== INCOMPLETE RUN LOGS ===
+${incomplete_logs}
+**ACTION:** Read the run log to restore context and continue from the last stage."
+        fi
+
+        if [ -n "$completed_logs" ]; then
+            context="$context
+
+=== COMPLETED RUNS ===
+${completed_logs}"
+        fi
     fi
 
     # Check for knowledge.md
     local knowledge_file=$(get_knowledge_file)
     if [ -f "$knowledge_file" ]; then
         context="$context
-
-Project knowledge file exists at: $knowledge_file
-Read this file to apply project-specific patterns and conventions."
+Knowledge: $knowledge_file"
     fi
 
-    # Add workflow guidance
+    # Add condensed workflow guidance
     context="$context
 
-## Documented Learning Loop
+FIRST ACTION for /test workflows:
+> Use quoth-context agent in session inject mode to load project patterns.
+This sets the session flag required by all downstream gates.
 
-Before writing any test code, you MUST:
-1. **ANALYZE** - Review requirements, identify test cases, acceptance criteria
-2. **RESEARCH** - **MANDATORY: Search Quoth FIRST**, then check Exolar for similar tests
-3. **PLAN** - Document test strategy, tools/helpers/data to use, new artifacts to create
-4. **WRITE** - Document hypothesis, then write test code
-5. **RUN** - Execute and document results
-6. **LEARN** - Extract patterns, update knowledge
-
-All stages must be documented in run logs at: .triqual/runs/{feature}.md
-
-## 🛑 REQUIRED: Quoth Context Loading — IMMEDIATE ACTION
-
-**You MUST invoke the quoth-context agent NOW** to load project patterns:
-
-> Use the quoth-context agent in **session inject** mode to load project context.
-
-The quoth-context agent will:
-1. Search Quoth for project-relevant patterns
-2. Read .triqual/knowledge.md for local conventions
-3. Return a ~500 token context summary
-4. **Set the session flag that unblocks downstream gates**
-
-This is the **REQUIRED first action** in every session. **Downstream hooks WILL BLOCK without it:**
-- **Gate 4.5** (pre-spec-write): Blocks writing .spec.ts files
-- **Gate 0** (pre-retry-gate): Blocks running playwright tests
-
-**Why:** Quoth contains proven patterns from past successes and failures. Loading context first prevents reinventing solutions and avoids common mistakes.
-
-## Available Skills
-- /test login        (full autonomous: analyze → research → plan → write → run → learn)
-- /test --explore    (interactive browser exploration)
-- /test --ticket     (generate from Linear ticket)
-- /test --describe   (generate from description)
-- /check             (lint tests for best practices)
-- /rules             (view best practice documentation)
-- /init              (initialize project config)
-
-## Available Agents
-- test-planner       (creates test plan - searches Quoth FIRST)
-- test-generator     (generates code from plan)
-- test-healer        (auto-fix failing tests)
-- failure-classifier (classify failures: FLAKE/BUG/ENV/TEST_ISSUE)
-- pattern-learner    (learn and document patterns)
-- quoth-context      (searches Quoth, loads context, proposes patterns)
-
-Tip: If Quoth/Exolar searches fail, verify MCP is connected with /mcp"
+Loop: ANALYZE → RESEARCH → PLAN → WRITE → RUN → LEARN
+Run logs: .triqual/runs/{feature}.md
+Skills: /test, /check, /rules, /init, /help"
 
     output_context "$context" "SessionStart"
 }

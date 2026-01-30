@@ -56,27 +56,16 @@ case "$AGENT_TYPE" in
         fi
 
         if [ "$quoth_loaded" = "false" ]; then
-            output_context "[Triqual] 🛑 STOP — Test Planner Agent Starting WITHOUT Quoth Context
+            # Task gate should have caught this, but provide fallback guidance
+            output_context "[Triqual] ⚠️ Test Planner starting — quoth-context not detected.
 
-=== ⛔ QUOTH CONTEXT NOT LOADED ===
+The Task dispatch gate should have blocked this. If you reached here:
+1. The quoth-context session flag may not have been set properly
+2. Invoke quoth-context agent NOW before proceeding
+3. After it completes, the session flag will be set
 
-**You MUST invoke quoth-context BEFORE test-planner can proceed effectively.**
-
-Downstream hooks WILL BLOCK:
-- Writing .spec.ts files (Gate 4.5 in pre-spec-write)
-- Running playwright tests (Gate 0 in pre-retry-gate)
-
-**IMMEDIATE ACTION:**
-> Use quoth-context agent to research patterns for '{feature}' (pre-agent research mode)
-
-Do this NOW, before reading files or creating the run log.
-
-=== AFTER quoth-context completes, then proceed with: ===
-
-1. Read $KNOWLEDGE_FILE
-2. Check $RUNS_DIR/ for similar features
-3. Search Exolar: \`query_exolar_data({ dataset: \"test_search\", filters: { search: \"{feature}\" } })\`
-4. Create run log at: $RUNS_DIR/{feature}.md with ANALYZE/RESEARCH/PLAN stages" "SubagentStart"
+$RUN_LOG_MSG
+$KNOWLEDGE_MSG" "SubagentStart"
         else
             output_context "[Triqual] 🎯 Test Planner Agent Starting — Quoth Context ✓ LOADED
 

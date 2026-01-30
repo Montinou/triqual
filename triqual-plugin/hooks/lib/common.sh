@@ -191,6 +191,47 @@ extract_tool_name() {
     extract_json_field "$input" "tool_name"
 }
 
+# Extract subagent type from Task tool_input
+# Checks: tool_input.subagent_type, then searches prompt/description for known agent names
+extract_task_agent_type() {
+    local input="$1"
+    if [ -z "$input" ]; then
+        return 0
+    fi
+
+    if has_jq; then
+        # Try direct subagent_type field
+        local stype
+        stype=$(echo "$input" | jq -r '.tool_input.subagent_type // empty' 2>/dev/null) || true
+        if [ -n "$stype" ]; then
+            echo "$stype"
+            return 0
+        fi
+
+        # Fallback: search prompt and description for known agent names
+        local prompt desc combined
+        prompt=$(echo "$input" | jq -r '.tool_input.prompt // empty' 2>/dev/null) || true
+        desc=$(echo "$input" | jq -r '.tool_input.description // empty' 2>/dev/null) || true
+        combined="${prompt} ${desc}"
+
+        for agent in test-planner test-generator test-healer failure-classifier pattern-learner quoth-context; do
+            if echo "$combined" | grep -qi "$agent"; then
+                echo "$agent"
+                return 0
+            fi
+        done
+    else
+        # Fallback without jq: grep for known agents in raw input
+        for agent in test-planner test-generator test-healer failure-classifier pattern-learner quoth-context; do
+            if echo "$input" | grep -qi "$agent"; then
+                echo "$agent"
+                return 0
+            fi
+        done
+    fi
+    return 0
+}
+
 # Extract tool_result from PostToolUse hook input
 # Usage: extract_tool_result "$INPUT"
 extract_tool_result() {
@@ -771,6 +812,60 @@ has_accumulated_learnings() {
     fi
 
     grep -q "## Accumulated Learnings" "$log_path"
+}
+
+# Check if run log is completed (has LEARN stage = tests passed and documented)
+is_run_log_completed() {
+    local feature="$1"
+    local log_path=$(get_run_log_path "$feature")
+
+    if [ ! -f "$log_path" ]; then
+        return 1
+    fi
+
+    # A run is complete if it has a LEARN stage (only written after PASS)
+    grep -q "### Stage: LEARN" "$log_path"
+}
+
+# List run logs that are incomplete (no LEARN stage)
+list_incomplete_run_logs() {
+    local runs_dir=$(get_runs_dir)
+    if [ ! -d "$runs_dir" ]; then
+        return 0
+    fi
+
+    for log in "$runs_dir"/*.md; do
+        [ -f "$log" ] || continue
+        local feature=$(basename "$log" .md)
+        if ! is_run_log_completed "$feature"; then
+            echo "$log"
+        fi
+    done
+}
+
+# Get human-readable status of a run log
+get_run_log_status() {
+    local feature="$1"
+    local log_path=$(get_run_log_path "$feature")
+
+    if [ ! -f "$log_path" ]; then
+        echo "NOT_FOUND"
+        return
+    fi
+
+    # Check completion (has LEARN = done)
+    if grep -q "### Stage: LEARN" "$log_path"; then
+        if grep -q "## Accumulated Learnings" "$log_path"; then
+            echo "COMPLETED"
+        else
+            echo "COMPLETED_NO_LEARNINGS"
+        fi
+        return
+    fi
+
+    # Determine last documented stage
+    local last_stage=$(grep -E "^### Stage:" "$log_path" | tail -1 | sed 's/### Stage: //' | sed 's/ .*//')
+    echo "IN_PROGRESS:$last_stage"
 }
 
 # Get the most recent run log file
