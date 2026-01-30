@@ -11,7 +11,7 @@
   "license": "MIT",
   "keywords": ["testing", "automation", "playwright", "e2e", "self-healing", "quoth", "exolar"],
   "skills": "./skills/",
-  "agents": "./agents/",
+  "agents": ["./agents"],
   "hooks": "./hooks.json",
   "mcpServers": "./.mcp.json"
 }
