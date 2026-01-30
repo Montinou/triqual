@@ -254,7 +254,7 @@ mcp__quoth__quoth_search_index({ query: "wait-no-timeout pattern" })
 - Run tests (use `npx playwright test`)
 - Generate new tests (use `/test`)
 - Fetch tickets (use `/test --ticket`)
-- Heal failing tests (use test-healer agent)
+- Heal failing tests (use triqual-plugin:test-healer agent)
 
 This skill is for **static analysis and linting** only.
 

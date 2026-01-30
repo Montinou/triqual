@@ -1023,7 +1023,7 @@ export default defineConfig({
 
 - **Run tests** - Use `/test` or `npx playwright test`
 - **Generate test files** - Use `/test` or `/test --describe`
-- **Heal failures** - That's the test-healer agent
+- **Heal failures** - That's the triqual-plugin:test-healer agent
 - **Fetch tickets** - Use `/test --ticket ENG-123`
 
 This skill is for **initial setup and configuration only**.

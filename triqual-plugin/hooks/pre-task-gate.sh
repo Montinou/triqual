@@ -40,9 +40,9 @@ main() {
     cat >&2 << 'EOF'
 🚫 BLOCKED: Cannot dispatch test-planner without Quoth context
 
-Invoke quoth-context agent FIRST to load patterns:
+Invoke triqual-plugin:quoth-context agent FIRST to load patterns:
 
-> Use quoth-context agent to research patterns for the feature (pre-agent research mode)
+> Use triqual-plugin:quoth-context agent to research patterns for the feature (pre-agent research mode)
 
 After quoth-context completes (sets session flag), retry dispatching test-planner.
 

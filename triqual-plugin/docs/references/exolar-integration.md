@@ -127,12 +127,12 @@ When analyzing failures, Exolar uses these classifications:
    - Compare expected vs actual
 
 4. **Classify and act:**
-   - Use failure-classifier agent
+   - Use triqual-plugin:failure-classifier agent
    - Apply appropriate fix based on classification
 
 ### Learning from History
 
-The pattern-learner agent uses Exolar data to:
+The triqual-plugin:pattern-learner agent uses Exolar data to:
 1. Identify recurring failure patterns
 2. Propose documentation updates to Quoth
 3. Improve future test generation

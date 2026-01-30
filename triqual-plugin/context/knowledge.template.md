@@ -1,7 +1,7 @@
 # Project-Specific Test Knowledge
 
 > This file accumulates learnings from test development sessions.
-> Updated automatically by Triqual hooks and pattern-learner agent.
+> Updated automatically by Triqual hooks and triqual-plugin:pattern-learner agent.
 > Read this file before writing tests to apply project conventions.
 
 ## Last Updated

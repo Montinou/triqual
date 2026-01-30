@@ -230,8 +230,8 @@ The RESEARCH stage exists but there is no evidence that Quoth patterns were load
 
 **IMMEDIATE ACTION — Do ONE of these NOW:**
 
-1. **Invoke quoth-context agent** (REQUIRED):
-   > Use quoth-context agent to research patterns for '$feature' (pre-agent research mode)
+1. **Invoke triqual-plugin:quoth-context agent** (REQUIRED):
+   > Use triqual-plugin:quoth-context agent to research patterns for '$feature' (pre-agent research mode)
 
    This sets the session flag that unblocks this gate.
 

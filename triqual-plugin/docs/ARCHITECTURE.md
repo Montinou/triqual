@@ -286,7 +286,7 @@ get_test_dir()         # Get configured test directory
 
 ## Agents Layer
 
-Five agents run on **Opus 4.5** for maximum capability. The **quoth-context** agent runs on **Sonnet** for fast, cheap Quoth interactions.
+Five agents run on **Opus 4.5** for maximum capability. The **triqual-plugin:quoth-context** agent runs on **Sonnet** for fast, cheap Quoth interactions.
 
 ### Agent Frontmatter Format
 

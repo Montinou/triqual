@@ -168,7 +168,7 @@ Document the successful run in $run_log:
 2. [Selector pattern that worked]
 3. [Wait pattern that worked]
 
-Consider running the pattern-learner agent if you discovered reusable patterns."
+Consider running the triqual-plugin:pattern-learner agent if you discovered reusable patterns."
     fi
 
     output_context "$context" "PostToolUse"

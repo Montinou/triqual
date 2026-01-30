@@ -61,7 +61,7 @@ You are an expert at analyzing test failures and classifying them to guide appro
 {Explanation of why this classification was chosen}
 
 **Recommended Action:**
-- For FLAKE: Use test-healer agent to add stability fixes
+- For FLAKE: Use triqual-plugin:test-healer agent to add stability fixes
 - For BUG: Create Linear ticket, do NOT modify test
 - For ENV_ISSUE: {specific environment fix}
 - For TEST_ISSUE: {specific test fix}
@@ -168,10 +168,10 @@ Based on classification, recommend which agent or action to use next:
 
 | Classification | Next Agent/Action |
 |----------------|-------------------|
-| FLAKE | → test-healer agent |
+| FLAKE | → triqual-plugin:test-healer agent |
 | BUG | → Create Linear ticket (do NOT fix test) |
 | ENV_ISSUE | → Check environment, then retry |
-| TEST_ISSUE | → test-healer agent or manual fix |
+| TEST_ISSUE | → triqual-plugin:test-healer agent or manual fix |
 
 ## Confidence Levels
 
@@ -192,7 +192,7 @@ For **Low confidence** classifications, recommend manual investigation.
 **Classification**: FLAKE
 **Confidence**: High
 **Evidence**: Intermittent failure, timing-related error, inconsistent across attempts
-**Action**: Use test-healer agent to add explicit waits
+**Action**: Use triqual-plugin:test-healer agent to add explicit waits
 </example>
 
 <example>
@@ -234,7 +234,7 @@ Read and update the run log at `.triqual/runs/{feature}.md`
 ### With Test Healer
 
 After classifying as FLAKE or TEST_ISSUE:
-- Recommend test-healer agent
+- Recommend triqual-plugin:test-healer agent
 - Classification informs healing strategy
 
 ### With Linear (for BUGs)
@@ -272,7 +272,7 @@ Read `.triqual/knowledge.md` for project-specific patterns that might inform cla
 
 ## What This Agent Does NOT Do
 
-- Fix failing tests (use test-healer agent)
+- Fix failing tests (use triqual-plugin:test-healer agent)
 - Create tests (use `/test`)
 - Run tests (use `/test --explore`)
 - Skip updating the run log

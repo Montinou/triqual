@@ -344,13 +344,13 @@ await page.locator('button:visible').click();
 - Add new project-specific patterns
 - Update anti-patterns section
 
-### With Quoth (via quoth-context agent)
+### With Quoth (via triqual-plugin:quoth-context agent)
 
 After extracting patterns, invoke **quoth-context** in **capture mode** to promote generalizable patterns to Quoth:
 
-> Use quoth-context agent to capture and propose patterns from '{feature}' (capture mode)
+> Use triqual-plugin:quoth-context agent to capture and propose patterns from '{feature}' (capture mode)
 
-The quoth-context agent will:
+The triqual-plugin:quoth-context agent will:
 1. Read your run log learnings
 2. Check knowledge.md for duplicates
 3. Search Quoth to verify pattern doesn't already exist

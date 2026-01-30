@@ -42,7 +42,7 @@ Generate production-ready Playwright tests with multiple input modes. Default mo
 │                                                                              │
 │  PHASES:                                                                     │
 │  0. SETUP → Auto-config, load patterns, discover credentials                │
-│  0.6 QUOTH CONTEXT → quoth-context agent loads patterns (MANDATORY, BLOCKING)│
+│  0.6 QUOTH CONTEXT → triqual-plugin:quoth-context agent loads patterns (MANDATORY, BLOCKING)│
 │  1. EXPLORE → Playwright MCP (skip with --ticket/--describe)                │
 │  2. PLAN → Quoth context output + input source                              │
 │  3. GENERATE → .spec.ts in tests/.draft/                                    │
@@ -222,11 +222,11 @@ mcp__plugin_triqual-plugin_playwright__browser_run_code({
 
 **Execute now:**
 
-> Use quoth-context agent to research patterns for '{feature}' (pre-agent research mode)
+> Use triqual-plugin:quoth-context agent to research patterns for '{feature}' (pre-agent research mode)
 
 Wait for the agent to complete before proceeding to Phase 1.
 
-The quoth-context agent will:
+The triqual-plugin:quoth-context agent will:
 1. Search Quoth for "{feature} playwright test patterns"
 2. Search Quoth for "{feature} common failures"
 3. Read local knowledge.md

@@ -97,7 +97,7 @@ Knowledge: $knowledge_file"
     context="$context
 
 FIRST ACTION for /test workflows:
-> Use quoth-context agent in session inject mode to load project patterns.
+> Use triqual-plugin:quoth-context agent in session inject mode to load project patterns.
 This sets the session flag required by all downstream gates.
 
 Loop: ANALYZE → RESEARCH → PLAN → WRITE → RUN → LEARN

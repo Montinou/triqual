@@ -47,11 +47,11 @@ Before doing ANYTHING else, your VERY FIRST action must be:
 
 ### Step 0: INVOKE QUOTH-CONTEXT AGENT (MANDATORY)
 
-Invoke the **quoth-context** agent in **pre-agent research** mode:
+Invoke the **triqual-plugin:quoth-context** agent in **pre-agent research** mode:
 
-> Use quoth-context agent to research patterns for '{feature}' (pre-agent research mode)
+> Use triqual-plugin:quoth-context agent to research patterns for '{feature}' (pre-agent research mode)
 
-The quoth-context agent will:
+The triqual-plugin:quoth-context agent will:
 1. Search Quoth for "{feature} playwright test patterns"
 2. Search Quoth for "{feature} common test failures"
 3. Read top matching docs from Quoth
@@ -406,12 +406,12 @@ After creating the run log, inform the user:
 ```
 ✅ Test plan created at: .triqual/runs/{feature}.md
 
-**Next step:** Use test-generator agent to generate test code from this plan.
+**Next step:** Use triqual-plugin:test-generator agent to generate test code from this plan.
 
 The plan includes:
 - {N} test cases identified
 - {N} existing resources to reuse
 - {N} new artifacts to create
 
-Ready to generate? Say "use test-generator agent" to continue.
+Ready to generate? Say "use triqual-plugin:test-generator agent" to continue.
 ```

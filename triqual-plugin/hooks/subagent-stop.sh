@@ -57,10 +57,10 @@ case "$AGENT_NAME" in
 - PLAN: $([ "$PLAN_EXISTS" -ge 1 ] && echo "✓" || echo "✗ MISSING")
 
 **Next step in the loop:**
-→ Use **test-generator** agent to generate test code from this plan.
+→ Use **triqual-plugin:test-generator** agent to generate test code from this plan.
 
 **To continue:**
-Say: 'Use test-generator agent to generate tests from the plan'" "SubagentStop"
+Say: 'Use triqual-plugin:test-generator agent to generate tests from the plan'" "SubagentStop"
         else
             output_context "[Triqual] ⚠️ Test planner completed but run log may not be updated.
 
@@ -71,7 +71,7 @@ Say: 'Use test-generator agent to generate tests from the plan'" "SubagentStop"
 
 **If not created, please run test-planner again:**
 
-'Use test-planner agent to plan tests for {feature}'
+'Use triqual-plugin:test-planner agent to plan tests for {feature}'
 
 A valid run log is REQUIRED before test-generator can proceed." "SubagentStop"
         fi
@@ -104,7 +104,7 @@ $([ -n "$RECENT_SPECS" ] && echo "$RECENT_SPECS" || echo "  (check run log for f
 npx playwright test ${FEATURE}.spec.ts
 \`\`\`
 
-If tests fail, test-healer agent will analyze and fix issues." "SubagentStop"
+If tests fail, triqual-plugin:test-healer agent will analyze and fix issues." "SubagentStop"
         else
             output_context "[Triqual] ⚠️ Test generator completed but run log may not be updated.
 
@@ -179,13 +179,13 @@ If tests fail, test-healer agent will analyze and fix issues." "SubagentStop"
 
 | Classification | Next Step |
 |----------------|-----------|
-| FLAKE | → Use **test-healer** agent to add stability fixes |
-| TEST_ISSUE | → Use **test-healer** agent to fix test logic |
+| FLAKE | → Use **triqual-plugin:test-healer** agent to add stability fixes |
+| TEST_ISSUE | → Use **triqual-plugin:test-healer** agent to fix test logic |
 | BUG | → Create Linear ticket, do NOT modify test |
 | ENV_ISSUE | → Check environment, then retry |
 
 **To continue:**
-- For FLAKE/TEST_ISSUE: 'Use test-healer agent to fix this'
+- For FLAKE/TEST_ISSUE: 'Use triqual-plugin:test-healer agent to fix this'
 - For BUG: 'Create a Linear ticket for this bug'
 - For ENV_ISSUE: Fix environment, then retry tests" "SubagentStop"
         else
@@ -268,8 +268,8 @@ Downstream gates (pre-spec-write, pre-retry-gate) will now allow writes and test
 - Anti-patterns will be avoided
 
 **Promote patterns to Quoth:**
-- Invoke **quoth-context** agent in **capture mode** to propose patterns to Quoth:
-  > Use quoth-context agent to capture and propose patterns from $FEATURE (capture mode)
+- Invoke **triqual-plugin:quoth-context** agent in **capture mode** to propose patterns to Quoth:
+  > Use triqual-plugin:quoth-context agent to capture and propose patterns from $FEATURE (capture mode)
 - quoth-context will read run log learnings and propose updates
 - You will be asked to confirm before anything is sent to Quoth
 - Promoted patterns will be available via quoth_search_index for all projects

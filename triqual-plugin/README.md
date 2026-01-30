@@ -148,7 +148,7 @@ Hooks **BLOCK** actions until documentation is complete:
 | Gate | Trigger | Block Condition | Resolution |
 |------|---------|-----------------|------------|
 | **Pre-Write** | Write `.spec.ts` | No run log or missing stages | Create run log with ANALYZE/RESEARCH/PLAN/WRITE |
-| **Quoth Context** | Write `.spec.ts` | **No Quoth context loaded** | **Invoke quoth-context agent or search Quoth manually** |
+| **Quoth Context** | Write `.spec.ts` | **No Quoth context loaded** | **Invoke triqual-plugin:quoth-context agent or search Quoth manually** |
 | **Post-Run** | After `playwright test` | Results not documented | Add RUN stage to log |
 | **Retry Limit** | 2+ same-category fails | No external research | Search Quoth/Exolar, document findings |
 | **Deep Analysis** | 12+ attempts | No deep analysis | Expand research, explore app, try new approaches |
@@ -156,11 +156,11 @@ Hooks **BLOCK** actions until documentation is complete:
 
 ### Mandatory Quoth Context Loading
 
-**BEFORE writing ANY test code**, invoke the **quoth-context** agent:
+**BEFORE writing ANY test code**, invoke the **triqual-plugin:quoth-context** agent:
 
-> Use quoth-context agent in **pre-agent research** mode to load patterns for '{feature}'.
+> Use triqual-plugin:quoth-context agent in **pre-agent research** mode to load patterns for '{feature}'.
 
-The quoth-context agent searches Quoth, reads knowledge.md, and returns structured patterns. This is **ENFORCED** — test writing will be **BLOCKED** until Quoth context is loaded.
+The triqual-plugin:quoth-context agent searches Quoth, reads knowledge.md, and returns structured patterns. This is **ENFORCED** — test writing will be **BLOCKED** until Quoth context is loaded.
 
 If quoth-context is unavailable, fall back to manual search:
 ```typescript
@@ -169,7 +169,7 @@ mcp__quoth__quoth_search_index({
 })
 ```
 
-**Why:** Quoth contains proven patterns from past successes and failures. The quoth-context agent searches comprehensively without consuming main context.
+**Why:** Quoth contains proven patterns from past successes and failures. The triqual-plugin:quoth-context agent searches comprehensively without consuming main context.
 
 ### Example: Blocked Action
 

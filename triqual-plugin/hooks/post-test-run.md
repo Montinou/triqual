@@ -58,7 +58,7 @@ If any tests failed:
 ```
 2 tests failed. Would you like me to:
 A) Analyze failures using Exolar semantic search
-B) Attempt auto-healing with test-healer agent
+B) Attempt auto-healing with triqual-plugin:test-healer agent
 C) Show failure details only
 ```
 

@@ -61,7 +61,7 @@ case "$AGENT_TYPE" in
 
 The Task dispatch gate should have blocked this. If you reached here:
 1. The quoth-context session flag may not have been set properly
-2. Invoke quoth-context agent NOW before proceeding
+2. Invoke triqual-plugin:quoth-context agent NOW before proceeding
 3. After it completes, the session flag will be set
 
 $RUN_LOG_MSG
@@ -113,7 +113,7 @@ Only after creating the run log can test-generator proceed." "SubagentStart"
 === BLOCKED: Run log required ===
 
 Cannot generate tests without a plan. You need:
-1. Run test-planner agent first, OR
+1. Run triqual-plugin:test-planner agent first, OR
 2. Create run log manually with ANALYZE/RESEARCH/PLAN stages
 
 Run log should be at: $RUNS_DIR/{feature}.md" "SubagentStart"

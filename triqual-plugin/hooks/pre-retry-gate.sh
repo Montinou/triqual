@@ -77,14 +77,14 @@ main() {
         cat >&2 << EOF
 🚫 BLOCKED: Quoth context not loaded before test run
 
-**MANDATORY:** You MUST invoke the quoth-context agent BEFORE running tests.
+**MANDATORY:** You MUST invoke the triqual-plugin:quoth-context agent BEFORE running tests.
 
 The run log for '$feature' exists, which means you are in the /test workflow.
 Quoth context loading is **required** before executing any test.
 
 **IMMEDIATE ACTION:**
 
-> Use quoth-context agent to research patterns for '$feature' (pre-agent research mode)
+> Use triqual-plugin:quoth-context agent to research patterns for '$feature' (pre-agent research mode)
 
 This sets the session flag that unblocks test execution.
 

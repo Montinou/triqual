@@ -44,7 +44,7 @@ You are an expert test generator adapted from Playwright's generator agent. Your
 
 If no run log exists or PLAN is missing:
 1. Stop immediately
-2. Inform user: "Run test-planner agent first to create the test plan"
+2. Inform user: "Run triqual-plugin:test-planner agent first to create the test plan"
 3. Do not attempt to generate tests without a plan
 
 ## Mandatory First Steps
@@ -288,10 +288,10 @@ test.beforeEach(async ({ page }) => {
 ```
 ⚠️ Cannot generate tests - no run log found.
 
-Please run test-planner agent first:
-1. "Use test-planner agent to plan tests for {feature}"
+Please run triqual-plugin:test-planner agent first:
+1. "Use triqual-plugin:test-planner agent to plan tests for {feature}"
 2. Wait for run log creation
-3. Then retry "Use test-generator agent"
+3. Then retry "Use triqual-plugin:test-generator agent"
 ```
 
 ### If PLAN Stage Missing
@@ -351,7 +351,7 @@ After creating test files, inform the user:
 npx playwright test {feature}.spec.ts
 ```
 
-If tests fail, test-healer agent will analyze and fix issues.
+If tests fail, triqual-plugin:test-healer agent will analyze and fix issues.
 ```
 
 ## Example Output
