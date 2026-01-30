@@ -137,8 +137,8 @@ If tests fail, test-healer agent will analyze and fix issues." "SubagentStop"
 1. If fix was applied → Run the test to verify
 2. If PASSED → Add to LEARN stage, update knowledge.md if pattern is reusable
 3. If STILL FAILING → Check attempt count:
-   - Under 3 attempts: Try another fix hypothesis
-   - 3+ attempts: Mark as .fixme() or justify another attempt
+   - Under 25 attempts: Try another fix hypothesis
+   - 25+ attempts: Mark as .fixme() or justify another attempt
 4. Consider running pattern-learner if a reusable pattern was discovered
 
 **To continue:**
@@ -214,19 +214,29 @@ If tests fail, test-healer agent will analyze and fix issues." "SubagentStop"
         fi
         ;;
 
+    *quoth-context*)
+        output_context "[Triqual] ✓ Quoth context agent completed.
+
+**Run log:** $RUN_LOG_PATH
+
+**Next step:**
+Use the context returned by quoth-context to inform your test planning or generation.
+If patterns were found, they should be referenced in the RESEARCH stage of the run log." "SubagentStop"
+        ;;
+
     *pattern-learner*)
         # Check if knowledge.md was updated
         KNOWLEDGE_FILE=$(get_knowledge_file)
         KNOWLEDGE_UPDATED=false
         if [ -f "$KNOWLEDGE_FILE" ]; then
             # Check if modified in last 60 seconds
-            local knowledge_mtime
+            knowledge_mtime=""
             if [[ "$OSTYPE" == "darwin"* ]]; then
                 knowledge_mtime=$(stat -f %m "$KNOWLEDGE_FILE" 2>/dev/null)
             else
                 knowledge_mtime=$(stat -c %Y "$KNOWLEDGE_FILE" 2>/dev/null)
             fi
-            local now=$(date +%s)
+            now=$(date +%s)
             if [ -n "$knowledge_mtime" ] && (( now - knowledge_mtime < 60 )); then
                 KNOWLEDGE_UPDATED=true
             fi

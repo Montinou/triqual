@@ -10,8 +10,8 @@
 # This hook fires BEFORE a playwright test command executes.
 # It checks the run log for:
 # - 2+ same-category failures -> require Quoth/Exolar search
-# - 5+ total attempts -> require DEEP ANALYSIS phase
-# - 8+ total attempts -> require .fixme() or justification
+# - 12+ total attempts -> require DEEP ANALYSIS phase
+# - 25+ total attempts -> require .fixme() or justification
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
@@ -156,12 +156,12 @@ You have made $total_attempts attempts to fix '$feature'.
 Before attempting again, you MUST perform **DEEP ANALYSIS**:
 
 1. **Extended Quoth Search** - Broader pattern search:
-   quoth_search_index({ query: "playwright {feature} patterns best practices" })
-   quoth_search_index({ query: "flaky test stabilization {error-category}" })
+   quoth_search_index({ query: "playwright $feature patterns best practices" })
+   quoth_search_index({ query: "flaky test stabilization $feature" })
 
 2. **Exolar Historical Data** - Query failure history:
-   query_exolar_data({ dataset: "test_history", filters: { test_signature: "{test}" } })
-   query_exolar_data({ dataset: "failure_patterns", filters: { error_type: "{category}" } })
+   query_exolar_data({ dataset: "test_history", filters: { test_signature: "$feature" } })
+   query_exolar_data({ dataset: "failure_patterns", filters: { error_type: "$feature" } })
 
 3. **App Exploration** - Use Playwright MCP to understand actual behavior:
    browser_navigate({ url: "{page-url}" })

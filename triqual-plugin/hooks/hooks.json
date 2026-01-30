@@ -44,7 +44,7 @@
     ],
     "SubagentStart": [
       {
-        "matcher": "test-planner|test-generator|test-healer|failure-classifier|pattern-learner",
+        "matcher": "test-planner|test-generator|test-healer|failure-classifier|pattern-learner|quoth-context",
         "hooks": [
           {
             "type": "command",
@@ -55,7 +55,7 @@
     ],
     "SubagentStop": [
       {
-        "matcher": "test-planner|test-generator|test-healer|failure-classifier|pattern-learner",
+        "matcher": "test-planner|test-generator|test-healer|failure-classifier|pattern-learner|quoth-context",
         "hooks": [
           {
             "type": "command",

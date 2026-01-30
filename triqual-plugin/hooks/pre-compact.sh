@@ -24,7 +24,7 @@ ANALYZE → RESEARCH → PLAN → WRITE → RUN → LEARN
 1. Document each stage in run logs at: .triqual/runs/{feature}.md
 2. Update run log AFTER each test run before any other action
 3. Search Quoth/Exolar after 2+ same-category failures
-4. Mark as .fixme() or justify after 3+ attempts
+4. Mark as .fixme() or justify after 25+ attempts
 
 "
 

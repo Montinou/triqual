@@ -174,7 +174,7 @@ You are an autonomous loop agent. Run tests, analyze, fix, repeat until:
 1. **Run Log** (REQUIRED - contains failure history):
    - Path: $LATEST_LOG
    - Feature: $FEATURE
-   - Current attempts: $ATTEMPT_COUNT of 8 max
+   - Current attempts: $ATTEMPT_COUNT of 25 max
    - Action: \`Read $LATEST_LOG\`
 
 2. **Project Knowledge** (fix patterns):
@@ -197,7 +197,7 @@ You run the full loop autonomously:
 === HOOKS WILL ENFORCE ===
 
 - **Attempt 12+**: Hook requires DEEP ANALYSIS phase
-- **Attempt 8+**: Hook requires .fixme() or strong justification
+- **Attempt 25+**: Hook requires .fixme() or strong justification
 - **2+ same category**: Hook requires Quoth/Exolar search
 
 === DEEP ANALYSIS (at attempt 12) ===
@@ -254,6 +254,23 @@ Update run log with classification:
 **Confidence:** {High | Medium | Low}
 **Evidence:** {supporting data}
 **Next Action:** {what agent/action to use next}" "SubagentStart"
+        ;;
+
+    *quoth-context*)
+        output_context "[Triqual] 🔮 Quoth Context Agent Starting
+
+=== CONTEXT ===
+
+$RUN_LOG_MSG
+$KNOWLEDGE_MSG
+
+You are loading semantic patterns from Quoth for the current feature.
+
+=== YOUR OUTPUT ===
+
+1. Search Quoth for relevant patterns
+2. Read .triqual/knowledge.md for project-specific patterns
+3. Return structured context summary for downstream agents" "SubagentStart"
         ;;
 
     *pattern-learner*)
