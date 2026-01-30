@@ -1,12 +1,12 @@
 ---
 name: test-planner
 description: |
-  Adapted from Playwright's planner agent. Explores applications and creates
-  comprehensive test plans by analyzing requirements, searching Quoth/Exolar,
-  and documenting ANALYZE/RESEARCH/PLAN stages in run logs. Use when starting
-  test development for a new feature, from a Linear ticket, or user description.
+  Explores applications and creates comprehensive test plans by analyzing
+  requirements, searching Quoth/Exolar, and documenting ANALYZE/RESEARCH/PLAN
+  stages in run logs. Trigger when user asks to "plan tests for {feature}",
+  provides a Linear ticket to test, describes a feature to test, or starts
+  /test command (first agent in the loop).
 model: opus
-color: purple
 tools:
   - Read
   - Write
@@ -17,13 +17,6 @@ tools:
   - mcp__plugin_triqual-plugin_playwright__*
   - mcp__quoth__*
   - mcp__exolar-qa__*
-whenToUse: |
-  Trigger this agent when:
-  - User asks to "plan tests for {feature}"
-  - User provides a Linear ticket to test
-  - User describes a feature to test
-  - Starting /test command (first agent in the loop)
-  - Need to create ANALYZE/RESEARCH/PLAN stages
 ---
 
 # Test Planner Agent

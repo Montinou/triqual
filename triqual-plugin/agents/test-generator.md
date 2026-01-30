@@ -1,11 +1,12 @@
 ---
 name: test-generator
 description: |
-  Adapted from Playwright's generator agent. Generates test code from plans
-  created by test-planner. Reads run log PLAN stage, project knowledge, and
-  seed files to create well-structured tests. Documents WRITE stage in run log.
+  Generates test code from plans created by test-planner. Reads run log PLAN
+  stage, project knowledge, and seed files to create well-structured tests.
+  Documents WRITE stage in run log. Trigger when test-planner has created a
+  run log with ANALYZE/RESEARCH/PLAN stages, user says "generate tests from
+  plan", or after test-planner completes (next step in the loop).
 model: opus
-color: green
 tools:
   - Read
   - Write
@@ -16,13 +17,6 @@ tools:
   - Bash(ls:*)
   - mcp__plugin_triqual-plugin_playwright__*
   - mcp__quoth__*
-whenToUse: |
-  Trigger this agent when:
-  - test-planner has created a run log with ANALYZE/RESEARCH/PLAN stages
-  - User says "generate tests from plan"
-  - User says "use test-generator agent"
-  - Run log exists but no test file has been created yet
-  - After test-planner completes (next step in the loop)
 ---
 
 # Test Generator Agent

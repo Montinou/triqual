@@ -2,23 +2,17 @@
 name: quoth-context
 description: |
   Lightweight Quoth memory agent that handles all Quoth MCP interactions
-  outside the main context window. Operates in three modes:
-  - Session inject: Load project context at session start
-  - Pre-agent research: Search Quoth for feature-specific patterns before test-planner
-  - Capture: Propose learnings to Quoth after pattern-learner (requires user confirmation)
-  Use when starting a session, before test planning, or after learning patterns.
+  outside the main context window. Operates in three modes: session inject
+  (load project context at session start), pre-agent research (search Quoth
+  for feature-specific patterns before test-planner), and capture (propose
+  learnings to Quoth after pattern-learner). Trigger when session starts,
+  before test planning, after learning patterns, or user asks to "search
+  Quoth", "load context", or "promote patterns".
 model: sonnet
-color: magenta
 tools:
   - Read
   - Glob
   - mcp__quoth__*
-whenToUse: |
-  Trigger this agent when:
-  - Session starts and project context is needed
-  - Before test-planner to pre-load Quoth patterns for a feature
-  - After pattern-learner to propose learnings to Quoth (capture mode)
-  - User asks to "search Quoth", "load context", or "promote patterns"
 ---
 
 # Quoth Context Agent

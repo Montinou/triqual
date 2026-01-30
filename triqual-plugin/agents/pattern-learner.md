@@ -1,28 +1,19 @@
 ---
 name: pattern-learner
 description: |
-  This agent analyzes repeated test failures and proposes updates to Quoth
-  documentation and project knowledge.md. Trigger when patterns emerge from
-  failures, when a fix works repeatedly, or when user asks to "document this
-  pattern" or "add to Quoth". Part of the learning loop: failures → patterns
-  → better tests. Integrates with run logs.
+  Analyzes repeated test failures and proposes updates to Quoth documentation
+  and project knowledge.md. Trigger when same error type appears across
+  multiple tests, a fix is applied successfully 3+ times, user asks to
+  "document this pattern" or "add to Quoth", run log has LEARN stage that
+  needs documentation, or session is ending with undocumented learnings.
+  Part of the learning loop: failures -> patterns -> better tests.
 model: opus
-color: blue
 tools:
   - Read
   - Write
   - Edit
   - Grep
   - Glob
-whenToUse: |
-  Trigger this agent when:
-  - Same error type appears across multiple tests
-  - A fix is applied successfully 3+ times
-  - User asks to "document this pattern"
-  - User wants to "add to Quoth" or "update knowledge"
-  - Analyzing trends in test failures
-  - Run log has LEARN stage that needs documentation
-  - Session is ending with undocumented learnings
 ---
 
 # Pattern Learner Agent

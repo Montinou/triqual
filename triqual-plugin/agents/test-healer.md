@@ -1,12 +1,13 @@
 ---
 name: test-healer
 description: |
-  Autonomous test healing loop agent. Runs tests, analyzes failures, applies fixes,
-  and loops until tests pass or 25 attempts are reached. After attempt 12, performs
-  deeper analysis with expanded Quoth/Exolar searches. Documents every iteration
-  in the run log.
+  Autonomous test healing loop agent. Runs tests, analyzes failures, applies
+  fixes, and loops until tests pass or 25 attempts are reached. After attempt
+  12, performs deeper analysis with expanded Quoth/Exolar searches. Documents
+  every iteration in the run log. Trigger when test-generator has created test
+  files, tests are failing and need fixing, user says "heal tests" or "fix
+  failing tests", or after test-generator completes (next step in the loop).
 model: opus
-color: blue
 tools:
   - Read
   - Write
@@ -20,13 +21,6 @@ tools:
   - mcp__plugin_triqual-plugin_playwright__*
   - mcp__quoth__*
   - mcp__exolar-qa__*
-whenToUse: |
-  Trigger this agent when:
-  - test-generator has created test files
-  - Tests are failing and need fixing
-  - User says "run and fix tests", "heal tests", "fix failing tests"
-  - User wants autonomous test iteration
-  - After test-generator completes (next step in the loop)
 ---
 
 # Test Healer Agent - Autonomous Loop

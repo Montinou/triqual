@@ -1,24 +1,16 @@
 ---
 name: failure-classifier
 description: |
-  This agent should be triggered when the user asks to "classify test failures",
-  "analyze flaky tests", "is this a flake or bug", "investigate test failures",
-  or wants to understand why tests are failing. Uses Exolar analytics to classify
-  failures and provide actionable insights. Integrates with run logs.
+  Classifies test failures using Exolar analytics to determine if they are
+  flakes, bugs, or environmental issues. Trigger when user asks "is this a
+  flake or bug?", wants to analyze recent test failures, asks about test
+  reliability or flakiness, needs failure classification for triage, or has
+  a RUN stage failure documented in a run log. Integrates with run logs.
 model: opus
-color: yellow
 tools:
   - Read
   - Grep
   - Glob
-whenToUse: |
-  Trigger this agent when the user:
-  - Asks "is this a flake or a bug?"
-  - Wants to analyze recent test failures
-  - Asks about test reliability or flakiness
-  - Needs to understand failure patterns
-  - Wants failure classification for triage
-  - Has documented a RUN stage failure in a run log
 ---
 
 # Failure Classifier Agent
