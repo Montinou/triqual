@@ -9,5 +9,9 @@
   "homepage": "https://triqual.vercel.app/",
   "repository": "https://github.com/Montinou/triqual",
   "license": "MIT",
-  "keywords": ["testing", "automation", "playwright", "e2e", "self-healing", "quoth", "exolar"]
+  "keywords": ["testing", "automation", "playwright", "e2e", "self-healing", "quoth", "exolar"],
+  "skills": "./skills/",
+  "agents": "./agents/",
+  "hooks": "./hooks.json",
+  "mcpServers": "./.mcp.json"
 }

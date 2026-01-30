@@ -70,6 +70,33 @@ main() {
     local run_log=$(get_run_log_path "$feature")
 
     # =========================================================================
+    # GATE 0: Quoth context must be loaded before first test run
+    # Only enforced when a run log exists (within /test workflow)
+    # =========================================================================
+    if ! quoth_context_invoked; then
+        cat >&2 << EOF
+🚫 BLOCKED: Quoth context not loaded before test run
+
+**MANDATORY:** You MUST invoke the quoth-context agent BEFORE running tests.
+
+The run log for '$feature' exists, which means you are in the /test workflow.
+Quoth context loading is **required** before executing any test.
+
+**IMMEDIATE ACTION:**
+
+> Use quoth-context agent to research patterns for '$feature' (pre-agent research mode)
+
+This sets the session flag that unblocks test execution.
+
+**Why:** Quoth patterns prevent common test failures. Loading context first
+reduces fix iterations and avoids reinventing solutions that already exist.
+
+After quoth-context completes, retry the test command.
+EOF
+        exit 2
+    fi
+
+    # =========================================================================
     # GATE 1: Check for repeated same-category failures (2+)
     # =========================================================================
     local locator_fails=$(count_failures_by_category "$feature" "LOCATOR")

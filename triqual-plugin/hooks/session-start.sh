@@ -87,9 +87,9 @@ Before writing any test code, you MUST:
 
 All stages must be documented in run logs at: .triqual/runs/{feature}.md
 
-## ⚠️ MANDATORY: Quoth Context Loading
+## 🛑 REQUIRED: Quoth Context Loading — IMMEDIATE ACTION
 
-**Invoke the quoth-context agent** to load project patterns from Quoth and local knowledge:
+**You MUST invoke the quoth-context agent NOW** to load project patterns:
 
 > Use the quoth-context agent in **session inject** mode to load project context.
 
@@ -97,8 +97,11 @@ The quoth-context agent will:
 1. Search Quoth for project-relevant patterns
 2. Read .triqual/knowledge.md for local conventions
 3. Return a ~500 token context summary
+4. **Set the session flag that unblocks downstream gates**
 
-This is the **recommended first action** in every session. During /test, quoth-context is **mandatory** before test-planner.
+This is the **REQUIRED first action** in every session. **Downstream hooks WILL BLOCK without it:**
+- **Gate 4.5** (pre-spec-write): Blocks writing .spec.ts files
+- **Gate 0** (pre-retry-gate): Blocks running playwright tests
 
 **Why:** Quoth contains proven patterns from past successes and failures. Loading context first prevents reinventing solutions and avoids common mistakes.
 

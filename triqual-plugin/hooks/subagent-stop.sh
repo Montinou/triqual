@@ -215,13 +215,26 @@ If tests fail, test-healer agent will analyze and fix issues." "SubagentStop"
         ;;
 
     *quoth-context*)
-        output_context "[Triqual] ✓ Quoth context agent completed.
+        # ROOT FIX: Set the session flag that downstream gates check
+        local qc_mode="pre-agent-research"
+        if [ -n "$FEATURE" ]; then
+            mark_quoth_context_invoked "$qc_mode" "$FEATURE"
+            log_debug "Marked quoth-context as invoked: mode=$qc_mode feature=$FEATURE"
+        else
+            mark_quoth_context_invoked "$qc_mode" ""
+            log_debug "Marked quoth-context as invoked: mode=$qc_mode (no feature)"
+        fi
+
+        output_context "[Triqual] ✓ Quoth context agent completed — session flag SET.
 
 **Run log:** $RUN_LOG_PATH
+**Session flag:** quoth_context.invoked = true (mode: $qc_mode, feature: $FEATURE)
 
 **Next step:**
 Use the context returned by quoth-context to inform your test planning or generation.
-If patterns were found, they should be referenced in the RESEARCH stage of the run log." "SubagentStop"
+If patterns were found, they should be referenced in the RESEARCH stage of the run log.
+
+Downstream gates (pre-spec-write, pre-retry-gate) will now allow writes and test runs." "SubagentStop"
         ;;
 
     *pattern-learner*)

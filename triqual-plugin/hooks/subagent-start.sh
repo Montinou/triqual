@@ -49,7 +49,36 @@ fi
 # Provide context based on which agent is starting
 case "$AGENT_TYPE" in
     *test-planner*)
-        output_context "[Triqual] 🎯 Test Planner Agent Starting
+        # Check if quoth-context was already invoked
+        local quoth_loaded=false
+        if quoth_context_invoked; then
+            quoth_loaded=true
+        fi
+
+        if [ "$quoth_loaded" = "false" ]; then
+            output_context "[Triqual] 🛑 STOP — Test Planner Agent Starting WITHOUT Quoth Context
+
+=== ⛔ QUOTH CONTEXT NOT LOADED ===
+
+**You MUST invoke quoth-context BEFORE test-planner can proceed effectively.**
+
+Downstream hooks WILL BLOCK:
+- Writing .spec.ts files (Gate 4.5 in pre-spec-write)
+- Running playwright tests (Gate 0 in pre-retry-gate)
+
+**IMMEDIATE ACTION:**
+> Use quoth-context agent to research patterns for '{feature}' (pre-agent research mode)
+
+Do this NOW, before reading files or creating the run log.
+
+=== AFTER quoth-context completes, then proceed with: ===
+
+1. Read $KNOWLEDGE_FILE
+2. Check $RUNS_DIR/ for similar features
+3. Search Exolar: \`query_exolar_data({ dataset: \"test_search\", filters: { search: \"{feature}\" } })\`
+4. Create run log at: $RUNS_DIR/{feature}.md with ANALYZE/RESEARCH/PLAN stages" "SubagentStart"
+        else
+            output_context "[Triqual] 🎯 Test Planner Agent Starting — Quoth Context ✓ LOADED
 
 === MANDATORY: READ BEFORE PROCEEDING ===
 
@@ -64,14 +93,8 @@ You MUST read the following before creating the test plan:
    - Path: $RUNS_DIR/
    - Action: \`ls $RUNS_DIR/\` then read relevant ones
 
-3. **Quoth Context** (MANDATORY FIRST STEP):
-   - **BEFORE doing anything else**, invoke the **quoth-context** agent:
-     > Use quoth-context agent to research patterns for '{feature}' (pre-agent research mode)
-   - quoth-context will search Quoth for '{feature} playwright patterns'
-   - quoth-context will read .triqual/knowledge.md
-   - quoth-context will return structured research output
-   - Use its output to populate your RESEARCH stage
-   - If quoth-context is unavailable, search Quoth manually:
+3. **Quoth Context** ✅ ALREADY LOADED — use patterns from quoth-context output.
+   - If you need additional searches:
      \`quoth_search_index({ query: \"$FEATURE playwright patterns\" })\`
 
 4. **Exolar Tests** (REQUIRED):
@@ -91,6 +114,7 @@ The run log MUST include:
 - **PLAN stage**: Test cases, tools to use, new artifacts to create
 
 Only after creating the run log can test-generator proceed." "SubagentStart"
+        fi
         ;;
 
     *test-generator*)

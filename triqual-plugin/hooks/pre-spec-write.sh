@@ -218,51 +218,40 @@ EOF
     fi
 
     # =========================================================================
-    # GATE 4.5: QUOTH SEARCH MUST BE DOCUMENTED (Mandatory Pattern Search)
+    # GATE 4.5: QUOTH CONTEXT MUST BE LOADED (Mandatory - No Skip Allowed)
     # =========================================================================
-    if ! quoth_context_invoked && ! quoth_search_documented "$feature" && ! quoth_search_skipped_justified "$feature"; then
+    if ! quoth_context_invoked && ! quoth_search_documented "$feature"; then
         cat >&2 << EOF
-🚫 BLOCKED: Quoth pattern search not documented
+🚫 BLOCKED: Quoth context not loaded
 
-**MANDATORY:** You MUST load Quoth context BEFORE writing test code.
+**MANDATORY — NO SKIP ALLOWED.** You MUST load Quoth context BEFORE writing test code.
 
-The RESEARCH stage exists but doesn't show evidence of Quoth search results.
+The RESEARCH stage exists but there is no evidence that Quoth patterns were loaded.
 
-**Required Actions:**
+**IMMEDIATE ACTION — Do ONE of these NOW:**
 
-1. **Invoke quoth-context agent** (RECOMMENDED):
+1. **Invoke quoth-context agent** (REQUIRED):
    > Use quoth-context agent to research patterns for '$feature' (pre-agent research mode)
 
-2. **Or search Quoth manually:**
+   This sets the session flag that unblocks this gate.
+
+2. **Or search Quoth manually and document results in $run_log:**
    \`\`\`
    mcp__quoth__quoth_search_index({
      query: "$feature playwright patterns"
    })
    \`\`\`
 
-3. **Document results in $run_log** under RESEARCH stage:
+   Then add to RESEARCH stage:
 
    #### Quoth Search Results
-
    **Query:** \`$feature playwright patterns\`
    **Patterns Found:**
-   - pattern-name: description of what it does
+   - pattern-name: description
    - another-pattern: description
 
-   **Relevant Docs:**
-   - doc-id-1: Title of pattern
-   - doc-id-2: Another useful pattern
-
-4. **If Quoth MCP is unavailable**, document the skip:
-   - "Quoth MCP unavailable - proceeding without pattern search"
-   - Or verify MCP connection with /mcp
-
-**Why this matters:**
-- Quoth contains proven patterns that prevent common mistakes
-- Searching first avoids reinventing existing solutions
-- Patterns learned from past failures help you succeed faster
-
-Load Quoth context, document results, then retry this write operation.
+**This gate CANNOT be skipped.** Quoth contains proven patterns that prevent
+common mistakes and reduce fix iterations. Load context, then retry.
 EOF
         exit 2
     fi
