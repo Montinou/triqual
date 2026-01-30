@@ -216,7 +216,7 @@ extract_task_agent_type() {
 
         for agent in test-planner test-generator test-healer failure-classifier pattern-learner quoth-context; do
             if echo "$combined" | grep -qi "$agent"; then
-                echo "$agent"
+                echo "triqual-plugin:$agent"
                 return 0
             fi
         done
@@ -224,7 +224,7 @@ extract_task_agent_type() {
         # Fallback without jq: grep for known agents in raw input
         for agent in test-planner test-generator test-healer failure-classifier pattern-learner quoth-context; do
             if echo "$input" | grep -qi "$agent"; then
-                echo "$agent"
+                echo "triqual-plugin:$agent"
                 return 0
             fi
         done

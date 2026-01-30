@@ -22,9 +22,11 @@ main() {
     local agent_type
     agent_type=$(extract_task_agent_type "$input")
 
-    if [ "$agent_type" != "test-planner" ]; then
-        exit 0  # Not test-planner, allow through
-    fi
+    # Match both plain and fully-qualified agent name
+    case "$agent_type" in
+        *test-planner*) ;;  # Continue to quoth-context check
+        *) exit 0 ;;        # Not test-planner, allow through
+    esac
 
     log_debug "Task gate: test-planner dispatch detected, checking quoth-context"
 
