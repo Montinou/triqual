@@ -93,12 +93,24 @@ ${completed_logs}"
 Knowledge: $knowledge_file"
     fi
 
+    # Check for existing context directories
+    local triqual_dir=$(get_triqual_dir)
+    if [ -d "$triqual_dir/context" ]; then
+        local context_features=$(ls "$triqual_dir/context/" 2>/dev/null | head -10)
+        if [ -n "$context_features" ]; then
+            context="$context
+
+=== CONTEXT FILES AVAILABLE ===
+${context_features}
+Use force: true to regenerate: triqual_load_context({ feature: \"{name}\", force: true })"
+        fi
+    fi
+
     # Add condensed workflow guidance
     context="$context
 
 FIRST ACTION for /test workflows:
-> Use triqual-plugin:quoth-context agent in session inject mode to load project patterns.
-This sets the session flag required by all downstream gates.
+Call triqual_load_context({ feature: \"{name}\" }) to build context files before planning.
 
 Loop: ANALYZE → RESEARCH → PLAN → WRITE → RUN → LEARN
 Run logs: .triqual/runs/{feature}.md

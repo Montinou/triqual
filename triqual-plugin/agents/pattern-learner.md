@@ -14,6 +14,7 @@ tools:
   - Edit
   - Grep
   - Glob
+  - mcp__quoth__*
 ---
 
 # Pattern Learner Agent
@@ -344,25 +345,52 @@ await page.locator('button:visible').click();
 - Add new project-specific patterns
 - Update anti-patterns section
 
-### With Quoth (via triqual-plugin:quoth-context agent)
+### With Quoth (Direct - Capture Mode)
 
-After extracting patterns, invoke **quoth-context** in **capture mode** to promote generalizable patterns to Quoth:
+After extracting generalizable patterns, you can propose them directly to Quoth.
 
-> Use triqual-plugin:quoth-context agent to capture and propose patterns from '{feature}' (capture mode)
+**IMPORTANT:** You MUST present the proposal to the user and get explicit confirmation before calling `quoth_propose_update`. Never auto-push.
 
-The triqual-plugin:quoth-context agent will:
-1. Read your run log learnings
-2. Check knowledge.md for duplicates
-3. Search Quoth to verify pattern doesn't already exist
-4. **Present the proposal to the user for confirmation**
-5. Only call `quoth_propose_update` after user approves
+**Steps for Quoth promotion:**
 
-**You should invoke quoth-context capture when:**
+1. Search Quoth to verify pattern doesn't already exist:
+   ```
+   mcp__quoth__quoth_search_index({
+     query: "{pattern keywords}"
+   })
+   ```
+
+2. **Present proposal to user:**
+   ```
+   These patterns were discovered and could be promoted to Quoth:
+
+   **Pattern:** {title}
+   - Evidence: {from which run logs}
+   - Category: {selector/wait/assertion/auth}
+   - Content: {the actual pattern}
+
+   **Options:**
+   1. Promote to Quoth (shared with all projects)
+   2. Keep in knowledge.md only (project-specific)
+   3. Skip
+   ```
+
+3. **Only after user confirms "promote"**, call:
+   ```
+   mcp__quoth__quoth_propose_update({
+     doc_id: "{relevant-doc-id}",
+     new_content: "{pattern content}",
+     evidence_snippet: "{evidence from run logs}",
+     reasoning: "{why this pattern is generalizable}"
+   })
+   ```
+
+**Promote to Quoth when:**
 - A pattern is generalizable (not project-specific)
 - The same fix worked across 3+ features
 - A new anti-pattern was discovered that others should know about
 
-**For project-specific patterns**, update knowledge.md directly without quoth-context.
+**For project-specific patterns**, update knowledge.md directly.
 
 ### With Exolar (Optional)
 

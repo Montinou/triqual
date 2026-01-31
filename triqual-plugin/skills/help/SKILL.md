@@ -47,6 +47,8 @@ pattern documentation (Quoth) and test analytics (Exolar).
 
 | Agent | Trigger | Description |
 |-------|---------|-------------|
+| test-planner | `/test` start, Linear ticket | Creates run log with ANALYZE/RESEARCH/PLAN stages |
+| test-generator | After test-planner | Generates test code from plan |
 | test-healer | Test failures | Auto-fix failing tests |
 | failure-classifier | "Is this a flake?" | Classify failure type |
 | pattern-learner | Recurring patterns | Propose documentation updates |
@@ -57,6 +59,16 @@ pattern documentation (Quoth) and test analytics (Exolar).
 |--------|---------|---------------|
 | Quoth | Pattern documentation | `quoth_search_index`, `quoth_read_doc` |
 | Exolar | Test analytics | `query_exolar_data`, `perform_exolar_action` |
+| triqual-context | Context building | `triqual_load_context` |
+
+## Key Tool: triqual_load_context
+
+Builds comprehensive context files before test planning:
+- `triqual_load_context({ feature: "login" })` — build context for a feature
+- `triqual_load_context({ feature: "login", ticket: "ENG-123" })` — include ticket details
+- `triqual_load_context({ feature: "login", force: true })` — regenerate existing context
+
+Output: `.triqual/context/{feature}/` with patterns, anti-patterns, codebase analysis, failures, etc.
 
 ## Quick Commands
 

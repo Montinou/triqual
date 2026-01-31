@@ -218,40 +218,28 @@ EOF
     fi
 
     # =========================================================================
-    # GATE 4.5: QUOTH CONTEXT MUST BE LOADED (Mandatory - No Skip Allowed)
+    # GATE 4.5: CONTEXT FILES MUST EXIST (Mandatory - No Skip Allowed)
     # =========================================================================
-    if ! quoth_context_invoked && ! quoth_search_documented "$feature"; then
+    if ! context_files_exist "$feature"; then
         cat >&2 << EOF
-🚫 BLOCKED: Quoth context not loaded
+🚫 BLOCKED: Context files not loaded for "$feature"
 
-**MANDATORY — NO SKIP ALLOWED.** You MUST load Quoth context BEFORE writing test code.
+**MANDATORY — NO SKIP ALLOWED.** You MUST load context BEFORE writing test code.
 
-The RESEARCH stage exists but there is no evidence that Quoth patterns were loaded.
+**IMMEDIATE ACTION — Call the triqual_load_context tool NOW:**
 
-**IMMEDIATE ACTION — Do ONE of these NOW:**
+  triqual_load_context({ feature: "$feature" })
 
-1. **Invoke triqual-plugin:quoth-context agent** (REQUIRED):
-   > Use triqual-plugin:quoth-context agent to research patterns for '$feature' (pre-agent research mode)
+This builds .triqual/context/$feature/ with:
+- patterns.md (Quoth proven patterns)
+- anti-patterns.md (known failures to avoid)
+- codebase.md (relevant source files, selectors, routes)
+- existing-tests.md (reusable tests and page objects)
+- failures.md (Exolar failure history)
+- summary.md (index of all context)
 
-   This sets the session flag that unblocks this gate.
-
-2. **Or search Quoth manually and document results in $run_log:**
-   \`\`\`
-   mcp__quoth__quoth_search_index({
-     query: "$feature playwright patterns"
-   })
-   \`\`\`
-
-   Then add to RESEARCH stage:
-
-   #### Quoth Search Results
-   **Query:** \`$feature playwright patterns\`
-   **Patterns Found:**
-   - pattern-name: description
-   - another-pattern: description
-
-**This gate CANNOT be skipped.** Quoth contains proven patterns that prevent
-common mistakes and reduce fix iterations. Load context, then retry.
+**This gate CANNOT be skipped.** Context files contain proven patterns that
+prevent common mistakes and reduce fix iterations. Load context, then retry.
 EOF
         exit 2
     fi

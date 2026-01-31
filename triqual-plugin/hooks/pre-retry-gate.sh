@@ -70,28 +70,31 @@ main() {
     local run_log=$(get_run_log_path "$feature")
 
     # =========================================================================
-    # GATE 0: Quoth context must be loaded before first test run
+    # GATE 0: Context files must exist before first test run
     # Only enforced when a run log exists (within /test workflow)
     # =========================================================================
-    if ! quoth_context_invoked; then
+    if ! context_files_exist "$feature"; then
         cat >&2 << EOF
-🚫 BLOCKED: Quoth context not loaded before test run
+🚫 BLOCKED: Context files not loaded before test run
 
-**MANDATORY:** You MUST invoke the triqual-plugin:quoth-context agent BEFORE running tests.
+**MANDATORY:** You MUST call triqual_load_context BEFORE running tests.
 
 The run log for '$feature' exists, which means you are in the /test workflow.
-Quoth context loading is **required** before executing any test.
+Context loading is **required** before executing any test.
 
 **IMMEDIATE ACTION:**
 
-> Use triqual-plugin:quoth-context agent to research patterns for '$feature' (pre-agent research mode)
+Call the MCP tool:
+\`\`\`
+triqual_load_context({ feature: "$feature" })
+\`\`\`
 
-This sets the session flag that unblocks test execution.
+This creates .triqual/context/$feature/ with patterns, anti-patterns, and codebase analysis.
 
-**Why:** Quoth patterns prevent common test failures. Loading context first
-reduces fix iterations and avoids reinventing solutions that already exist.
+**Why:** Context files contain proven patterns from Quoth and project history.
+Loading them first reduces fix iterations and avoids reinventing solutions.
 
-After quoth-context completes, retry the test command.
+After context loads, retry the test command.
 EOF
         exit 2
     fi

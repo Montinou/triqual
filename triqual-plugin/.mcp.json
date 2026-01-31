@@ -11,6 +11,11 @@
     "playwright": {
       "command": "npx",
       "args": ["@playwright/mcp@latest"]
+    },
+    "triqual-context": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp/triqual-context-server.js"],
+      "type": "stdio"
     }
   }
 }

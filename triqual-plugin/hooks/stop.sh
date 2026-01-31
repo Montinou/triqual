@@ -89,8 +89,7 @@ Before ending, please add:
 Also consider:
 - Update .triqual/knowledge.md with generalizable patterns
 - Run **triqual-plugin:pattern-learner** agent to extract patterns across run logs
-- Then invoke **triqual-plugin:quoth-context** agent in **capture mode** to propose patterns to Quoth:
-  > Use triqual-plugin:quoth-context agent to capture and propose session learnings (capture mode)
+- Use pattern-learner's Quoth capture capability to propose generalizable patterns via \`quoth_propose_update\`
 
 ---
 
@@ -110,9 +109,9 @@ Session stats: Quoth searches: $quoth_searches, Exolar queries: $exolar_queries"
 "
 
         if [ "$quoth_searches" = "0" ] && [ "$exolar_queries" = "0" ]; then
-            message="${message}Tip: Invoke triqual-plugin:quoth-context agent at session start to load project patterns from Quoth and knowledge.md."
+            message="${message}Tip: Call triqual_load_context({ feature: \"...\" }) at session start to load project patterns from Quoth and knowledge.md."
         elif [ "$quoth_searches" = "0" ]; then
-            message="${message}Tip: Invoke triqual-plugin:quoth-context agent to discover reusable patterns and Page Objects from Quoth."
+            message="${message}Tip: Call triqual_load_context({ feature: \"...\" }) to discover reusable patterns and Page Objects from Quoth."
         elif [ "$exolar_queries" = "0" ]; then
             message="${message}Tip: Exolar queries help identify flaky tests and historical fix patterns."
         fi

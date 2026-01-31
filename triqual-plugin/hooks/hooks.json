@@ -53,7 +53,7 @@
     ],
     "SubagentStart": [
       {
-        "matcher": "triqual-plugin:test-planner|triqual-plugin:test-generator|triqual-plugin:test-healer|triqual-plugin:failure-classifier|triqual-plugin:pattern-learner|triqual-plugin:quoth-context",
+        "matcher": "triqual-plugin:test-planner|triqual-plugin:test-generator|triqual-plugin:test-healer|triqual-plugin:failure-classifier|triqual-plugin:pattern-learner",
         "hooks": [
           {
             "type": "command",
@@ -64,7 +64,7 @@
     ],
     "SubagentStop": [
       {
-        "matcher": "triqual-plugin:test-planner|triqual-plugin:test-generator|triqual-plugin:test-healer|triqual-plugin:failure-classifier|triqual-plugin:pattern-learner|triqual-plugin:quoth-context",
+        "matcher": "triqual-plugin:test-planner|triqual-plugin:test-generator|triqual-plugin:test-healer|triqual-plugin:failure-classifier|triqual-plugin:pattern-learner",
         "hooks": [
           {
             "type": "command",

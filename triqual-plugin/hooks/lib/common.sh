@@ -214,7 +214,7 @@ extract_task_agent_type() {
         desc=$(echo "$input" | jq -r '.tool_input.description // empty' 2>/dev/null) || true
         combined="${prompt} ${desc}"
 
-        for agent in test-planner test-generator test-healer failure-classifier pattern-learner quoth-context; do
+        for agent in test-planner test-generator test-healer failure-classifier pattern-learner; do
             if echo "$combined" | grep -qi "$agent"; then
                 echo "triqual-plugin:$agent"
                 return 0
@@ -222,7 +222,7 @@ extract_task_agent_type() {
         done
     else
         # Fallback without jq: grep for known agents in raw input
-        for agent in test-planner test-generator test-healer failure-classifier pattern-learner quoth-context; do
+        for agent in test-planner test-generator test-healer failure-classifier pattern-learner; do
             if echo "$input" | grep -qi "$agent"; then
                 echo "triqual-plugin:$agent"
                 return 0
@@ -373,11 +373,6 @@ init_session() {
     "passed": 0,
     "failed": 0,
     "healed": 0
-  },
-  "quoth_context": {
-    "invoked": false,
-    "mode": null,
-    "last_feature": null
   }
 }
 EOF
@@ -512,63 +507,86 @@ increment_tool_counter() {
 }
 
 # ============================================================================
-# QUOTH-CONTEXT AGENT TRACKING
+# CONTEXT FILES CHECKING (replaces quoth-context agent tracking)
 # ============================================================================
 
-# Check if quoth-context agent was invoked this session
-# Returns: 0 if invoked, 1 if not
-quoth_context_invoked() {
-    local session_file
-    session_file=$(get_session_file) || return 1
+# Check if context files exist for a feature
+# Validates .triqual/context/{feature}/ has required files (patterns.md + codebase.md)
+# Returns: 0 if context exists, 1 if not
+context_files_exist() {
+    local feature="$1"
 
-    if [ -f "$session_file" ]; then
-        if has_jq; then
-            local invoked=$(jq -r '.quoth_context.invoked // false' "$session_file" 2>/dev/null)
-            [ "$invoked" = "true" ] && return 0
-        else
-            if grep -q '"invoked"[[:space:]]*:[[:space:]]*true' "$session_file" 2>/dev/null; then
-                return 0
-            fi
-        fi
-    fi
-    return 1
-}
-
-# Mark quoth-context agent as invoked with mode
-# Usage: mark_quoth_context_invoked "session_inject" "login"
-mark_quoth_context_invoked() {
-    local mode="$1"
-    local feature="${2:-}"
-    local session_file
-
-    session_file=$(get_session_file) || return 1
-
-    if [ ! -f "$session_file" ]; then
+    if [ -z "$feature" ]; then
         return 1
     fi
 
-    (
-        flock -x 200 2>/dev/null || true
+    local triqual_dir
+    triqual_dir=$(get_triqual_dir)
+    local context_dir="${triqual_dir}/context/${feature}"
 
-        if has_jq; then
-            local temp_file="${session_file}.tmp"
-            jq ".quoth_context.invoked = true | .quoth_context.mode = \"$mode\" | .quoth_context.last_feature = \"$feature\"" \
-                "$session_file" > "$temp_file" 2>/dev/null && \
-                mv "$temp_file" "$session_file"
-        else
-            if [[ "$OSTYPE" == "darwin"* ]]; then
-                sed -i '' 's/"invoked"[[:space:]]*:[[:space:]]*false/"invoked": true/' "$session_file"
-                sed -i '' "s/\"mode\"[[:space:]]*:[[:space:]]*null/\"mode\": \"$mode\"/" "$session_file"
-                sed -i '' "s/\"last_feature\"[[:space:]]*:[[:space:]]*null/\"last_feature\": \"$feature\"/" "$session_file"
-            else
-                sed -i 's/"invoked"[[:space:]]*:[[:space:]]*false/"invoked": true/' "$session_file"
-                sed -i "s/\"mode\"[[:space:]]*:[[:space:]]*null/\"mode\": \"$mode\"/" "$session_file"
-                sed -i "s/\"last_feature\"[[:space:]]*:[[:space:]]*null/\"last_feature\": \"$feature\"/" "$session_file"
-            fi
+    [[ -f "${context_dir}/patterns.md" ]] && [[ -f "${context_dir}/codebase.md" ]]
+}
+
+# Get context directory path for a feature
+get_context_dir() {
+    local feature="$1"
+    echo "$(get_triqual_dir)/context/${feature}"
+}
+
+# List context files for a feature
+list_context_files() {
+    local feature="$1"
+    local context_dir
+    context_dir=$(get_context_dir "$feature")
+
+    if [ -d "$context_dir" ]; then
+        ls "$context_dir"/*.md 2>/dev/null | while read -r f; do basename "$f"; done
+    fi
+}
+
+# Extract feature name from a Task tool prompt/description
+# Searches for common patterns like "for login", "feature: login", etc.
+extract_feature_from_prompt() {
+    local input="$1"
+
+    if [ -z "$input" ]; then
+        return 0
+    fi
+
+    local prompt=""
+    if has_jq; then
+        prompt=$(echo "$input" | jq -r '.tool_input.prompt // empty' 2>/dev/null) || true
+        if [ -z "$prompt" ]; then
+            prompt=$(echo "$input" | jq -r '.tool_input.description // empty' 2>/dev/null) || true
         fi
-    ) 200>"$session_file.lock"
+    else
+        prompt="$input"
+    fi
 
-    rm -f "$session_file.lock" 2>/dev/null || true
+    if [ -z "$prompt" ]; then
+        return 0
+    fi
+
+    # Try to extract feature name from common patterns
+    local feature=""
+
+    # Pattern: "for {feature}" or "feature: {feature}"
+    feature=$(echo "$prompt" | grep -oEi '(for|feature:?)[[:space:]]+([a-z0-9_-]+)' | head -1 | sed -E 's/(for|feature:?)[[:space:]]+//' | tr '[:upper:]' '[:lower:]') || true
+
+    if [ -n "$feature" ]; then
+        echo "$feature"
+        return 0
+    fi
+
+    # Pattern: quoted feature name
+    feature=$(echo "$prompt" | grep -oE '"([a-z0-9_-]+)"' | head -1 | tr -d '"') || true
+
+    if [ -n "$feature" ]; then
+        echo "$feature"
+        return 0
+    fi
+
+    return 0
 }
 
 # Update test run statistics
@@ -714,49 +732,6 @@ external_research_exists() {
     if grep -q "## External Research" "$log_path" && grep -q "Quoth Search" "$log_path"; then
         return 0
     fi
-    return 1
-}
-
-# Check if Quoth pattern search was performed and documented in RESEARCH stage
-# This verifies that the run log contains evidence of Quoth MCP usage
-# Returns: 0 if Quoth search documented, 1 otherwise
-quoth_search_documented() {
-    local feature="$1"
-    local log_path=$(get_run_log_path "$feature")
-
-    if [ ! -f "$log_path" ]; then
-        return 1
-    fi
-
-    # Check for evidence of Quoth search in the RESEARCH stage
-    # Must have at least one of these patterns indicating Quoth was actually used
-    if grep -qE "(Quoth Search|quoth_search_index|Quoth Patterns|Patterns Found)" "$log_path" && \
-       grep -qE "(Query.*:|Results:|\- \[?[A-Za-z])" "$log_path"; then
-        return 0
-    fi
-
-    # Alternative: Check for explicit Quoth documentation section
-    if grep -q "#### Quoth Search Results" "$log_path"; then
-        return 0
-    fi
-
-    return 1
-}
-
-# Check if Quoth search was skipped with valid justification
-quoth_search_skipped_justified() {
-    local feature="$1"
-    local log_path=$(get_run_log_path "$feature")
-
-    if [ ! -f "$log_path" ]; then
-        return 1
-    fi
-
-    # Check for explicit skip justification
-    if grep -qEi "(Quoth.*skip|MCP.*unavailable|Quoth.*offline|skip.*Quoth)" "$log_path"; then
-        return 0
-    fi
-
     return 1
 }
 
