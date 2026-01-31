@@ -105,20 +105,24 @@ If Exolar returns no data, write:
 No historical failure data found for this feature.
 ```
 
-### Step 4: Fetch Linear Ticket (if provided)
+### Step 4: Gather Requirements
 
 {{#if ticket}}
 Fetch ticket details:
 ```
 mcp__linear__get_issue({ id: "{{ticket}}" })
 ```
+{{/if}}
 
 **Write file:** `{{contextDir}}/requirements.md`
+
+This file should include ALL available requirement sources. Include whichever sections apply:
 
 Format:
 ```markdown
 # Requirements: {{feature}}
 
+{{#if ticket}}
 ## Ticket: {{ticket}}
 - Title: [title]
 - Status: [status]
@@ -128,29 +132,24 @@ Format:
 - [ ] [criterion 1]
 - [ ] [criterion 2]
 
-## Description
+## Description (from Ticket)
 [key points from description, structured as bullets]
 
 ## Labels
 - [label1], [label2]
-```
 {{/if}}
 
 {{#if description}}
-**Write file:** `{{contextDir}}/requirements.md`
-
-Format:
-```markdown
-# Requirements: {{feature}}
-
 ## User Description
 {{description}}
 
 ## Inferred Test Cases
 - [test case 1 derived from description]
 - [test case 2]
-```
 {{/if}}
+```
+
+If neither ticket nor description is provided, skip this file.
 
 ### Step 5: Scan Codebase
 
