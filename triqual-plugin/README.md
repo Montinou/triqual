@@ -1,6 +1,6 @@
 # Triqual
 
-> **Version 1.1.0** | Opus 4.5 + Sonnet Agents | Quoth v2 Context Agent | macOS & Linux
+> **Version 1.2.0** | Opus 4.5 Agents | MCP Context Orchestration | macOS & Linux
 
 **Autonomous Test Automation for Claude Code**
 
@@ -47,7 +47,8 @@ claude --plugin-dir /path/to/triqual/triqual-plugin
 | MCP Servers | 2 | `quoth` (patterns), `exolar-qa` (analytics) |
 | Hooks | 7 | Blocking enforcement for documentation |
 | Skills | 5 | `/init`, `/test`, `/check`, `/rules`, `/help` |
-| Agents | 6 | 5 Opus 4.5 + 1 Sonnet (quoth-context) |
+| Agents | 5 | All Opus 4.5 (planner, generator, healer, classifier, learner) |
+| MCP Tools | 1 | `triqual_load_context` (Sonnet subprocess for context building) |
 | Rules | 31 | Playwright best practices (8 categories) |
 
 ## Quick Start
@@ -148,28 +149,30 @@ Hooks **BLOCK** actions until documentation is complete:
 | Gate | Trigger | Block Condition | Resolution |
 |------|---------|-----------------|------------|
 | **Pre-Write** | Write `.spec.ts` | No run log or missing stages | Create run log with ANALYZE/RESEARCH/PLAN/WRITE |
-| **Quoth Context** | Write `.spec.ts` | **No Quoth context loaded** | **Invoke triqual-plugin:quoth-context agent or search Quoth manually** |
+| **Context Files** | Write `.spec.ts` | **No context files in .triqual/context/{feature}/** | **Call `triqual_load_context({ feature: "..." })`** |
 | **Post-Run** | After `playwright test` | Results not documented | Add RUN stage to log |
 | **Retry Limit** | 2+ same-category fails | No external research | Search Quoth/Exolar, document findings |
 | **Deep Analysis** | 12+ attempts | No deep analysis | Expand research, explore app, try new approaches |
 | **Max Attempts** | 25+ attempts | No resolution | Mark as `.fixme()` with justification |
 
-### Mandatory Quoth Context Loading
+### Mandatory Context Loading
 
-**BEFORE writing ANY test code**, invoke the **triqual-plugin:quoth-context** agent:
+**BEFORE writing ANY test code**, call the `triqual_load_context` MCP tool:
 
-> Use triqual-plugin:quoth-context agent in **pre-agent research** mode to load patterns for '{feature}'.
+```
+triqual_load_context({ feature: "login", ticket?: "ENG-123", description?: "..." })
+```
 
-The triqual-plugin:quoth-context agent searches Quoth, reads knowledge.md, and returns structured patterns. This is **ENFORCED** — test writing will be **BLOCKED** until Quoth context is loaded.
+This spawns a headless Sonnet subprocess that searches Quoth, queries Exolar, scans the codebase, and writes structured context files to `.triqual/context/{feature}/`. This is **ENFORCED** — test writing will be **BLOCKED** until context files exist.
 
-If quoth-context is unavailable, fall back to manual search:
+If the MCP tool is unavailable, fall back to manual search:
 ```typescript
 mcp__quoth__quoth_search_index({
   query: "{feature} playwright patterns"
 })
 ```
 
-**Why:** Quoth contains proven patterns from past successes and failures. The triqual-plugin:quoth-context agent searches comprehensively without consuming main context.
+**Why:** Context files contain proven patterns from Quoth and project history. Loading them first reduces fix iterations without consuming main context.
 
 ### Example: Blocked Action
 
@@ -188,9 +191,9 @@ Required stages:
 Then retry this write operation.
 ```
 
-## The Six Agents
+## The Five Agents
 
-Five agents run on **Opus 4.5** for maximum intelligence, plus one **Sonnet** agent for fast Quoth interactions:
+Five agents run on **Opus 4.5** for maximum intelligence. Context building is handled by the `triqual_load_context` MCP tool (Sonnet subprocess):
 
 ### 1. TEST-PLANNER
 
@@ -237,17 +240,21 @@ Five agents run on **Opus 4.5** for maximum intelligence, plus one **Sonnet** ag
 
 - Reviews all run logs for patterns
 - Updates `.triqual/knowledge.md`
-- Invokes quoth-context in capture mode to propose patterns to Quoth
+- Proposes generalizable patterns to Quoth via `quoth_propose_update` (with user confirmation)
 - Ensures learnings survive sessions
 
-### 6. QUOTH-CONTEXT (Sonnet)
+### MCP Tool: triqual_load_context
 
-**Role:** Handles all Quoth MCP interactions outside the main context window
+**Role:** Deterministic context building via headless Sonnet subprocess
 
-- **Session inject:** Loads project patterns at session start (~500 token summary)
-- **Pre-agent research:** Searches Quoth for feature-specific patterns before test-planner
-- **Capture:** Proposes learned patterns to Quoth after pattern-learner (requires user confirmation)
-- Exempt from all Triqual hooks (prevents infinite loops)
+```
+triqual_load_context({ feature: "login", ticket?: "ENG-123", force?: false })
+```
+
+- Spawns `claude -p` subprocess (Sonnet) with Quoth/Exolar MCP access
+- Writes structured context files to `.triqual/context/{feature}/`
+- Output: patterns.md, anti-patterns.md, failures.md, codebase.md, summary.md
+- Cached: skips if context files exist and are fresh (use `force: true` to regenerate)
 
 ## Directory Structure
 
@@ -281,7 +288,7 @@ triqual-plugin/
 │   ├── test-healer.md
 │   ├── failure-classifier.md
 │   ├── pattern-learner.md
-│   └── quoth-context.md       # Sonnet - Quoth MCP interactions
+│   └── (pattern-learner has Quoth capture capability)
 ├── context/                   # Templates
 │   ├── run-log.template.md
 │   ├── knowledge.template.md
@@ -517,6 +524,8 @@ export TRIQUAL_DEBUG=true
 
 | Version | Date | Changes |
 |---------|------|---------|
+| **1.2.0** | 2026-01-31 | **MCP context orchestration: replaced quoth-context agent with triqual_load_context MCP tool + headless Sonnet subprocess** |
+| **1.1.0** | 2026-01-29 | **Quoth v2 integration: context injection, enhanced hooks** |
 | **1.0.5** | 2026-01-27 | **Mandatory Quoth pattern search enforcement** |
 | **1.0.4** | 2026-01-27 | All agents on Opus 4.5, comprehensive documentation update |
 | **1.0.3** | 2026-01-26 | macOS stdin compatibility fix for hooks |

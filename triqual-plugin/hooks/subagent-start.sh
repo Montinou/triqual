@@ -49,49 +49,32 @@ fi
 # Provide context based on which agent is starting
 case "$AGENT_TYPE" in
     *test-planner*)
-        # Check if quoth-context was already invoked
-        local quoth_loaded=false
-        if quoth_context_invoked; then
-            quoth_loaded=true
-        fi
+        # Build context file paths for the feature
+        CONTEXT_DIR="$TRIQUAL_DIR/context/$FEATURE"
 
-        if [ "$quoth_loaded" = "false" ]; then
-            # Task gate should have caught this, but provide fallback guidance
-            output_context "[Triqual] ⚠️ Test Planner starting — quoth-context not detected.
-
-The Task dispatch gate should have blocked this. If you reached here:
-1. The quoth-context session flag may not have been set properly
-2. Invoke triqual-plugin:quoth-context agent NOW before proceeding
-3. After it completes, the session flag will be set
-
-$RUN_LOG_MSG
-$KNOWLEDGE_MSG" "SubagentStart"
-        else
-            output_context "[Triqual] 🎯 Test Planner Agent Starting — Quoth Context ✓ LOADED
+        output_context "[Triqual] 🎯 Test Planner Agent Starting — Context Files Available
 
 === MANDATORY: READ BEFORE PROCEEDING ===
 
-You MUST read the following before creating the test plan:
+You MUST read the following context files before creating the test plan:
 
-1. **Project Knowledge** (if exists):
+1. **Context Files** (pre-built by triqual_load_context):
+   - \`Read $CONTEXT_DIR/patterns.md\` — Quoth proven patterns
+   - \`Read $CONTEXT_DIR/anti-patterns.md\` — Known failures to avoid
+   - \`Read $CONTEXT_DIR/codebase.md\` — Relevant source files, selectors, routes
+   - \`Read $CONTEXT_DIR/existing-tests.md\` — Reusable tests and page objects
+   - \`Read $CONTEXT_DIR/failures.md\` — Exolar failure history
+   - \`Read $CONTEXT_DIR/requirements.md\` — Ticket/description details (if exists)
+   - \`Read $CONTEXT_DIR/summary.md\` — Index of all context
+
+2. **Project Knowledge** (if exists):
    - Path: $KNOWLEDGE_FILE
-   - Contains: Selector strategies, wait patterns, auth methods, gotchas
+   - Contains: Accumulated project-specific patterns
    - Action: \`Read $KNOWLEDGE_FILE\`
 
-2. **Existing Run Logs** (check for similar features):
+3. **Existing Run Logs** (check for similar features):
    - Path: $RUNS_DIR/
    - Action: \`ls $RUNS_DIR/\` then read relevant ones
-
-3. **Quoth Context** ✅ ALREADY LOADED — use patterns from quoth-context output.
-   - If you need additional searches:
-     \`quoth_search_index({ query: \"$FEATURE playwright patterns\" })\`
-
-4. **Exolar Tests** (REQUIRED):
-   - Search: \`query_exolar_data({ dataset: \"test_search\", filters: { search: \"{feature}\" } })\`
-   - This finds existing tests and coverage gaps
-
-5. **Linear Ticket** (if provided):
-   - Fetch ticket details for acceptance criteria
 
 === YOUR OUTPUT ===
 
@@ -99,11 +82,10 @@ Create a run log at: $RUNS_DIR/{feature}.md
 
 The run log MUST include:
 - **ANALYZE stage**: Requirements, acceptance criteria, user flows
-- **RESEARCH stage**: Quoth patterns, Exolar tests, available resources
+- **RESEARCH stage**: Summary of context files read, additional findings
 - **PLAN stage**: Test cases, tools to use, new artifacts to create
 
 Only after creating the run log can test-generator proceed." "SubagentStart"
-        fi
         ;;
 
     *test-generator*)
@@ -267,23 +249,6 @@ Update run log with classification:
 **Confidence:** {High | Medium | Low}
 **Evidence:** {supporting data}
 **Next Action:** {what agent/action to use next}" "SubagentStart"
-        ;;
-
-    *quoth-context*)
-        output_context "[Triqual] 🔮 Quoth Context Agent Starting
-
-=== CONTEXT ===
-
-$RUN_LOG_MSG
-$KNOWLEDGE_MSG
-
-You are loading semantic patterns from Quoth for the current feature.
-
-=== YOUR OUTPUT ===
-
-1. Search Quoth for relevant patterns
-2. Read .triqual/knowledge.md for project-specific patterns
-3. Return structured context summary for downstream agents" "SubagentStart"
         ;;
 
     *pattern-learner*)

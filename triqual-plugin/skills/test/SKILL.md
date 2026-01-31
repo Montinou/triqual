@@ -42,7 +42,7 @@ Generate production-ready Playwright tests with multiple input modes. Default mo
 │                                                                              │
 │  PHASES:                                                                     │
 │  0. SETUP → Auto-config, load patterns, discover credentials                │
-│  0.6 QUOTH CONTEXT → triqual-plugin:quoth-context agent loads patterns (MANDATORY, BLOCKING)│
+│  0.6 LOAD CONTEXT → triqual_load_context tool builds context files (MANDATORY, BLOCKING)│
 │  1. EXPLORE → Playwright MCP (skip with --ticket/--describe)                │
 │  2. PLAN → Quoth context output + input source                              │
 │  3. GENERATE → .spec.ts in tests/.draft/                                    │
@@ -216,28 +216,47 @@ mcp__plugin_triqual-plugin_playwright__browser_run_code({
 
 ---
 
-## Phase 0.6: QUOTH CONTEXT (EXECUTE IMMEDIATELY AFTER SETUP)
+## Phase 0.6: LOAD CONTEXT (EXECUTE IMMEDIATELY AFTER SETUP)
 
-**This is a blocking gate.** The Task hook will BLOCK dispatching test-planner until this completes.
+**This is a blocking gate.** The hooks will BLOCK test writing and test-planner dispatch until context files exist.
 
 **Execute now:**
 
-> Use triqual-plugin:quoth-context agent to research patterns for '{feature}' (pre-agent research mode)
-
-Wait for the agent to complete before proceeding to Phase 1.
-
-The triqual-plugin:quoth-context agent will:
-1. Search Quoth for "{feature} playwright test patterns"
-2. Search Quoth for "{feature} common failures"
-3. Read local knowledge.md
-4. Return structured patterns summary (~500 tokens)
-5. Set session flag `quoth_context.invoked = true`
-
-**If quoth-context fails** (MCP unavailable), fall back to manual search:
 ```
-mcp__quoth__quoth_search_index({ query: "{feature} playwright test pattern" })
+triqual_load_context({ feature: "{feature}" })
 ```
-Document results in the run log RESEARCH stage. This satisfies Gate 4.5 but not the Task gate — you will need to retry test-planner dispatch.
+
+If using a Linear ticket:
+```
+triqual_load_context({ feature: "{feature}", ticket: "ENG-123" })
+```
+
+If using a description:
+```
+triqual_load_context({ feature: "{feature}", description: "..." })
+```
+
+Wait for the tool to complete before proceeding to Phase 1.
+
+The `triqual_load_context` tool will:
+1. Spawn a headless Claude subprocess (Sonnet)
+2. Search Quoth for patterns and anti-patterns
+3. Query Exolar for failure history
+4. Scan codebase for relevant files, selectors, routes
+5. Fetch Linear ticket details (if provided)
+6. Read project knowledge.md
+7. Write structured context files to `.triqual/context/{feature}/`
+
+**Output files created:**
+- `patterns.md` — Quoth proven patterns
+- `anti-patterns.md` — Known failures to avoid
+- `codebase.md` — Relevant source files, selectors, routes
+- `existing-tests.md` — Reusable tests and page objects
+- `failures.md` — Exolar failure history
+- `requirements.md` — Ticket/description details (if provided)
+- `summary.md` — Index of all context
+
+**If tool fails** (MCP unavailable), retry with `force: true` or check MCP connectivity with `/mcp`.
 
 ---
 
@@ -285,13 +304,14 @@ Use the provided description as test requirements. Skip exploration phase.
 
 ## Phase 2: PLAN
 
-### Using Quoth Context Output
+### Using Context Files
 
-test-planner receives the quoth-context output and uses it for:
-- Existing Page Objects (from Quoth patterns)
-- Similar test files (from Quoth search results)
-- Assertion patterns (from matched docs)
-- Locator strategies (from knowledge.md)
+test-planner reads the context files at `.triqual/context/{feature}/` and uses them for:
+- Existing Page Objects (from codebase.md and existing-tests.md)
+- Proven patterns (from patterns.md)
+- Anti-patterns to avoid (from anti-patterns.md)
+- Failure history (from failures.md)
+- Locator strategies (from codebase.md and patterns.md)
 
 ### Create Test Plan
 

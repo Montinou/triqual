@@ -62,7 +62,7 @@ Knowledge survives sessions through file-based storage:
 │   │  /check     │  │  post-run   │  │  healer     │                 │
 │   │  /rules     │  │  subagent   │  │  classifier │                 │
 │   │  /help      │  │  compact    │  │  learner    │                 │
-│   │             │  │  stop       │  │  quoth-ctx  │                 │
+│   │             │  │  stop       │  │             │                 │
 │   └─────────────┘  └─────────────┘  └─────────────┘                 │
 │          │                │                │                         │
 │          └────────────────┼────────────────┘                        │
@@ -71,13 +71,13 @@ Knowledge survives sessions through file-based storage:
 │   ┌─────────────────────────────────────────────────────────────┐   │
 │   │                     MCP INTEGRATION                          │   │
 │   │                                                              │   │
-│   │  ┌───────────┐    ┌───────────┐    ┌───────────────────┐    │   │
-│   │  │   Quoth   │    │  Exolar   │    │   Playwright MCP  │    │   │
-│   │  │           │    │           │    │                   │    │   │
-│   │  │ patterns  │    │ analytics │    │ browser control   │    │   │
-│   │  │ docs      │    │ failures  │    │ app exploration   │    │   │
-│   │  │ guidelines│    │ trends    │    │ verification      │    │   │
-│   │  └───────────┘    └───────────┘    └───────────────────┘    │   │
+│   │  ┌───────────┐  ┌───────────┐  ┌─────────────┐  ┌──────────┐  │   │
+│   │  │   Quoth   │  │  Exolar   │  │  Playwright  │  │ triqual  │  │   │
+│   │  │           │  │           │  │     MCP      │  │ context  │  │   │
+│   │  │ patterns  │  │ analytics │  │ browser      │  │ (Sonnet  │  │   │
+│   │  │ docs      │  │ failures  │  │ control      │  │  subproc)│  │   │
+│   │  │ guidelines│  │ trends    │  │ exploration  │  │ context  │  │   │
+│   │  └───────────┘  └───────────┘  └─────────────┘  └──────────┘  │   │
 │   └─────────────────────────────────────────────────────────────┘   │
 │                                                                      │
 └─────────────────────────────────────────────────────────────────────┘
@@ -286,7 +286,7 @@ get_test_dir()         # Get configured test directory
 
 ## Agents Layer
 
-Five agents run on **Opus 4.5** for maximum capability. The **triqual-plugin:quoth-context** agent runs on **Sonnet** for fast, cheap Quoth interactions.
+Five agents run on **Opus 4.5** for maximum capability. Context building is handled by the `triqual_load_context` MCP tool (Sonnet subprocess).
 
 ### Agent Frontmatter Format
 
@@ -404,23 +404,22 @@ tools:
 1. Review all run logs
 2. Identify recurring patterns
 3. Update `.triqual/knowledge.md`
-4. Invoke quoth-context in capture mode to propose patterns to Quoth
+4. Propose generalizable patterns to Quoth via `quoth_propose_update` (with user confirmation)
 
-### quoth-context
+### MCP Tool: triqual_load_context
 
-**Color:** Magenta
-**Model:** Sonnet (fast, cheap)
-**Role:** Handle all Quoth MCP interactions outside the main context window
+**Model:** Sonnet (headless subprocess)
+**Role:** Deterministic context building outside the main context window
 
-**Exempt from:** ALL Triqual hooks (prevents infinite loops)
+Spawns `claude -p` subprocess with Quoth/Exolar MCP access. Writes structured files to `.triqual/context/{feature}/`.
 
-**Three modes:**
-
-| Mode | When | Output |
-|------|------|--------|
-| Session inject | Session start | ~500 token project context summary |
-| Pre-agent research | Before test-planner | Feature-specific patterns + doc IDs |
-| Capture | After pattern-learner | Proposes patterns to Quoth (user confirms) |
+| Output File | Content |
+|-------------|---------|
+| patterns.md | Quoth patterns relevant to feature |
+| anti-patterns.md | What NOT to do |
+| failures.md | Exolar failure history |
+| codebase.md | Relevant source files, Page Objects, helpers |
+| summary.md | AI-optimized overview for agents |
 
 **Workflow (pre-agent research):**
 1. Search Quoth for "{feature} playwright test patterns"

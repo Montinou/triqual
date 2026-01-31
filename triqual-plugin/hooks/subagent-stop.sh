@@ -214,29 +214,6 @@ If tests fail, triqual-plugin:test-healer agent will analyze and fix issues." "S
         fi
         ;;
 
-    *quoth-context*)
-        # ROOT FIX: Set the session flag that downstream gates check
-        local qc_mode="pre-agent-research"
-        if [ -n "$FEATURE" ]; then
-            mark_quoth_context_invoked "$qc_mode" "$FEATURE"
-            log_debug "Marked quoth-context as invoked: mode=$qc_mode feature=$FEATURE"
-        else
-            mark_quoth_context_invoked "$qc_mode" ""
-            log_debug "Marked quoth-context as invoked: mode=$qc_mode (no feature)"
-        fi
-
-        output_context "[Triqual] ✓ Quoth context agent completed — session flag SET.
-
-**Run log:** $RUN_LOG_PATH
-**Session flag:** quoth_context.invoked = true (mode: $qc_mode, feature: $FEATURE)
-
-**Next step:**
-Use the context returned by quoth-context to inform your test planning or generation.
-If patterns were found, they should be referenced in the RESEARCH stage of the run log.
-
-Downstream gates (pre-spec-write, pre-retry-gate) will now allow writes and test runs." "SubagentStop"
-        ;;
-
     *pattern-learner*)
         # Check if knowledge.md was updated
         KNOWLEDGE_FILE=$(get_knowledge_file)
@@ -268,11 +245,9 @@ Downstream gates (pre-spec-write, pre-retry-gate) will now allow writes and test
 - Anti-patterns will be avoided
 
 **Promote patterns to Quoth:**
-- Invoke **triqual-plugin:quoth-context** agent in **capture mode** to propose patterns to Quoth:
-  > Use triqual-plugin:quoth-context agent to capture and propose patterns from $FEATURE (capture mode)
-- quoth-context will read run log learnings and propose updates
+- Use \`quoth_propose_update\` to propose generalizable patterns to Quoth
 - You will be asked to confirm before anything is sent to Quoth
-- Promoted patterns will be available via quoth_search_index for all projects
+- Promoted patterns will be available via \`quoth_search_index\` for all projects
 
 **Session learnings are now persisted!**" "SubagentStop"
         else

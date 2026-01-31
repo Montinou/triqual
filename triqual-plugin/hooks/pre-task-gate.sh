@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Triqual Plugin - PreToolUse Hook (Task tool gate)
-# BLOCKING: Prevents test-planner dispatch without quoth-context
+# BLOCKING: Prevents test-planner dispatch without context files
 #
 # This is the earliest possible enforcement point — before the subagent spawns.
-# If quoth-context has not been invoked yet, test-planner dispatch is blocked.
+# If context files have not been built yet, test-planner dispatch is blocked.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
@@ -24,30 +24,43 @@ main() {
 
     # Match both plain and fully-qualified agent name
     case "$agent_type" in
-        *test-planner*) ;;  # Continue to quoth-context check
+        *test-planner*) ;;  # Continue to context check
         *) exit 0 ;;        # Not test-planner, allow through
     esac
 
-    log_debug "Task gate: test-planner dispatch detected, checking quoth-context"
+    log_debug "Task gate: test-planner dispatch detected, checking context files"
 
-    # Check if quoth-context was already invoked
-    if quoth_context_invoked; then
-        log_debug "test-planner dispatch allowed - quoth-context already invoked"
+    # Extract feature from prompt
+    local feature
+    feature=$(extract_feature_from_prompt "$input")
+
+    if [ -z "$feature" ]; then
+        log_debug "Could not extract feature name from prompt, allowing through"
+        exit 0
+    fi
+
+    # Check if context files exist
+    if context_files_exist "$feature"; then
+        log_debug "test-planner dispatch allowed - context files exist for $feature"
         exit 0
     fi
 
     # BLOCK
-    cat >&2 << 'EOF'
-🚫 BLOCKED: Cannot dispatch test-planner without Quoth context
+    cat >&2 << EOF
+🚫 BLOCKED: Cannot dispatch test-planner without context files
 
-Invoke triqual-plugin:quoth-context agent FIRST to load patterns:
+Call triqual_load_context tool FIRST:
 
-> Use triqual-plugin:quoth-context agent to research patterns for the feature (pre-agent research mode)
+  triqual_load_context({ feature: "$feature" })
 
-After quoth-context completes (sets session flag), retry dispatching test-planner.
+This builds .triqual/context/$feature/ with Quoth patterns,
+Exolar failures, codebase analysis, and more.
 
-Why: Quoth patterns prevent common test failures and reduce fix iterations.
-Without them, planning is less effective and downstream gates will block anyway.
+After context files are generated, retry dispatching test-planner.
+
+Why: Context files contain proven patterns that prevent common test
+failures and reduce fix iterations. Without them, planning is less
+effective and downstream gates will block anyway.
 EOF
     exit 2
 }
