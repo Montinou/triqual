@@ -216,6 +216,28 @@ function spawnContextBuilder(prompt, projectRoot) {
 // --- Tool Handler ---
 
 async function handleLoadContext({ feature, ticket, description, force }) {
+  // Validate feature name to prevent path traversal
+  if (
+    !feature ||
+    feature.includes("..") ||
+    feature.includes("/") ||
+    feature.includes("\\")
+  ) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            status: "error",
+            message:
+              "Invalid feature name. Must not contain path separators or '..'.",
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+
   const projectRoot = findProjectRoot();
   const pluginRoot =
     process.env.CLAUDE_PLUGIN_ROOT || path.resolve(__dirname, "..");

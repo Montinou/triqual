@@ -216,7 +216,7 @@ The prompt template (`mcp/prompts/context-builder.md`) instructs the headless Cl
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | `context_files_exist()` | `lib/common.sh` | Check `.triqual/context/{feature}/` has required files |
-| `extract_feature_from_path()` | `lib/common.sh` | Extract feature name from test file path (if not already present) |
+| `extract_feature_from_prompt()` | `lib/common.sh` | Extract feature name from a Task tool prompt/description |
 
 ### Modified
 
@@ -412,12 +412,12 @@ triqual-plugin/
 │   ├── session-start.sh            # MODIFIED: remove quoth session flag init
 │   ├── pre-spec-write.sh           # MODIFIED: gate 4.5 uses file check
 │   ├── pre-task-gate.sh            # MODIFIED: uses file check
-│   ├── pre-retry-gate.sh           # UNCHANGED
+│   ├── pre-retry-gate.sh           # MODIFIED: updated agent name references
 │   ├── post-test-run.sh            # UNCHANGED
 │   ├── subagent-start.sh           # MODIFIED: remove quoth-context case, update test-planner injection
 │   ├── subagent-stop.sh            # MODIFIED: remove quoth-context case
 │   ├── pre-compact.sh              # UNCHANGED
-│   └── stop.sh                     # UNCHANGED
+│   └── stop.sh                     # MODIFIED: updated agent name references
 ├── skills/
 │   ├── init/SKILL.md               # MODIFIED: create .triqual/context/ dir
 │   ├── test/SKILL.md               # MODIFIED: phase 0.6 calls tool
