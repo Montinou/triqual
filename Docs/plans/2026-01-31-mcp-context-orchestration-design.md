@@ -81,12 +81,12 @@ Main Claude calls: triqual_load_context({ feature: "login" })
 - wait: networkidle after redirect
 
 ## Proven Sequences
-\`\`\`typescript
+```typescript
 await page.goto('/login')
 await page.getByTestId('email').fill(creds.email)
 await page.getByTestId('login-submit').click()
 await page.waitForURL('/dashboard', { waitUntil: 'networkidle' })
-\`\`\`
+```
 
 ## Source: quoth://doc/abc123
 ```
@@ -292,7 +292,7 @@ fi
 **Before:** Checks quoth-context flag, provides fallback if not invoked.
 
 **After:** Always injects context file paths:
-```bash
+```text
 Read these context files before planning:
 - .triqual/context/{feature}/patterns.md
 - .triqual/context/{feature}/anti-patterns.md
