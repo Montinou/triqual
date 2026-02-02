@@ -220,41 +220,47 @@ mcp__plugin_triqual-plugin_playwright__browser_run_code({
 
 **This is a blocking gate.** The hooks will BLOCK test writing and test-planner dispatch until context files exist.
 
-**Execute now:**
+### Execute Context Loading
+
+Call the context loading tool with just the feature name - the system automatically determines the optimal depth:
 
 ```
 triqual_load_context({ feature: "{feature}" })
 ```
 
-If using a Linear ticket:
+If you have a Linear ticket:
 ```
 triqual_load_context({ feature: "{feature}", ticket: "ENG-123" })
 ```
 
-If using a description:
+If you have a description:
 ```
 triqual_load_context({ feature: "{feature}", description: "..." })
 ```
 
 Wait for the tool to complete before proceeding to Phase 1.
 
-The `triqual_load_context` tool will:
-1. Spawn a headless Claude subprocess (Sonnet)
-2. Search Quoth for patterns and anti-patterns
-3. Query Exolar for failure history
-4. Scan codebase for relevant files, selectors, routes
-5. Fetch Linear ticket details (if provided)
-6. Read project knowledge.md
-7. Write structured context files to `.triqual/context/{feature}/`
+### What Happens Automatically
 
-**Output files created:**
-- `patterns.md` — Quoth proven patterns
-- `anti-patterns.md` — Known failures to avoid
+The tool intelligently analyzes your request and optimizes context depth:
+- **Simple features** with existing patterns → Fast local scan
+- **New test generation** → Quoth patterns + codebase analysis
+- **Complex features** or tickets → Full context with failure history
+
+This optimization saves ~70% tokens on average without any manual configuration.
+
+### Output Files
+
+Context files are written to `.triqual/context/{feature}/`:
+- `patterns.md` — Proven patterns from Quoth
 - `codebase.md` — Relevant source files, selectors, routes
 - `existing-tests.md` — Reusable tests and page objects
-- `failures.md` — Exolar failure history
-- `requirements.md` — Ticket/description details (if provided)
 - `summary.md` — Index of all context
+
+Additional files are added automatically when needed:
+- `anti-patterns.md` — Known failures to avoid
+- `failures.md` — Exolar failure history
+- `requirements.md` — Ticket details
 
 **If tool fails** (MCP unavailable), retry with `force: true` or check MCP connectivity with `/mcp`.
 

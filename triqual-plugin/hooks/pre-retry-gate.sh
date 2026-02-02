@@ -77,19 +77,19 @@ main() {
         cat >&2 << EOF
 🚫 BLOCKED: Context files not loaded before test run
 
-**MANDATORY:** You MUST call triqual_load_context BEFORE running tests.
+**Load context first:**
 
-The run log for '$feature' exists, which means you are in the /test workflow.
-Context loading is **required** before executing any test.
-
-**IMMEDIATE ACTION:**
-
-Call the MCP tool:
 \`\`\`
 triqual_load_context({ feature: "$feature" })
 \`\`\`
 
-This creates .triqual/context/$feature/ with patterns, anti-patterns, and codebase analysis.
+The tool automatically determines the optimal context depth based on:
+- Feature complexity and existing patterns
+- Test history and failure data
+- Available resources in the codebase
+
+This creates .triqual/context/$feature/ with patterns, codebase analysis,
+and other context files.
 
 **Why:** Context files contain proven patterns from Quoth and project history.
 Loading them first reduces fix iterations and avoids reinventing solutions.

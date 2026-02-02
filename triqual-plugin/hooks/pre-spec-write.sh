@@ -259,22 +259,26 @@ EOF
         cat >&2 << EOF
 🚫 BLOCKED: Context files not loaded for "$feature"
 
-**MANDATORY — NO SKIP ALLOWED.** You MUST load context BEFORE writing test code.
+**Load context first:**
 
-**IMMEDIATE ACTION — Call the triqual_load_context tool NOW:**
+\`\`\`
+triqual_load_context({ feature: "$feature" })
+\`\`\`
 
-  triqual_load_context({ feature: "$feature" })
+If you have a Linear ticket:
+\`\`\`
+triqual_load_context({ feature: "$feature", ticket: "ENG-123" })
+\`\`\`
 
-This builds .triqual/context/$feature/ with:
-- patterns.md (Quoth proven patterns)
-- anti-patterns.md (known failures to avoid)
-- codebase.md (relevant source files, selectors, routes)
-- existing-tests.md (reusable tests and page objects)
-- failures.md (Exolar failure history)
-- summary.md (index of all context)
+The tool automatically determines the optimal context depth based on:
+- Feature complexity
+- Available patterns
+- Existing test history
 
-**This gate CANNOT be skipped.** Context files contain proven patterns that
-prevent common mistakes and reduce fix iterations. Load context, then retry.
+This creates .triqual/context/$feature/ with patterns, codebase analysis,
+and other context files needed for effective test generation.
+
+**This gate CANNOT be skipped.** Load context, then retry.
 EOF
         exit 2
     fi

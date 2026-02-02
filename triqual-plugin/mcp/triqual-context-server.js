@@ -23,11 +23,9 @@ const MCP_PROTOCOL_VERSION = "2024-11-05";
 const TOOL_DEFINITION = {
   name: "triqual_load_context",
   description:
-    "Build comprehensive test context for a feature by spawning a headless Claude subprocess. " +
-    "Searches Quoth for patterns/anti-patterns, queries Exolar for failure history, " +
-    "scans codebase for relevant files, and optionally fetches Linear ticket details. " +
-    "Writes structured, AI-optimized context files to .triqual/context/{feature}/. " +
-    "Returns file paths for the main agent to read.",
+    "Build test context for a feature. Automatically analyzes feature complexity and optimizes " +
+    "context depth (fast local scan for simple features, full Quoth/Exolar search for complex ones). " +
+    "Writes structured context files to .triqual/context/{feature}/.",
   inputSchema: {
     type: "object",
     properties: {
@@ -39,7 +37,7 @@ const TOOL_DEFINITION = {
       ticket: {
         type: "string",
         description:
-          'Optional Linear ticket ID (e.g., "ENG-123"). If provided, fetches acceptance criteria.',
+          'Optional Linear ticket ID (e.g., "ENG-123"). Fetches acceptance criteria and requirements.',
       },
       description: {
         type: "string",
@@ -52,12 +50,51 @@ const TOOL_DEFINITION = {
           "Regenerate context even if files already exist. Default: false.",
         default: false,
       },
+      level: {
+        type: "string",
+        enum: ["light", "standard", "full", "auto"],
+        default: "auto",
+        description:
+          "Advanced: Override automatic level detection. Usually not needed.",
+      },
     },
     required: ["feature"],
   },
 };
 
+const EXTEND_TOOL_DEFINITION = {
+  name: "triqual_extend_context",
+  description:
+    "Advanced: Add specific context files to existing context. Rarely needed since " +
+    "triqual_load_context auto-detects appropriate depth. Use only if you specifically " +
+    "need additional files after context was already loaded.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      feature: {
+        type: "string",
+        description: "Feature name with existing context",
+      },
+      add: {
+        type: "array",
+        items: {
+          type: "string",
+          enum: ["anti-patterns", "failures", "requirements"],
+        },
+        description: "Additional files to generate",
+      },
+      ticket: {
+        type: "string",
+        description: "Required if adding requirements",
+      },
+    },
+    required: ["feature", "add"],
+  },
+};
+
 const SUBPROCESS_TIMEOUT_MS = 360_000; // 6 minutes
+const STANDARD_TIMEOUT_MS = 180_000; // 3 minutes for standard mode
+const LIGHT_CONTEXT_FRESHNESS_MS = 1800_000; // 30 minutes for light context
 
 // --- Project Root Resolution ---
 
@@ -102,12 +139,12 @@ function readTriqualConfig(projectRoot) {
 
 // --- Prompt Template ---
 
-function loadPromptTemplate(pluginRoot) {
+function loadPromptTemplate(pluginRoot, templateName = "context-builder.md") {
   const templatePath = path.join(
     pluginRoot,
     "mcp",
     "prompts",
-    "context-builder.md"
+    templateName
   );
   if (!fs.existsSync(templatePath)) {
     throw new Error(`Prompt template not found: ${templatePath}`);
@@ -130,10 +167,148 @@ function interpolatePrompt(template, vars) {
   return result;
 }
 
+// --- Level Detection ---
+
+function hasSuccessfulRunLog(feature, projectRoot) {
+  const runLogPath = path.join(projectRoot, ".triqual", "runs", `${feature}.md`);
+  if (!fs.existsSync(runLogPath)) return false;
+
+  try {
+    const content = fs.readFileSync(runLogPath, "utf-8");
+    // Check for LEARN stage (only written after tests pass)
+    return /^#{2,3} Stage: LEARN/m.test(content);
+  } catch {
+    return false;
+  }
+}
+
+function hasFailedRunLog(feature, projectRoot) {
+  const runLogPath = path.join(projectRoot, ".triqual", "runs", `${feature}.md`);
+  if (!fs.existsSync(runLogPath)) return false;
+
+  try {
+    const content = fs.readFileSync(runLogPath, "utf-8");
+    // Check for multiple failed attempts (suggests complexity)
+    const failCount = (content.match(/Result:\s*FAILED/gi) || []).length;
+    return failCount >= 3;
+  } catch {
+    return false;
+  }
+}
+
+function hasExistingTests(feature, projectRoot, testDir) {
+  const fullTestDir = path.join(projectRoot, testDir);
+  if (!fs.existsSync(fullTestDir)) return false;
+
+  try {
+    const { execSync } = require("child_process");
+    const result = execSync(
+      `find "${fullTestDir}" -name "*${feature}*.spec.ts" -o -name "*${feature}*.test.ts" 2>/dev/null | head -1`,
+      { encoding: "utf-8" }
+    ).trim();
+    return result.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function isComplexFeature(feature) {
+  // Complex feature patterns that benefit from full context
+  const complexPatterns = [
+    /auth/i, /login/i, /signup/i, /register/i,
+    /checkout/i, /payment/i, /billing/i,
+    /dashboard/i, /admin/i,
+    /workflow/i, /wizard/i, /multi.?step/i,
+    /upload/i, /import/i, /export/i,
+    /search/i, /filter/i,
+    /notification/i, /email/i,
+    /integration/i, /api/i, /webhook/i,
+  ];
+
+  return complexPatterns.some((pattern) => pattern.test(feature));
+}
+
+function isSimpleFeature(feature) {
+  // Simple feature patterns that work well with light context
+  const simplePatterns = [
+    /^button$/i, /^link$/i, /^modal$/i, /^tooltip$/i,
+    /^header$/i, /^footer$/i, /^nav/i,
+    /^badge$/i, /^tag$/i, /^chip$/i,
+    /^spinner$/i, /^loader$/i,
+  ];
+
+  return simplePatterns.some((pattern) => pattern.test(feature));
+}
+
+function detectLevel(args, projectRoot) {
+  // Explicit level overrides auto-detection
+  if (args.level && args.level !== "auto") {
+    return args.level;
+  }
+
+  const config = readTriqualConfig(projectRoot);
+  const feature = args.feature;
+
+  // FULL LEVEL TRIGGERS:
+
+  // 1. Ticket provided - always full (needs requirements, AC)
+  if (args.ticket) {
+    return "full";
+  }
+
+  // 2. Long description (>100 chars) - suggests complex requirements
+  if (args.description && args.description.length > 100) {
+    return "full";
+  }
+
+  // 3. Previous failures on this feature - need more context to debug
+  if (hasFailedRunLog(feature, projectRoot)) {
+    return "full";
+  }
+
+  // 4. Known complex feature pattern
+  if (isComplexFeature(feature)) {
+    return "standard"; // Use standard, can upgrade to full if needed
+  }
+
+  // LIGHT LEVEL TRIGGERS:
+
+  // 1. Feature has successful run log (iterations on working tests)
+  if (hasSuccessfulRunLog(feature, projectRoot)) {
+    return "light";
+  }
+
+  // 2. Simple feature pattern AND existing tests exist
+  if (isSimpleFeature(feature) && hasExistingTests(feature, projectRoot, config.testDir)) {
+    return "light";
+  }
+
+  // STANDARD: Default for new test generation
+  return "standard";
+}
+
+function getContextLevel(contextDir) {
+  const summaryPath = path.join(contextDir, "summary.md");
+  if (!fs.existsSync(summaryPath)) return null;
+
+  try {
+    const content = fs.readFileSync(summaryPath, "utf-8");
+    const match = content.match(/^Level:\s*(\w+)/m);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
+
 // --- Context Validation ---
 
-function contextFilesExist(contextDir) {
-  const required = ["patterns.md", "codebase.md"];
+function contextFilesExist(contextDir, level = "standard") {
+  const levelFiles = {
+    light: ["codebase.md"],
+    standard: ["patterns.md", "codebase.md"],
+    full: ["patterns.md", "codebase.md", "existing-tests.md"],
+  };
+  const required = levelFiles[level] || levelFiles.standard;
   return required.every((f) => fs.existsSync(path.join(contextDir, f)));
 }
 
@@ -160,9 +335,201 @@ function listContextFiles(contextDir) {
     .sort();
 }
 
+// --- Light Mode (Local Scan) ---
+
+const { execSync } = require("child_process");
+
+function scanCodebaseLocal(feature, projectRoot, testDir) {
+  const results = {
+    sourceFiles: [],
+    selectors: [],
+    routes: [],
+    components: [],
+  };
+
+  // Search patterns in common source directories
+  const searchDirs = ["src", "app", "pages", "components", "lib"].filter((d) =>
+    fs.existsSync(path.join(projectRoot, d))
+  );
+
+  for (const dir of searchDirs) {
+    try {
+      // Search for feature name in files (case-insensitive)
+      const grepResult = execSync(
+        `grep -rniI "${feature}" "${path.join(projectRoot, dir)}" --include="*.ts" --include="*.tsx" --include="*.js" --include="*.jsx" 2>/dev/null | head -20`,
+        { encoding: "utf-8", maxBuffer: 1024 * 1024 }
+      ).trim();
+
+      if (grepResult) {
+        const lines = grepResult.split("\n").filter(Boolean);
+        for (const line of lines) {
+          const match = line.match(/^([^:]+):(\d+):/);
+          if (match) {
+            results.sourceFiles.push({
+              path: match[1].replace(projectRoot + "/", ""),
+              line: match[2],
+            });
+          }
+        }
+      }
+    } catch {
+      // grep returns non-zero if no matches
+    }
+  }
+
+  // Extract data-testid selectors
+  for (const dir of searchDirs) {
+    try {
+      const testidResult = execSync(
+        `grep -rohE 'data-testid="[^"]+"' "${path.join(projectRoot, dir)}" 2>/dev/null | sort -u | head -30`,
+        { encoding: "utf-8", maxBuffer: 1024 * 1024 }
+      ).trim();
+
+      if (testidResult) {
+        results.selectors.push(
+          ...testidResult.split("\n").filter((s) => s.includes(feature.toLowerCase()))
+        );
+      }
+    } catch {
+      // no matches
+    }
+  }
+
+  return results;
+}
+
+function findExistingTestsLocal(feature, projectRoot, testDir) {
+  const results = {
+    testFiles: [],
+    pageObjects: [],
+    helpers: [],
+  };
+
+  const fullTestDir = path.join(projectRoot, testDir);
+
+  // Find test files
+  if (fs.existsSync(fullTestDir)) {
+    try {
+      const testFiles = execSync(
+        `find "${fullTestDir}" -name "*.spec.ts" -o -name "*.test.ts" 2>/dev/null | head -20`,
+        { encoding: "utf-8" }
+      ).trim();
+
+      if (testFiles) {
+        results.testFiles = testFiles.split("\n").filter(Boolean).map((f) => f.replace(projectRoot + "/", ""));
+      }
+    } catch {
+      // no matches
+    }
+
+    // Find page objects
+    try {
+      const pageObjects = execSync(
+        `find "${fullTestDir}" -name "*Page.ts" -o -name "*page.ts" 2>/dev/null`,
+        { encoding: "utf-8" }
+      ).trim();
+
+      if (pageObjects) {
+        results.pageObjects = pageObjects.split("\n").filter(Boolean).map((f) => f.replace(projectRoot + "/", ""));
+      }
+    } catch {
+      // no matches
+    }
+
+    // Find helpers/fixtures
+    try {
+      const helpers = execSync(
+        `find "${fullTestDir}" -name "*helper*.ts" -o -name "*fixture*.ts" -o -name "seed*.ts" 2>/dev/null`,
+        { encoding: "utf-8" }
+      ).trim();
+
+      if (helpers) {
+        results.helpers = helpers.split("\n").filter(Boolean).map((f) => f.replace(projectRoot + "/", ""));
+      }
+    } catch {
+      // no matches
+    }
+  }
+
+  return results;
+}
+
+async function buildLightContext(feature, projectRoot, contextDir, config) {
+  // Ensure output directory exists
+  fs.mkdirSync(contextDir, { recursive: true });
+
+  // 1. Scan codebase locally
+  const codebase = scanCodebaseLocal(feature, projectRoot, config.testDir);
+
+  // 2. Find existing tests locally
+  const tests = findExistingTestsLocal(feature, projectRoot, config.testDir);
+
+  // 3. Write codebase.md
+  const codebaseContent = `# Codebase: ${feature}
+
+## Source Files
+${codebase.sourceFiles.length > 0
+    ? codebase.sourceFiles.map((f) => `- ${f.path}:${f.line}`).join("\n")
+    : "- No source files found matching feature name"}
+
+## Selectors Found
+${codebase.selectors.length > 0
+    ? codebase.selectors.map((s) => `- ${s}`).join("\n")
+    : "- No data-testid selectors found matching feature"}
+
+## Existing Tests
+${tests.testFiles.length > 0
+    ? tests.testFiles.map((f) => `- ${f}`).join("\n")
+    : "- No existing test files found"}
+
+## Page Objects Available
+${tests.pageObjects.length > 0
+    ? tests.pageObjects.map((f) => `- ${f}`).join("\n")
+    : "- No page objects found"}
+
+## Helpers/Fixtures
+${tests.helpers.length > 0
+    ? tests.helpers.map((f) => `- ${f}`).join("\n")
+    : "- No helpers/fixtures found"}
+`;
+
+  fs.writeFileSync(path.join(contextDir, "codebase.md"), codebaseContent);
+
+  // 4. Write summary.md
+  const summaryContent = `# Context Summary: ${feature}
+
+Level: light
+Generated: ${new Date().toISOString()}
+Feature: ${feature}
+
+## Files
+| File | Content |
+|------|---------|
+| codebase.md | Local codebase scan |
+
+## Note
+This is a **light** context (local scan only). No Quoth patterns or Exolar data.
+
+To upgrade context, use:
+- \`triqual_load_context({ feature: "${feature}", level: "standard" })\` - Add Quoth patterns
+- \`triqual_load_context({ feature: "${feature}", level: "full" })\` - Full context with all sources
+- \`triqual_extend_context({ feature: "${feature}", add: ["failures"] })\` - Add specific files
+`;
+
+  fs.writeFileSync(path.join(contextDir, "summary.md"), summaryContent);
+
+  return {
+    files: ["codebase.md", "summary.md"],
+    level: "light",
+    sourceFiles: codebase.sourceFiles.length,
+    selectors: codebase.selectors.length,
+    testFiles: tests.testFiles.length,
+  };
+}
+
 // --- Subprocess Spawning ---
 
-function spawnContextBuilder(prompt, projectRoot) {
+function spawnContextBuilder(prompt, projectRoot, timeoutMs = SUBPROCESS_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const child = spawn(
       "claude",
@@ -170,7 +537,7 @@ function spawnContextBuilder(prompt, projectRoot) {
       {
         cwd: projectRoot,
         stdio: ["pipe", "pipe", "pipe"],
-        timeout: SUBPROCESS_TIMEOUT_MS,
+        timeout: timeoutMs,
         env: { ...process.env, CLAUDE_PLUGIN_ROOT: undefined },
       }
     );
@@ -188,8 +555,8 @@ function spawnContextBuilder(prompt, projectRoot) {
 
     const timer = setTimeout(() => {
       child.kill("SIGTERM");
-      reject(new Error(`Subprocess timed out after ${SUBPROCESS_TIMEOUT_MS / 1000}s`));
-    }, SUBPROCESS_TIMEOUT_MS);
+      reject(new Error(`Subprocess timed out after ${timeoutMs / 1000}s`));
+    }, timeoutMs);
 
     child.on("close", (code) => {
       clearTimeout(timer);
@@ -215,7 +582,7 @@ function spawnContextBuilder(prompt, projectRoot) {
 
 // --- Tool Handler ---
 
-async function handleLoadContext({ feature, ticket, description, force }) {
+async function handleLoadContext({ feature, level, ticket, description, force }) {
   // Validate feature name to prevent path traversal
   if (
     !feature ||
@@ -244,20 +611,26 @@ async function handleLoadContext({ feature, ticket, description, force }) {
   const config = readTriqualConfig(projectRoot);
   const contextDir = path.join(projectRoot, ".triqual", "context", feature);
 
-  // Check cache
+  // Auto-detect level if not specified or "auto"
+  const detectedLevel = detectLevel({ feature, level, ticket, description }, projectRoot);
+  const freshnessMs = detectedLevel === "light" ? LIGHT_CONTEXT_FRESHNESS_MS : 3600_000;
+
+  // Check cache (level-aware)
   if (
     !force &&
-    contextFilesExist(contextDir) &&
-    contextIsFresh(contextDir)
+    contextFilesExist(contextDir, detectedLevel) &&
+    contextIsFresh(contextDir, freshnessMs)
   ) {
     const files = listContextFiles(contextDir);
+    const currentLevel = getContextLevel(contextDir) || detectedLevel;
     return {
       content: [
         {
           type: "text",
           text: JSON.stringify({
             status: "cached",
-            message: `Context files already exist and are fresh. Use force: true to regenerate.`,
+            level: currentLevel,
+            message: `Context files already exist and are fresh (level: ${currentLevel}). Use force: true to regenerate.`,
             path: `.triqual/context/${feature}/`,
             files,
           }),
@@ -269,19 +642,67 @@ async function handleLoadContext({ feature, ticket, description, force }) {
   // Ensure output directory exists
   fs.mkdirSync(contextDir, { recursive: true });
 
-  // Build prompt
+  // LIGHT MODE: Local scan only (no subprocess)
+  if (detectedLevel === "light") {
+    try {
+      const result = await buildLightContext(feature, projectRoot, contextDir, config);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              status: "ok",
+              level: "light",
+              path: `.triqual/context/${feature}/`,
+              files: result.files,
+              stats: {
+                sourceFiles: result.sourceFiles,
+                selectors: result.selectors,
+                testFiles: result.testFiles,
+              },
+              note: "Light context generated (local scan only). Use level: 'standard' or 'full' for Quoth patterns.",
+            }),
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              status: "error",
+              message: `Light context build failed: ${err.message}`,
+            }),
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+
+  // STANDARD/FULL MODE: Subprocess required
+  const templateName = detectedLevel === "full" ? "context-full.md" : "context-standard.md";
+  const timeoutMs = detectedLevel === "full" ? SUBPROCESS_TIMEOUT_MS : STANDARD_TIMEOUT_MS;
+
   let template;
   try {
-    template = loadPromptTemplate(pluginRoot);
+    template = loadPromptTemplate(pluginRoot, templateName);
   } catch (err) {
-    return {
-      content: [{ type: "text", text: JSON.stringify({ status: "error", message: err.message }) }],
-      isError: true,
-    };
+    // Fall back to context-builder.md if specific template doesn't exist
+    try {
+      template = loadPromptTemplate(pluginRoot, "context-builder.md");
+    } catch (fallbackErr) {
+      return {
+        content: [{ type: "text", text: JSON.stringify({ status: "error", message: err.message }) }],
+        isError: true,
+      };
+    }
   }
 
   const prompt = interpolatePrompt(template, {
     feature,
+    level: detectedLevel,
     ticket: ticket || "",
     description: description || "",
     projectRoot,
@@ -293,7 +714,7 @@ async function handleLoadContext({ feature, ticket, description, force }) {
 
   // Spawn subprocess
   try {
-    await spawnContextBuilder(prompt, projectRoot);
+    await spawnContextBuilder(prompt, projectRoot, timeoutMs);
   } catch (err) {
     const partialFiles = listContextFiles(contextDir);
     const isTimeout = err.message.includes("timed out");
@@ -306,6 +727,7 @@ async function handleLoadContext({ feature, ticket, description, force }) {
             type: "text",
             text: JSON.stringify({
               status: "partial",
+              level: detectedLevel,
               message: `Context builder timed out but produced ${partialFiles.length} file(s). These can still be used.`,
               path: `.triqual/context/${feature}/`,
               files: partialFiles,
@@ -321,6 +743,7 @@ async function handleLoadContext({ feature, ticket, description, force }) {
           type: "text",
           text: JSON.stringify({
             status: "error",
+            level: detectedLevel,
             message: `Context builder failed: ${err.message}`,
             partialFiles,
           }),
@@ -330,16 +753,17 @@ async function handleLoadContext({ feature, ticket, description, force }) {
     };
   }
 
-  // Validate output
-  if (!contextFilesExist(contextDir)) {
+  // Validate output (level-aware)
+  if (!contextFilesExist(contextDir, detectedLevel)) {
     return {
       content: [
         {
           type: "text",
           text: JSON.stringify({
             status: "error",
+            level: detectedLevel,
             message:
-              "Subprocess completed but required files (patterns.md, codebase.md) were not created.",
+              `Subprocess completed but required files for level '${detectedLevel}' were not created.`,
             partialFiles: listContextFiles(contextDir),
           }),
         },
@@ -355,6 +779,160 @@ async function handleLoadContext({ feature, ticket, description, force }) {
         type: "text",
         text: JSON.stringify({
           status: "ok",
+          level: detectedLevel,
+          path: `.triqual/context/${feature}/`,
+          files,
+        }),
+      },
+    ],
+  };
+}
+
+// --- Extend Context Handler ---
+
+async function handleExtendContext({ feature, add, ticket }) {
+  // Validate feature name
+  if (
+    !feature ||
+    feature.includes("..") ||
+    feature.includes("/") ||
+    feature.includes("\\")
+  ) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            status: "error",
+            message: "Invalid feature name.",
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  if (!add || add.length === 0) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            status: "error",
+            message: "Must specify at least one file type to add.",
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  // Check requirements needs ticket
+  if (add.includes("requirements") && !ticket) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            status: "error",
+            message: "Adding requirements requires a ticket ID.",
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  const projectRoot = findProjectRoot();
+  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || path.resolve(__dirname, "..");
+  const config = readTriqualConfig(projectRoot);
+  const contextDir = path.join(projectRoot, ".triqual", "context", feature);
+
+  // Verify context exists
+  if (!fs.existsSync(contextDir)) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            status: "error",
+            message: `No existing context for '${feature}'. Use triqual_load_context first.`,
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  // Build a targeted prompt for just the requested files
+  const addPrompt = `You are extending existing test context for feature: **${feature}**
+
+Project root: ${projectRoot}
+Test directory: ${config.testDir}
+Context directory: .triqual/context/${feature}
+
+## Task
+
+Generate ONLY the following additional files:
+
+${add.includes("anti-patterns") ? `
+### anti-patterns.md
+Search Quoth for anti-patterns:
+quoth_search_index({ query: "${feature} test failures anti-patterns" })
+
+Extract from search snippets (prefer snippets over full doc reads).
+Write .triqual/context/${feature}/anti-patterns.md
+` : ""}
+
+${add.includes("failures") ? `
+### failures.md
+Query Exolar for failure history:
+query_exolar_data({ dataset: "test_search", filters: { search: "${feature}" }})
+query_exolar_data({ dataset: "failure_patterns", filters: { search: "${feature}" }})
+
+Write .triqual/context/${feature}/failures.md
+` : ""}
+
+${add.includes("requirements") && ticket ? `
+### requirements.md
+Fetch Linear ticket:
+mcp__linear__get_issue({ id: "${ticket}" })
+
+Extract acceptance criteria.
+Write .triqual/context/${feature}/requirements.md
+` : ""}
+
+## Rules
+- ONLY write the requested files
+- Do NOT modify existing files
+- Do NOT write test code
+`;
+
+  try {
+    await spawnContextBuilder(addPrompt, projectRoot, STANDARD_TIMEOUT_MS);
+  } catch (err) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            status: "error",
+            message: `Extend context failed: ${err.message}`,
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  const files = listContextFiles(contextDir);
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          status: "ok",
+          message: `Added ${add.join(", ")} to context`,
           path: `.triqual/context/${feature}/`,
           files,
         }),
@@ -391,18 +969,31 @@ async function handleMessage(msg) {
       return null; // No response needed
 
     case "tools/list":
-      return makeResponse(id, { tools: [TOOL_DEFINITION] });
+      return makeResponse(id, { tools: [TOOL_DEFINITION, EXTEND_TOOL_DEFINITION] });
 
     case "tools/call": {
       const { name, arguments: args } = params;
-      if (name !== "triqual_load_context") {
-        return makeError(id, -32602, `Unknown tool: ${name}`);
+
+      if (name === "triqual_load_context") {
+        if (!args || !args.feature) {
+          return makeError(id, -32602, "Missing required parameter: feature");
+        }
+        const result = await handleLoadContext(args);
+        return makeResponse(id, result);
       }
-      if (!args || !args.feature) {
-        return makeError(id, -32602, "Missing required parameter: feature");
+
+      if (name === "triqual_extend_context") {
+        if (!args || !args.feature) {
+          return makeError(id, -32602, "Missing required parameter: feature");
+        }
+        if (!args.add || args.add.length === 0) {
+          return makeError(id, -32602, "Missing required parameter: add (array of file types)");
+        }
+        const result = await handleExtendContext(args);
+        return makeResponse(id, result);
       }
-      const result = await handleLoadContext(args);
-      return makeResponse(id, result);
+
+      return makeError(id, -32602, `Unknown tool: ${name}`);
     }
 
     case "ping":

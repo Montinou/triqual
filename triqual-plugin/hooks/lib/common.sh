@@ -510,8 +510,64 @@ increment_tool_counter() {
 # CONTEXT FILES CHECKING (replaces quoth-context agent tracking)
 # ============================================================================
 
-# Check if context files exist for a feature
-# Validates .triqual/context/{feature}/ has required files (patterns.md + codebase.md)
+# Get context level from summary.md
+# Returns: light | standard | full | (empty if not found)
+get_context_level() {
+    local feature="$1"
+
+    if [ -z "$feature" ]; then
+        return 0
+    fi
+
+    local context_dir
+    context_dir=$(get_context_dir "$feature")
+    local summary_file="${context_dir}/summary.md"
+
+    if [ -f "$summary_file" ]; then
+        grep -oE '^Level:\s*\w+' "$summary_file" 2>/dev/null | sed 's/Level:\s*//' | head -1
+    fi
+}
+
+# Check if context is sufficient for a given required level
+# Args: $1 = feature, $2 = required_level (light|standard|full, default: standard)
+# Returns: 0 if sufficient, 1 if not
+context_is_sufficient() {
+    local feature="$1"
+    local required_level="${2:-standard}"
+
+    if [ -z "$feature" ]; then
+        return 1
+    fi
+
+    local context_dir
+    context_dir=$(get_context_dir "$feature")
+
+    # Check based on required level
+    case "$required_level" in
+        light)
+            # Light only needs codebase.md
+            [[ -f "${context_dir}/codebase.md" ]]
+            ;;
+        standard)
+            # Standard needs patterns.md AND codebase.md
+            [[ -f "${context_dir}/patterns.md" ]] && [[ -f "${context_dir}/codebase.md" ]]
+            ;;
+        full)
+            # Full needs patterns, codebase, AND existing-tests
+            [[ -f "${context_dir}/patterns.md" ]] && \
+            [[ -f "${context_dir}/codebase.md" ]] && \
+            [[ -f "${context_dir}/existing-tests.md" ]]
+            ;;
+        *)
+            # Default to standard check
+            [[ -f "${context_dir}/patterns.md" ]] && [[ -f "${context_dir}/codebase.md" ]]
+            ;;
+    esac
+}
+
+# Check if context files exist for a feature (backward compatible)
+# Now defaults to checking for light level (just codebase.md) for minimum viability
+# Validates .triqual/context/{feature}/ has at least codebase.md
 # Returns: 0 if context exists, 1 if not
 context_files_exist() {
     local feature="$1"
@@ -520,11 +576,11 @@ context_files_exist() {
         return 1
     fi
 
-    local triqual_dir
-    triqual_dir=$(get_triqual_dir)
-    local context_dir="${triqual_dir}/context/${feature}"
+    local context_dir
+    context_dir=$(get_context_dir "$feature")
 
-    [[ -f "${context_dir}/patterns.md" ]] && [[ -f "${context_dir}/codebase.md" ]]
+    # Minimum requirement: codebase.md exists (light level)
+    [[ -f "${context_dir}/codebase.md" ]]
 }
 
 # Get context directory path for a feature
@@ -542,6 +598,36 @@ list_context_files() {
     if [ -d "$context_dir" ]; then
         ls "$context_dir"/*.md 2>/dev/null | while read -r f; do basename "$f"; done
     fi
+}
+
+# Suggest appropriate context level based on task indicators
+# Args: $1 = has_ticket (true/false), $2 = has_long_description (true/false), $3 = has_run_log (true/false)
+# Returns: light | standard | full
+suggest_context_level() {
+    local has_ticket="${1:-false}"
+    local has_long_desc="${2:-false}"
+    local has_run_log="${3:-false}"
+
+    # Full if ticket provided
+    if [ "$has_ticket" = "true" ]; then
+        echo "full"
+        return 0
+    fi
+
+    # Full if long description
+    if [ "$has_long_desc" = "true" ]; then
+        echo "full"
+        return 0
+    fi
+
+    # Light if successful run log exists (quick iterations)
+    if [ "$has_run_log" = "true" ]; then
+        echo "light"
+        return 0
+    fi
+
+    # Standard is the default
+    echo "standard"
 }
 
 # Extract feature name from a Task tool prompt/description

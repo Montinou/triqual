@@ -49,18 +49,24 @@ main() {
     cat >&2 << EOF
 🚫 BLOCKED: Cannot dispatch test-planner without context files
 
-Call triqual_load_context tool FIRST:
+**Load context first:**
 
-  triqual_load_context({ feature: "$feature" })
+\`\`\`
+triqual_load_context({ feature: "$feature" })
+\`\`\`
 
-This builds .triqual/context/$feature/ with Quoth patterns,
-Exolar failures, codebase analysis, and more.
+If you have a Linear ticket:
+\`\`\`
+triqual_load_context({ feature: "$feature", ticket: "ENG-123" })
+\`\`\`
+
+The tool automatically analyzes the feature complexity and loads
+appropriate context (Quoth patterns, codebase analysis, failure history).
 
 After context files are generated, retry dispatching test-planner.
 
-Why: Context files contain proven patterns that prevent common test
-failures and reduce fix iterations. Without them, planning is less
-effective and downstream gates will block anyway.
+**Why:** Context files contain proven patterns that make planning more
+effective and prevent common test failures.
 EOF
     exit 2
 }

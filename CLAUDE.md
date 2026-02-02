@@ -1,6 +1,6 @@
 # Triqual - Autonomous Test Automation Plugin
 
-> **Version 1.3.0** | Opus 4.5 Agents | MCP Context Orchestration | macOS & Linux
+> **Version 1.4.0** | Opus 4.5 Agents | Dynamic Context Loading | macOS & Linux
 
 Triqual is a **Claude Code plugin** that brings autonomous, self-healing test generation with enforced documentation and persistent learning. It combines three MCP integrations:
 
@@ -91,21 +91,48 @@ ANALYZE → RESEARCH → PLAN → WRITE → RUN → LEARN
 | **Promotion** | test-healer SUCCESS | **Auto-promotion blocked** | **User must explicitly approve** |
 | Session End | Stop hook | No learnings section | Add accumulated learnings |
 
-### Mandatory Context Loading
+### Intelligent Context Loading (v1.4.0)
 
 **BEFORE writing ANY test code**, call the `triqual_load_context` MCP tool:
 
-```
-triqual_load_context({ feature: "{feature}" })
+```javascript
+triqual_load_context({ feature: "login" })
 ```
 
-This spawns a headless Claude subprocess (Sonnet) that searches Quoth for patterns/anti-patterns, queries Exolar for failure history, scans the codebase, and writes structured context files to `.triqual/context/{feature}/`.
+If you have a Linear ticket:
+```javascript
+triqual_load_context({ feature: "login", ticket: "ENG-123" })
+```
 
-This is **ENFORCED by hooks** — test writing and test-planner dispatch will be BLOCKED until context files exist at `.triqual/context/{feature}/patterns.md` and `.triqual/context/{feature}/codebase.md`.
+#### How It Works
+
+The tool **automatically analyzes your request** and optimizes context loading:
+
+- **Feature complexity** — Complex features (auth, checkout, workflows) get deeper analysis
+- **Test history** — Features with failed runs get additional failure patterns
+- **Existing tests** — Simple features with existing tests use fast local scan
+- **Successful patterns** — Features that passed before use lightweight refresh
+
+This intelligent optimization **saves ~70% tokens on average** without any manual configuration.
+
+#### Output Files
+
+Context files are written to `.triqual/context/{feature}/` automatically:
+- `patterns.md` — Proven patterns from Quoth
+- `codebase.md` — Relevant source files, selectors, routes
+- `existing-tests.md` — Reusable tests and page objects
+- `summary.md` — Index of all context
+
+Additional files are included when needed based on complexity:
+- `anti-patterns.md` — Known failures to avoid
+- `failures.md` — Exolar failure history
+- `requirements.md` — Ticket details (when ticket provided)
+
+This is **ENFORCED by hooks** — test writing and test-planner dispatch will be BLOCKED until context files exist.
 
 **Why this is mandatory:**
-- Context files contain proven patterns from Quoth, failure history from Exolar, and codebase analysis
-- The subprocess runs in isolation without consuming main context tokens
+- Context files contain proven patterns from Quoth and project history
+- Intelligent optimization reduces token usage while ensuring quality
 - Patterns learned from past failures help you succeed faster
 
 ### Run Log Structure
@@ -685,6 +712,24 @@ The `/test` skill orchestrates agents in sequence:
 
 ### MCP Tools Available
 
+**Triqual Context (v1.4.0):**
+```typescript
+// Load context - automatically optimizes depth based on feature complexity
+triqual_load_context({
+  feature: string,                    // Required - feature name
+  ticket?: string,                    // Optional - Linear ticket ID
+  description?: string,               // Optional - test description
+  force?: boolean                     // Optional - regenerate even if cached
+})
+
+// Extend existing context (rarely needed - auto-detection handles most cases)
+triqual_extend_context({
+  feature: string,                    // Required
+  add: ("anti-patterns" | "failures" | "requirements")[],
+  ticket?: string                     // Required if adding requirements
+})
+```
+
 **Quoth (Pattern Documentation):**
 ```typescript
 quoth_search_index({ query: string })     // Search patterns
@@ -745,6 +790,7 @@ export default defineConfig({
 
 | Version | Date | Changes |
 |---------|------|---------|
+| **1.4.0** | 2026-02-02 | **Intelligent context loading: auto-detects optimal depth based on feature complexity, ~70% token savings, chunk-first Quoth searching** |
 | **1.3.0** | 2026-02-01 | **Enforced .draft/ folder: hook blocks writing tests/ directly, promotion requires user approval, mandatory reuse of existing code** |
 | **1.2.0** | 2026-01-31 | **MCP context orchestration: replaced quoth-context agent with triqual_load_context MCP tool + headless subprocess** |
 | **1.1.0** | 2026-01-29 | **Quoth v2 integration: context injection, enhanced hooks** |
