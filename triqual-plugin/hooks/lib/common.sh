@@ -682,7 +682,7 @@ stage_exists() {
         return 1
     fi
 
-    grep -q "### Stage: $stage" "$log_path"
+    grep -qE "^#{2,3} Stage: $stage" "$log_path"
 }
 
 # Check if ANALYZE stage exists
@@ -713,7 +713,7 @@ write_stage_exists() {
     fi
 
     # Check for WRITE stage AND Hypothesis
-    if grep -q "### Stage: WRITE" "$log_path" && grep -q "Hypothesis:" "$log_path"; then
+    if grep -qE "^#{2,3} Stage: WRITE" "$log_path" && grep -q "Hypothesis:" "$log_path"; then
         return 0
     fi
     return 1
@@ -761,7 +761,7 @@ count_run_attempts() {
         return 0
     fi
 
-    local count=$(grep -c "### Stage: RUN" "$log_path" 2>/dev/null || echo "0")
+    local count=$(grep -cE "^#{2,3} Stage: RUN" "$log_path" 2>/dev/null || echo "0")
     echo "$count"
 }
 
@@ -799,7 +799,7 @@ is_run_log_completed() {
     fi
 
     # A run is complete if it has a LEARN stage (only written after PASS)
-    grep -q "### Stage: LEARN" "$log_path"
+    grep -qE "^#{2,3} Stage: LEARN" "$log_path"
 }
 
 # List run logs that are incomplete (no LEARN stage)
@@ -829,7 +829,7 @@ get_run_log_status() {
     fi
 
     # Check completion (has LEARN = done)
-    if grep -q "### Stage: LEARN" "$log_path"; then
+    if grep -qE "^#{2,3} Stage: LEARN" "$log_path"; then
         if grep -q "## Accumulated Learnings" "$log_path"; then
             echo "COMPLETED"
         else
@@ -839,7 +839,7 @@ get_run_log_status() {
     fi
 
     # Determine last documented stage
-    local last_stage=$(grep -E "^### Stage:" "$log_path" | tail -1 | sed 's/### Stage: //' | sed 's/ .*//')
+    local last_stage=$(grep -E "^#{2,3} Stage:" "$log_path" | tail -1 | sed -E 's/^#{2,3} Stage: //' | sed 's/ .*//')
     echo "IN_PROGRESS:$last_stage"
 }
 

@@ -101,9 +101,9 @@ Cannot generate tests without a plan. You need:
 Run log should be at: $RUNS_DIR/{feature}.md" "SubagentStart"
         else
             # Count stages in run log
-            ANALYZE_EXISTS=$(grep -c "### Stage: ANALYZE" "$LATEST_LOG" 2>/dev/null || echo "0")
-            RESEARCH_EXISTS=$(grep -c "### Stage: RESEARCH" "$LATEST_LOG" 2>/dev/null || echo "0")
-            PLAN_EXISTS=$(grep -c "### Stage: PLAN" "$LATEST_LOG" 2>/dev/null || echo "0")
+            ANALYZE_EXISTS=$(grep -cE "^#{2,3} Stage: ANALYZE" "$LATEST_LOG" 2>/dev/null || echo "0")
+            RESEARCH_EXISTS=$(grep -cE "^#{2,3} Stage: RESEARCH" "$LATEST_LOG" 2>/dev/null || echo "0")
+            PLAN_EXISTS=$(grep -cE "^#{2,3} Stage: PLAN" "$LATEST_LOG" 2>/dev/null || echo "0")
 
             output_context "[Triqual] 🔨 Test Generator Agent Starting
 

@@ -43,9 +43,9 @@ case "$AGENT_NAME" in
     *test-planner*)
         if [ "$LOG_UPDATED" = "true" ]; then
             # Check if required stages exist
-            ANALYZE_EXISTS=$(grep -c "### Stage: ANALYZE" "$LATEST_LOG" 2>/dev/null || echo "0")
-            RESEARCH_EXISTS=$(grep -c "### Stage: RESEARCH" "$LATEST_LOG" 2>/dev/null || echo "0")
-            PLAN_EXISTS=$(grep -c "### Stage: PLAN" "$LATEST_LOG" 2>/dev/null || echo "0")
+            ANALYZE_EXISTS=$(grep -cE "^#{2,3} Stage: ANALYZE" "$LATEST_LOG" 2>/dev/null || echo "0")
+            RESEARCH_EXISTS=$(grep -cE "^#{2,3} Stage: RESEARCH" "$LATEST_LOG" 2>/dev/null || echo "0")
+            PLAN_EXISTS=$(grep -cE "^#{2,3} Stage: PLAN" "$LATEST_LOG" 2>/dev/null || echo "0")
 
             output_context "[Triqual] ✓ Test planner completed and run log created.
 
@@ -80,7 +80,7 @@ A valid run log is REQUIRED before test-generator can proceed." "SubagentStop"
     *test-generator*)
         if [ "$LOG_UPDATED" = "true" ]; then
             # Check if WRITE stage was added
-            WRITE_EXISTS=$(grep -c "### Stage: WRITE" "$LATEST_LOG" 2>/dev/null || echo "0")
+            WRITE_EXISTS=$(grep -cE "^#{2,3} Stage: WRITE" "$LATEST_LOG" 2>/dev/null || echo "0")
 
             # Find any newly created test files
             RECENT_SPECS=""

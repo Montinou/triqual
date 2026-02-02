@@ -177,7 +177,7 @@ EOF
 
     if [ "$total_attempts" -ge 12 ] && [ "$total_attempts" -lt 25 ]; then
         # Check if deep analysis is documented
-        if ! grep -q "### Stage: DEEP ANALYSIS" "$run_log" 2>/dev/null; then
+        if ! grep -qE "^#{2,3} Stage: DEEP ANALYSIS" "$run_log" 2>/dev/null; then
             cat >&2 << EOF
 🚫 BLOCKED: Deep analysis required after 11 failed attempts
 
