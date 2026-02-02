@@ -3,13 +3,12 @@ import { AnimatedGrid } from "@/components/animations/animated-grid"
 import { GlowBackground } from "@/components/animations/glow-background"
 import { Navbar } from "@/components/layout/navbar"
 import { Footer } from "@/components/layout/footer"
-import { Hero } from "@/components/landing/hero"
-import { FeaturesGrid } from "@/components/landing/features-grid"
-import { CodePreview } from "@/components/landing/code-preview"
-import { WorkflowSteps } from "@/components/landing/workflow-steps"
-import { CTASection } from "@/components/landing/cta-section"
+import { HeroRefined } from "@/components/landing/hero-refined"
+import { FeaturePanels } from "@/components/landing/feature-panels"
+import { TerminalDemo } from "@/components/landing/terminal-demo"
+import { FinalCTA } from "@/components/landing/final-cta"
 
-// Dynamic import for heavy below-the-fold component
+// Dynamic import for heavy animated component
 const TrinityDiagram = dynamic(
   () => import("@/components/landing/trinity-diagram").then((m) => m.TrinityDiagram),
   { ssr: true }
@@ -27,12 +26,11 @@ export default function Home() {
 
       {/* Main content */}
       <main>
-        <Hero />
+        <HeroRefined />
         <TrinityDiagram />
-        <FeaturesGrid />
-        <CodePreview />
-        <WorkflowSteps />
-        <CTASection />
+        <FeaturePanels />
+        <TerminalDemo />
+        <FinalCTA />
       </main>
 
       {/* Footer */}

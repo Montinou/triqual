@@ -216,6 +216,50 @@ export function Hero() {
           </Button>
         </motion.div>
       </motion.div>
+
+      {/* 3D Diagram Preview */}
+      <motion.div
+        className="mt-16 w-full max-w-5xl scene-container"
+        variants={itemVariants}
+      >
+        <motion.div
+          className="relative rounded-xl border border-border/30 overflow-hidden glass min-h-[45vh] flex items-center justify-center cursor-pointer group"
+          animate={{
+            rotateY: [-2, 2],
+          }}
+          whileHover={{
+            scale: 1.02,
+            rotateY: 0,
+          }}
+          transition={{
+            duration: 4,
+            ease: "easeInOut",
+            repeat: Infinity,
+            repeatType: "reverse",
+          }}
+          style={{
+            transformStyle: "preserve-3d",
+          }}
+        >
+          <Image
+            src="/flow-images/02-test_generation_flow.png"
+            alt="Test Generation Flow Preview"
+            width={1920}
+            height={1440}
+            quality={85}
+            priority
+            className="w-full h-full object-contain opacity-60 group-hover:opacity-90 transition-opacity duration-500"
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-background via-transparent to-transparent pointer-events-none" />
+
+          {/* Hover hint */}
+          <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+            <div className="px-4 py-2 rounded-lg bg-background/90 backdrop-blur-sm border border-primary/50 text-sm text-primary font-medium">
+              Scroll down to explore
+            </div>
+          </div>
+        </motion.div>
+      </motion.div>
     </motion.section>
   )
 }

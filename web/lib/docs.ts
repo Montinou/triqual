@@ -19,18 +19,29 @@ export interface Doc extends DocMeta {
 
 // Define document metadata (since the markdown files may not have frontmatter)
 const docsMeta: Record<string, Omit<DocMeta, "slug">> = {
+  // Getting Started
+  "installation": {
+    title: "Installation & Setup",
+    description: "Install Triqual, connect MCP servers, complete first-time setup",
+    category: "Getting Started",
+    order: 0,
+  },
   "bootstrap-workflow": {
     title: "Getting Started",
     description: "Set up Triqual and learn available skills",
     category: "Workflows",
     order: 1,
   },
+
+  // Patterns
   "standard-patterns": {
     title: "Standard Patterns",
     description: "Core patterns for writing reliable Playwright tests",
     category: "Patterns",
     order: 2,
   },
+
+  // Integrations
   "quoth-integration": {
     title: "Quoth Integration",
     description: "Persisting live docs for learned patterns",
@@ -49,11 +60,101 @@ const docsMeta: Record<string, Omit<DocMeta, "slug">> = {
     category: "Integrations",
     order: 5,
   },
+
+  // Reference
   "locator-strategies": {
     title: "Locator Strategies",
     description: "Best practices for element locators",
     category: "Reference",
     order: 6,
+  },
+  "skills-reference": {
+    title: "Skills Reference",
+    description: "Complete reference for all 5 Triqual skills (slash commands)",
+    category: "Reference",
+    order: 7,
+  },
+  "configuration": {
+    title: "Configuration Reference",
+    description: "Complete reference for triqual.config.ts configuration",
+    category: "Configuration",
+    order: 8,
+  },
+  "troubleshooting": {
+    title: "Troubleshooting Guide",
+    description: "Common issues, solutions, and debugging techniques",
+    category: "Reference",
+    order: 9,
+  },
+  "api-reference": {
+    title: "API Reference",
+    description: "Complete API reference for MCP tools, TypeScript types, and configuration",
+    category: "Reference",
+    order: 10,
+  },
+  "error-patterns": {
+    title: "Error Patterns",
+    description: "Common test failure patterns and solutions",
+    category: "Reference",
+    order: 11,
+  },
+
+  // Architecture
+  "learning-loop": {
+    title: "Documented Learning Loop",
+    description: "6-stage learning loop enforced by hooks",
+    category: "Architecture",
+    order: 12,
+  },
+  "hooks-system": {
+    title: "Hook System",
+    description: "Hook architecture, communication protocol, and exit codes",
+    category: "Architecture",
+    order: 13,
+  },
+  "agents-guide": {
+    title: "Agent Orchestration",
+    description: "Complete guide to Triqual's 5 specialized agents",
+    category: "Architecture",
+    order: 14,
+  },
+  "draft-folder": {
+    title: "Draft Folder Pattern",
+    description: "Tests developed in .draft/ folder, promotion requires approval",
+    category: "Workflow",
+    order: 15,
+  },
+  "session-state": {
+    title: "Session State & Persistence",
+    description: "Understanding what persists across sessions and compaction",
+    category: "Architecture",
+    order: 16,
+  },
+
+  // Workflows
+  "debug-workflow": {
+    title: "Debug Workflow",
+    description: "Systematic debugging workflow for test failures",
+    category: "Workflows",
+    order: 17,
+  },
+  "explore-workflow": {
+    title: "Explore Workflow",
+    description: "Interactive browser exploration workflow",
+    category: "Workflows",
+    order: 18,
+  },
+  "verification-workflow": {
+    title: "Verification Workflow",
+    description: "Verification and validation workflow for tests",
+    category: "Workflows",
+    order: 19,
+  },
+  "escalation-triggers": {
+    title: "Escalation Triggers",
+    description: "When and how to escalate test healing attempts",
+    category: "Workflows",
+    order: 20,
   },
 }
 

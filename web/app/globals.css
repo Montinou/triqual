@@ -304,6 +304,229 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════
+   3D PERSPECTIVE SYSTEM - Spatial Depth Layers
+   ═══════════════════════════════════════════════════════════ */
+
+.scene-container {
+  perspective: 1200px;
+  perspective-origin: 50% 50%;
+  transform-style: preserve-3d;
+}
+
+.scroll-section {
+  transform-style: preserve-3d;
+  position: relative;
+}
+
+/* Three-tier spatial hierarchy */
+.depth-fg {
+  transform: translateZ(100px);
+}
+
+.depth-mid {
+  transform: translateZ(0px);
+}
+
+.depth-bg {
+  transform: translateZ(-200px) scale(1.2);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SCROLL-DRIVEN ANIMATIONS (CSS View Timeline)
+   ═══════════════════════════════════════════════════════════ */
+
+@keyframes diagram-reveal {
+  from {
+    opacity: 0;
+    transform: perspective(1000px) rotateX(15deg) translateY(80px);
+  }
+  to {
+    opacity: 1;
+    transform: perspective(1000px) rotateX(0deg) translateY(0);
+  }
+}
+
+@keyframes diagram-reveal-3d {
+  from {
+    opacity: 0;
+    transform: perspective(1000px) rotateX(15deg) rotateY(-5deg) translateY(80px) translateZ(-100px);
+  }
+  to {
+    opacity: 1;
+    transform: perspective(1000px) rotateX(0deg) rotateY(0deg) translateY(0) translateZ(0);
+  }
+}
+
+@keyframes card-slide-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-60px) rotateY(-15deg);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) rotateY(0);
+  }
+}
+
+@keyframes card-slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(60px) rotateY(15deg);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) rotateY(0);
+  }
+}
+
+/* Apply scroll-driven animations with CSS view() timeline */
+.animate-on-scroll {
+  animation: diagram-reveal ease-out both;
+  animation-timeline: view();
+  animation-range: entry 10% entry 70%;
+}
+
+.animate-on-scroll-3d {
+  animation: diagram-reveal-3d ease-out both;
+  animation-timeline: view();
+  animation-range: entry 10% entry 70%;
+}
+
+.animate-slide-in-left {
+  animation: card-slide-in-left ease-out both;
+  animation-timeline: view();
+  animation-range: entry 10% entry 70%;
+}
+
+.animate-slide-in-right {
+  animation: card-slide-in-right ease-out both;
+  animation-timeline: view();
+  animation-range: entry 10% entry 70%;
+}
+
+/* Stagger delays for multiple elements */
+.stagger-1 { animation-delay: 0ms; }
+.stagger-2 { animation-delay: 150ms; }
+.stagger-3 { animation-delay: 300ms; }
+.stagger-4 { animation-delay: 450ms; }
+
+/* ═══════════════════════════════════════════════════════════
+   GLASSMORPHISM
+   ═══════════════════════════════════════════════════════════ */
+
+.glass {
+  background: rgba(10, 15, 26, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(0, 240, 255, 0.1);
+}
+
+.glass-strong {
+  background: rgba(10, 15, 26, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(0, 240, 255, 0.15);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SCROLL SNAP
+   ═══════════════════════════════════════════════════════════ */
+
+.scroll-snap-container {
+  scroll-snap-type: y mandatory;
+  scroll-padding-top: 4rem;
+}
+
+.scroll-snap-section {
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   REDUCED MOTION
+   ═══════════════════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════════════════
+   SCROLL-DRIVEN ANIMATIONS (Landing Page)
+   ═══════════════════════════════════════════════════════════ */
+
+/* Section reveal on scroll */
+.section-reveal {
+  animation: section-enter linear both;
+  animation-timeline: view();
+  animation-range: entry 10% entry 90%;
+}
+
+@keyframes section-enter {
+  from { opacity: 0; transform: translateY(60px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 3D card reveal */
+.card-3d-reveal {
+  animation: card-3d-enter linear both;
+  animation-timeline: view();
+  animation-range: entry 0% cover 40%;
+  transform-style: preserve-3d;
+}
+
+@keyframes card-3d-enter {
+  from {
+    opacity: 0;
+    transform: perspective(1200px) rotateX(15deg) translateY(80px) translateZ(-100px);
+  }
+  to {
+    opacity: 1;
+    transform: perspective(1200px) rotateX(0) translateY(0) translateZ(0);
+  }
+}
+
+/* Staggered children */
+.stagger-children > *:nth-child(1) { --stagger: 0; }
+.stagger-children > *:nth-child(2) { --stagger: 1; }
+.stagger-children > *:nth-child(3) { --stagger: 2; }
+
+.stagger-children > * {
+  animation: stagger-fade-in linear both;
+  animation-timeline: view();
+  animation-range: entry 20% entry 80%;
+  animation-delay: calc(var(--stagger, 0) * 0.1s);
+}
+
+@keyframes stagger-fade-in {
+  from { opacity: 0; transform: translateY(30px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Learning Loop float animation */
+.learning-loop-float {
+  animation: loop-float 6s ease-in-out infinite;
+}
+
+@keyframes loop-float {
+  0%, 100% { transform: translateY(0) rotateY(-2deg); }
+  50% { transform: translateY(-15px) rotateY(2deg); }
+}
+
+/* Value card hover lift */
+.value-card {
+  transition: transform 0.3s var(--ease-out-expo), box-shadow 0.3s ease;
+}
+
+.value-card:hover {
+  transform: translateY(-8px) translateZ(20px);
+}
+
+/* Stage pill animation */
+.stage-pill {
+  transition: all 0.2s var(--ease-out-expo);
+}
+
+.stage-pill:hover {
+  transform: scale(1.05);
+}
+
+/* ═══════════════════════════════════════════════════════════
    REDUCED MOTION
    ═══════════════════════════════════════════════════════════ */
 
@@ -319,5 +542,25 @@ body {
   .bg-grid,
   .bg-glow::before {
     animation: none;
+  }
+
+  /* Disable 3D transforms for reduced motion */
+  .depth-fg,
+  .depth-mid,
+  .depth-bg,
+  .scene-container,
+  .scroll-section {
+    transform: none !important;
+    perspective: none !important;
+  }
+
+  /* Disable scroll-driven animations for reduced motion */
+  .section-reveal,
+  .card-3d-reveal,
+  .stagger-children > *,
+  .learning-loop-float {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
   }
 }
