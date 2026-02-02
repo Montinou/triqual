@@ -10,6 +10,5 @@
   "repository": "https://github.com/Montinou/triqual",
   "license": "MIT",
   "keywords": ["testing", "automation", "playwright", "e2e", "self-healing", "quoth", "exolar"],
-  "hooks": "./hooks/hooks.json",
   "mcpServers": "./.mcp.json"
 }
