@@ -992,6 +992,35 @@ is_spec_file() {
     esac
 }
 
+# Check if spec file is in the .draft/ directory (required for new test writes)
+# Returns: 0 if in .draft/, 1 if not
+is_draft_spec_path() {
+    local file_path="$1"
+
+    if [ -z "$file_path" ]; then
+        return 1
+    fi
+
+    # Match .draft/tests/ or .draft/pages/ anywhere in path
+    if echo "$file_path" | grep -qE '(^|/)\.draft/'; then
+        return 0
+    fi
+    return 1
+}
+
+# Check if spec file is being promoted (exists in .draft/ already, writing to tests/)
+# This distinguishes a fresh write to tests/ (blocked) from legitimate edits to existing tests
+# Returns: 0 if the file already exists at the target path (existing test edit), 1 if new
+is_existing_test_file() {
+    local file_path="$1"
+
+    if [ -z "$file_path" ]; then
+        return 1
+    fi
+
+    [ -f "$file_path" ]
+}
+
 # Check if file is in /tmp (quick-test scripts)
 is_temp_file() {
     local file_path="$1"

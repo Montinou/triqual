@@ -77,6 +77,41 @@ main() {
     local runs_dir=$(get_runs_dir)
 
     # =========================================================================
+    # GATE 0: DRAFT FOLDER ENFORCEMENT — .spec.ts MUST be in .draft/
+    # =========================================================================
+    # New spec files MUST be written to .draft/tests/, never directly to tests/.
+    # Only existing test files (already on disk) can be edited in-place.
+    if ! is_draft_spec_path "$file_path"; then
+        log_debug "File is NOT in .draft/: $file_path"
+        if ! is_existing_test_file "$file_path"; then
+            log_debug "File does NOT exist yet — blocking new test outside .draft/"
+            cat >&2 << EOF
+🚫 BLOCKED: Test files MUST be written to .draft/ folder
+
+You are trying to write to: $file_path
+This path is NOT in the .draft/ directory.
+
+**ALL new test files MUST go to .draft/tests/ first.**
+
+Correct path: .draft/tests/$(basename "$file_path")
+
+The .draft/ folder pattern:
+1. test-generator creates files in .draft/tests/
+2. test-healer iterates fixes on .draft/tests/ files
+3. Only after tests PASS AND user approves → promote to tests/
+
+**Promotion requires explicit user approval.** Do NOT move files
+from .draft/ to tests/ without the user confirming.
+
+Rewrite to .draft/tests/$(basename "$file_path") instead.
+EOF
+            exit 2
+        fi
+        # File already exists at target — allow editing existing tests
+        log_debug "Allowing edit of existing test file: $file_path"
+    fi
+
+    # =========================================================================
     # GATE 1: Check awaiting_log_update flag (from previous test run)
     # =========================================================================
     if is_awaiting_log_update; then

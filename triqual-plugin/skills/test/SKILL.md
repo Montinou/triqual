@@ -45,9 +45,9 @@ Generate production-ready Playwright tests with multiple input modes. Default mo
 │  0.6 LOAD CONTEXT → triqual_load_context tool builds context files (MANDATORY, BLOCKING)│
 │  1. EXPLORE → Playwright MCP (skip with --ticket/--describe)                │
 │  2. PLAN → Quoth context output + input source                              │
-│  3. GENERATE → .spec.ts in tests/.draft/                                    │
+│  3. GENERATE → .spec.ts in .draft/tests/ (NEVER directly to tests/)         │
 │  4. HEAL LOOP → Run → Fix → Re-run (max 5 iterations)                       │
-│  5. PROMOTE → Move to production test directory                             │
+│  5. PROMOTE → User approves → Move to production test directory             │
 │  6. LEARN → Save patterns + anti-patterns                                   │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -352,12 +352,23 @@ Based on input source (exploration notes, ticket AC, or description):
 
 ## Phase 3: GENERATE
 
+### Reuse Existing Code (MANDATORY)
+
+**Before creating ANY new code, check what already exists:**
+
+1. Read `.triqual/context/{feature}/existing-tests.md` for available Page Objects, helpers, fixtures
+2. Read every existing Page Object referenced in the PLAN stage
+3. Read every existing helper and fixture referenced in the PLAN stage
+4. **IMPORT and USE existing code** — do NOT recreate functionality that exists
+5. Only create new artifacts when nothing existing covers the need
+6. If creating something new, document WHY in the WRITE stage
+
 ### Prepare seed.spec.ts
 
 Copy from `${PLUGIN_ROOT}/context/seed.template.ts` and customize:
 
 ```typescript
-// tests/.draft/seed.spec.ts
+// .draft/tests/seed.spec.ts
 import { test as base } from '@playwright/test';
 import { testUsers } from '../../shared/test-data/users';
 
@@ -379,7 +390,7 @@ export const test = base.extend<AuthFixtures>({
 
 ### Generate Test File
 
-**Output: tests/.draft/{feature}.spec.ts**
+**Output: .draft/tests/{feature}.spec.ts**
 
 ```typescript
 import { test, expect } from './seed.spec';
@@ -457,7 +468,7 @@ export class FeaturePage {
 ### Run Test
 
 ```bash
-npx playwright test tests/.draft/{feature}.spec.ts --reporter=list
+npx playwright test .draft/tests/{feature}.spec.ts --reporter=list
 ```
 
 ### If PASS → Go to Phase 5
@@ -514,16 +525,32 @@ Edit the test file with the fix.
 #### 4f. Re-run
 
 ```bash
-npx playwright test tests/.draft/{feature}.spec.ts --reporter=list
+npx playwright test .draft/tests/{feature}.spec.ts --reporter=list
 ```
 
 Repeat until passing or max iterations (5) reached.
 
 ---
 
-## Phase 5: PROMOTE
+## Phase 5: PROMOTE (Requires User Approval)
 
-### Move from Draft to Production
+**⚠️ Promotion MUST NOT happen automatically. Ask the user first.**
+
+### Ask User for Approval
+
+Present the passing test results and ask:
+
+```
+✅ Tests PASSING in .draft/tests/{feature}.spec.ts
+
+Files ready for promotion:
+- .draft/tests/{feature}.spec.ts → tests/{category}/{feature}.spec.ts
+- .draft/pages/{Page}.ts → pages/{Page}.ts (if applicable)
+
+**Promote these files to production?** (say "yes" to confirm)
+```
+
+### Move from Draft to Production (only after user confirms)
 
 ```bash
 # Determine target directory based on feature
@@ -532,8 +559,8 @@ Repeat until passing or max iterations (5) reached.
 # settings/ for settings, profile
 
 mkdir -p tests/{category}/
-mv tests/.draft/{feature}.spec.ts tests/{category}/{feature}.spec.ts
-mv tests/.draft/seed.spec.ts tests/{category}/seed.spec.ts  # If new
+mv .draft/tests/{feature}.spec.ts tests/{category}/{feature}.spec.ts
+mv .draft/pages/*.ts pages/ 2>/dev/null || true  # Page Objects if created
 ```
 
 ### Verify Final Location

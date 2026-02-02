@@ -122,13 +122,16 @@ Run log should be at: $RUNS_DIR/{feature}.md" "SubagentStart"
    - Look for: \`seed.spec.ts\` or similar in test directory
    - Copy setup patterns from seed file
 
-4. **Existing Page Objects** (from RESEARCH stage):
-   - Reuse existing Page Objects listed in run log
-   - Create new ones only if needed
+4. **Existing Page Objects, Helpers, and Fixtures** (MANDATORY REUSE):
+   - **YOU MUST reuse** existing Page Objects listed in run log
+   - **YOU MUST reuse** existing helpers and fixtures
+   - Create new ones ONLY if nothing existing covers the need
+   - If you create something new, document WHY existing code doesn't work
 
 === YOUR OUTPUT ===
 
-1. Generate test file following the PLAN in run log
+1. Generate test file in **.draft/tests/** (NEVER directly to tests/)
+2. **REUSE existing code** — do NOT recreate Page Objects, helpers, or fixtures that already exist
 2. Update run log with WRITE stage:
 
 ### Stage: WRITE
@@ -157,8 +160,10 @@ $KNOWLEDGE_MSG
 === AUTONOMOUS MODE ===
 
 You are an autonomous loop agent. Run tests, analyze, fix, repeat until:
-- Tests PASS (move from .draft/ to final location)
-- 25 attempts reached (mark as .fixme())" "SubagentStart"
+- Tests PASS → document SUCCESS and **STOP** (do NOT promote from .draft/)
+- 25 attempts reached (mark as .fixme())
+
+**⚠️ Do NOT move files from .draft/ to tests/. User must approve promotion.**" "SubagentStart"
         else
             ATTEMPT_COUNT=$(count_run_attempts "$FEATURE")
 
@@ -183,21 +188,32 @@ You are an autonomous loop agent. Run tests, analyze, fix, repeat until:
 === AUTONOMOUS LOOP ===
 
 You run the full loop autonomously:
-1. RUN test → if PASS, promote from .draft/ and exit
+1. RUN test from .draft/tests/ → if PASS, document SUCCESS and **STOP**
 2. If FAIL → analyze, document RUN stage
 3. Search Quoth/knowledge for patterns
 4. Apply FIX, document FIX stage
 5. REPEAT until PASS or 25 attempts
+
+**⚠️ CRITICAL: Do NOT promote files from .draft/ to tests/.**
+**On SUCCESS: Document and STOP. User must approve promotion.**
 
 === HOOKS WILL ENFORCE ===
 
 - **Attempt 12+**: Hook requires DEEP ANALYSIS phase
 - **Attempt 25+**: Hook requires .fixme() or strong justification
 - **2+ same category**: Hook requires Quoth/Exolar search
+- **Writing to tests/ directly**: BLOCKED by hook — must stay in .draft/
 
-=== DEEP ANALYSIS (at attempt 12) ===
+=== REUSE EXISTING CODE ===
 
-When you reach attempt 12, perform extended research:
+Before creating new helpers or Page Objects:
+- Check existing Page Objects, helpers, and fixtures
+- Read .triqual/context/{feature}/existing-tests.md
+- REUSE what exists — only create new when nothing covers the need
+
+=== DEEP ANALYSIS (at attempt 5) ===
+
+When you reach attempt 5, perform extended research:
 - Broader Quoth searches
 - Exolar historical data
 - App exploration with Playwright MCP
@@ -217,8 +233,8 @@ Document every iteration:
 **Changes:** {what you changed}
 
 On SUCCESS:
-- Move files from .draft/ to tests/
-- Document SUCCESS stage" "SubagentStart"
+- Document SUCCESS stage (files remain in .draft/)
+- **STOP and inform user** — do NOT move files" "SubagentStart"
         fi
         ;;
 

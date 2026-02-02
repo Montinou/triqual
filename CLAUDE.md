@@ -1,6 +1,6 @@
 # Triqual - Autonomous Test Automation Plugin
 
-> **Version 1.2.0** | Opus 4.5 Agents | MCP Context Orchestration | macOS & Linux
+> **Version 1.3.0** | Opus 4.5 Agents | MCP Context Orchestration | macOS & Linux
 
 Triqual is a **Claude Code plugin** that brings autonomous, self-healing test generation with enforced documentation and persistent learning. It combines three MCP integrations:
 
@@ -81,12 +81,14 @@ ANALYZE → RESEARCH → PLAN → WRITE → RUN → LEARN
 
 | Gate | Trigger | Block Condition | Unblock Action |
 |------|---------|-----------------|----------------|
+| **Draft Folder** | Write .spec.ts | **File path NOT in .draft/ (and file doesn't already exist)** | **Write to .draft/tests/ instead** |
 | Pre-Write | Write .spec.ts | No run log or missing ANALYZE/RESEARCH/PLAN | Create log, document stages |
 | **Context Files** | Write .spec.ts | **No context files at .triqual/context/{feature}/** | **Call triqual_load_context({ feature }) tool** |
 | Post-Run | After playwright test | Log not updated with results | Add RUN stage with results |
 | Retry Limit | 2+ same-category fails | No Quoth/Exolar search | Document external research |
 | Deep Analysis | 12+ attempts | No deep analysis documented | Perform expanded Quoth/Exolar research |
 | Max Attempts | 25+ total attempts | No .fixme() or justification | Mark fixme or justify |
+| **Promotion** | test-healer SUCCESS | **Auto-promotion blocked** | **User must explicitly approve** |
 | Session End | Stop hook | No learnings section | Add accumulated learnings |
 
 ### Mandatory Context Loading
@@ -409,9 +411,9 @@ your-project/
 └── ...
 ```
 
-### Draft Folder Pattern
+### Draft Folder Pattern (ENFORCED BY HOOKS)
 
-Tests are developed in `.draft/` folder first, then promoted on success:
+Tests are developed in `.draft/` folder ONLY. Promotion requires explicit user approval.
 
 ```
 .draft/
@@ -421,11 +423,21 @@ Tests are developed in `.draft/` folder first, then promoted on success:
     └── LoginPage.ts             # New Page Objects (if created)
 
 tests/
-└── login.spec.ts                # Only after test-healer confirms PASSING
+└── login.spec.ts                # ONLY after user explicitly approves promotion
 ```
 
-- **test-generator** → Creates files in `.draft/`
-- **test-healer** → Works on `.draft/` files, promotes to `tests/` on SUCCESS
+- **test-generator** → Creates files in `.draft/` (hook BLOCKS writing to `tests/` directly)
+- **test-healer** → Works on `.draft/` files, **STOPS on SUCCESS** (does NOT auto-promote)
+- **Promotion** → Requires explicit user approval ("promote" command)
+- **Hook enforcement** → `pre-spec-write.sh` blocks new `.spec.ts` outside `.draft/`
+
+### Reuse Existing Code (MANDATORY)
+
+Before creating new Page Objects, helpers, or fixtures:
+1. Check `.triqual/context/{feature}/existing-tests.md` for available resources
+2. Read all existing Page Objects, helpers, and fixtures referenced in RESEARCH stage
+3. **REUSE what exists** — only create new when nothing covers the need
+4. If creating something new, document WHY existing code doesn't work
 
 ## The Learning Loop
 
@@ -645,7 +657,7 @@ The `/test` skill orchestrates agents in sequence:
             │
             ├── Run: npx playwright test
             │       │
-            │       ├─ PASS ──► Promote to tests/
+            │       ├─ PASS ──► STOP (await user approval to promote)
             │       │           └─► pattern-learner
             │       │
             │       └─ FAIL ──► failure-classifier
@@ -733,6 +745,7 @@ export default defineConfig({
 
 | Version | Date | Changes |
 |---------|------|---------|
+| **1.3.0** | 2026-02-01 | **Enforced .draft/ folder: hook blocks writing tests/ directly, promotion requires user approval, mandatory reuse of existing code** |
 | **1.2.0** | 2026-01-31 | **MCP context orchestration: replaced quoth-context agent with triqual_load_context MCP tool + headless subprocess** |
 | **1.1.0** | 2026-01-29 | **Quoth v2 integration: context injection, enhanced hooks** |
 | **1.0.5** | 2026-01-27 | **Mandatory Quoth pattern search enforcement** |

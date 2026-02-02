@@ -81,19 +81,31 @@ If no run log exists or PLAN is missing:
    - Setup/teardown patterns
    - Test structure conventions
 
-4. **Read Existing Page Objects** (from RESEARCH stage):
+4. **Read ALL Existing Page Objects, Helpers, and Fixtures** (MANDATORY):
    ```bash
-   # Read Page Objects listed in run log
+   # Read EVERY Page Object, helper, and fixture listed in run log RESEARCH stage
    cat {path-to-page-object}
+   cat {path-to-helper}
+   cat {path-to-fixture}
    ```
-   Reuse:
-   - Existing methods
-   - Selector patterns
-   - Wait strategies
+
+   **⚠️ REUSE IS MANDATORY — DO NOT RECREATE WHAT EXISTS:**
+   - If a Page Object exists with the methods you need → **USE IT**
+   - If a helper function does what you need → **IMPORT IT**
+   - If a fixture provides test data → **USE IT**
+   - If an existing test has setup logic you need → **EXTRACT AND REUSE**
+   - Only create new artifacts when NO existing code covers the need
+   - If you create something new, you MUST justify WHY existing code doesn't work
+
+   **Before creating ANY new Page Object or helper, verify:**
+   - [ ] No existing Page Object has this functionality
+   - [ ] No existing helper covers this use case
+   - [ ] No existing fixture provides this data
+   - [ ] The RESEARCH stage confirms this doesn't exist
 
 ## Draft Folder Pattern
 
-**All generated files go to `.draft/` folder first.**
+**All generated files go to `.draft/` folder first. NEVER write directly to tests/.**
 
 ```
 .draft/
@@ -106,7 +118,8 @@ tests/
 └── {feature}.spec.ts        ← Only after test-healer confirms PASSING
 ```
 
-Files are promoted from `.draft/` to final location by test-healer when tests PASS.
+Files are promoted from `.draft/` to final location ONLY after tests PASS AND user explicitly approves.
+**You MUST NOT write test files directly to tests/. The hook will BLOCK you.**
 
 ## Code Generation Process
 
@@ -216,10 +229,15 @@ export class NewPage {
 | 1 | {test case} | High | Written |
 | 2 | {test case} | Medium | Written |
 
-**Dependencies Used:**
-- Page Objects: {list}
-- Fixtures: {list}
-- Helpers: {list}
+**Existing Resources Reused:**
+- Page Objects: {list with paths}
+- Fixtures: {list with paths}
+- Helpers: {list with paths}
+
+**New Artifacts Created (with justification):**
+| Artifact | Path | Why Existing Code Doesn't Cover This |
+|----------|------|--------------------------------------|
+| {NewPage.ts} | .draft/pages/ | {reason} |
 
 **Ready for RUN stage.**
 ```

@@ -197,10 +197,27 @@ mcp__plugin_triqual-plugin_playwright__browser_snapshot({})
 - Wait patterns: {what}
 - Known gotchas: {what}
 
+#### Reuse Inventory (MANDATORY)
+
+**⚠️ REUSE EXISTING CODE — DO NOT RECREATE WHAT EXISTS.**
+
+List ALL reusable resources found. test-generator MUST use these before creating new ones.
+
+| Resource | Path | Methods/Exports | Reusable For This Feature? |
+|----------|------|-----------------|---------------------------|
+| {PageObject} | {path} | {methods} | {Yes — explain / No — explain why not} |
+| {Helper} | {path} | {functions} | {Yes / No — reason} |
+| {Fixture} | {path} | {data} | {Yes / No — reason} |
+
+**New artifacts needed (only if nothing above covers the need):**
+| New Artifact | Type | Justification (why existing code doesn't work) |
+|-------------|------|------------------------------------------------|
+| {name} | Page Object | {specific reason} |
+
 #### Research Findings Summary
 1. {What existing patterns apply?}
-2. {What resources can be reused?}
-3. {What needs to be created?}
+2. {What resources MUST be reused?}
+3. {What needs to be created and WHY?}
 4. {Potential issues to watch for?}
 ```
 
