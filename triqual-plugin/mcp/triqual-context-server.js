@@ -166,7 +166,7 @@ function spawnContextBuilder(prompt, projectRoot) {
   return new Promise((resolve, reject) => {
     const child = spawn(
       "claude",
-      ["-p", prompt, "--dangerously-skip-permissions", "-m", "sonnet"],
+      ["-p", prompt, "--dangerously-skip-permissions", "--model", "sonnet"],
       {
         cwd: projectRoot,
         stdio: ["pipe", "pipe", "pipe"],
