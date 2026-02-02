@@ -70,33 +70,21 @@ main() {
     local run_log=$(get_run_log_path "$feature")
 
     # =========================================================================
-    # GATE 0: Context files must exist before first test run
-    # Only enforced when a run log exists (within /test workflow)
+    # ADVISORY: Suggest context loading if not present (non-blocking)
     # =========================================================================
     if ! context_files_exist "$feature"; then
-        cat >&2 << EOF
-🚫 BLOCKED: Context files not loaded before test run
+        # Only show once per session per feature
+        if ! has_shown_hint "context_reminder_$feature"; then
+            cat >&2 << EOF
+💡 TIP: Consider loading context for better test healing:
+   triqual_load_context({ feature: "$feature" })
 
-**Load context first:**
-
-\`\`\`
-triqual_load_context({ feature: "$feature" })
-\`\`\`
-
-The tool automatically determines the optimal context depth based on:
-- Feature complexity and existing patterns
-- Test history and failure data
-- Available resources in the codebase
-
-This creates .triqual/context/$feature/ with patterns, codebase analysis,
-and other context files.
-
-**Why:** Context files contain proven patterns from Quoth and project history.
-Loading them first reduces fix iterations and avoids reinventing solutions.
-
-After context loads, retry the test command.
+Context files contain proven patterns from Quoth and project history,
+which can help reduce fix iterations. This is optional for running
+existing tests but recommended for better results.
 EOF
-        exit 2
+            mark_hint_shown "context_reminder_$feature"
+        fi
     fi
 
     # =========================================================================
