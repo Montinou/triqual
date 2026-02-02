@@ -92,8 +92,8 @@ const EXTEND_TOOL_DEFINITION = {
   },
 };
 
-const SUBPROCESS_TIMEOUT_MS = 360_000; // 6 minutes
-const STANDARD_TIMEOUT_MS = 180_000; // 3 minutes for standard mode
+const SUBPROCESS_TIMEOUT_MS = 600_000; // 10 minutes (all modes)
+const STANDARD_TIMEOUT_MS = 600_000;   // 10 minutes (same as full)
 const LIGHT_CONTEXT_FRESHNESS_MS = 1800_000; // 30 minutes for light context
 
 // --- Project Root Resolution ---
