@@ -57,7 +57,7 @@ const TOOL_DEFINITION = {
   },
 };
 
-const SUBPROCESS_TIMEOUT_MS = 180_000; // 3 minutes
+const SUBPROCESS_TIMEOUT_MS = 360_000; // 6 minutes
 
 // --- Project Root Resolution ---
 
@@ -295,6 +295,26 @@ async function handleLoadContext({ feature, ticket, description, force }) {
   try {
     await spawnContextBuilder(prompt, projectRoot);
   } catch (err) {
+    const partialFiles = listContextFiles(contextDir);
+    const isTimeout = err.message.includes("timed out");
+
+    // If we have partial files from a timeout, treat as partial success
+    if (isTimeout && partialFiles.length > 0) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              status: "partial",
+              message: `Context builder timed out but produced ${partialFiles.length} file(s). These can still be used.`,
+              path: `.triqual/context/${feature}/`,
+              files: partialFiles,
+            }),
+          },
+        ],
+      };
+    }
+
     return {
       content: [
         {
@@ -302,7 +322,7 @@ async function handleLoadContext({ feature, ticket, description, force }) {
           text: JSON.stringify({
             status: "error",
             message: `Context builder failed: ${err.message}`,
-            partialFiles: listContextFiles(contextDir),
+            partialFiles,
           }),
         },
       ],
