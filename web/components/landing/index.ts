@@ -1,6 +1,0 @@
-export { Hero } from "./hero"
-export { TrinityDiagram } from "./trinity-diagram"
-export { FeaturesGrid } from "./features-grid"
-export { CodePreview } from "./code-preview"
-export { WorkflowSteps } from "./workflow-steps"
-export { CTASection } from "./cta-section"
