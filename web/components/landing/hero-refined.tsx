@@ -1,7 +1,7 @@
 "use client"
 
 import { motion, useReducedMotion } from "framer-motion"
-import { ArrowRight, Terminal } from "lucide-react"
+import { ArrowRight, Terminal, Github } from "lucide-react"
 import Image from "next/image"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
@@ -83,6 +83,10 @@ export function HeroRefined() {
                 <span className="text-foreground-secondary text-[0.6em] font-bold">That Learns From Failure</span>
               </h1>
 
+              <p className="text-base text-primary/80 font-mono mb-4">
+                Built for QA engineers using Claude Code
+              </p>
+
               <p className="text-lg text-foreground-secondary max-w-lg mb-8 leading-relaxed">
                 Triqual writes Playwright tests, runs them, heals failures autonomously,
                 and captures every pattern into a persistent knowledge base.
@@ -103,7 +107,7 @@ export function HeroRefined() {
                   className="bg-gradient-to-r from-primary to-secondary text-background font-semibold glow-cyan hover:opacity-90 transition-opacity"
                 >
                   <Link href="/how-it-works">
-                    How It Works
+                    Start Automating Tests
                     <ArrowRight className="ml-2 h-5 w-5" />
                   </Link>
                 </Button>
@@ -113,7 +117,10 @@ export function HeroRefined() {
                   size="lg"
                   className="border-white/15 hover:bg-background-card hover:border-primary/40"
                 >
-                  <Link href="#install">Get Started</Link>
+                  <a href="https://github.com/Montinou/triqual" target="_blank" rel="noopener noreferrer">
+                    <Github className="mr-2 h-5 w-5" />
+                    View on GitHub
+                  </a>
                 </Button>
               </div>
             </div>
@@ -194,6 +201,13 @@ export function HeroRefined() {
             </motion.h1>
 
             <motion.p
+              className="text-base text-primary/80 font-mono mb-4"
+              variants={itemVariants}
+            >
+              Built for QA engineers using Claude Code
+            </motion.p>
+
+            <motion.p
               className="text-lg text-foreground-secondary max-w-lg mb-8 leading-relaxed"
               variants={itemVariants}
             >
@@ -223,7 +237,7 @@ export function HeroRefined() {
                   className="bg-gradient-to-r from-primary to-secondary text-background font-semibold glow-cyan hover:shadow-[0_0_40px_rgba(0,240,255,0.6),0_0_80px_rgba(0,240,255,0.3)] transition-shadow"
                 >
                   <Link href="/how-it-works">
-                    How It Works
+                    Start Automating Tests
                     <ArrowRight className="ml-2 h-5 w-5" />
                   </Link>
                 </Button>
@@ -235,7 +249,10 @@ export function HeroRefined() {
                   size="lg"
                   className="border-white/15 hover:bg-background-card hover:border-primary/40 transition-all"
                 >
-                  <Link href="#install">Get Started</Link>
+                  <a href="https://github.com/Montinou/triqual" target="_blank" rel="noopener noreferrer">
+                    <Github className="mr-2 h-5 w-5" />
+                    View on GitHub
+                  </a>
                 </Button>
               </motion.div>
             </motion.div>
@@ -251,7 +268,7 @@ export function HeroRefined() {
           >
             <motion.div
               className="relative rounded-2xl border border-border/20 overflow-hidden bg-background-surface/30 p-2 group"
-              whileHover={{ scale: 1.45, rotateY: 2 }}
+              whileHover={{ scale: 1.02, rotateY: 2 }}
               transition={{ type: "spring", stiffness: 200, damping: 20 }}
             >
               <Image

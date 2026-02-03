@@ -4,8 +4,10 @@ import { GlowBackground } from "@/components/animations/glow-background"
 import { Navbar } from "@/components/layout/navbar"
 import { Footer } from "@/components/layout/footer"
 import { HeroRefined } from "@/components/landing/hero-refined"
+import { SocialProofBar } from "@/components/landing/social-proof-bar"
 import { FeaturePanels } from "@/components/landing/feature-panels"
 import { TerminalDemo } from "@/components/landing/terminal-demo"
+import { PricingSection } from "@/components/landing/pricing-section"
 import { FinalCTA } from "@/components/landing/final-cta"
 
 // Dynamic import for heavy animated component
@@ -27,9 +29,11 @@ export default function Home() {
       {/* Main content */}
       <main>
         <HeroRefined />
-        <TrinityDiagram />
-        <FeaturePanels />
+        <SocialProofBar />
         <TerminalDemo />
+        <FeaturePanels />
+        <TrinityDiagram />
+        <PricingSection />
         <FinalCTA />
       </main>
 

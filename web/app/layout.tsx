@@ -15,10 +15,10 @@ const jetbrainsMono = JetBrains_Mono({
 })
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || 'https://montinou.github.io/triqual'),
-  title: "Triqual | Intelligent Test Automation",
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || 'https://triqual.dev'),
+  title: "Triqual | Autonomous Test Automation for Claude Code",
   description:
-    "Unified test automation plugin combining Playwright execution, Quoth knowledge base, and Exolar analytics into one self-learning system.",
+    "Open-source Claude Code plugin that writes Playwright tests, heals failures autonomously, and learns from every run. Built for QA engineers and developers.",
   keywords: [
     "test automation",
     "playwright",
@@ -33,11 +33,11 @@ export const metadata: Metadata = {
     apple: "/triqual_logo.png",
   },
   openGraph: {
-    title: "Triqual | Intelligent Test Automation",
+    title: "Triqual | Autonomous Test Automation for Claude Code",
     description:
-      "Unified test automation plugin combining Playwright execution, Quoth knowledge base, and Exolar analytics into one self-learning system.",
+      "Open-source Claude Code plugin that writes Playwright tests, heals failures autonomously, and learns from every run. Built for QA engineers and developers.",
     type: "website",
-    images: ["/triqual_logo.png"],
+    images: ["/og-image.png"],
   },
 }
 

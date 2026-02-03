@@ -130,7 +130,7 @@ function FeaturePanel({ feature, index, shouldReduceMotion }: FeaturePanelProps)
         <div className={isImageRight ? "lg:order-2" : "lg:order-1"}>
           <motion.div
             className="relative rounded-2xl border border-border/20 overflow-hidden bg-background-surface/20 p-1.5 group"
-            whileHover={{ scale: 1.45 }}
+            whileHover={{ scale: 1.02 }}
             transition={{ type: "spring", stiffness: 300, damping: 25 }}
           >
             <Image

@@ -88,7 +88,7 @@ export function Navbar() {
       <Link href="/" className="flex items-center gap-3 group">
         <motion.div
           className="w-10 h-10 flex items-center justify-center relative"
-          whileHover={{ scale: 1.05, rotate: 5 }}
+          whileHover={{ scale: 1.02, rotate: 5 }}
           transition={{ duration: 0.3 }}
         >
           <Image

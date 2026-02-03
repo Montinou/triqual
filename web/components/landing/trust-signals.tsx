@@ -79,7 +79,7 @@ export function TrustSignals() {
         >
           <motion.span
             className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-primary/30 bg-primary/5 text-sm font-medium text-primary"
-            whileHover={{ scale: 1.05 }}
+            whileHover={{ scale: 1.02 }}
             transition={{ type: "spring", stiffness: 400, damping: 17 }}
           >
             <motion.span
@@ -145,7 +145,7 @@ export function TrustSignals() {
                 },
               }}
               whileHover={{
-                scale: 1.05,
+                scale: 1.02,
                 y: -4,
                 transition: { type: "spring", stiffness: 400, damping: 17 },
               }}

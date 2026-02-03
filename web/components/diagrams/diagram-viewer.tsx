@@ -63,7 +63,7 @@ export function DiagramViewer({
       <motion.div
         className="relative w-full h-full group cursor-pointer"
         onClick={() => setIsZoomed(!isZoomed)}
-        whileHover={{ scale: 1.45 }}
+        whileHover={{ scale: 1.02 }}
         transition={{ type: "spring", stiffness: 300, damping: 25 }}
       >
         <Image
@@ -196,7 +196,7 @@ function DiagramHotspotMarker({
         },
       }}
       whileHover={{
-        scale: 1.2,
+        scale: 1.02,
         transition: { type: "spring", stiffness: 600, damping: 15 },
       }}
       whileTap={{ scale: 0.95 }}

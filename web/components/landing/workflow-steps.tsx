@@ -148,7 +148,7 @@ export function WorkflowSteps() {
                 <motion.div
                   className="relative z-10 flex-shrink-0 w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-background-card border-2 border-primary flex items-center justify-center font-mono font-bold text-lg text-primary"
                   whileHover={{
-                    scale: 1.1,
+                    scale: 1.02,
                     boxShadow: "0 0 30px rgba(0, 240, 255, 0.5), 0 0 60px rgba(0, 240, 255, 0.2)",
                   }}
                   transition={{ duration: 0.3 }}

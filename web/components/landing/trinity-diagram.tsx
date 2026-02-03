@@ -89,7 +89,7 @@ function TrinityNode({ title, description, icon, position, glowClass, borderColo
     className: `absolute w-52 min-h-[170px] p-5 bg-background-surface rounded-2xl border text-center transition-all duration-400 ${positionClasses[position]} ${borderColor} ${href ? "cursor-pointer" : ""}`,
     variants: nodeVariants,
     whileHover: {
-      scale: 1.45,
+      scale: 1.02,
       boxShadow: glowClass === "glow-green"
         ? "0 0 30px rgba(0, 255, 136, 0.5), 0 0 60px rgba(0, 255, 136, 0.2)"
         : glowClass === "glow-purple"
@@ -361,7 +361,7 @@ export function TrinityDiagram() {
                 },
               },
             }}
-            whileHover={{ scale: 1.1 }}
+            whileHover={{ scale: 1.02 }}
           >
             <Zap className="w-7 h-7 text-primary mb-1" />
             <span className="font-mono text-[10px] text-primary uppercase tracking-[0.15em]">Unified</span>

@@ -96,7 +96,7 @@ export function FeaturesGrid() {
             {features.map((feature) => (
               <Card
                 key={feature.title}
-                className="bg-background-surface border-white/5 hover:border-primary/25 hover:bg-background-elevated transition-all duration-300 group overflow-hidden relative h-full shadow-[0_0_20px_rgba(0,240,255,0.08)] hover:shadow-[0_0_30px_rgba(0,240,255,0.25)] hover:scale-105"
+                className="bg-background-surface border-white/5 hover:border-primary/25 hover:bg-background-elevated transition-all duration-300 group overflow-hidden relative h-full shadow-[0_0_20px_rgba(0,240,255,0.08)] hover:shadow-[0_0_30px_rgba(0,240,255,0.25)] hover:scale-[1.02]"
               >
                 <div className="absolute top-0 left-0 right-0 h-[3px] bg-gradient-to-r from-primary to-secondary opacity-0 group-hover:opacity-100 transition-opacity" />
                 <CardContent className="p-6 sm:p-8">
@@ -146,8 +146,8 @@ export function FeaturesGrid() {
           {features.map((feature) => (
             <motion.div key={feature.title} variants={itemVariants} className="h-full">
               <motion.div
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 1.02 }}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
                 transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] as const }}
                 className="h-full cursor-pointer"
               >

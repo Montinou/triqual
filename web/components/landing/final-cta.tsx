@@ -36,7 +36,7 @@ export function FinalCTA() {
           {/* Top row: version + built for */}
           <div className="flex flex-wrap items-center justify-center gap-3 mb-8">
             <span className="px-3 py-1 rounded-full border border-secondary/30 bg-secondary/10 text-secondary text-xs font-mono font-bold">
-              v1.3.0
+              v1.4.0
             </span>
             <span className="px-3 py-1 rounded-full border border-primary/30 bg-primary/5 text-primary text-xs font-mono">
               Built for Claude Code
