@@ -1,7 +1,7 @@
 "use client"
 
 import { motion, useReducedMotion } from "framer-motion"
-import { Github, Code2, Cpu, User, Users, Star } from "lucide-react"
+import { Github, Cpu, User, Users } from "lucide-react"
 
 const badges = [
   {
@@ -9,12 +9,6 @@ const badges = [
     label: "Open Source",
     href: "https://github.com/Montinou/triqual",
     color: "border-white/10 text-foreground-secondary hover:border-primary/40 hover:text-primary",
-  },
-  {
-    icon: Star,
-    label: "Star on GitHub",
-    href: "https://github.com/Montinou/triqual",
-    color: "border-yellow-500/20 text-yellow-400/80 hover:border-yellow-500/40 hover:text-yellow-400",
   },
   {
     icon: Cpu,
