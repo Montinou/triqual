@@ -527,6 +527,116 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════
+   MAGNIFYING GLASS (desktop only)
+   ═══════════════════════════════════════════════════════════ */
+
+@media (hover: hover) and (pointer: fine) {
+  .magnify-container {
+    cursor: crosshair;
+  }
+}
+
+/* Hide magnifying glass on touch devices */
+@media (hover: none) {
+  .magnify-glass {
+    display: none !important;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   GLASS BADGE (Social Proof)
+   ═══════════════════════════════════════════════════════════ */
+
+.glass-badge {
+  background: rgba(10, 15, 26, 0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.glass-badge:hover {
+  background: rgba(10, 15, 26, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   HERO IMAGE ANIMATED BORDER
+   ═══════════════════════════════════════════════════════════ */
+
+.hero-image-border {
+  position: relative;
+}
+
+.hero-image-border::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    rgba(0, 240, 255, 0.3),
+    rgba(0, 255, 136, 0.1),
+    rgba(168, 85, 247, 0.2),
+    rgba(0, 240, 255, 0.3)
+  );
+  background-size: 300% 300%;
+  animation: borderShimmer 6s ease-in-out infinite;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 1;
+}
+
+@keyframes borderShimmer {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CTA BORDER SHIMMER
+   ═══════════════════════════════════════════════════════════ */
+
+.cta-border-shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(0, 240, 255, 0.15) 25%,
+    rgba(0, 255, 136, 0.1) 50%,
+    rgba(168, 85, 247, 0.15) 75%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: ctaShimmer 4s linear infinite;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  padding: 1px;
+}
+
+@keyframes ctaShimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SECTION DIVIDERS
+   ═══════════════════════════════════════════════════════════ */
+
+.section-divider {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(0, 240, 255, 0.3) 50%,
+    transparent 100%
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
    REDUCED MOTION
    ═══════════════════════════════════════════════════════════ */
 
@@ -562,5 +672,14 @@ body {
     animation: none !important;
     opacity: 1 !important;
     transform: none !important;
+  }
+
+  .hero-image-border::before,
+  .cta-border-shimmer {
+    animation: none !important;
+  }
+
+  .magnify-glass {
+    display: none !important;
   }
 }

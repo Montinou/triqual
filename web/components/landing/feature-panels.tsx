@@ -1,10 +1,9 @@
 "use client"
 
 import { motion, useReducedMotion } from "framer-motion"
-import Image from "next/image"
 import Link from "next/link"
 import { ArrowRight, Bot, Shield, Brain } from "lucide-react"
-import { viewportDefault } from "@/lib/spatial-animations"
+import { MagnifyImage } from "@/components/ui/magnify-image"
 
 const features = [
   {
@@ -19,6 +18,7 @@ const features = [
     image: "/flow-images/02-test_generation_flow.png",
     imageAlt: "Test Generation Flow — from /test command through 6 stages to passing tests",
     imagePosition: "right" as const,
+    glowColor: "green" as const,
   },
   {
     tag: "HEALING",
@@ -32,6 +32,7 @@ const features = [
     image: "/flow-images/08-draft_promotion.png",
     imageAlt: "Draft to Production — .draft/ heals until PASS then promotes to tests/",
     imagePosition: "left" as const,
+    glowColor: "cyan" as const,
   },
   {
     tag: "LEARNING",
@@ -45,6 +46,7 @@ const features = [
     image: "/flow-images/03-agent_orchestration.png",
     imageAlt: "Agent Orchestration — test-planner, test-generator, test-healer, failure-classifier, pattern-learner",
     imagePosition: "right" as const,
+    glowColor: "purple" as const,
   },
 ]
 
@@ -53,6 +55,11 @@ export function FeaturePanels() {
 
   return (
     <section className="py-24 md:py-32">
+      {/* Section divider */}
+      <div className="w-full flex justify-center mb-20">
+        <div className="h-px w-2/3 max-w-2xl bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
+      </div>
+
       {/* Section header */}
       <div className="text-center mb-20 px-4">
         <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold mb-4">
@@ -126,25 +133,21 @@ function FeaturePanel({ feature, index, shouldReduceMotion }: FeaturePanelProps)
           </p>
         </div>
 
-        {/* Image */}
+        {/* Image with magnifying glass */}
         <div className={isImageRight ? "lg:order-2" : "lg:order-1"}>
-          <motion.div
-            className="relative rounded-2xl border border-border/20 overflow-hidden bg-background-surface/20 p-1.5 group"
-            whileHover={{ scale: 1.02 }}
-            transition={{ type: "spring", stiffness: 300, damping: 25 }}
-          >
-            <Image
+          <div className="relative rounded-2xl border border-border/20 overflow-hidden bg-background-surface/20 p-1.5 group hover:border-primary/20 transition-colors duration-300">
+            <MagnifyImage
               src={feature.image}
               alt={feature.imageAlt}
               width={1920}
               height={1440}
               quality={90}
-              loading="lazy"
-              className="w-full h-auto object-contain rounded-xl opacity-90 group-hover:opacity-100 transition-opacity duration-300"
+              glowColor={feature.glowColor}
+              className="rounded-xl"
             />
             {/* Subtle bottom fade */}
             <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-background-surface/40 to-transparent pointer-events-none rounded-b-xl" />
-          </motion.div>
+          </div>
         </div>
       </div>
     </div>

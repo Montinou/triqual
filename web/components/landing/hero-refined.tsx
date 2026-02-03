@@ -1,11 +1,13 @@
 "use client"
 
-import { motion, useReducedMotion } from "framer-motion"
+import { motion, useReducedMotion, useScroll, useTransform } from "framer-motion"
 import { ArrowRight, Terminal, Github } from "lucide-react"
 import Image from "next/image"
 import Link from "next/link"
+import { useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { MagnifyImage } from "@/components/ui/magnify-image"
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -46,6 +48,14 @@ const imageVariants = {
 
 export function HeroRefined() {
   const shouldReduceMotion = useReducedMotion()
+  const sectionRef = useRef<HTMLElement>(null)
+  const { scrollYProgress } = useScroll({
+    target: sectionRef,
+    offset: ["start start", "end start"],
+  })
+
+  const imageY = useTransform(scrollYProgress, [0, 1], [0, 60])
+  const imageRotate = useTransform(scrollYProgress, [0, 1], [0, 3])
 
   if (shouldReduceMotion) {
     return (
@@ -127,15 +137,15 @@ export function HeroRefined() {
 
             {/* Right: Learning Loop diagram */}
             <div className="relative">
-              <div className="relative rounded-2xl border border-border/20 overflow-hidden bg-background-surface/30 p-2">
-                <Image
+              <div className="relative rounded-2xl border border-primary/15 overflow-hidden bg-background-surface/30 p-2 hero-image-border">
+                <MagnifyImage
                   src="/flow-images/06-learning_loop.png"
                   alt="Documented Learning Loop — ANALYZE → RESEARCH → PLAN → WRITE → RUN → LEARN"
                   width={1920}
                   height={1440}
                   quality={90}
                   priority
-                  className="w-full h-auto object-contain rounded-xl"
+                  glowColor="cyan"
                 />
               </div>
               {/* Decorative glow behind image */}
@@ -148,7 +158,7 @@ export function HeroRefined() {
   }
 
   return (
-    <section className="min-h-screen flex items-center px-4 sm:px-6 lg:px-12 pt-28 pb-16">
+    <section ref={sectionRef} className="min-h-screen flex items-center px-4 sm:px-6 lg:px-12 pt-28 pb-16">
       <div className="container mx-auto max-w-7xl">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 items-center">
           {/* Left: Copy */}
@@ -258,31 +268,37 @@ export function HeroRefined() {
             </motion.div>
           </motion.div>
 
-          {/* Right: Learning Loop diagram */}
+          {/* Right: Learning Loop diagram with parallax */}
           <motion.div
             className="relative"
             initial="hidden"
             animate="visible"
             variants={imageVariants}
-            style={{ perspective: 1200, transformStyle: "preserve-3d" }}
+            style={{
+              perspective: 1200,
+              transformStyle: "preserve-3d",
+              y: imageY,
+              rotateY: imageRotate,
+            }}
           >
             <motion.div
-              className="relative rounded-2xl border border-border/20 overflow-hidden bg-background-surface/30 p-2 group"
+              className="relative rounded-2xl border border-primary/15 overflow-hidden bg-background-surface/30 p-2 group hero-image-border"
               whileHover={{ scale: 1.02, rotateY: 2 }}
               transition={{ type: "spring", stiffness: 200, damping: 20 }}
             >
-              <Image
+              <MagnifyImage
                 src="/flow-images/06-learning_loop.png"
                 alt="Documented Learning Loop — ANALYZE → RESEARCH → PLAN → WRITE → RUN → LEARN"
                 width={1920}
                 height={1440}
                 quality={90}
                 priority
-                className="w-full h-auto object-contain rounded-xl opacity-90 group-hover:opacity-100 transition-opacity duration-500"
+                glowColor="cyan"
               />
             </motion.div>
-            {/* Decorative glow behind image */}
-            <div className="absolute -inset-4 bg-[radial-gradient(ellipse_at_center,rgba(0,240,255,0.08)_0%,transparent_70%)] pointer-events-none -z-10" />
+            {/* Decorative glow behind image — layered */}
+            <div className="absolute -inset-4 bg-[radial-gradient(ellipse_at_center,rgba(0,240,255,0.1)_0%,transparent_70%)] pointer-events-none -z-10" />
+            <div className="absolute -inset-8 bg-[radial-gradient(ellipse_at_top_right,rgba(168,85,247,0.05)_0%,transparent_60%)] pointer-events-none -z-10" />
           </motion.div>
         </div>
       </div>

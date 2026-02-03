@@ -1,13 +1,14 @@
 "use client"
 
 import { motion, useReducedMotion } from "framer-motion"
-import { Check, Github } from "lucide-react"
+import { Check, Github, Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
 const tiers = [
   {
     name: "Free",
     badge: "Open Source",
+    recommended: true,
     price: "$0",
     period: "forever",
     description: "Everything you need to start automating tests locally.",
@@ -27,6 +28,7 @@ const tiers = [
   {
     name: "Pro",
     badge: "Coming Soon",
+    recommended: false,
     price: "$19",
     period: "/mo",
     description: "Enhanced healing and cloud sync for individual developers.",
@@ -46,6 +48,7 @@ const tiers = [
   {
     name: "Team",
     badge: "Coming Soon",
+    recommended: false,
     price: "$49",
     period: "/seat/mo",
     description: "Shared knowledge and analytics for engineering teams.",
@@ -95,10 +98,20 @@ export function PricingSection() {
       key={tier.name}
       className={`relative flex flex-col p-6 sm:p-8 rounded-2xl border transition-all duration-300 group ${
         tier.highlight
-          ? "border-primary/40 bg-background-surface shadow-[0_0_30px_rgba(0,240,255,0.1)]"
+          ? "border-primary/40 bg-background-surface shadow-[0_0_30px_rgba(0,240,255,0.1)] scale-[1.02]"
           : "border-white/10 bg-background-surface/60 hover:border-white/20"
       }`}
     >
+      {/* MOST POPULAR badge for recommended tier */}
+      {tier.recommended && (
+        <div className="absolute -top-3 left-1/2 -translate-x-1/2 z-10">
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gradient-to-r from-primary to-secondary text-background text-xs font-mono font-bold shadow-[0_0_20px_rgba(0,240,255,0.3)]">
+            <Sparkles className="w-3 h-3" />
+            MOST POPULAR
+          </span>
+        </div>
+      )}
+
       {/* Badge */}
       <div className="mb-4">
         <span
@@ -115,7 +128,7 @@ export function PricingSection() {
       {/* Name & Price */}
       <h3 className="text-xl font-bold text-foreground mb-1">{tier.name}</h3>
       <div className="flex items-baseline gap-1 mb-3">
-        <span className="text-3xl font-extrabold text-foreground">{tier.price}</span>
+        <span className={`text-3xl font-extrabold ${tier.highlight ? "gradient-text" : "text-foreground"}`}>{tier.price}</span>
         <span className="text-sm text-foreground-muted">{tier.period}</span>
       </div>
       <p className="text-sm text-foreground-secondary mb-6">{tier.description}</p>
@@ -124,7 +137,7 @@ export function PricingSection() {
       <ul className="space-y-3 mb-8 flex-1">
         {tier.features.map((feature) => (
           <li key={feature} className="flex items-start gap-2.5 text-sm text-foreground-secondary">
-            <Check className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
+            <Check className={`w-4 h-4 flex-shrink-0 mt-0.5 ${tier.highlight ? "text-primary" : "text-foreground-muted"}`} />
             {feature}
           </li>
         ))}
@@ -136,7 +149,7 @@ export function PricingSection() {
           asChild
           className={
             tier.highlight
-              ? "bg-gradient-to-r from-primary to-secondary text-background font-semibold w-full"
+              ? "bg-gradient-to-r from-primary to-secondary text-background font-semibold w-full hover:shadow-[0_0_30px_rgba(0,240,255,0.4)] transition-shadow"
               : "border-white/15 w-full"
           }
           variant={tier.highlight ? "default" : "outline"}
@@ -173,6 +186,10 @@ export function PricingSection() {
     return (
       <section className="py-24 md:py-32 px-4 sm:px-6 lg:px-12">
         <div className="container mx-auto max-w-6xl">
+          {/* Section divider */}
+          <div className="w-full flex justify-center mb-16">
+            <div className="h-px w-2/3 max-w-2xl bg-gradient-to-r from-transparent via-accent/30 to-transparent" />
+          </div>
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold mb-4">
               <span className="gradient-text">Simple Pricing</span>
@@ -181,7 +198,7 @@ export function PricingSection() {
               Start free. Scale when you&apos;re ready.
             </p>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 lg:gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 lg:gap-8 items-start">
             {cards}
           </div>
         </div>
@@ -192,6 +209,10 @@ export function PricingSection() {
   return (
     <section className="py-24 md:py-32 px-4 sm:px-6 lg:px-12">
       <div className="container mx-auto max-w-6xl">
+        {/* Section divider */}
+        <div className="w-full flex justify-center mb-16">
+          <div className="h-px w-2/3 max-w-2xl bg-gradient-to-r from-transparent via-accent/30 to-transparent" />
+        </div>
         <motion.div
           className="text-center mb-16"
           initial={{ opacity: 0, y: 20 }}
@@ -207,7 +228,7 @@ export function PricingSection() {
           </p>
         </motion.div>
         <motion.div
-          className="grid grid-cols-1 md:grid-cols-3 gap-6 lg:gap-8"
+          className="grid grid-cols-1 md:grid-cols-3 gap-6 lg:gap-8 items-start"
           initial="hidden"
           whileInView="visible"
           viewport={{ once: true, margin: "-80px" }}
@@ -217,7 +238,7 @@ export function PricingSection() {
             <motion.div
               key={tier.name}
               variants={cardVariants}
-              whileHover={{ scale: 1.01 }}
+              whileHover={{ scale: tier.highlight ? 1.03 : 1.02 }}
               transition={{ type: "spring", stiffness: 300, damping: 25 }}
             >
               {cards[i]}

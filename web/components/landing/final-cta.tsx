@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { motion, useReducedMotion } from "framer-motion"
-import { Copy, Check, ArrowRight, Github, BookOpen } from "lucide-react"
+import { Copy, Check, ArrowRight, Github, BookOpen, Zap } from "lucide-react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { viewportDefault } from "@/lib/spatial-animations"
@@ -25,12 +25,21 @@ export function FinalCTA() {
 
   const inner = (
     <div className="container mx-auto max-w-5xl px-4 sm:px-6 lg:px-12">
-      <div className="relative p-8 sm:p-12 lg:p-16 rounded-3xl border border-primary/20 bg-background-surface overflow-hidden">
-        {/* Layered background glows */}
+      {/* Section divider */}
+      <div className="w-full flex justify-center mb-16">
+        <div className="h-px w-2/3 max-w-2xl bg-gradient-to-r from-transparent via-secondary/30 to-transparent" />
+      </div>
+
+      <div className="relative p-8 sm:p-12 lg:p-16 rounded-3xl border border-primary/25 bg-background-surface overflow-hidden">
+        {/* Layered background glows — more intense */}
         <div className="absolute inset-0 pointer-events-none">
-          <div className="absolute top-0 left-1/4 w-96 h-96 bg-primary/8 rounded-full blur-3xl" />
-          <div className="absolute bottom-0 right-1/4 w-80 h-80 bg-accent/6 rounded-full blur-3xl" />
+          <div className="absolute top-0 left-1/4 w-96 h-96 bg-primary/10 rounded-full blur-3xl" />
+          <div className="absolute bottom-0 right-1/4 w-80 h-80 bg-accent/8 rounded-full blur-3xl" />
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-secondary/5 rounded-full blur-[100px]" />
         </div>
+
+        {/* Animated border shimmer */}
+        <div className="absolute inset-0 rounded-3xl border border-primary/10 pointer-events-none cta-border-shimmer" />
 
         <div className="relative z-10">
           {/* Top row: version + built for */}
@@ -46,18 +55,20 @@ export function FinalCTA() {
             </span>
           </div>
 
-          {/* Headline */}
-          <h2 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-center mb-4 leading-tight">
-            Stop Fixing Tests Manually
+          {/* Headline — bolder */}
+          <h2 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-extrabold text-center mb-4 leading-tight">
+            <span className="gradient-text-shimmer">Stop Fixing Tests</span>
+            <br />
+            <span className="text-foreground">Manually</span>
           </h2>
-          <p className="text-center text-lg text-foreground-secondary mb-10 max-w-xl mx-auto">
-            Install Triqual. Run <code className="text-primary font-mono">/test</code>. Let
+          <p className="text-center text-lg sm:text-xl text-foreground-secondary mb-10 max-w-xl mx-auto">
+            Install Triqual. Run <code className="text-primary font-mono bg-primary/10 px-1.5 py-0.5 rounded">/test</code>. Let
             the agents handle the rest.
           </p>
 
           {/* Install command - prominent */}
           <div id="install" className="max-w-lg mx-auto mb-10">
-            <div className="flex items-center gap-2 p-4 rounded-xl bg-background-card border border-border/60 font-mono text-base group hover:border-primary/40 transition-colors">
+            <div className="flex items-center gap-2 p-4 rounded-xl bg-background-card border border-primary/20 font-mono text-base group hover:border-primary/40 transition-all hover:shadow-[0_0_20px_rgba(0,240,255,0.1)]">
               <span className="text-foreground-muted select-none">$</span>
               <code className="flex-1 text-primary font-semibold">{installCommand}</code>
               <button
@@ -84,7 +95,7 @@ export function FinalCTA() {
                 <Button
                   asChild
                   size="lg"
-                  className="bg-gradient-to-r from-primary to-secondary text-background font-semibold glow-cyan"
+                  className="bg-gradient-to-r from-primary to-secondary text-background font-semibold glow-cyan text-base px-8"
                 >
                   <a
                     href="https://github.com/Montinou/triqual"
@@ -124,7 +135,7 @@ export function FinalCTA() {
                   <Button
                     asChild
                     size="lg"
-                    className="bg-gradient-to-r from-primary to-secondary text-background font-semibold glow-cyan hover:shadow-[0_0_40px_rgba(0,240,255,0.6),0_0_80px_rgba(0,240,255,0.3)] transition-shadow"
+                    className="bg-gradient-to-r from-primary to-secondary text-background font-semibold glow-cyan hover:shadow-[0_0_40px_rgba(0,240,255,0.6),0_0_80px_rgba(0,240,255,0.3)] transition-shadow text-base px-8"
                   >
                     <a
                       href="https://github.com/Montinou/triqual"

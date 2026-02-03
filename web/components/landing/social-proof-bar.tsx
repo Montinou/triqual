@@ -1,7 +1,7 @@
 "use client"
 
 import { motion, useReducedMotion } from "framer-motion"
-import { Github, Code2, Cpu, User, Users } from "lucide-react"
+import { Github, Code2, Cpu, User, Users, Star } from "lucide-react"
 
 const badges = [
   {
@@ -11,10 +11,10 @@ const badges = [
     color: "border-white/10 text-foreground-secondary hover:border-primary/40 hover:text-primary",
   },
   {
-    icon: Code2,
-    label: "GitHub Stars",
+    icon: Star,
+    label: "Star on GitHub",
     href: "https://github.com/Montinou/triqual",
-    color: "border-white/10 text-foreground-secondary hover:border-secondary/40 hover:text-secondary",
+    color: "border-yellow-500/20 text-yellow-400/80 hover:border-yellow-500/40 hover:text-yellow-400",
   },
   {
     icon: Cpu,
@@ -43,7 +43,7 @@ export function SocialProofBar() {
           const Icon = badge.icon
           const inner = (
             <span
-              className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-mono font-medium transition-colors duration-300 ${badge.color}`}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-full border text-xs font-mono font-medium transition-all duration-300 glass-badge ${badge.color}`}
             >
               <Icon className="w-3.5 h-3.5" />
               {badge.label}
@@ -71,7 +71,7 @@ export function SocialProofBar() {
 
   if (shouldReduceMotion) {
     return (
-      <section className="py-8 border-y border-white/5">
+      <section className="py-10 border-y border-white/5">
         {content}
       </section>
     )
@@ -79,7 +79,7 @@ export function SocialProofBar() {
 
   return (
     <motion.section
-      className="py-8 border-y border-white/5"
+      className="py-10 border-y border-white/5"
       initial={{ opacity: 0, y: 20 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true }}
