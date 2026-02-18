@@ -364,8 +364,8 @@ Triqual automatically configures these MCP servers via `.mcp.json`:
 
 | Server | URL | Auth |
 |--------|-----|------|
-| quoth | https://quoth.ai-innovation.site/api/mcp | OAuth |
-| exolar-qa | https://exolar.ai-innovation.site/api/mcp/mcp | OAuth |
+| quoth | https://quoth.triqual.dev/api/mcp | OAuth |
+| exolar-qa | https://exolar.triqual.dev/api/mcp/mcp | OAuth |
 
 ### Checking MCP Status
 

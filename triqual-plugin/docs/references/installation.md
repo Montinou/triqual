@@ -108,12 +108,12 @@ Use marketplace or local development method above.
 On first run, Claude Code will prompt for OAuth:
 
 **Quoth:**
-- Visit: `https://quoth.ai-innovation.site/api/mcp`
+- Visit: `https://quoth.triqual.dev/api/mcp`
 - Authorize with your account
 - Pattern documentation unlocked ✅
 
 **Exolar:**
-- Visit: `https://exolar.ai-innovation.site/api/mcp/mcp`
+- Visit: `https://exolar.triqual.dev/api/mcp/mcp`
 - Authorize with your account
 - Test analytics unlocked ✅
 

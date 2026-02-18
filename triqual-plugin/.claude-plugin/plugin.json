@@ -6,7 +6,7 @@
     "name": "Montinou",
     "url": "https://github.com/Montinou"
   },
-  "homepage": "https://triqual.vercel.app/",
+  "homepage": "https://triqual.dev",
   "repository": "https://github.com/Montinou/triqual",
   "license": "MIT",
   "keywords": ["testing", "automation", "playwright", "e2e", "self-healing", "quoth", "exolar"],

@@ -11,8 +11,8 @@ Common issues, solutions, and debugging techniques for Triqual.
 | Issue | Solution |
 |-------|----------|
 | MCP not connected | Check `/mcp` - authenticate when prompted |
-| Quoth search fails | Verify OAuth at quoth.ai-innovation.site |
-| Exolar query fails | Verify OAuth at exolar.ai-innovation.site |
+| Quoth search fails | Verify OAuth at quoth.triqual.dev |
+| Exolar query fails | Verify OAuth at exolar.triqual.dev |
 | Hooks not triggering | Check `hooks.json` syntax, verify scripts executable |
 | Session state stale | Delete `~/.cache/triqual/` directory |
 | Action blocked | Read error message, create/update run log |
@@ -48,11 +48,11 @@ Should show:
 {
   "servers": {
     "quoth": {
-      "url": "https://quoth.ai-innovation.site/api/mcp",
+      "url": "https://quoth.triqual.dev/api/mcp",
       "transport": "sse"
     },
     "exolar-qa": {
-      "url": "https://exolar.ai-innovation.site/api/mcp/mcp",
+      "url": "https://exolar.triqual.dev/api/mcp/mcp",
       "transport": "sse"
     }
   }
@@ -69,8 +69,8 @@ claude
 
 2. **Re-authenticate MCP servers:**
 - Visit URLs and authorize
-- Quoth: `https://quoth.ai-innovation.site/api/mcp`
-- Exolar: `https://exolar.ai-innovation.site/api/mcp/mcp`
+- Quoth: `https://quoth.triqual.dev/api/mcp`
+- Exolar: `https://exolar.triqual.dev/api/mcp/mcp`
 
 3. **Check plugin installation:**
 ```bash
@@ -90,7 +90,7 @@ claude
 1. **Re-authenticate:**
 ```bash
 # Visit Quoth OAuth
-open https://quoth.ai-innovation.site/api/mcp
+open https://quoth.triqual.dev/api/mcp
 ```
 
 2. **Verify connection:**
@@ -117,7 +117,7 @@ quoth_search_index({ query: "login patterns" })
 1. **Re-authenticate:**
 ```bash
 # Visit Exolar OAuth
-open https://exolar.ai-innovation.site/api/mcp/mcp
+open https://exolar.triqual.dev/api/mcp/mcp
 ```
 
 2. **Verify project ID:**

@@ -437,11 +437,11 @@ Spawns `claude -p` subprocess with Quoth/Exolar MCP access. Writes structured fi
   "mcpServers": {
     "quoth": {
       "type": "http",
-      "url": "https://quoth.ai-innovation.site/api/mcp"
+      "url": "https://quoth.triqual.dev/api/mcp"
     },
     "exolar-qa": {
       "type": "http",
-      "url": "https://exolar.ai-innovation.site/api/mcp/mcp"
+      "url": "https://exolar.triqual.dev/api/mcp/mcp"
     }
   }
 }

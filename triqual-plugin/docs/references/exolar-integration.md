@@ -27,7 +27,7 @@ Exolar is a **CI analytics database** that stores test results from your CI/CD p
 
 On first use, authenticate at:
 ```
-https://exolar.ai-innovation.site/
+https://exolar.triqual.dev/
 ```
 
 ## Available Tools
@@ -141,7 +141,7 @@ The triqual-plugin:pattern-learner agent uses Exolar data to:
 
 View your test analytics at:
 ```
-https://exolar.ai-innovation.site/dashboard
+https://exolar.triqual.dev/dashboard
 ```
 
 Features:

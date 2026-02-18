@@ -425,8 +425,8 @@ Testing error states with invalid credentials fixture.
 
 | Server | URL | Purpose |
 |--------|-----|---------|
-| `quoth` | `https://quoth.ai-innovation.site/api/mcp` | Pattern documentation |
-| `exolar-qa` | `https://exolar.ai-innovation.site/api/mcp/mcp` | Test analytics |
+| `quoth` | `https://quoth.triqual.dev/api/mcp` | Pattern documentation |
+| `exolar-qa` | `https://exolar.triqual.dev/api/mcp/mcp` | Test analytics |
 
 ### Quoth Tools
 
@@ -493,7 +493,7 @@ export default defineConfig({
 | Issue | Solution |
 |-------|----------|
 | Hooks not blocking | Check Claude Code version, restart session |
-| MCP auth fails | Visit quoth.ai-innovation.site, complete OAuth |
+| MCP auth fails | Visit quoth.triqual.dev, complete OAuth |
 | Run logs not created | Run `/init` first |
 | Tests not promoting | Ensure tests PASS before promotion |
 | Action blocked | Read error message, document required stages |

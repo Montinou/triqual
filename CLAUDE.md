@@ -187,8 +187,8 @@ The plugin automatically installs these MCP servers:
 
 | Server | URL | Purpose |
 |--------|-----|---------|
-| `quoth` | `https://quoth.ai-innovation.site/api/mcp` | Pattern documentation |
-| `exolar-qa` | `https://exolar.ai-innovation.site/api/mcp/mcp` | Test analytics |
+| `quoth` | `https://quoth.triqual.dev/api/mcp` | Pattern documentation |
+| `exolar-qa` | `https://exolar.triqual.dev/api/mcp/mcp` | Test analytics |
 
 **On first run**, Claude Code will prompt for OAuth authentication for each server.
 
@@ -546,8 +546,8 @@ Or run `/init` to auto-generate based on your project structure. The TypeScript 
 | Issue | Solution |
 |-------|----------|
 | MCP not connected | Check `/mcp` - authenticate when prompted |
-| Quoth search fails | Verify OAuth at quoth.ai-innovation.site |
-| Exolar query fails | Verify OAuth at exolar.ai-innovation.site |
+| Quoth search fails | Verify OAuth at quoth.triqual.dev |
+| Exolar query fails | Verify OAuth at exolar.triqual.dev |
 | Hooks not triggering | Check `hooks.json` syntax, verify scripts are executable |
 | Session state stale | Delete `~/.cache/triqual/` directory |
 | Action blocked | Read the error message, create/update run log as instructed |

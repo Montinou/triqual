@@ -2,7 +2,7 @@
   "name": "triqual",
   "owner": {
     "name": "Montinou",
-    "email": "montinou@ai-innovation.site"
+    "email": "agusmontoya@gmail.com"
   },
   "metadata": {
     "description": "Triqual - Autonomous test automation with documented learning loops, self-healing tests, and MCP-powered pattern learning",
@@ -17,7 +17,7 @@
       "author": {
         "name": "Montinou"
       },
-      "homepage": "https://triqual.vercel.app/",
+      "homepage": "https://triqual.dev",
       "repository": "https://github.com/Montinou/triqual",
       "license": "MIT",
       "keywords": ["testing", "automation", "playwright", "e2e", "self-healing", "quoth", "exolar", "mcp", "agents", "opus"],
@@ -34,7 +34,7 @@
       "author": {
         "name": "Montinou"
       },
-      "homepage": "https://quoth.ai-innovation.site",
+      "homepage": "https://quoth.triqual.dev",
       "repository": "https://github.com/Montinou/quoth-mcp",
       "license": "MIT",
       "keywords": ["memory", "mcp", "documentation", "knowledge", "rag", "ai-memory", "quoth"],

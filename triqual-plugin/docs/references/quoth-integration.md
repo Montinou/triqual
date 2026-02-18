@@ -17,7 +17,7 @@ Quoth is **live documentation** that the AI reads from AND writes to. Unlike sta
 
 On first use, authenticate at:
 ```
-https://quoth.ai-innovation.site/
+https://quoth.triqual.dev/
 ```
 
 ## Available Tools
