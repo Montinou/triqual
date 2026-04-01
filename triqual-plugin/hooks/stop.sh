@@ -148,3 +148,4 @@ Session stats: Quoth searches: $quoth_searches, Exolar queries: $exolar_queries"
 }
 
 main "$@"
+exit 0
