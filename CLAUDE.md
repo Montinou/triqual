@@ -191,6 +191,10 @@ The plugin automatically installs these MCP servers:
 | `exolar-qa` | `https://exolar.triqual.dev/api/mcp/mcp` | Test analytics |
 | `quoth-learning` | `~/.quoth/daemon.js` (local stdio) | Pattern scoring and outcome logging |
 
+**Required env vars for cloud promotion (set per-repo):**
+- `QUOTH_API_KEY=qth_...` — agent API key from Quoth dashboard
+- `QUOTH_PROJECT_ID=<uuid>` — this repo's project UUID in Quoth
+
 **On first run**, Claude Code will prompt for OAuth authentication for each server.
 
 ### Available MCP Tools
@@ -209,6 +213,7 @@ The plugin automatically installs these MCP servers:
 - `quoth_top_patterns({ limit?, tags? })` - Get top-N patterns by confidence
 - `quoth_seed_from_exolar({ dataset?, projectId? })` - Import Exolar failure clusters as candidates
 - `quoth_daemon_status({})` - Check if learning daemon is running
+- `quoth_propose_update({ patternId })` — Manually push a local pattern to Quoth cloud now
 
 **Playwright MCP (Autonomous App Verification):**
 - `browser_navigate`, `browser_snapshot`, `browser_click`, etc. - Explore app behavior
