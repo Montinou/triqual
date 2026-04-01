@@ -81,6 +81,14 @@ main() {
     # =========================================================================
     # New spec files MUST be written to .draft/tests/, never directly to tests/.
     # Only existing test files (already on disk) can be edited in-place.
+
+    # Allow promotion writes (moving from .draft/ to tests/ after quality gates)
+    if is_promotion_write "$file_path"; then
+        log_debug "Promotion write detected for $file_path — allowing autonomous promotion"
+        output_empty
+        exit 0
+    fi
+
     if ! is_draft_spec_path "$file_path"; then
         log_debug "File is NOT in .draft/: $file_path"
         if ! is_existing_test_file "$file_path"; then

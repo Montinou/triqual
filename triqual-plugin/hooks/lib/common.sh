@@ -1107,6 +1107,30 @@ is_existing_test_file() {
     [ -f "$file_path" ]
 }
 
+# Check if this is a promotion write (file exists in .draft/ and is being written to tests/)
+# Used to allow autonomous promotion after quality gates pass
+is_promotion_write() {
+    local file_path="$1"
+    if [ -z "$file_path" ]; then
+        return 1
+    fi
+    local basename
+    basename=$(basename "$file_path")
+    # If writing to tests/ (not .draft/) and the same file exists in .draft/tests/
+    if [[ "$file_path" == *"tests/"* ]] && [[ "$file_path" != *".draft/"* ]]; then
+        if [ -f ".draft/tests/${basename}" ]; then
+            return 0  # This is a promotion write
+        fi
+    fi
+    # Same for pages/
+    if [[ "$file_path" == *"pages/"* ]] && [[ "$file_path" != *".draft/"* ]]; then
+        if [ -f ".draft/pages/${basename}" ]; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
 # Check if file is in /tmp (quick-test scripts)
 is_temp_file() {
     local file_path="$1"
