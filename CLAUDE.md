@@ -187,8 +187,9 @@ The plugin automatically installs these MCP servers:
 
 | Server | URL | Purpose |
 |--------|-----|---------|
-| `quoth` | `https://quoth.triqual.dev/api/mcp` | Pattern documentation |
+| `quoth` | `https://quoth.triqual.dev/api/mcp/sse` | Pattern documentation |
 | `exolar-qa` | `https://exolar.triqual.dev/api/mcp/mcp` | Test analytics |
+| `quoth-learning` | `~/.quoth/daemon.js` (local stdio) | Pattern scoring and outcome logging |
 
 **On first run**, Claude Code will prompt for OAuth authentication for each server.
 
