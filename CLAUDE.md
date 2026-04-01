@@ -203,6 +203,13 @@ The plugin automatically installs these MCP servers:
 **Exolar Tools (CI Analytics Database):**
 - `query_exolar_data({ dataset, filters })` - Fetch test results, failures, trends
 
+**Quoth-Learning Tools (Local stdio — pattern scoring):**
+- `quoth_log_outcome({ patternId, result })` - Record success/failure for a pattern
+- `quoth_score_pattern({ patternId, delta })` - Manually adjust confidence score
+- `quoth_top_patterns({ limit?, tags? })` - Get top-N patterns by confidence
+- `quoth_seed_from_exolar({ dataset?, projectId? })` - Import Exolar failure clusters as candidates
+- `quoth_daemon_status({})` - Check if learning daemon is running
+
 **Playwright MCP (Autonomous App Verification):**
 - `browser_navigate`, `browser_snapshot`, `browser_click`, etc. - Explore app behavior
 
