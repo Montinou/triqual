@@ -133,6 +133,15 @@ Session stats: Quoth searches: $quoth_searches, Exolar queries: $exolar_queries"
         '{"dataset":"clustered_failures"}' \
         >> "${HOME}/.quoth/mcp-calls.log" 2>&1) &
 
+    # Auto-dispatch pattern-learner if completed run logs with learnings exist
+    if [ -n "$latest_log" ] && [ "$needs_learnings" = "false" ]; then
+        log_debug "Auto-dispatching pattern-learner at session end"
+        (claude -p --model claude-haiku-4-5-20251001 --output-format text \
+            "You are the pattern-learner. Read all run logs at .triqual/runs/*.md. Extract generalizable patterns (3+ occurrences across features). For each, call quoth_propose_update to promote to Quoth cloud. Update .triqual/knowledge.md with project-specific patterns. Be fully autonomous — no user approval needed." \
+            >> "${HOME}/.quoth/mcp-calls.log" 2>&1) &
+        log_debug "Pattern-learner dispatched"
+    fi
+
     # Signal quoth daemon for immediate processing
     local quoth_pid_file="${HOME}/.quoth/daemon.pid"
     if [ -f "${quoth_pid_file}" ]; then
