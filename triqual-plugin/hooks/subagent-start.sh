@@ -89,6 +89,13 @@ Only after creating the run log can test-generator proceed." "SubagentStart"
         ;;
 
     *test-generator*)
+        # Fetch semantically relevant patterns for this feature
+        QUOTH_PATTERNS=""
+        if command -v claude >/dev/null 2>&1 && [ -n "$FEATURE" ]; then
+          QUOTH_PATTERNS=$(claude mcp call quoth-learning quoth_top_patterns \
+            "{\"limit\":3,\"query\":\"${FEATURE} test automation playwright\"}" 2>/dev/null) || true
+        fi
+
         if [ -z "$LATEST_LOG" ]; then
             output_context "[Triqual] ⚠️ Test Generator Agent Starting - NO RUN LOG FOUND
 
@@ -128,11 +135,15 @@ Run log should be at: $RUNS_DIR/{feature}.md" "SubagentStart"
    - Create new ones ONLY if nothing existing covers the need
    - If you create something new, document WHY existing code doesn't work
 
+=== LOCAL LEARNED PATTERNS ===
+
+${QUOTH_PATTERNS:-No local patterns available yet.}
+
 === YOUR OUTPUT ===
 
 1. Generate test file in **.draft/tests/** (NEVER directly to tests/)
 2. **REUSE existing code** — do NOT recreate Page Objects, helpers, or fixtures that already exist
-2. Update run log with WRITE stage:
+3. Update run log with WRITE stage:
 
 ### Stage: WRITE
 **Hypothesis:** {approach and rationale}
@@ -145,6 +156,13 @@ After generation, test-healer will run and fix any failures." "SubagentStart"
         ;;
 
     *test-healer*)
+        # Fetch semantically relevant patterns for this feature
+        QUOTH_PATTERNS=""
+        if command -v claude >/dev/null 2>&1 && [ -n "$FEATURE" ]; then
+          QUOTH_PATTERNS=$(claude mcp call quoth-learning quoth_top_patterns \
+            "{\"limit\":3,\"query\":\"${FEATURE} test fix heal playwright\"}" 2>/dev/null) || true
+        fi
+
         if [ -z "$LATEST_LOG" ]; then
             output_context "[Triqual] 🔧 Test Healer Agent Starting (Autonomous Loop)
 
@@ -203,6 +221,10 @@ You run the full loop autonomously:
 - **Attempt 25+**: Hook requires .fixme() or strong justification
 - **2+ same category**: Hook requires Quoth/Exolar search
 - **Writing to tests/ directly**: BLOCKED by hook — must stay in .draft/
+
+=== LOCAL LEARNED PATTERNS ===
+
+${QUOTH_PATTERNS:-No local patterns available yet.}
 
 === REUSE EXISTING CODE ===
 
