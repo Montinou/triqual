@@ -214,6 +214,8 @@ The plugin automatically installs these MCP servers:
 - `quoth_seed_from_exolar({ dataset?, projectId? })` - Import Exolar failure clusters as candidates
 - `quoth_daemon_status({})` - Check if learning daemon is running
 - `quoth_propose_update({ patternId })` — Manually push a local pattern to Quoth cloud now
+- `quoth_extract_skill({ testFile, feature })` — Extract reusable test skill (Sonnet 4.6)
+- `quoth_list_skills({ tags? })` — List extracted skills from local database
 
 **Playwright MCP (Autonomous App Verification):**
 - `browser_navigate`, `browser_snapshot`, `browser_click`, etc. - Explore app behavior
@@ -321,6 +323,13 @@ Triqual includes 5 specialized agents plus the `triqual_load_context` MCP tool:
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+### Autonomous Behavior (No Human Approval)
+- test-healer: auto-promotes from .draft/ → tests/ after quality gates (2 consecutive passes + mutation test + duplication check)
+- pattern-learner: auto-promotes generalizable patterns to Quoth (no user confirmation)
+- pattern-learner: auto-dispatched at session end when completed run logs exist
+- failure-classifier: auto-updates pattern confidence via quoth_log_outcome
+- Decision Attribution: tracks which patterns were active during agent runs, scores them on outcome
 
 ### Agent Reference
 
