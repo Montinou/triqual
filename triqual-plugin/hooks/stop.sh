@@ -128,6 +128,19 @@ Session stats: Quoth searches: $quoth_searches, Exolar queries: $exolar_queries"
         fi
     fi
 
+    # Quoth learning: seed patterns from Exolar failure clusters (fire-and-forget)
+    (claude mcp call quoth-learning quoth_seed_from_exolar \
+        '{"dataset":"clustered_failures"}' \
+        >> "${HOME}/.quoth/mcp-calls.log" 2>&1) &
+
+    # Signal quoth daemon for immediate processing
+    local quoth_pid_file="${HOME}/.quoth/daemon.pid"
+    if [ -f "${quoth_pid_file}" ]; then
+        local quoth_pid
+        quoth_pid=$(cat "${quoth_pid_file}" 2>/dev/null)
+        [ -n "${quoth_pid}" ] && kill -USR1 "${quoth_pid}" 2>/dev/null || true
+    fi
+
     # Cleanup session state (but keep run logs - they're persistent)
     cleanup_session
 

@@ -171,6 +171,22 @@ Document the successful run in $run_log:
 Consider running the triqual-plugin:pattern-learner agent if you discovered reusable patterns."
     fi
 
+    # Quoth learning: log outcome for pattern scoring (fire-and-forget)
+    if [ -n "$feature" ]; then
+        local pattern_id=""
+        # Try to extract pattern_used from run log
+        if run_log_exists "$feature"; then
+            pattern_id=$(grep -oE '"pattern_used":"[^"]+"' "$(get_run_log_path "$feature")" | tail -1 | cut -d'"' -f4 || echo "")
+        fi
+        if [ -n "$pattern_id" ]; then
+            local outcome_val="failure"
+            [ "$has_failures" = "false" ] && outcome_val="success"
+            (claude mcp call quoth-learning quoth_log_outcome \
+                "{\"patternId\":\"${pattern_id}\",\"result\":\"${outcome_val}\"}" \
+                >> "${HOME}/.quoth/mcp-calls.log" 2>&1) &
+        fi
+    fi
+
     output_context "$context" "PostToolUse"
 }
 
