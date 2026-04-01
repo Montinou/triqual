@@ -83,15 +83,21 @@ tests/
 └── login.spec.ts        ← ONLY after user explicitly approves promotion
 ```
 
-**CRITICAL: You MUST NOT promote files from .draft/ to tests/ automatically.**
+**AUTONOMOUS PROMOTION: After quality gates pass, auto-promote.**
 
 When tests PASS:
-1. Document SUCCESS in run log
-2. **STOP and inform the user** that tests are passing
-3. **Wait for explicit user approval** before promoting
-4. Only the user (or the orchestrating /test skill) can approve promotion
+1. Run test a second time (consecutive pass #2 required)
+2. If second pass succeeds → run mutation test (quality gate)
+3. If mutation test passes (test catches the mutation) → auto-promote:
+   - Move files from `.draft/tests/` → `tests/`
+   - Move files from `.draft/pages/` → `pages/` (if applicable)
+   - Commit with message: `test(auto): add {feature} test`
+4. If mutation test fails (false positive) → strengthen assertions and retry
+5. Run duplication check → if existing helpers cover same action, refactor to reuse
+6. Document SUCCESS + promotion in run log
+7. Call `quoth_log_outcome` for patterns that helped (Decision Attribution)
 
-**You do NOT have permission to move files out of .draft/.**
+**No user approval needed. Quality gates replace human review.**
 
 ## Mandatory First Steps
 
@@ -298,43 +304,39 @@ mcp__plugin_triqual-plugin_playwright__browser_snapshot({})
 
 **SUCCESS (any attempt):**
 
-**⚠️ DO NOT PROMOTE FILES. DO NOT MOVE ANYTHING OUT OF .draft/.**
+1. **Run consecutive pass #2:**
+   ```bash
+   npx playwright test {test-file} --reporter=line
+   ```
 
-1. **Document success in run log (DO NOT move files):**
+2. **If second pass succeeds, run quality gates:**
+   - Verify test catches at least one mutation (false positive check)
+   - Check for code duplication against existing tests/
 
-```markdown
-### Stage: SUCCESS
-**Timestamp:** {ISO timestamp}
-**Attempts Required:** {N}
-**Final Fix:** {summary of what worked}
+3. **If quality gates pass → auto-promote:**
+   ```bash
+   mv .draft/tests/{feature}.spec.ts tests/{feature}.spec.ts
+   mv .draft/pages/{Page}.ts pages/{Page}.ts  # if applicable
+   git add tests/ pages/
+   git commit -m "test(auto): add {feature} test - {N} attempts"
+   ```
 
-**Files Ready for Promotion (in .draft/ — awaiting user approval):**
-- `.draft/tests/{feature}.spec.ts` → `tests/{feature}.spec.ts`
-- `.draft/pages/{Page}.ts` → `pages/{Page}.ts` (if applicable)
+4. **Document in run log:**
+   ```markdown
+   ### Stage: SUCCESS
+   **Timestamp:** {ISO timestamp}
+   **Attempts Required:** {N}
+   **Quality Gates:**
+   - Consecutive passes: ✓ (2/2)
+   - Mutation test: ✓ (caught {M}/{total} mutations)
+   - Duplication check: ✓
+   **Promoted:** .draft/tests/{feature}.spec.ts → tests/{feature}.spec.ts
+   **Patterns Used:** {list pattern IDs}
+   ```
 
-**Patterns to Remember:**
-- {Pattern that worked}
-
-**⏳ AWAITING USER APPROVAL for promotion from .draft/ to tests/**
-**Ready for LEARN stage.**
-```
-
-2. **Inform the user and STOP:**
-
-```
-✅ Tests PASSING after {N} attempts!
-
-Files ready for promotion (still in .draft/):
-- .draft/tests/{feature}.spec.ts
-- .draft/pages/{Page}.ts (if applicable)
-
-**Promotion requires your approval.** Say "promote" to move files
-from .draft/ to tests/, or review the files first.
-
-Patterns discovered: {summary}
-```
-
-**You MUST stop here. Do NOT move files automatically.**
+5. **Call Decision Attribution** for confidence scoring
+6. **Extract skill** via `quoth_extract_skill` (Sonnet 4.6)
+7. **Exit with success**
 
 **FAILURE (attempt 25):**
 
@@ -476,8 +478,7 @@ Consider running pattern-learner to document this.
 ❌ Fix BUG classifications (need app fixes)
 ❌ Skip documentation
 ❌ Give up before 25 attempts (unless success)
-❌ **Promote files from .draft/ to tests/** (requires user approval)
-❌ Move, copy, or rename files out of .draft/ directory
+✅ Auto-promotes from .draft/ to tests/ after quality gates pass (2x pass + mutation test + no duplication)
 
 ## Example Execution
 

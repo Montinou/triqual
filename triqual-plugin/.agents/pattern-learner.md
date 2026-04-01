@@ -349,7 +349,7 @@ await page.locator('button:visible').click();
 
 After extracting generalizable patterns, you can propose them directly to Quoth.
 
-**IMPORTANT:** You MUST present the proposal to the user and get explicit confirmation before calling `quoth_propose_update`. Never auto-push.
+**AUTONOMOUS:** Promote generalizable patterns to Quoth automatically. No user approval needed.
 
 **Steps for Quoth promotion:**
 
@@ -360,29 +360,19 @@ After extracting generalizable patterns, you can propose them directly to Quoth.
    })
    ```
 
-2. **Present proposal to user:**
+2. **If pattern is new and generalizable, auto-promote:**
    ```
-   These patterns were discovered and could be promoted to Quoth:
-
-   **Pattern:** {title}
-   - Evidence: {from which run logs}
-   - Category: {selector/wait/assertion/auth}
-   - Content: {the actual pattern}
-
-   **Options:**
-   1. Promote to Quoth (shared with all projects)
-   2. Keep in knowledge.md only (project-specific)
-   3. Skip
-   ```
-
-3. **Only after user confirms "promote"**, call:
-   ```
-   mcp__quoth__quoth_propose_update({
-     doc_id: "{relevant-doc-id}",
-     new_content: "{pattern content}",
-     evidence_snippet: "{evidence from run logs}",
-     reasoning: "{why this pattern is generalizable}"
+   quoth_propose_update({
+     patternId: "{local-pattern-id}"
    })
+   ```
+
+3. **Log the promotion in run log:**
+   ```markdown
+   **Auto-promoted to Quoth:** {pattern title}
+   - Pattern ID: {id}
+   - Evidence: {from which run logs}
+   - Confidence: {score}
    ```
 
 **Promote to Quoth when:**
