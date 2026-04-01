@@ -96,6 +96,14 @@ Only after creating the run log can test-generator proceed." "SubagentStart"
             "{\"limit\":3,\"query\":\"${FEATURE} test automation playwright\"}" 2>/dev/null) || true
         fi
 
+        # Log injected pattern IDs for Decision Attribution
+        if [ -n "$QUOTH_PATTERNS" ] && [ -n "$FEATURE" ]; then
+            QUOTH_HOME="${HOME}/.quoth"
+            DA_SESSION_ID=$(cat "${QUOTH_HOME}/current_session" 2>/dev/null || echo "unknown")
+            DA_TRAJ_FILE="${QUOTH_HOME}/trajectories/${DA_SESSION_ID}.jsonl"
+            echo "{\"event\":\"patterns_injected\",\"agent\":\"${AGENT_TYPE}\",\"feature\":\"${FEATURE}\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" >> "${DA_TRAJ_FILE}" 2>/dev/null || true
+        fi
+
         if [ -z "$LATEST_LOG" ]; then
             output_context "[Triqual] ⚠️ Test Generator Agent Starting - NO RUN LOG FOUND
 
@@ -161,6 +169,14 @@ After generation, test-healer will run and fix any failures." "SubagentStart"
         if command -v claude >/dev/null 2>&1 && [ -n "$FEATURE" ]; then
           QUOTH_PATTERNS=$(claude mcp call quoth-learning quoth_top_patterns \
             "{\"limit\":3,\"query\":\"${FEATURE} test fix heal playwright\"}" 2>/dev/null) || true
+        fi
+
+        # Log injected pattern IDs for Decision Attribution
+        if [ -n "$QUOTH_PATTERNS" ] && [ -n "$FEATURE" ]; then
+            QUOTH_HOME="${HOME}/.quoth"
+            DA_SESSION_ID=$(cat "${QUOTH_HOME}/current_session" 2>/dev/null || echo "unknown")
+            DA_TRAJ_FILE="${QUOTH_HOME}/trajectories/${DA_SESSION_ID}.jsonl"
+            echo "{\"event\":\"patterns_injected\",\"agent\":\"${AGENT_TYPE}\",\"feature\":\"${FEATURE}\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" >> "${DA_TRAJ_FILE}" 2>/dev/null || true
         fi
 
         if [ -z "$LATEST_LOG" ]; then

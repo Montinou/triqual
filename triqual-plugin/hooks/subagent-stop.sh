@@ -128,6 +128,18 @@ If tests fail, triqual-plugin:test-healer agent will analyze and fix issues." "S
         ;;
 
     *test-healer*)
+        # Decision Attribution: auto-score patterns based on outcome
+        if [ -n "$FEATURE" ] && [ -n "$LATEST_LOG" ]; then
+            DA_OUTCOME="failure"
+            if grep -q "Stage: SUCCESS" "$LATEST_LOG" 2>/dev/null; then
+                DA_OUTCOME="success"
+            fi
+            # Fire-and-forget confidence update
+            (claude mcp call quoth-learning quoth_log_outcome \
+                "{\"patternId\":\"session-${FEATURE}\",\"result\":\"${DA_OUTCOME}\"}" \
+                >> "${HOME}/.quoth/mcp-calls.log" 2>&1) &
+        fi
+
         if [ "$LOG_UPDATED" = "true" ]; then
             output_context "[Triqual] ✓ Test healer completed and run log updated.
 
