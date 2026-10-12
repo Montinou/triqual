@@ -229,3 +229,15 @@ test('README opens with what Triqual is, a quick start and what bootstrap change
     assert.ok(changes.includes(touched), `names ${touched}`);
   }
 });
+
+test('CONTRIBUTING.md and SECURITY.md exist, link each other and are published by the export manifest', () => {
+  const contributing = readFileSync(join(ROOT, 'CONTRIBUTING.md'), 'utf8');
+  const security = readFileSync(join(ROOT, 'SECURITY.md'), 'utf8');
+  assert.match(contributing, /^# Contributing to Triqual$/m);
+  assert.ok(contributing.includes('[SECURITY.md](SECURITY.md)') && contributing.includes('npm test'));
+  assert.ok(contributing.includes('Node 22.13'), 'the Node floor matches the README');
+  assert.match(security, /^# Security policy$/m);
+  assert.ok(security.includes('Report a\nvulnerability') || security.includes('Report a vulnerability'), 'names the private reporting path');
+  const manifest = JSON.parse(readFileSync(join(ROOT, 'public-export.json'), 'utf8'));
+  for (const file of ['CONTRIBUTING.md', 'SECURITY.md']) assert.ok(manifest.include.includes(file), `${file} is in the export manifest`);
+});
