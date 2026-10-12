@@ -1,0 +1,11 @@
+{
+  "agents": {
+    "brief-writer.md": "d2abb02392678786d66ce5c181323ef0f85add79f2292e01da1f7924f33d8d3c",
+    "final-adversarial-reviewer.md": "aae81d3496954621d063fb359fe92b5b6c4290f6ad55b38429a8c6b1b9c5a7ee",
+    "review-fixer.md": "ab8c4a277c78922a3f419e2cc642fa9e0ae7adb65a36ddac42bd10488d723b8a",
+    "safety-reviewer.md": "7523972c41f7c5433360622b209b702fad330a2b1023ebc960989dc034d853ac",
+    "spec-reviewer.md": "9ada9ed8223fef952f78481422533c7c2a507c40fd05aa7dd249e883f90d96bf",
+    "tdd-implementer.md": "61e20eb62f00e7bd691d719bcfb4ee87ff6e901946af0fd4880358261216344f"
+  },
+  "workflowGate": "16a9c842f82cf7d27a8c5b5ebf16d5a41f7b3e62d2aec8092729bce716a866de"
+}

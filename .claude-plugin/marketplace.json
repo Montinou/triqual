@@ -1,0 +1,37 @@
+{
+  "name": "triqual",
+  "owner": { "name": "Montinou", "url": "https://github.com/Montinou" },
+  "metadata": { "description": "Triqual: a methodology for working with Claude Code" },
+  "plugins": [
+    {
+      "name": "progress-tracking",
+      "source": "./plugins/progress-tracking",
+      "description": "Strict progress tracking: one entry per task, the overall status and per-plan task ledgers driven by triqual tasks, kept up to date by gates that enforce them and a hook that injects the state at every session start. Committed mode (progress.md and status.md in the repo), local mode (under .git) or store mode (a local database, nothing in the repo or its history).",
+      "version": "0.4.0"
+    },
+    {
+      "name": "workflow-gate",
+      "source": "./plugins/workflow-gate",
+      "description": "Rejects Workflow scripts without a declared agent budget, role dispatch or bounded fan-out",
+      "version": "0.1.1"
+    },
+    {
+      "name": "roles",
+      "source": "./plugins/roles",
+      "description": "Eight role agents for plan execution, from brief writing and candidate hunting to the final adversarial review",
+      "version": "0.3.1"
+    },
+    {
+      "name": "methodology",
+      "source": "./plugins/methodology",
+      "description": "Methodology core: the workflow skills forked from superpowers (roles dispatch, task ledger and progress tracking), global rules, triqual sync, doctor and upstream-diff, drift notices; installs the other plugins",
+      "version": "0.5.1"
+    },
+    {
+      "name": "memory-report",
+      "source": "./plugins/memory-report",
+      "description": "Optional weekly local report on the health of the claude-mem memory (hygiene, storage and growth, Chroma health) plus LLM insights on proposed rules, skill changes and stale notes from allowlisted personal projects. Runs lazily from a SessionStart hook and shows one line until the report is read.",
+      "version": "0.4.0"
+    }
+  ]
+}

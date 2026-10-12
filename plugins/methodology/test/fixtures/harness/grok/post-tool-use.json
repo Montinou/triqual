@@ -1,0 +1,50 @@
+{
+  "hookEventName": "post_tool_use",
+  "sessionId": "id-f9292758ca48",
+  "cwd": "<project>",
+  "workspaceRoot": "<project>/",
+  "timestamp": "2026-09-28T22:05:53.448411+00:00",
+  "transcriptPath": "<redacted>",
+  "permissionMode": "bypassPermissions",
+  "toolName": "read_file",
+  "toolUseId": "id-f2f2ab3338fb",
+  "toolInput": {
+    "target_file": "<project>/note.txt"
+  },
+  "toolResult": {
+    "type": "ReadFile",
+    "FileContent": {
+      "content": "1\u2192hello probe\n",
+      "content_concise": "1\u2192hello probe\n",
+      "absolute_path": "<project>/note.txt",
+      "offset": null,
+      "raw_output": "hello probe\n",
+      "total_lines": 2
+    }
+  },
+  "toolInputTruncated": false,
+  "toolResultTruncated": false,
+  "durationMs": 37,
+  "isBackgrounded": false,
+  "hook_event_name": "PostToolUse",
+  "session_id": "id-f9292758ca48",
+  "transcript_path": "<redacted>",
+  "permission_mode": "bypassPermissions",
+  "tool_name": "read_file",
+  "tool_input": {
+    "target_file": "<project>/note.txt"
+  },
+  "tool_response": {
+    "type": "ReadFile",
+    "FileContent": {
+      "content": "1\u2192hello probe\n",
+      "content_concise": "1\u2192hello probe\n",
+      "absolute_path": "<project>/note.txt",
+      "offset": null,
+      "raw_output": "hello probe\n",
+      "total_lines": 2
+    }
+  },
+  "tool_use_id": "id-f2f2ab3338fb",
+  "duration_ms": 37
+}

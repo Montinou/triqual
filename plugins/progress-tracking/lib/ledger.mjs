@@ -1,0 +1,334 @@
+// Pure task-ledger model (spec §6.2): plan parsing, ledger creation, reconciliation and task transitions.
+// No I/O and no clock: every timestamp comes in as `now` (an ISO string). Functions never mutate their input.
+import { TASK_ROLES, roleOf } from './roles.mjs';
+
+export class LedgerError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'LedgerError';
+    this.code = 2;
+  }
+}
+
+// Headings and the Depends on / Skills / Role lines are read at column 0 only.
+const HEADING = /^### Task (\d+): (.+)$/;
+const DEPENDS = /^\*\*Depends on:\*\*(.*)$/;
+const SKILLS = /^\*\*Skills:\*\*(.*)$/;
+const ROLE = /^\*\*Role:\*\*(.*)$/;
+// CommonMark fence: a run of 3+ backticks or tildes, then an optional info string; after backticks the info string may
+// not hold a backtick (such a line is inline code). Groups: 1 the run, 2 the info string.
+const FENCE = /^(`{3,}(?=[^`]*$)|~{3,})(.*)$/;
+// The leading spaces and tabs of a line. Indented four or more columns (a tab counts as four) a line never opens or
+// closes a fence, as in CommonMark; subagent-driven-development's task-brief applies the same rule.
+const INDENT = /^[ \t]*/;
+const FENCE_INDENT_LIMIT = 4;
+const TAB_COLUMNS = 4;
+
+const list = (s) => s.split(',').map((x) => x.trim()).filter(Boolean);
+
+// The fence match of `line` ([, run, info]), or null when it is no fence line.
+function fenceOf(line) {
+  const [indent] = INDENT.exec(line);
+  const columns = [...indent].reduce((n, c) => n + (c === '\t' ? TAB_COLUMNS : 1), 0);
+  return columns < FENCE_INDENT_LIMIT ? FENCE.exec(line.slice(indent.length)) : null;
+}
+
+export function parsePlan(text) {
+  const tasks = [];
+  const seen = new Set();
+  let current = null;
+  let fence = null; // { run, line } of the opening fence while inside a fenced code block
+  const lines = text.split(/\r?\n/);
+  for (const [i, line] of lines.entries()) {
+    const f = fenceOf(line);
+    if (fence) {
+      // Closes only on a run of the same character, at least as long as the opener, with no info string.
+      if (f && f[1][0] === fence.run[0] && f[1].length >= fence.run.length && !f[2].trim()) fence = null;
+      continue;
+    }
+    if (f) { fence = { run: f[1], line: i + 1 }; continue; }
+    const h = HEADING.exec(line);
+    if (h) {
+      const id = `T${Number(h[1])}`;
+      if (seen.has(id)) throw new LedgerError(`duplicate task ${id} in plan`);
+      seen.add(id);
+      current = { id, title: h[2].trim(), deps: [], skills: [], role: null };
+      tasks.push(current);
+      continue;
+    }
+    if (line.startsWith('### ')) { current = null; continue; }
+    if (!current) continue;
+    const d = DEPENDS.exec(line);
+    if (d) { current.deps = list(d[1]); continue; }
+    const s = SKILLS.exec(line);
+    if (s) { current.skills = list(s[1]); continue; }
+    const r = ROLE.exec(line);
+    if (r) current.role = r[1].trim();
+  }
+  if (fence) throw new LedgerError(`unclosed code fence opened at line ${fence.line}`);
+  return tasks;
+}
+
+const newTask = ({ id, title, deps, skills, role }, now) => ({
+  id,
+  title,
+  status: 'pending',
+  deps: [...deps],
+  skills: [...skills],
+  role: role ?? null,
+  commits: [],
+  reason: null,
+  history: [{ at: now, from: null, to: 'pending', note: null }],
+});
+
+export function createLedger({ plan, spec, branch, tasks, now }) {
+  return {
+    version: 1,
+    plan,
+    spec,
+    branch,
+    state: 'active',
+    tasks: tasks.map((t) => newTask(t, now)),
+  };
+}
+
+// Reconciles by id and title: new plan tasks are appended as pending, tasks no longer in the plan are reported and
+// kept, a changed title is reported as drift and the task is left untouched. Pending tasks take the plan's deps, skills
+// and role. Adding a task reactivates a closed plan.
+export function reconcile(ledger, planTasks, now) {
+  const next = structuredClone(ledger);
+  const planById = new Map(planTasks.map((t) => [t.id, t]));
+  const added = [];
+  const missing = [];
+  const retitled = [];
+  for (const task of next.tasks) {
+    const p = planById.get(task.id);
+    if (!p) { missing.push(task.id); continue; }
+    if (p.title !== task.title) { retitled.push(task.id); continue; }
+    if (task.status === 'pending') { task.deps = [...p.deps]; task.skills = [...p.skills]; task.role = p.role ?? null; }
+  }
+  const known = new Set(next.tasks.map((t) => t.id));
+  for (const p of planTasks) {
+    if (known.has(p.id)) continue;
+    next.tasks.push(newTask(p, now));
+    added.push(p.id);
+  }
+  if (added.length) next.state = 'active';
+  return { ledger: next, added, missing, retitled };
+}
+// Task commands: the statuses each may start from, and its target status (spec §6.2 table plus `restore`).
+const MOVES = {
+  start: { from: ['pending', 'blocked'], to: 'in_progress' },
+  review: { from: ['in_progress'], to: 'in_review' },
+  rework: { from: ['in_review'], to: 'in_progress' },
+  done: { from: ['in_progress', 'in_review'], to: 'done' },
+  block: { from: ['pending', 'in_progress', 'in_review'], to: 'blocked' },
+  drop: { from: ['pending', 'blocked'], to: 'dropped' },
+  restore: { from: ['dropped'], to: 'pending' },
+  reopen: { from: ['done'], to: 'in_progress' },
+};
+const NEEDS_TEXT = new Set(['block', 'drop', 'reopen', 'retitle', 'done']);
+const ARG_NAME = { done: 'a commit sha', retitle: 'a title' };
+const FINISHED = new Set(['done', 'dropped']);
+
+export function transition(ledger, cmd, id, arg, now) {
+  const next = structuredClone(ledger);
+
+  if (cmd === 'close') {
+    const open = next.tasks.filter((t) => !FINISHED.has(t.status)).map((t) => t.id);
+    if (open.length) throw new LedgerError(`plan has unfinished tasks: ${open.join(', ')}`);
+    if (next.state === 'done') return { ledger: next, changed: false };
+    next.state = 'done';
+    return { ledger: next, changed: true };
+  }
+
+  if (cmd !== 'retitle' && !MOVES[cmd]) throw new LedgerError(`unknown command ${cmd}`);
+  const task = next.tasks.find((t) => t.id === id);
+  if (!task) throw new LedgerError(`unknown task ${id}`);
+  const text = typeof arg === 'string' ? arg.trim() : '';
+  if (NEEDS_TEXT.has(cmd) && !text) throw new LedgerError(`${id}: ${cmd} requires ${ARG_NAME[cmd] ?? 'a reason'}`);
+
+  if (cmd === 'retitle') {
+    if (task.title === text) return { ledger: next, changed: false };
+    task.history.push({ at: now, from: task.status, to: task.status, note: `retitle: ${task.title} -> ${text}` });
+    task.title = text;
+    return { ledger: next, changed: true };
+  }
+
+  const { from, to } = MOVES[cmd];
+  if (task.status === to) {
+    if (cmd === 'done' && !task.commits.includes(text)) throw new LedgerError(`${id} is done; cannot done`);
+    return { ledger: next, changed: false };
+  }
+  if (!from.includes(task.status)) throw new LedgerError(`${id} is ${task.status}; cannot ${cmd}`);
+
+  if (cmd === 'start') {
+    for (const dep of task.deps) {
+      const status = next.tasks.find((t) => t.id === dep)?.status ?? 'unknown';
+      if (!FINISHED.has(status)) throw new LedgerError(`${id} depends on ${dep} (${status})`);
+    }
+  }
+
+  let note = null;
+  if (cmd === 'block' || cmd === 'drop' || cmd === 'reopen') { task.reason = text; note = text; }
+  if (cmd === 'start' || cmd === 'restore') task.reason = null;
+  // A task reaches done with commits already recorded only after a reopen: the new sha replaces them, so a sha lost to
+  // rewritten history is fixed with reopen + done --commit <new>.
+  if (cmd === 'done') task.commits = [text];
+  if (cmd === 'reopen' || cmd === 'restore') next.state = 'active';
+  task.history.push({ at: now, from: task.status, to, note });
+  task.status = to;
+  return { ledger: next, changed: true };
+}
+
+
+// ---- Views (spec §6.2 `render`, `status`, `next`, `check`) ----
+
+const START = '<!-- tasks:start -->';
+const END = '<!-- tasks:end -->';
+const STATUSES = new Set(['pending', 'in_progress', 'in_review', 'done', 'blocked', 'dropped']);
+const PLAN_STATES = new Set(['active', 'done']);
+const NO_ACTIVE = '## Active plan\n\nNo active plan.';
+
+// done and total (every task except dropped ones) of one ledger: the numbers renderSection and statusLine show.
+export const counts = (ledger) => ({
+  done: ledger.tasks.filter((t) => t.status === 'done').length,
+  total: ledger.tasks.filter((t) => t.status !== 'dropped').length,
+});
+const withStatus = (ledger, status) => ledger.tasks.filter((t) => t.status === status);
+
+// The first pending task, in ledger order, whose deps are all done or dropped (an unknown dep is unmet).
+export function nextTask(ledger) {
+  const byId = new Map(ledger.tasks.map((t) => [t.id, t]));
+  return ledger.tasks.find((t) => t.status === 'pending'
+    && t.deps.every((d) => FINISHED.has(byId.get(d)?.status))) ?? null;
+}
+
+function renderPlan(name, ledger) {
+  const { done, total } = counts(ledger);
+  const titled = (ts) => ts.map((t) => `${t.id} ${t.title}`).join('; ');
+  const reasoned = (ts) => ts.map((t) => `${t.id} ${t.title} — ${t.reason}`).join('; ');
+  const next = nextTask(ledger);
+  const lines = [
+    ['In progress', titled(withStatus(ledger, 'in_progress'))],
+    ['In review', titled(withStatus(ledger, 'in_review'))],
+    ['Blocked', reasoned(withStatus(ledger, 'blocked'))],
+    ['Dropped', reasoned(withStatus(ledger, 'dropped'))],
+    ['Next', next ? `${next.id} ${next.title}` : ''],
+  ].filter(([, v]) => v).map(([k, v]) => `- ${k}: ${v}`);
+  return [`### ${name} — ${done}/${total} done`, ...lines].join('\n');
+}
+
+// The status.md "Active plan" section body (markers excluded): active ledgers only, newest name first.
+export function renderSection(ledgers) {
+  const active = ledgers.filter((l) => l.ledger.state !== 'done')
+    .sort((a, b) => (a.name < b.name ? 1 : a.name > b.name ? -1 : 0));
+  if (!active.length) return NO_ACTIVE;
+  return ['## Active plan', ...active.map((l) => renderPlan(l.name, l.ledger))].join('\n\n');
+}
+
+// Locates the managed section: null when neither marker is present; throws when an end marker has no start before
+// it (misordered) or the start marker has no end after it (unterminated).
+function findSection(text) {
+  const start = text.indexOf(START);
+  const firstEnd = text.indexOf(END);
+  if (firstEnd !== -1 && (start === -1 || firstEnd < start)) {
+    throw new LedgerError('status.md tasks section is misordered');
+  }
+  if (start === -1) return null;
+  const end = text.indexOf(END, start + START.length);
+  if (end === -1) throw new LedgerError('status.md tasks section is unterminated');
+  return { inner: start + START.length, end };
+}
+
+export function upsertStatusSection(statusText, body) {
+  // A marker inside the body would end the section early on the next upsert and grow status.md every render.
+  if (body.includes(START) || body.includes(END)) throw new LedgerError('task text contains a tasks section marker');
+  const at = findSection(statusText);
+  if (!at) {
+    const base = statusText.endsWith('\n') ? statusText : `${statusText}\n`;
+    return `${base}\n${START}\n${body}\n${END}\n`;
+  }
+  return `${statusText.slice(0, at.inner)}\n${body}\n${statusText.slice(at.end)}`;
+}
+
+export function statusLine(name, ledger) {
+  const { done, total } = counts(ledger);
+  const inProgress = withStatus(ledger, 'in_progress').map((t) => t.id).join(', ') || 'none';
+  const next = nextTask(ledger)?.id ?? 'none';
+  return `${name}: ${done}/${total} done · in progress: ${inProgress} · next: ${next}`;
+}
+
+// Schema drift of one ledger in any plan state: version, plan state, task statuses and histories.
+export function checkSchema(ledger) {
+  const drift = [];
+  if (ledger.version !== 1) drift.push(`unsupported ledger version ${ledger.version} (expected 1)`);
+  if (!PLAN_STATES.has(ledger.state)) drift.push(`unknown plan state "${ledger.state}"`);
+  if (!Array.isArray(ledger.tasks)) drift.push('ledger tasks is not an array');
+  for (const t of Array.isArray(ledger.tasks) ? ledger.tasks : []) {
+    if (!STATUSES.has(t.status)) drift.push(`${t.id} has unknown status "${t.status}"`);
+    if (!Array.isArray(t.history)) drift.push(`${t.id} history is not an array`);
+  }
+  return drift;
+}
+
+// Drift of status.md's managed section against `renderedBody`: [] when equal (trimmed), the stale message when it
+// differs or is absent, the LedgerError message when the markers are misordered or unterminated.
+export function checkSection(statusText, renderedBody) {
+  try {
+    const at = findSection(statusText);
+    if (at && statusText.slice(at.inner, at.end).trim() === renderedBody.trim()) return [];
+  } catch (e) {
+    if (!(e instanceof LedgerError)) throw e;
+    return [e.message]; // misordered or unterminated: render would refuse it too
+  }
+  return ['status.md Active plan section is stale — run triqual tasks render'];
+}
+
+// Drift messages for one ledger, empty when clean. Never throws on a malformed plan, ledger or status text.
+export function checkLedger({ ledger, planText, statusText, renderedBody, commitExists }) {
+  const drift = checkSchema(ledger);
+  const tasks = Array.isArray(ledger.tasks) ? ledger.tasks : [];
+
+  let planTasks = null;
+  try {
+    planTasks = parsePlan(planText);
+  } catch (e) {
+    drift.push(`plan: ${e.message}`);
+  }
+  if (planTasks) {
+    const ledgerById = new Map(tasks.map((t) => [t.id, t]));
+    for (const p of planTasks) {
+      const t = ledgerById.get(p.id);
+      if (!t) drift.push(`${p.id} is in the plan but not in the ledger — run triqual tasks init`);
+      else if (t.title !== p.title) {
+        drift.push(`${p.id} title differs: plan "${p.title}", ledger "${t.title}" — run triqual tasks retitle`);
+      }
+    }
+    const planIds = new Set(planTasks.map((p) => p.id));
+    // Dropping is how a removal is recorded, so a dropped task missing from the plan is not drift.
+    for (const t of tasks) {
+      if (!planIds.has(t.id) && t.status !== 'dropped') {
+        drift.push(`${t.id} is not in the plan — restore the heading or drop the task`);
+      }
+    }
+  }
+
+  // A role outside the task roles (a typo, a reviewer role) is drift while the task can still be dispatched: SDD stops
+  // and asks instead. A done or dropped task's role no longer drives anything, and triqual cannot change it any more.
+  for (const t of tasks.filter((x) => !FINISHED.has(x.status))) {
+    const role = roleOf(t);
+    if (!TASK_ROLES.includes(role)) drift.push(`${t.id} has role "${role}", not a task role (${TASK_ROLES.join(', ')})`);
+  }
+
+  drift.push(...checkSection(statusText, renderedBody));
+
+  if (ledger.state === 'active') {
+    for (const t of tasks) {
+      for (const sha of Array.isArray(t.commits) ? t.commits : []) {
+        if (!commitExists(sha)) drift.push(`${t.id} commit ${String(sha).slice(0, 7)} does not resolve`);
+      }
+    }
+  }
+  return drift;
+}

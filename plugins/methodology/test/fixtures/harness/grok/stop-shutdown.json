@@ -1,0 +1,15 @@
+{
+  "hookEventName": "stop",
+  "sessionId": "id-f9292758ca48",
+  "cwd": "<project>",
+  "workspaceRoot": "<project>/",
+  "timestamp": "2026-09-28T22:05:58.358737+00:00",
+  "transcriptPath": "<redacted>",
+  "permissionMode": "bypassPermissions",
+  "reason": "shutdown",
+  "stopHookActive": false,
+  "hook_event_name": "Stop",
+  "session_id": "id-f9292758ca48",
+  "transcript_path": "<redacted>",
+  "permission_mode": "bypassPermissions"
+}

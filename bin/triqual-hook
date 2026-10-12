@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# The triqual hook launcher.
+# Bootstrap's shim step copies this file verbatim to ~/.local/bin/triqual-hook (mode 0755); ~/.local/bin/cm-hook is the
+# forwarder that runs it for one release. Every harness hook (Codex, Grok) calls `triqual-hook <event> --harness <id>`;
+# it runs `triqual hook <event> --harness <id>` through the triqual shim, with stdin and stdout passed through, and
+# always exits 0: blocks travel as stdout JSON. A missing node or shim, or a failing shim, is silent: its stderr goes
+# to hook.log.
+# The state dir is ~/.local/state/triqual when it exists, else ~/.local/state/claude-methodology when that exists, else
+# ~/.local/state/triqual (as doctor reads it). Before running node it writes the last-run stamp
+# <state>/last-run-<harness> (one line: UTC time and event), then moves a hook.log larger than 1 MiB to hook.log.1 (one
+# generation kept). The stamp is written only for a harness id of [A-Za-z0-9_-] and an event that is not an option.
+# When hook.log cannot be opened, node still runs, with its stderr discarded.
+set +e
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+state="$HOME/.local/state/triqual"
+if [ ! -e "$state" ] && [ -e "$HOME/.local/state/claude-methodology" ]; then
+  state="$HOME/.local/state/claude-methodology"
+fi
+log="$state/hook.log"
+mkdir -p "$state" 2>/dev/null
+
+harness=''
+prev=''
+for arg in "$@"; do
+  if [ "$prev" = '--harness' ]; then
+    harness="$arg"
+    break
+  fi
+  prev="$arg"
+done
+now=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
+stamp=yes
+case "$harness" in '' | *[!A-Za-z0-9_-]*) stamp='' ;; esac
+case "$1" in -*) stamp='' ;; esac
+if [ -n "$stamp" ] && [ -n "$now" ]; then
+  { printf '%s %s\n' "$now" "$1" > "$state/last-run-$harness"; } 2>/dev/null
+fi
+
+if [ -f "$log" ]; then
+  size=$( { wc -c < "$log" | tr -d ' '; } 2>/dev/null)
+  if [ -n "$size" ] && [ "$size" -gt 1048576 ] 2>/dev/null; then
+    mv -f "$log" "$log.1" 2>/dev/null
+  fi
+fi
+
+# A failed redirect would skip node altogether, so probe hook.log first.
+if { : >>"$log"; } 2>/dev/null; then
+  node "$HOME/.local/bin/triqual.mjs" hook "$@" 2>>"$log"
+else
+  node "$HOME/.local/bin/triqual.mjs" hook "$@" 2>/dev/null
+fi
+exit 0

@@ -1,0 +1,37 @@
+# Synthetic Codex config for the toml-edit tests. Every value is a placeholder.
+model = "gpt-placeholder"
+model_reasoning_effort = "high"
+approval_policy = "on-request"
+notify = [
+  "node",
+  "/tmp/placeholder-notify.mjs",
+]
+matrix = [
+[1, 2],
+[3, 4],
+]
+developer_note = """
+A multi-line string holding lines that look like headers:
+[not.a.header]
+[[not.an.array.table]]
+"""
+literal_note = '''
+[also.not.a.header]
+'''
+
+[features]
+hooks = true
+
+[projects."/tmp/placeholder-project"]
+trust_level = "trusted"
+
+# The bridge plugin, enabled by cm sync.
+[plugins."methodology-codex@claude-methodology"]
+enabled = true
+
+[hooks.state."methodology-codex@claude-methodology:hooks/hooks.json:session_start:0:0"]
+trusted_hash = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+[mcp_servers.claude-mem]
+command = "node"
+args = ["/tmp/placeholder-claude-mem.mjs"]

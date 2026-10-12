@@ -1,0 +1,12 @@
+{
+  "hookEventName": "session_start",
+  "sessionId": "id-f9292758ca48",
+  "cwd": "<project>",
+  "workspaceRoot": "<project>/",
+  "timestamp": "2026-09-28T22:05:40.640687+00:00",
+  "permissionMode": "bypassPermissions",
+  "source": "new",
+  "hook_event_name": "SessionStart",
+  "session_id": "id-f9292758ca48",
+  "permission_mode": "bypassPermissions"
+}

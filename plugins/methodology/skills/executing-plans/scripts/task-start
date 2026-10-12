@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# Begin one task of an inline plan execution in a single call: extract the
+# task's brief (via subagent-driven-development's task-brief, so both skills
+# share one workspace), record BASE, the commit the task's review range is
+# cut from, and — when the repo is opted in to progress tracking — move the
+# plan's task ledger (`triqual tasks start T<N>`). One tool call instead of three,
+# because every call in an inline session is a turn that re-reads the whole
+# context.
+#
+# Tracking paths come from `triqual tasks paths --json` (Addendum E.5):
+#   opted in             the ledger moves; a plan named by file name only is
+#                        looked up in plansDir (local mode keeps plans there)
+#   not opted in         (`"optedIn": false`, or exit 2 from an older
+#                        progress-tracking) no ledger move
+#   triqual missing           (exit 3, or not on PATH) as not opted in, said once
+# A task the ledger already shows started (in_progress, in_review or done) is
+# not moved again: a resumed session never fails on a move it already made.
+# No run ever creates progress.md.
+#
+# Usage: task-start PLAN_FILE TASK_NUMBER
+# Prints:
+#   brief: <path to the task's brief file>
+#   base:  <full SHA of HEAD>
+#   and a `ledger:` or `tracking:` line
+set -euo pipefail
+
+if [ $# -ne 2 ]; then
+  echo "usage: task-start PLAN_FILE TASK_NUMBER" >&2
+  exit 2
+fi
+
+plan=$1
+n=$2
+sdd="$(cd "$(dirname "$0")/../../subagent-driven-development/scripts" && pwd)"
+
+# Tracking paths: the same block in task-start and task-done. Sets `tracking`
+# to committed|local|store (opted in), off (not opted in) or missing, and
+# `plans_dir` when opted in. `plan_arg` is what the moves pass as `--plan`: the
+# plan's path in `plans_dir` (committed, local), or its bare file name in store
+# mode, where there is no ledger file and `triqual tasks` matches by file name.
+tracking=missing
+plans_dir=
+# triqual when it is on PATH, else its cm alias (a machine whose plugin was updated before bootstrap): the same order as
+# the progress gate. `cli` stays empty when neither is installed.
+cli=
+if command -v triqual >/dev/null 2>&1; then
+  cli=triqual
+elif command -v cm >/dev/null 2>&1; then
+  cli=cm
+fi
+if [ -n "$cli" ]; then
+  rc=0
+  paths=$("$cli" tasks paths --json 2>/dev/null) || rc=$?
+  case $rc in
+    0)
+      parsed=$(printf '%s' "$paths" | node -e '
+        const j = JSON.parse(require("fs").readFileSync(0, "utf8"));
+        process.stdout.write(`${j.optedIn === false ? "off" : j.mode || "committed"}\t${j.plansDir || ""}`);
+      ')
+      tracking=${parsed%%$'\t'*}
+      plans_dir=${parsed#*$'\t'}
+      ;;
+    2) tracking=off ;;
+    3 | 127) tracking=missing ;;
+    *) echo "task-start: $cli tasks paths --json exited $rc" >&2; exit "$rc" ;;
+  esac
+fi
+if [ "$tracking" = off ] || [ "$tracking" = missing ]; then
+  plans_dir=
+elif [ ! -f "$plan" ] && [ -f "$plans_dir/$(basename "$plan")" ]; then
+  plan="$plans_dir/$(basename "$plan")"
+fi
+if [ "$tracking" = store ]; then
+  plan_arg=$(basename "$plan")
+else
+  plan_arg="$plans_dir/$(basename "$plan")"
+fi
+
+# The task's status in the plan's task ledger, which `triqual tasks status --json`
+# locates (empty when it lists no such ledger): a resumed session skips a
+# move the ledger already shows instead of failing on it. A listing or ledger
+# that cannot be read or parsed also gives empty, so the move is made (and
+# `triqual tasks` itself says what is wrong). In store mode there is no ledger
+# file (`ledgerPath` is a stored plan path), so the status comes from
+# `triqual tasks export --json` instead: the plan whose `name` is the plan file
+# name without `.md`. Same in task-start and task-done.
+task_status() {
+  local ledger_path listing
+  if [ "$tracking" = store ]; then
+    listing=$("$cli" tasks export --json 2>/dev/null) || listing='{}'
+    printf '%s' "$listing" | node -e '
+      const fs = require("fs");
+      const [name, id] = process.argv.slice(1);
+      try {
+        const exported = JSON.parse(fs.readFileSync(0, "utf8"));
+        const found = (Array.isArray(exported.plans) ? exported.plans : []).find((p) => p && p.name === name);
+        const task = found ? (found.tasks || []).find((t) => t && t.id === id) : null;
+        if (task) process.stdout.write(String(task.status));
+      } catch {
+        // unreadable: no status, so the caller makes the move
+      }
+    ' "$(basename "$plan" .md)" "T$n"
+    return 0
+  fi
+  ledger_path="$plans_dir/$(basename "$plan" .md).tasks.json"
+  listing=$("$cli" tasks status --json 2>/dev/null) || listing='[]'
+  printf '%s' "$listing" | node -e '
+    const fs = require("fs");
+    const [ledgerPath, id] = process.argv.slice(1);
+    try {
+      const listed = JSON.parse(fs.readFileSync(0, "utf8"));
+      const entry = Array.isArray(listed) ? listed.find((l) => l && l.ledgerPath === ledgerPath) : null;
+      if (!entry) process.exit(0);
+      const task = (JSON.parse(fs.readFileSync(entry.ledgerPath, "utf8")).tasks || []).find((t) => t && t.id === id);
+      if (task) process.stdout.write(String(task.status));
+    } catch {
+      // unreadable: no status, so the caller makes the move
+    }
+  ' "$ledger_path" "T$n"
+}
+
+out=$("$sdd/task-brief" "$plan" "$n")
+brief=$(printf '%s\n' "$out" | sed -n 's/^wrote \(.*\): [0-9][0-9]* lines$/\1/p')
+[ -n "$brief" ] || { echo "task-brief did not report a path: $out" >&2; exit 1; }
+
+echo "brief: $brief"
+echo "base: $(git rev-parse HEAD)"
+
+case $tracking in
+  missing) echo "tracking: triqual missing (exit 3 or not on PATH): handled as not opted in; no ledger move" ;;
+  off) echo "tracking: not opted in; no ledger move" ;;
+  *)
+    status=$(task_status)
+    case $status in
+      in_progress | in_review | done) echo "ledger: T$n already $status; start skipped"; exit 0 ;;
+    esac
+    rc=0
+    moved=$("$cli" tasks start "T$n" --plan "$plan_arg" 2>&1) || rc=$?
+    if [ "$rc" -ne 0 ]; then
+      echo "task-start: $cli tasks start T$n exited $rc: $moved" >&2
+      exit "$rc"
+    fi
+    echo "ledger: $moved"
+    ;;
+esac

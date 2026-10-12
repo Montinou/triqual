@@ -1,0 +1,25 @@
+{
+  "hookEventName": "pre_tool_use",
+  "sessionId": "id-dbc534548164",
+  "cwd": "<project>",
+  "workspaceRoot": "<project>/",
+  "timestamp": "2026-09-28T21:58:27.579504+00:00",
+  "transcriptPath": "<redacted>",
+  "permissionMode": "bypassPermissions",
+  "toolName": "list_dir",
+  "toolUseId": "id-f21faca47acd",
+  "toolInput": {
+    "target_directory": "<project>"
+  },
+  "toolInputTruncated": false,
+  "subagentType": "general-purpose",
+  "hook_event_name": "PreToolUse",
+  "session_id": "id-dbc534548164",
+  "transcript_path": "<redacted>",
+  "permission_mode": "bypassPermissions",
+  "tool_name": "list_dir",
+  "tool_input": {
+    "target_directory": "<project>"
+  },
+  "tool_use_id": "id-f21faca47acd"
+}

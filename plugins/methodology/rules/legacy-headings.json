@@ -1,0 +1,13 @@
+[
+  "## DISCOVERING PROJECT DOCUMENTATION",
+  "## UNIVERSAL DEVELOPMENT RULES",
+  "### Never Assume - Always Verify",
+  "### No Hardcoded Values",
+  "### UI: shadcn/ui + shadcnblocks Pro",
+  "### Multi-Agent Coordination",
+  "### Multi-Agent Roles: Model and Effort",
+  "### Workflow Fan-out Caps (enforced by hook)",
+  "### Git Best Practices",
+  "### Code Quality Rules",
+  "## INSTRUCTION HIERARCHY"
+]

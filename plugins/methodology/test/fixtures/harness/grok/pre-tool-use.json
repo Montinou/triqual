@@ -1,0 +1,24 @@
+{
+  "hookEventName": "pre_tool_use",
+  "sessionId": "id-f9292758ca48",
+  "cwd": "<project>",
+  "workspaceRoot": "<project>/",
+  "timestamp": "2026-09-28T22:05:49.554270+00:00",
+  "transcriptPath": "<redacted>",
+  "permissionMode": "bypassPermissions",
+  "toolName": "read_file",
+  "toolUseId": "id-f2f2ab3338fb",
+  "toolInput": {
+    "target_file": "<project>/note.txt"
+  },
+  "toolInputTruncated": false,
+  "hook_event_name": "PreToolUse",
+  "session_id": "id-f9292758ca48",
+  "transcript_path": "<redacted>",
+  "permission_mode": "bypassPermissions",
+  "tool_name": "read_file",
+  "tool_input": {
+    "target_file": "<project>/note.txt"
+  },
+  "tool_use_id": "id-f2f2ab3338fb"
+}

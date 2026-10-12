@@ -1,0 +1,19 @@
+{
+  "hookEventName": "stop",
+  "sessionId": "id-f6183d86d4fc",
+  "cwd": "<project>",
+  "workspaceRoot": "<project>/",
+  "timestamp": "2026-09-28T22:01:19.603621+00:00",
+  "transcriptPath": "<redacted>",
+  "promptId": "id-4a53f1b33ed0",
+  "permissionMode": "bypassPermissions",
+  "reason": "end_turn",
+  "stopHookActive": true,
+  "lastAssistantMessage": "CONTINUED",
+  "backgroundTasks": [],
+  "sessionCrons": [],
+  "hook_event_name": "Stop",
+  "session_id": "id-f6183d86d4fc",
+  "transcript_path": "<redacted>",
+  "permission_mode": "bypassPermissions"
+}

@@ -1,0 +1,6 @@
+{
+  "name": "methodology-codex",
+  "version": "0.2.0",
+  "description": "Runs the triqual hooks in Codex through ~/.local/bin/triqual-hook.",
+  "hooks": "./hooks/hooks.json"
+}

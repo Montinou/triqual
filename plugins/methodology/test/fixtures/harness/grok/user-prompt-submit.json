@@ -1,0 +1,13 @@
+{
+  "hookEventName": "user_prompt_submit",
+  "sessionId": "id-f9292758ca48",
+  "cwd": "<project>",
+  "workspaceRoot": "<project>/",
+  "timestamp": "2026-09-28T22:05:40.769008+00:00",
+  "promptId": "id-787ea0e1ac11",
+  "permissionMode": "bypassPermissions",
+  "prompt": "In ONE step, issue three read_file tool calls in parallel for note.txt, a.txt and b.txt (do not call them one after another), then report the three contents.",
+  "hook_event_name": "UserPromptSubmit",
+  "session_id": "id-f9292758ca48",
+  "permission_mode": "bypassPermissions"
+}

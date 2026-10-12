@@ -1,0 +1,9 @@
+{
+  "name": "memory-report",
+  "description": "Optional weekly local report on the health of the claude-mem memory (hygiene, storage and growth, Chroma health) plus LLM insights on proposed rules, skill changes and stale notes from allowlisted personal projects. Runs lazily from a SessionStart hook and shows one line until the report is read.",
+  "version": "0.4.0",
+  "author": { "name": "Montinou" },
+  "repository": "https://github.com/Montinou/triqual",
+  "license": "MIT",
+  "keywords": ["memory", "claude-mem", "report", "hooks"]
+}

@@ -1,0 +1,187 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import {
+  copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { BRIDGE_VERSION, HOOK_TIMEOUTS } from '../plugins/methodology/bin/lib/harnesses.mjs';
+import { BRAND } from '../plugins/methodology/bin/lib/brand.mjs';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const readJson = (rel) => JSON.parse(readFileSync(join(ROOT, rel), 'utf8'));
+
+// The Codex bridge: listed only in the Codex marketplace, never in the Claude one (spec F.2).
+const BRIDGE = 'methodology-codex';
+const CODEX_MARKETPLACE = '.agents/plugins/marketplace.json';
+const BRIDGE_HOOKS = `plugins/${BRIDGE}/hooks/hooks.json`;
+
+// FROZEN: the sha256 of the bridge's hooks/hooks.json. Codex keys hook trust on this file, so any change to it is a
+// breaking release the user must re-approve in Codex (spec F.2), and the bridge's version moves only then. Do not
+// update this pin to make a test pass. Last moved by bridge 0.2.0, which runs ~/.local/bin/triqual-hook.
+const BRIDGE_HOOKS_SHA256 = '30a8ddb402feb1a736e0478680513e5ef75fb9a71db98ba9df43379e1e470643';
+
+// The plugins/* dirs a marketplace under `root` fails to list: the bridge must be in the Codex marketplace, every
+// other dir in the Claude one.
+function unlistedPluginDirs(root) {
+  const read = (rel) => JSON.parse(readFileSync(join(root, rel), 'utf8'));
+  const claude = read('.claude-plugin/marketplace.json').plugins.map((p) => p.name);
+  const codex = read(CODEX_MARKETPLACE).plugins.map((p) => p.name);
+  const dirs = readdirSync(join(root, 'plugins')).filter((d) => statSync(join(root, 'plugins', d)).isDirectory());
+  return dirs.filter((dir) => !(dir === BRIDGE ? codex : claude).includes(dir));
+}
+
+// A temp root holding both marketplace files and an empty dir per plugins/* entry, plus `extraDirs`.
+function withMarketplaceCopy(extraDirs, fn) {
+  const root = mkdtempSync(join(tmpdir(), 'cm-marketplace-'));
+  try {
+    for (const rel of ['.claude-plugin/marketplace.json', CODEX_MARKETPLACE]) {
+      mkdirSync(dirname(join(root, rel)), { recursive: true });
+      copyFileSync(join(ROOT, rel), join(root, rel));
+    }
+    const dirs = readdirSync(join(ROOT, 'plugins')).filter((d) => statSync(join(ROOT, 'plugins', d)).isDirectory());
+    for (const dir of [...dirs, ...extraDirs]) mkdirSync(join(root, 'plugins', dir), { recursive: true });
+    return fn(root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test('codex marketplace lists only the bridge', () => {
+  const marketplace = readJson(CODEX_MARKETPLACE);
+  assert.equal(marketplace.name, BRAND.marketplace);
+  assert.deepEqual(marketplace.interface, { displayName: BRAND.marketplace });
+  assert.deepEqual(marketplace.plugins, [{
+    name: BRIDGE,
+    source: { source: 'local', path: `./plugins/${BRIDGE}` },
+    policy: { installation: 'AVAILABLE', authentication: 'ON_INSTALL' },
+    category: 'Productivity',
+  }]);
+});
+
+test('the Claude marketplace does not list methodology-codex', () => {
+  const listed = readJson('.claude-plugin/marketplace.json').plugins.map((p) => p.name);
+  assert.ok(!listed.includes(BRIDGE), `${BRIDGE} is not in the Claude marketplace`);
+});
+
+test('every plugins/* dir is listed in a marketplace', () => {
+  assert.ok(existsSync(join(ROOT, 'plugins', BRIDGE)), `plugins/${BRIDGE} exists`);
+  assert.deepEqual(unlistedPluginDirs(ROOT), []);
+  withMarketplaceCopy(['unlisted-extra'], (root) => {
+    assert.deepEqual(unlistedPluginDirs(root), ['unlisted-extra'], 'an unlisted extra dir still fails');
+  });
+});
+
+test('bridge hooks are frozen', () => {
+  const sha = createHash('sha256').update(readFileSync(join(ROOT, BRIDGE_HOOKS))).digest('hex');
+  assert.equal(sha, BRIDGE_HOOKS_SHA256, `${BRIDGE_HOOKS} changed: that is a breaking release (see the pin comment)`);
+});
+
+test('bridge has exactly two handlers with the F.2 commands', () => {
+  const { hooks } = readJson(BRIDGE_HOOKS);
+  assert.deepEqual(Object.keys(hooks), ['SessionStart', 'Stop']);
+  assert.deepEqual(hooks.SessionStart, [{
+    matcher: 'startup|resume|clear|compact',
+    hooks: [{
+      type: 'command',
+      command: `"$HOME/.local/bin/${BRAND.launcher}" session-start --harness codex`,
+      timeout: HOOK_TIMEOUTS.codex['session-start'],
+    }],
+  }]);
+  assert.deepEqual(hooks.Stop, [{
+    hooks: [{
+      type: 'command',
+      command: `"$HOME/.local/bin/${BRAND.launcher}" stop --harness codex`,
+      timeout: HOOK_TIMEOUTS.codex.stop,
+    }],
+  }]);
+  const manifest = readJson(`plugins/${BRIDGE}/.codex-plugin/plugin.json`);
+  assert.deepEqual(manifest, {
+    name: BRIDGE,
+    version: '0.2.0',
+    description: 'Runs the triqual hooks in Codex through ~/.local/bin/triqual-hook.',
+    hooks: './hooks/hooks.json',
+  });
+  assert.equal(manifest.version, BRIDGE_VERSION);
+});
+
+test('marketplace versions match plugin manifests', () => {
+  const marketplace = readJson('.claude-plugin/marketplace.json');
+  const listed = marketplace.plugins.map((p) => p.name);
+
+  for (const entry of marketplace.plugins) {
+    assert.equal(entry.source, `./plugins/${entry.name}`, `${entry.name}: source`);
+    const manifestRel = `plugins/${entry.name}/.claude-plugin/plugin.json`;
+    assert.ok(existsSync(join(ROOT, manifestRel)), `${manifestRel} exists`);
+    const manifest = readJson(manifestRel);
+    assert.equal(manifest.name, entry.name, `${manifestRel}: name`);
+    assert.equal(manifest.version, entry.version, `${entry.name}: marketplace version equals plugin.json version`);
+  }
+
+  assert.ok(listed.includes('methodology'), 'methodology is listed in the marketplace');
+  const methodology = readJson('plugins/methodology/.claude-plugin/plugin.json');
+  assert.ok(Array.isArray(methodology.dependencies), 'methodology declares its dependencies');
+  for (const dep of methodology.dependencies) {
+    assert.ok(listed.includes(dep), `methodology dependency ${dep} is a listed plugin`);
+  }
+});
+
+test('plugin versions are the ones this release ships', () => {
+  const versions = Object.fromEntries(readJson('.claude-plugin/marketplace.json').plugins.map((p) => [p.name, p.version]));
+  assert.deepEqual(versions, {
+    'progress-tracking': '0.4.0',
+    'workflow-gate': '0.1.1',
+    roles: '0.3.1',
+    methodology: '0.5.1',
+    'memory-report': '0.4.0',
+  });
+  assert.equal(readJson('plugins/methodology-codex/.codex-plugin/plugin.json').version, '0.2.0');
+  assert.deepEqual(readJson('plugins/methodology/.claude-plugin/plugin.json').dependencies,
+    ['progress-tracking', 'workflow-gate', 'roles']);
+});
+
+// Store-2 T6: the public export carries the plugins and their tests, never this repo's own tracking or its docs.
+test('public-export.json includes neither docs/ nor the tracking files', () => {
+  const { include } = readJson('public-export.json');
+  assert.ok(Array.isArray(include) && include.length > 0, 'include list');
+  const tracking = (entry) => /^(\.\/)?(docs(\/|$)|\.methodology(\/|$)|progress\.md$|status\.md$)/.test(entry) || entry.endsWith('.tasks.json');
+  assert.deepEqual(include.filter(tracking), []);
+});
+
+test('the marketplace, the package and the plugin repositories carry the triqual names', () => {
+  assert.equal(readJson('.claude-plugin/marketplace.json').name, 'triqual');
+  assert.equal(readJson('.agents/plugins/marketplace.json').name, 'triqual');
+  assert.equal(readJson('package.json').name, 'triqual');
+  for (const name of ['progress-tracking', 'memory-report']) {
+    assert.equal(readJson(`plugins/${name}/.claude-plugin/plugin.json`).repository, 'https://github.com/Montinou/triqual', name);
+  }
+});
+
+test('npm test runs every plugin test and the root test dir', () => {
+  assert.equal(readJson('package.json').scripts.test, 'node --test "plugins/*/test/*.test.mjs" "test/*.test.mjs"');
+});
+
+test('roles\' plugin.json description lists the eight shipped role agents', () => {
+  assert.equal(readJson('plugins/roles/.claude-plugin/plugin.json').description,
+    'Eight role agents for plan execution: brief-writer, tdd-implementer, complex-implementer, safety-reviewer, '
+    + 'spec-reviewer, review-fixer, final-adversarial-reviewer, hunter.');
+});
+
+test('methodology\'s description names the fork: skills, roles dispatch and tracking', () => {
+  const entry = readJson('.claude-plugin/marketplace.json').plugins.find((p) => p.name === 'methodology');
+  const manifest = readJson('plugins/methodology/.claude-plugin/plugin.json');
+  for (const description of [entry.description, manifest.description]) {
+    for (const word of [/fork/i, /skills/, /roles/, /tracking/]) assert.match(description, word, description);
+  }
+});
+
+test('the marketplace and methodology descriptions say Triqual, not the personal methodology (spec 2, brand text)', () => {
+  const marketplace = readJson('.claude-plugin/marketplace.json');
+  const manifest = readJson('plugins/methodology/.claude-plugin/plugin.json');
+  for (const description of [marketplace.metadata.description, manifest.description]) {
+    assert.match(description, /Triqual/, description);
+    assert.doesNotMatch(description, /personal methodology/i, description);
+  }
+});

@@ -1,0 +1,8 @@
+[
+  "### Step 1: Check Local Documentation Directories",
+  "### Step 2: Check Project AGENTS.md",
+  "### Priority Order",
+  "#### WRONG (Sequential Execution)",
+  "#### CORRECT (Parallel Execution)",
+  "#### Example: Parallel Agent Launch"
+]

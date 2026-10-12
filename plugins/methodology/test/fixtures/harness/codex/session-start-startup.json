@@ -1,0 +1,9 @@
+{
+  "session_id": "id-ecdf4486eaa2",
+  "transcript_path": "<redacted>",
+  "cwd": "<project>",
+  "hook_event_name": "SessionStart",
+  "model": "gpt-6-sol",
+  "permission_mode": "bypassPermissions",
+  "source": "startup"
+}

@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Workflow",
+        "hooks": [
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs\"", "timeout": 10, "statusMessage": "workflow-gate: checking agent budget and role dispatch" }
+        ]
+      }
+    ]
+  }
+}

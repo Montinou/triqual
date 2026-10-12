@@ -1,0 +1,19 @@
+{
+  "hookEventName": "stop",
+  "sessionId": "id-f9292758ca48",
+  "cwd": "<project>",
+  "workspaceRoot": "<project>/",
+  "timestamp": "2026-09-28T22:05:57.812502+00:00",
+  "transcriptPath": "<redacted>",
+  "promptId": "id-787ea0e1ac11",
+  "permissionMode": "bypassPermissions",
+  "reason": "end_turn",
+  "stopHookActive": false,
+  "lastAssistantMessage": "The three files were read in one parallel step. MHPROBE.\n\n- `note.txt`: hello probe\n- `a.txt`: a\n- `b.txt`: b",
+  "backgroundTasks": [],
+  "sessionCrons": [],
+  "hook_event_name": "Stop",
+  "session_id": "id-f9292758ca48",
+  "transcript_path": "<redacted>",
+  "permission_mode": "bypassPermissions"
+}

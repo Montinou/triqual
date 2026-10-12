@@ -1,0 +1,14 @@
+{
+  "hookEventName": "post_compact",
+  "sessionId": "id-15412047aaf7",
+  "cwd": "<project>",
+  "workspaceRoot": "<project>/",
+  "timestamp": "2026-09-28T22:00:57.366194+00:00",
+  "transcriptPath": "<redacted>",
+  "permissionMode": "bypassPermissions",
+  "source": "manual",
+  "hook_event_name": "PostCompact",
+  "session_id": "id-15412047aaf7",
+  "transcript_path": "<redacted>",
+  "permission_mode": "bypassPermissions"
+}

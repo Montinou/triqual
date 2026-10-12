@@ -1,0 +1,30 @@
+{
+  "include": [".claude-plugin/", ".agents/", "bin/", "plugins/", "test/", "package.json", "README.md", ".gitignore", "LICENSE", "public-export.json"],
+  "exclude": ["test/e2e-probe.test.mjs", "test/provider-probes.test.mjs", "test/no-personal-data.test.mjs", "test/brand-guard.test.mjs"],
+  "keepInTarget": [".github/"],
+  "allowLegacy": [
+    {"path": "bin/triqual-hook", "contains": "claude-methodolog"},
+    {"path": "bin/triqual-shim.mjs", "contains": "claude-methodolog"},
+    {"path": "plugins/memory-report/lib/brand.mjs", "contains": "claude-methodolog"},
+    {"path": "plugins/methodology/bin/lib/brand.mjs", "contains": "claude-methodolog"},
+    {"path": "plugins/methodology/test/fixtures/legacy/claude-md.md", "contains": "claude-methodolog"},
+    {"path": "plugins/methodology/test/fixtures/legacy/codex-agent.toml", "contains": "claude-methodolog"},
+    {"path": "plugins/methodology/test/fixtures/legacy/codex-config.toml", "contains": "claude-methodolog"},
+    {"path": "plugins/progress-tracking/lib/brand.mjs", "contains": "claude-methodolog"},
+    {"path": "plugins/progress-tracking/lib/snapshot.mjs", "contains": "claude-methodolog"}
+  ],
+  "allowSecrets": [
+    {"path": "plugins/memory-report/lib/insights.mjs", "contains": "selection.secret + dropped.secret"},
+    {"path": "plugins/memory-report/lib/policy.mjs", "contains": "BEGIN/,"},
+    {"path": "plugins/memory-report/test/insights-runner.test.mjs", "contains": "NOTE-TEXT-' + 'zq'"},
+    {"path": "plugins/memory-report/test/policy.test.mjs", "contains": "u0070'.repeat(3)}"},
+    {"path": "plugins/memory-report/test/repo-resolve.test.mjs", "contains": "user:hunter2@Example.invalid"},
+    {"path": "plugins/methodology/rules/global.md", "contains": "TOKEN = \"sk-123"},
+    {"path": "plugins/methodology/skills/brainstorming/scripts/server.cjs", "contains": "tokenInfo.value"},
+    {"path": "plugins/methodology/skills/brainstorming/scripts/server.cjs", "contains": "N = generateToken();"},
+    {"path": "plugins/methodology/test/doctor.test.mjs", "contains": "ghp_SecretLooking"},
+    {"path": "plugins/methodology/test/doctor.test.mjs", "contains": "sk-live-SecretLook"},
+    {"path": "plugins/methodology/test/doctor.test.mjs", "contains": "xai-SECRET-TOKEN-inspect"},
+    {"path": "plugins/methodology/test/fork.test.mjs", "contains": "randomBytes(32).toString('hex')"}
+  ]
+}

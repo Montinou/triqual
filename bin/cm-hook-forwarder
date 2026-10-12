@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# The cm-hook forwarder of triqual.
+# Bootstrap's shim step copies this file verbatim to ~/.local/bin/cm-hook (mode 0755) for one release, so harness hook
+# files written before the rename (they call cm-hook) keep running: it execs ~/.local/bin/triqual-hook with the same
+# args, stdin and stdout. Without an executable triqual-hook it exits 0 with no output, as the launcher does when it
+# cannot run.
+launcher="$HOME/.local/bin/triqual-hook"
+if [ -x "$launcher" ]; then
+  exec "$launcher" "$@"
+fi
+exit 0

@@ -1,0 +1,11 @@
+{
+  "session_id": "id-339ce0192925",
+  "turn_id": "id-71018cd8a303",
+  "transcript_path": "<redacted>",
+  "cwd": "<project>",
+  "hook_event_name": "Stop",
+  "model": "gpt-6-sol",
+  "permission_mode": "bypassPermissions",
+  "stop_hook_active": false,
+  "last_assistant_message": "hello"
+}

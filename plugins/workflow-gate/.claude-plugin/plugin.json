@@ -1,0 +1,1 @@
+{ "name": "workflow-gate", "version": "0.1.1", "description": "Rejects Workflow scripts without a declared agent budget, role dispatch, or bounded fan-out.", "author": { "name": "Montinou" }, "license": "MIT" }
