@@ -755,24 +755,24 @@ test('background work never delays the hook', () => withHome({}, async (home) =>
 }));
 
 test('backgroundRun', () => withHome({}, async (home) => {
-  const skillvault = join(home, '.local', 'bin', 'skillvault');
+  const headjack = join(home, '.local', 'bin', 'headjack');
   const recorder = () => {
     const runs = [];
     return { runs, run: async (cmd, args, opts) => { runs.push({ cmd, args, ...opts }); return { code: 0, stdout: '', stderr: '' }; } };
   };
-  // Refresh is called; the cleanup runs only for Codex, and only when skillvault is there.
+  // Refresh is called; the cleanup runs only for Codex, and only when headjack is there.
   let refreshed = 0;
   let r = recorder();
   await backgroundRun({ home, harness: 'codex', run: r.run, refresh: async () => { refreshed += 1; } });
   assert.equal(refreshed, 1);
   assert.deepEqual(r.runs, []);
-  mkdirSync(dirname(skillvault), { recursive: true });
-  writeFileSync(skillvault, '#!/bin/sh\n', { mode: 0o755 });
+  mkdirSync(dirname(headjack), { recursive: true });
+  writeFileSync(headjack, '#!/bin/sh\n', { mode: 0o755 });
   r = recorder();
   await backgroundRun({ home, harness: 'codex', run: r.run, refresh: async () => { refreshed += 1; } });
   assert.equal(refreshed, 2);
   assert.equal(r.runs.length, 1);
-  assert.equal(r.runs[0].cmd, skillvault);
+  assert.equal(r.runs[0].cmd, headjack);
   assert.deepEqual(r.runs[0].args, ['cleanup', '--older-than', '48h']);
   assert.ok(r.runs[0].timeoutMs <= 5000);
   r = recorder();

@@ -241,3 +241,13 @@ test('CONTRIBUTING.md and SECURITY.md exist, link each other and are published b
   const manifest = JSON.parse(readFileSync(join(ROOT, 'public-export.json'), 'utf8'));
   for (const file of ['CONTRIBUTING.md', 'SECURITY.md']) assert.ok(manifest.include.includes(file), `${file} is in the export manifest`);
 });
+
+test('README lists headjack as an optional external plugin', () => {
+  const row = README.split('\n').find((line) => line.startsWith('| `headjack` | external |'));
+  assert.ok(row, 'headjack row');
+  for (const text of ['claude plugin install headjack@triqual', 'Node 22.16', '2.1.275', 'https://github.com/Montinou/headjack',
+    '~/.local/bin', 'clone', 'not from the installed plugin']) {
+    assert.ok(row.includes(text), text);
+  }
+  assert.doesNotMatch(row, /0\.1\.0/);
+});

@@ -10,7 +10,7 @@
 // Claude gives them, and one deadline per event (the harness timeout minus 2 s) is shared by drift and the gate.
 // It never throws and always exits 0: any failure gives no output, and unknown input or an unexpected error one
 // stderr line (never the payload).
-//   node hook.mjs background --harness <id>   the detached background run (refresh; Codex: skillvault cleanup)
+//   node hook.mjs background --harness <id>   the detached background run (refresh; Codex: headjack cleanup)
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -263,7 +263,7 @@ function realRun(cmd, args, { timeoutMs, cwd }) {
 }
 
 // The background entry: refresh (the CLI passes refreshHarness: the Codex skill links and role agents), then for Codex
-// `skillvault cleanup --older-than 48h` when ~/.local/bin/skillvault exists, output discarded. Nothing runs when
+// `headjack cleanup --older-than 48h` when ~/.local/bin/headjack exists, output discarded. Nothing runs when
 // config.json records the harness as removed (`harnesses.<id>.enabled === false`). Never throws.
 export async function backgroundRun({ home, harness, run, refresh = async () => {} }) {
   if (readMethodologyConfig(home).harnesses[harness]?.enabled === false) return; // never throws
@@ -274,9 +274,9 @@ export async function backgroundRun({ home, harness, run, refresh = async () => 
   }
   if (harness !== 'codex') return;
   try {
-    const skillvault = join(home, '.local', 'bin', 'skillvault');
-    if (existsSync(skillvault)) {
-      await run(skillvault, ['cleanup', '--older-than', '48h'], { timeoutMs: CLEANUP_TIMEOUT_MS, cwd: home });
+    const headjack = join(home, '.local', 'bin', 'headjack');
+    if (existsSync(headjack)) {
+      await run(headjack, ['cleanup', '--older-than', '48h'], { timeoutMs: CLEANUP_TIMEOUT_MS, cwd: home });
     }
   } catch (err) {
     logLine(err);

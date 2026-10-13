@@ -77,9 +77,9 @@ Subagent (<task role>):
 
     [TASK_SKILLS — include this section when the brief has a `**Skills:**` line; drop it otherwise]
     The brief's `**Skills:**` line names the vault skills this task needs.
-    1. Before installing any of them, record which are already installed (`skillvault list --json`).
-    2. Install the rest with `skillvault add <slug> --to claude --session --source plan`.
-    3. When you finish, remove only the skills you added in this task, and only while they are still session entries (`skillvault remove <slug> --from claude`). Never run `remove` on a skill that was installed before the task.
+    1. Before installing any of them, record which are already installed (`headjack list --json`).
+    2. Install the rest with `headjack add <slug> --to claude --session --source plan`.
+    3. When you finish, remove only the skills you added in this task, and only while they are still session entries (`headjack remove <slug> --from claude`). Never run `remove` on a skill that was installed before the task.
     4. When opted in, skip the removal while another task in the plan's task ledger is `in_progress` and lists the same skill: the last task that uses it removes it. In `"mode": "store"` there is no ledger file to read: take the other `in_progress` tasks' skills from `triqual tasks export --json` (`plans[].tasks[].skills`) instead.
 
     ## Code Organization

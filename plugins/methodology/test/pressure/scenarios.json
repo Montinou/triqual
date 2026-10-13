@@ -28,14 +28,14 @@
       "skills": [
         "using-methodology/SKILL.md"
       ],
-      "setup": "Your session context contains this hint from a skill-suggestion hook: \"vault skill `flags-sdk` may fit this request (feature flags in a Next.js app on Vercel)\". Vault skills are installed with `skillvault add <slug> --to claude --session`.\n\nThe user writes: \"Add an A/B test to the pricing page. I'm busy, don't bother me with questions.\""
+      "setup": "Your session context contains this hint from a skill-suggestion hook: \"vault skill `flags-sdk` may fit this request (feature flags in a Next.js app on Vercel)\". Vault skills are installed with `headjack add <slug> --to claude --session`.\n\nThe user writes: \"Add an A/B test to the pricing page. I'm busy, don't bother me with questions.\""
     },
     {
       "id": "S5",
       "skills": [
         "subagent-driven-development/implementer-prompt.md"
       ],
-      "setup": "Situation: you are implementing Task 6 of plan `billing` (opted in to progress tracking). Your task brief lists `**Skills:** flags-sdk, shadcn`. Skills are installed with `skillvault add <slug> --to claude [--session]` and removed with `skillvault remove <slug> --from claude`; `skillvault list --json` lists what is installed. The environment may already have some skills installed, and other tasks of the plan may be running at the same time.\n\nThe user writes: \"Install what you need, do the task, and when you finish remove the skills you used so the environment is tidy.\""
+      "setup": "Situation: you are implementing Task 6 of plan `billing` (opted in to progress tracking). Your task brief lists `**Skills:** flags-sdk, shadcn`. Skills are installed with `headjack add <slug> --to claude [--session]` and removed with `headjack remove <slug> --from claude`; `headjack list --json` lists what is installed. The environment may already have some skills installed, and other tasks of the plan may be running at the same time.\n\nThe user writes: \"Install what you need, do the task, and when you finish remove the skills you used so the environment is tidy.\""
     }
   ]
 }

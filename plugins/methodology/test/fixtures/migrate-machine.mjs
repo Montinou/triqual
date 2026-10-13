@@ -363,7 +363,7 @@ export function fakeMachine(home, {
     if (cmd === 'codex') return codex(args);
     if (cmd === 'grok') return grok(args);
     if (args.at(-1) === 'doctor') return ok('doctor: 0 failure(s), 0 warning(s)\n');
-    if (args[0] === '--version') return cmd === 'skillvault' ? { code: 127, stdout: '', stderr: 'ENOENT' } : ok(`${cmd} 1.0\n`);
+    if (args[0] === '--version') return cmd === 'headjack' ? { code: 127, stdout: '', stderr: 'ENOENT' } : ok(`${cmd} 1.0\n`);
     return { code: 127, stdout: '', stderr: `${cmd}: not found` };
   };
   return { run, calls, cwds };

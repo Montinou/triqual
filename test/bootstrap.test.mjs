@@ -127,7 +127,7 @@ test('each call gets its timeout: 300 s for plugin calls, 60 s for --version che
     assert.deepEqual(first.timeouts, {
       'claude --version': 60000,
       'git --version': 60000,
-      'skillvault --version': 60000,
+      'headjack --version': 60000,
       [ADD]: 300000,
       ...Object.fromEntries(SYSTEM.map((name) => [installCall(name), 300000])),
       [doctorCall(home)]: 60000,
@@ -216,31 +216,31 @@ test('prereqs fails without git', async () => {
   }
 });
 
-test('a missing skillvault is noted but does not fail prereqs', async () => {
+test('a missing headjack is noted but does not fail prereqs', async () => {
   const home = tempHome();
   try {
-    const { run, calls } = fakeRun({ 'skillvault --version': { code: 127 } });
+    const { run, calls } = fakeRun({ 'headjack --version': { code: 127 } });
     const steps = byId(await boot(home, run));
-    assert.ok(calls.includes('skillvault --version'), calls.join('\n'));
+    assert.ok(calls.includes('headjack --version'), calls.join('\n'));
     assert.equal(steps.prereqs.status, 'done');
-    assert.match(steps.prereqs.detail, /skillvault/);
+    assert.match(steps.prereqs.detail, /headjack/);
     assert.equal(steps.marketplace.status, 'done');
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
 });
 
-// The real skillvault CLI has no --version: it prints "Unknown option '--version'" and exits 2. Only 127 (spawn
+// The real headjack CLI has no --version: it prints "Unknown option '--version'" and exits 2. Only 127 (spawn
 // ENOENT) means it is absent.
-test('a skillvault whose --version exits non-zero (not 127) is present, not "not found"', async () => {
+test('a headjack whose --version exits non-zero (not 127) is present, not "not found"', async () => {
   const home = tempHome();
   try {
     const { run } = fakeRun({
-      'skillvault --version': { code: 2, stderr: "skillvault: Unknown option '--version'." },
+      'headjack --version': { code: 2, stderr: "headjack: Unknown option '--version'." },
     });
     const steps = byId(await boot(home, run));
     assert.equal(steps.prereqs.status, 'done');
-    assert.match(steps.prereqs.detail, /skillvault/);
+    assert.match(steps.prereqs.detail, /headjack/);
     assert.doesNotMatch(steps.prereqs.detail, /not found/);
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -833,7 +833,7 @@ test('doctor runs the installed shim: exit 0 is done', async () => {
   const home = tempHome();
   try {
     const { run, calls } = fakeRun({
-      [doctorCall(home)]: { code: 0, stdout: 'WARN skillvault unreachable\ndoctor: 0 failure(s), 1 warning(s)\n' },
+      [doctorCall(home)]: { code: 0, stdout: 'WARN headjack unreachable\ndoctor: 0 failure(s), 1 warning(s)\n' },
     });
     const steps = byId(await boot(home, run));
     assert.equal(calls.at(-1), doctorCall(home));
@@ -1425,7 +1425,7 @@ test("syncHarness receives the installed pluginRoot and ctx's isTTY and confirm"
   }
 });
 
-// The CLI with a fake claude and git on PATH (skillvault absent) and a temp HOME. The installed methodology plugin's
+// The CLI with a fake claude and git on PATH (headjack absent) and a temp HOME. The installed methodology plugin's
 // bin/doctor.mjs is a stub whose exit code the test chooses, so the real installed shim runs it; its rules/ is a copy
 // of the repo's, so the rules steps sync into the temp HOME. `commonjs` puts {"type":"commonjs"} in HOME's
 // package.json, which governs any extensionless file below HOME.
@@ -1470,7 +1470,7 @@ test('the CLI prints one line per step and exits 0 when nothing failed', () => {
     assert.equal(r.status, 0, r.stdout + r.stderr);
     const lines = r.stdout.trim().split('\n').filter((l) => !l.startsWith('migrate/'));
     assert.deepEqual(lines.map((l) => l.split(':')[0]), STEP_IDS);
-    assert.match(lines[0], /^prereqs: done — .*skillvault/);
+    assert.match(lines[0], /^prereqs: done — .*headjack/);
     assert.equal(lines[1], 'migrate: already — nothing to migrate');
     assert.equal(lines[3], 'install: already — every system plugin is installed at the marketplace version');
     assert.match(lines[6], /^rules: done — managed section created in /);

@@ -123,10 +123,10 @@ async function prereqs({ run, nodeVersion }) {
     else if (r.code !== 0) problems.push(`${cmd} --version failed (${failureDetail(r)}); ${hint}`);
     else notes.push(lastLine(r.stdout) || cmd);
   }
-  // Only 127 (spawn ENOENT) means absent: the real skillvault has no --version and exits 2 on it.
-  const sv = await tryRun(run, 'skillvault', ['--version'], CHECK_TIMEOUT_MS);
-  if (sv.code === 127) notes.push('skillvault not found (optional)');
-  else notes.push((sv.code === 0 && lastLine(sv.stdout)) || 'skillvault');
+  // Only 127 (spawn ENOENT) means absent: the real headjack has no --version and exits 2 on it.
+  const sv = await tryRun(run, 'headjack', ['--version'], CHECK_TIMEOUT_MS);
+  if (sv.code === 127) notes.push('headjack not found (optional)');
+  else notes.push((sv.code === 0 && lastLine(sv.stdout)) || 'headjack');
   if (problems.length > 0) return { status: 'failed', detail: problems.join('; ') };
   return { status: 'done', detail: notes.join(', ') };
 }

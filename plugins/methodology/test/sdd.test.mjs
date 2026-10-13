@@ -432,8 +432,8 @@ test('implementer and fixer briefs carry the progress.md entry rule, the staging
   // §11's task-skills rule, verbatim commands; the ledger check applies when opted in.
   const skills = at('## Task Skills').join('\n');
   for (const needle of [
-    '`skillvault list --json`',
-    '`skillvault add <slug> --to claude --session --source plan`',
+    '`headjack list --json`',
+    '`headjack add <slug> --to claude --session --source plan`',
     'only the skills you added in this task',
     'still session entries',
     'Never run `remove` on a skill that was installed before the task',

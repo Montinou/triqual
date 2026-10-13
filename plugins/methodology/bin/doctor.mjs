@@ -30,7 +30,7 @@ export const PLUGINS = ['methodology', 'progress-tracking', 'workflow-gate', 'ro
 const ROLES = ['brief-writer', 'tdd-implementer', 'complex-implementer', 'safety-reviewer', 'spec-reviewer',
   'review-fixer', 'final-adversarial-reviewer', 'hunter'];
 const LEGACY_GATE = 'hooks/workflow-gate.mjs';
-const SKILLVAULT_TIMEOUT_MS = 10000;
+const HEADJACK_TIMEOUT_MS = 10000;
 const GIT_TIMEOUT_MS = 10000;
 const TASKS_TIMEOUT_MS = 10000;
 // What progress-tracking's bin/tasks.mjs prints (exit 2) for a repo that is not opted in, verbatim. Since
@@ -407,18 +407,21 @@ function agentChecks(home, failures) {
   }
 }
 
-async function skillvaultCheck(run, warnings) {
+async function headjackCheck(run, warnings) {
   let detail;
   try {
-    const { code } = await run('skillvault', ['search', 'ping', '-k', '1', '--json'],
-      { timeoutMs: SKILLVAULT_TIMEOUT_MS });
+    const { code } = await run('headjack', ['search', 'ping', '-k', '1', '--json'],
+      { timeoutMs: HEADJACK_TIMEOUT_MS });
     if (code === 0) return;
     detail = `exited ${code}`;
   } catch (err) {
     detail = `failed: ${err.message}`;
   }
-  warnings.push(`skillvault is unreachable (skillvault search ${detail}): skill search will not work; `
-    + 'check that the skillvault CLI is installed and logged in');
+  warnings.push(`headjack is unreachable (headjack search ${detail}): skill search will not work; `
+    + 'Headjack is optional: install it with `claude plugin install headjack@triqual` or sign in with '
+    + '`headjack login`, and to run it from a terminal link bin/headjack from a clone of '
+    + 'https://github.com/Montinou/headjack into ~/.local/bin (not from the installed plugin\'s directory, '
+    + 'which changes on every update; see its README)');
 }
 
 // A git call's trimmed stdout (possibly empty), or null on any error or a run past timeoutMs (git is then killed).
@@ -1193,7 +1196,7 @@ export async function doctor({ home, cwd, repo = false, run }) {
   shimCheck(home, installs, failures);
   agentChecks(home, failures);
   legacyChecks(home, failures, warnings);
-  await skillvaultCheck(run, warnings);
+  await headjackCheck(run, warnings);
   if (!config.error) await harnessChecks({ home, run, config }, failures, warnings);
   if (repo && installs.methodology !== null && !config.keepSuperseded) {
     projectSupersededCheck(home, cwd, installs.methodology, warnings);

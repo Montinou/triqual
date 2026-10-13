@@ -26,7 +26,7 @@ const IDS = ['methodology', 'progress-tracking', 'workflow-gate', 'roles'].map((
 const ROLES = ['brief-writer', 'tdd-implementer', 'complex-implementer', 'safety-reviewer', 'spec-reviewer',
   'review-fixer', 'final-adversarial-reviewer', 'hunter'];
 const SUPERSEDED = 'superpowers@superpowers-marketplace';
-const SKILLVAULT_ARGS = ['skillvault', ['search', 'ping', '-k', '1', '--json'], { timeoutMs: 10000 }];
+const HEADJACK_ARGS = ['headjack', ['search', 'ping', '-k', '1', '--json'], { timeoutMs: 10000 }];
 // The shim as released on this branch: a clean machine's ~/.local/bin/triqual.mjs; the alias and the forwarder beside it.
 const SHIM_TEXT = readFileSync(join(REPO_ROOT, 'bin', 'triqual-shim.mjs'), 'utf8');
 const ALIAS_TEXT = readFileSync(join(REPO_ROOT, 'bin', `${BRAND.legacy.cli}-alias.mjs`), 'utf8');
@@ -166,7 +166,7 @@ test('a clean fixture yields no failures', async () => {
     const before = snapshot(home);
     const r = await doctor({ home, cwd: home, run });
     assert.deepEqual(r, { failures: [], warnings: [kept(2)] }); // the cm alias and the forwarder
-    assert.deepEqual(calls, [SKILLVAULT_ARGS]);
+    assert.deepEqual(calls, [HEADJACK_ARGS]);
     assert.deepEqual(snapshot(home), before);
   });
 });
@@ -685,17 +685,39 @@ test('doctor --repo warns on a superpowers@* enable in .claude/settings.json or 
   }
 });
 
-test('an unreachable skillvault is a warning, never a failure', async () => {
-  for (const result of [{ code: 1, stdout: '', stderr: 'boom' }, { code: 127, stdout: '', stderr: '' }, new Error('spawn')]) {
+test('an unreachable headjack is a warning, never a failure', async () => {
+  const cases = [
+    [{ code: 1, stdout: '', stderr: 'boom' }, 'exited 1'],
+    [{ code: 2, stdout: '', stderr: 'not logged in' }, 'exited 2'],
+    [{ code: 127, stdout: '', stderr: '' }, 'exited 127'],
+    [new Error('spawn'), 'failed: spawn'],
+  ];
+  for (const [result, detail] of cases) {
     const { run, calls } = fakeRun(result);
     await withHome(async ({ home }) => {
       const r = await diagnose({ home, cwd: home, run });
       assert.deepEqual(r.failures, []);
       assert.equal(r.warnings.length, 1, r.warnings.join('\n'));
-      assert.match(r.warnings[0], /skillvault/);
-      assert.deepEqual(calls, [SKILLVAULT_ARGS]);
+      assert.match(r.warnings[0], /headjack/);
+      assert.ok(r.warnings[0].includes(`headjack is unreachable (headjack search ${detail})`), r.warnings[0]);
+      assert.ok(r.warnings[0].includes('claude plugin install headjack@triqual'), r.warnings[0]);
+      assert.ok(r.warnings[0].includes('headjack login'), r.warnings[0]);
+      assert.ok(r.warnings[0].includes('~/.local/bin'), r.warnings[0]);
+      assert.ok(r.warnings[0].includes('clone'), r.warnings[0]);
+      assert.ok(r.warnings[0].includes('not from the installed plugin'), r.warnings[0]);
+      assert.deepEqual(calls, [HEADJACK_ARGS]);
     });
   }
+});
+
+test('doctor warns, and does not fail, when headjack is absent', async () => {
+  const { run } = fakeRun({ code: 127, stdout: '', stderr: '' }); // what lib/run.mjs returns for a missing command
+  await withHome(async ({ home }) => {
+    const r = await diagnose({ home, cwd: home, run });
+    assert.deepEqual(r.failures, []);
+    assert.equal(r.warnings.length, 1, r.warnings.join('\n'));
+    assert.ok(r.warnings[0].includes('headjack is unreachable (headjack search exited 127)'), r.warnings[0]);
+  });
 });
 
 const COMMITTED_LINE = 'sh "$(git rev-parse --git-path hooks)/progress-gate.sh" || exit 1';
@@ -771,7 +793,7 @@ test('--repo skips triqual tasks silently while progress-tracking lacks bin/task
     const repo = makeRepo(home);
     const r = await diagnose({ home, cwd: repo, repo: true, run });
     assert.deepEqual(r, { failures: [], warnings: [] });
-    assert.deepEqual(calls, [SKILLVAULT_ARGS]);
+    assert.deepEqual(calls, [HEADJACK_ARGS]);
   });
 });
 
@@ -810,12 +832,12 @@ function installTasks(installPath, { paths, check = { code: 0 } }) {
   return join(pt, 'bin', 'tasks.mjs');
 }
 
-// Answers skillvault itself and really runs everything else (the fake tasks.mjs), recording each call.
+// Answers headjack itself and really runs everything else (the fake tasks.mjs), recording each call.
 function tasksRun() {
   const calls = [];
   const run = async (cmd, args, opts) => {
     calls.push([cmd, args, opts]);
-    return cmd === 'skillvault' ? { code: 0, stdout: '[]', stderr: '' } : realRun(cmd, args, opts);
+    return cmd === 'headjack' ? { code: 0, stdout: '[]', stderr: '' } : realRun(cmd, args, opts);
   };
   return { run, calls };
 }
@@ -864,7 +886,7 @@ test('--repo runs tasks.mjs paths --json then check, in the cwd, with a 10 s tim
     const r = await diagnose({ home, cwd, repo: true, run });
     assert.deepEqual(r, { failures: [], warnings: [] });
     assert.deepEqual(calls, [
-      SKILLVAULT_ARGS,
+      HEADJACK_ARGS,
       [process.execPath, [tasks, 'paths', '--json'], { timeoutMs: 10000, cwd }],
       [process.execPath, [tasks, 'check'], { timeoutMs: 10000, cwd }],
       [process.execPath, [tasks, 'export', '--json', '--all'], { timeoutMs: 10000, cwd }], // the mode listing
@@ -879,7 +901,7 @@ test('--repo runs no repo check when paths exits 2 (not opted in)', async () => 
     const tasks = installTasks(installPath, { paths: { code: 2, stderr: `${NOT_OPTED_IN}\n` } });
     const r = await diagnose({ home, cwd: repo, repo: true, run });
     assert.deepEqual(r, { failures: [], warnings: [] });
-    assert.deepEqual(notExport(calls).map(([, args]) => args), [SKILLVAULT_ARGS[1], [tasks, 'paths', '--json']]);
+    assert.deepEqual(notExport(calls).map(([, args]) => args), [HEADJACK_ARGS[1], [tasks, 'paths', '--json']]);
   });
 });
 
@@ -1150,7 +1172,7 @@ test('git gives up after its timeout and returns null', () => {
 });
 
 const CLI = join(PLUGIN_ROOT, 'bin', 'doctor.mjs');
-// PATH holds no skillvault, so the CLI's real run warns instead of reaching the network.
+// PATH holds no headjack, so the CLI's real run warns instead of reaching the network.
 const cli = (home, args = []) => spawnSync(process.execPath, [CLI, ...args], {
   cwd: home, encoding: 'utf8', env: { HOME: home, PATH: join(home, 'empty-path') },
 });
@@ -1162,7 +1184,7 @@ test('the CLI prints FAIL and WARN lines and the summary, and exits 1 on failure
     const lines = r.stdout.trimEnd().split('\n');
     assert.equal(lines.filter((l) => l.startsWith('FAIL ')).length, 1, r.stdout);
     assert.match(r.stdout, /^FAIL .*run node bin\/bootstrap\.mjs$/m);
-    assert.match(r.stdout, /^WARN .*skillvault/m);
+    assert.match(r.stdout, /^WARN .*headjack/m);
     assert.ok(lines.includes(`WARN ${kept(2)}`), r.stdout);
     assert.equal(lines.at(-1), 'doctor: 1 failure(s), 2 warning(s)');
   }, (p) => { p.shim = false; });
@@ -1295,7 +1317,7 @@ test('doctor treats optedIn false as not opted in and runs no other repo check',
     const tasks = installTasks(installPath, { paths: pathsAnswer({ optedIn: false, ...PATHS_FACTS }) });
     const r = await diagnose({ home, cwd: repo, repo: true, run });
     assert.deepEqual(r, { failures: [], warnings: [] });
-    assert.deepEqual(notExport(calls).map(([, args]) => args), [SKILLVAULT_ARGS[1], [tasks, 'paths', '--json']]);
+    assert.deepEqual(notExport(calls).map(([, args]) => args), [HEADJACK_ARGS[1], [tasks, 'paths', '--json']]);
   });
 });
 
@@ -1386,7 +1408,7 @@ const grokStillLoads = (name) => `plugin ${name}@${BRAND.marketplace} is disable
 
 // The healthy answers of the harness CLIs, by `<cmd> <args>`.
 const harnessAnswers = (home) => ({
-  'skillvault search ping -k 1 --json': { code: 0, stdout: '[]', stderr: '' },
+  'headjack search ping -k 1 --json': { code: 0, stdout: '[]', stderr: '' },
   'codex plugin list --json': jsonAnswer({ installed: [{ pluginId: BRIDGE, enabled: true }] }),
   'codex features list': { code: 0, stdout: HOOKS_ON, stderr: '' },
   'grok plugin list --json': jsonAnswer([]),
@@ -1468,7 +1490,7 @@ test('a machine set up for Codex and Grok by triqual sync yields no failures, re
     assert.deepEqual(snapshot(ctx.home), before);
     assert.deepEqual(calls.map(([cmd, args]) => `${cmd} ${args.join(' ')}`).sort(), [
       'codex features list', 'codex plugin list --json', 'grok inspect --json', 'grok plugin list --json',
-      'skillvault search ping -k 1 --json',
+      'headjack search ping -k 1 --json',
     ]);
   });
 });
@@ -1481,7 +1503,7 @@ test('a harness not enabled in config.json is not checked, and an enabled one no
       writeConfig(home, JSON.stringify({ harnesses }));
       const { run, calls } = answerRun(harnessAnswers(home));
       assert.deepEqual(await diagnose({ home, cwd: home, run }), { failures: [], warnings: [] });
-      assert.deepEqual(calls.map(([cmd]) => cmd), ['skillvault']);
+      assert.deepEqual(calls.map(([cmd]) => cmd), ['headjack']);
     });
   }
   // Enabled, but neither ~/.codex nor a codex binary: one line, no failure, no check.
@@ -2238,13 +2260,13 @@ test('--repo warns about a store snapshot older than 3 days, and about none', as
 test('the CLI prints the INFO tracking lines before the summary', async () => {
   await withHome(async ({ home, installPath }) => {
     const s = makeStoreRepo(home, installPath);
-    const tools = join(home, 'tools'); // git only: no skillvault, so the CLI's real run warns instead of reaching the network
+    const tools = join(home, 'tools'); // git only: no headjack, so the CLI's real run warns instead of reaching the network
     mkdirSync(tools);
     symlinkSync(execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim(), join(tools, 'git'));
     const r = spawnSync(process.execPath, [CLI, '--repo'], { cwd: s.repo, encoding: 'utf8', env: { ...s.env, PATH: tools } });
     assert.equal(r.status, 0, r.stdout + r.stderr);
     const lines = r.stdout.trimEnd().split('\n');
-    assert.equal(lines.at(-1), 'doctor: 0 failure(s), 2 warning(s)'); // skillvault, and the legacy items kept
+    assert.equal(lines.at(-1), 'doctor: 0 failure(s), 2 warning(s)'); // headjack, and the legacy items kept
     assert.equal(lines.at(-2), `INFO tracking: ${s.root} store`, r.stdout);
     assert.deepEqual(lines.filter((l) => l.startsWith('FAIL ')), []);
   });

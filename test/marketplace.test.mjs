@@ -23,6 +23,20 @@ const BRIDGE_HOOKS = `plugins/${BRIDGE}/hooks/hooks.json`;
 // update this pin to make a test pass. Last moved by bridge 0.2.0, which runs ~/.local/bin/triqual-hook.
 const BRIDGE_HOOKS_SHA256 = '30a8ddb402feb1a736e0478680513e5ef75fb9a71db98ba9df43379e1e470643';
 
+// An external entry points at a git repository instead of a plugins/<name> dir. Headjack is the only one we list.
+const EXTERNAL_NAME = 'headjack';
+const isExternal = (entry) => typeof entry.source === 'object' && entry.source !== null;
+
+// What is wrong with an external marketplace entry; an empty list means it is fine.
+function externalProblems(entry) {
+  const problems = [];
+  if (!['url', 'git-subdir'].includes(entry.source?.source)) problems.push(`source.source is ${entry.source?.source}, not url or git-subdir`);
+  if (!/^https:\/\//.test(entry.source?.url ?? '')) problems.push(`source.url ${entry.source?.url} is not an https URL`);
+  if ('version' in entry) problems.push('an external entry carries no version: users see the version of its own plugin.json');
+  if (entry.name !== EXTERNAL_NAME) problems.push(`name ${entry.name} is not ${EXTERNAL_NAME}`);
+  return problems;
+}
+
 // The plugins/* dirs a marketplace under `root` fails to list: the bridge must be in the Codex marketplace, every
 // other dir in the Claude one.
 function unlistedPluginDirs(root) {
@@ -111,7 +125,13 @@ test('marketplace versions match plugin manifests', () => {
   const marketplace = readJson('.claude-plugin/marketplace.json');
   const listed = marketplace.plugins.map((p) => p.name);
 
+  const externalNames = [];
   for (const entry of marketplace.plugins) {
+    if (isExternal(entry)) {
+      externalNames.push(entry.name);
+      assert.deepEqual(externalProblems(entry), [], `${entry.name}: external entry`);
+      continue;
+    }
     assert.equal(entry.source, `./plugins/${entry.name}`, `${entry.name}: source`);
     const manifestRel = `plugins/${entry.name}/.claude-plugin/plugin.json`;
     assert.ok(existsSync(join(ROOT, manifestRel)), `${manifestRel} exists`);
@@ -120,6 +140,7 @@ test('marketplace versions match plugin manifests', () => {
     assert.equal(manifest.version, entry.version, `${entry.name}: marketplace version equals plugin.json version`);
   }
 
+  assert.deepEqual(externalNames, ['headjack']);
   assert.ok(listed.includes('methodology'), 'methodology is listed in the marketplace');
   const methodology = readJson('plugins/methodology/.claude-plugin/plugin.json');
   assert.ok(Array.isArray(methodology.dependencies), 'methodology declares its dependencies');
@@ -129,17 +150,30 @@ test('marketplace versions match plugin manifests', () => {
 });
 
 test('plugin versions are the ones this release ships', () => {
-  const versions = Object.fromEntries(readJson('.claude-plugin/marketplace.json').plugins.map((p) => [p.name, p.version]));
+  const versions = Object.fromEntries(readJson('.claude-plugin/marketplace.json').plugins
+    .filter((p) => !isExternal(p)).map((p) => [p.name, p.version]));
   assert.deepEqual(versions, {
     'progress-tracking': '0.4.0',
     'workflow-gate': '0.1.1',
     roles: '0.3.1',
-    methodology: '0.5.1',
+    methodology: '0.5.2',
     'memory-report': '0.4.0',
   });
   assert.equal(readJson('plugins/methodology-codex/.codex-plugin/plugin.json').version, '0.2.0');
   assert.deepEqual(readJson('plugins/methodology/.claude-plugin/plugin.json').dependencies,
     ['progress-tracking', 'workflow-gate', 'roles']);
+});
+
+test('an external entry with an http URL, a version or another name is rejected', () => {
+  const entry = readJson('.claude-plugin/marketplace.json').plugins.find((p) => p.name === EXTERNAL_NAME);
+  assert.ok(entry, 'headjack is listed');
+  assert.deepEqual(externalProblems(entry), []);
+  const httpUrl = { ...entry, source: { ...entry.source, url: entry.source.url.replace('https://', 'http://') } };
+  const withVersion = { ...entry, version: '1.0.0' };
+  const otherName = { ...entry, name: 'other' };
+  for (const [label, mutated] of [['http URL', httpUrl], ['version', withVersion], ['other name', otherName]]) {
+    assert.notDeepEqual(externalProblems(mutated), [], `${label} is rejected`);
+  }
 });
 
 // Store-2 T6: the public export carries the plugins and their tests, never this repo's own tracking or its docs.
