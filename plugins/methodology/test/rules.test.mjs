@@ -176,7 +176,7 @@ test('global.md drops the safety shadow and adds the complex implementer', () =>
   assert.ok(complex, 'no complex-implementer row');
   const [, , model, effort, by, why] = cells(complex);
   assert.equal(model, 'opus');
-  assert.equal(effort, 'high');
+  assert.equal(effort, 'medium');
   assert.ok(by.includes('`methodology:subagent-driven-development`') && by.includes('`roles:complex-implementer`'), by);
   assert.match(why, /multi-system/);
   assert.match(why, /live-state/);

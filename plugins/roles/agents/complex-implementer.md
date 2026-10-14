@@ -2,7 +2,7 @@
 name: complex-implementer
 description: "Implements one plan task that the plan marks as complex (`**Role:** roles:complex-implementer`): multi-system changes, migrations of live state, or work where a mistake is costly. Works from a brief with strict TDD (write the failing test, run it, implement, run it green), verifies with the project's typecheck/lint/test commands, commits, self-reviews and writes a report."
 model: opus
-effort: high
+effort: medium
 disallowedTools: Agent
 ---
 

@@ -52,6 +52,11 @@ Fork-only files built from an upstream file, with their source.
   read-only and no-subagents sections, and adds the adversarial method, the plan's Review Focus verbatim, the
   triage of the workspace ledger's `Ruling:`, deferred-minor and parked lines, and the verifier contract for the
   final hunters' candidates (role-tiers spec §4.3, §4.4).
+- `subagent-driven-development/scripts/stack.mjs` ← `subagent-driven-development/scripts/sdd-workspace` — fork-only: a
+  Node script that owns the git and `gh` operations of a stacked plan execution (one branch, and with `gh stack` one
+  draft PR, per plan phase). It keeps its state beside the SDD workspace under `.methodology/`, which is the same
+  self-ignoring directory `sdd-workspace` resolves, and finds plan fences by progress-tracking's `parsePlan` rule
+  (stacked-execution spec U4, R1-R9).
 - `using-methodology/references/grok-tools.md` ← `using-superpowers/references/codex-tools.md` — fork-only: a harness
   reference in the form of upstream's Codex one, for Grok, which upstream does not cover. It states the F.11 P6d
   result: Grok's `spawn_subagent` cannot select a named agent, so role dispatch is unavailable there and SDD is
@@ -137,6 +142,25 @@ replaced skills):
   header and handoff name `methodology:*` skills, and the Native option says each task still gets its reviews (E.4).
   Reason: §11, E.4 and E.5.
 
+- `brainstorming` requires every architectural spec to carry `## Units` (per unit: Purpose, Interface, Depends on,
+  Acceptance) and `## Delivery Slices` (per slice: Delivers, Units, Stands alone because, Acceptance), with the rules
+  that a slice depends only on earlier slices, slices cover every unit, a slice over about 6 atomic tasks is split and
+  operations that need the merge go under the rollout. The Architectural checklist, "Presenting the design" and "Design
+  for isolation and clarity" name them, the Spec Self-Review gains a fifth check, Modularity, and
+  `spec-document-reviewer-prompt.md` gains a Modularity row for specs. Reason: stacked execution (a plan maps slices to
+  phases instead of re-designing).
+- `writing-plans` writes plans as `## Phase` blocks (Slice, Branch, PR title, Stands alone because, Phase check; one PR
+  each) of atomic one-commit `### Task` blocks with global numbering, about 6 tasks per phase and an optional
+  `## After Merge` checklist; the header gains `**Branch prefix:**`, Task Right-Sizing is rewritten around one commit,
+  the self-review gains a sixth check, Phases, and `spec-document-reviewer-prompt.md` gains a Phases row for plans.
+  Reason: stacked execution (one branch and PR per phase).
+- `writing-plans` Execution Handoff, both branches (and the paragraph above them), states that execution builds a stack
+  and, in GitHub mode, pushes this plan's phase branches and opens and updates their draft PRs; choosing the method, or
+  confirming the plan when the method was already supplied, authorizes that push, the execution skill records it in its
+  ledger as `Authorization: push phase branches and draft PRs — handoff <date>`, and merging stays the partner's.
+  Reason: stacked execution (explicit, ledgered push authorization). `subagent-driven-development` and
+  `executing-plans` write that `handoff` line themselves at setup when the method was chosen at the handoff in the same
+  conversation, and ask once only without such a choice.
 - `subagent-driven-development` dispatches by role (Role dispatch above). Its "Model Selection" section, which told
   the controller to always specify a model, becomes "Role Dispatch": the task's `**Role:**` (default
   `roles:tdd-implementer`; `roles:complex-implementer` for a task the plan marks complex; `coordinator` run by the
@@ -156,6 +180,14 @@ replaced skills):
   when opted in) and a Task Skills section (§11's rule, whenever the brief has `**Skills:**`; its ledger check when
   opted in). The upstream process, circuit breaker, ledger discipline and pre-flight scan are unchanged. Reason: §11,
   E.4 and E.5.
+  It also runs the plan as a stack (the stacked-execution spec, U5): Setup runs `scripts/stack.mjs init` (committed
+  tracking mode stops the run) and reads or asks once for the ledgered push authorization; each phase starts with
+  `scripts/stack.mjs phase`, each task is one dispatch and one commit (the batching paragraph is gone, fix rounds
+  commit with `--fixup`, `scripts/stack.mjs squash` folds the task before its `done` move), and each phase ends with
+  its Phase check, `done` and `submit`; a submitted phase is never rewritten, the final fix wave is one commit on the
+  top phase, and the push stop gains one exception, the ledgered authorization. `implementer-prompt.md` asks for one
+  commit and fix rounds as `--fixup`; `final-review-prompt.md` has the reviewer name each finding's phase. Reason:
+  the stacked-execution spec (U5, R1, R2, R4, R7).
 - `subagent-driven-development/scripts/task-brief` finds fences by progress-tracking's `parsePlan` rule instead of
   toggling on every line that starts with three backticks: a run of 3+ backticks or tildes indented under four
   columns (a tab counts as four) opens a fence, and only a run of the same character at least as long, with nothing
@@ -190,7 +222,15 @@ replaced skills):
     task without its `sdd-ledger.md` line.
   - references follow the renames (`methodology:*`, `../using-methodology/references/`, `<plansDir>/…` in the
     example).
-  Reason: §11, E.4 and E.5.
+  - it runs the same stack as `subagent-driven-development` with the controller as implementer (the stacked-execution
+    spec, U5, R1, R2, R4, R7): Stack setup runs `../subagent-driven-development/scripts/stack.mjs init` (committed tracking
+    mode stops the run) and reads or asks once for the ledgered push authorization; each phase starts with `stack.mjs
+    phase` and ends with its Phase check, `done` and `submit`; fix rounds commit with `--fixup`; the final fix pass is one
+    commit on the top phase, then the top Phase check and `submit --open`; and the push stop gains one exception, the
+    ledgered authorization. `scripts/task-done` locates the state file with `stack.mjs path`, and when it exists runs
+    `stack.mjs squash` after the test command passes and before the ledger move, so the move and the completion line
+    record the squashed HEAD; a refused squash (exit 3) fails the script with nothing recorded.
+  Reason: §11, E.4 and E.5; the stacked-execution spec.
 - `finishing-branch` adds Step 2, Close the Plan, between the test run and the environment check (later steps are
   renumbered): when opted in it runs `triqual tasks check` (drift stops the close), `triqual tasks close`, writes the closing
   `progress.md` entry (Stage/task `Plan <topic> · close`), updates the roadmap in `status.md`, and makes the closing
@@ -198,6 +238,15 @@ replaced skills):
   The options are upstream's (merge, PR, keep, and discard only on an explicit request with the typed confirmation).
   The worktree-provenance note names `methodology:using-git-worktrees` instead of upstream's product name. Reason:
   §11 and E.5.
+  It also integrates a stack (the stacked-execution spec, U6, R5, R6): Step 1 runs the suite on the top phase's branch
+  when `subagent-driven-development/scripts/stack.mjs path` names an existing state file; with one, Step 5 replaces the
+  options with a GitHub menu (leave the stack open, or merge now with `gh stack merge <pr> --yes --merge-method <m>`,
+  the owner naming the PR and the method) or a local one (`git merge --ff-only` on the trunk, push and open as stacked
+  PRs through `stack.mjs mode … github` and `submit`, or keep). The closing commit is skipped, and the closing entry
+  and status `Next` always carry the plan's `## After Merge` checklist, marked to run once merged; it runs only when
+  the top phase's PR merged in the session (then `gh stack sync --prune` or deleting the phase branches, the state
+  file's deletion, and a second progress entry recording the run). With no state file the current menu stays. Reason: the
+  stacked-execution spec (U6, R5, R6).
 - `using-methodology/references/claude-code-tools.md` drops the advice to hand a whole plan to one orchestrator
   subagent on a mid-tier model and describes role dispatch instead (coordination stays in the session);
   `codex-tools.md`'s "Model routing on spawns" points at role files instead of the removed "Model Selection". Reason:

@@ -32,6 +32,9 @@ fi
 # columns (a tab counts as four) opens a fence; after backticks the rest of the
 # line may not hold a backtick. Only a run of the same character, at least as
 # long as the opener, with nothing but blanks after it, closes the fence.
+# Outside a fence, a heading of level 1 to 3 (a phase, a section) ends the task
+# in progress; only a Task heading starts one. No interval expressions: mawk
+# lacks them.
 awk -v n="$n" '
   function fence_line(line,   i, c, w, rest) {
     w = 0
@@ -61,6 +64,8 @@ awk -v n="$n" '
       fence_len = f_len
     } else if (line ~ /^#+[ \t]+Task[ \t]+[0-9]+/) {
       intask = (line ~ ("^#+[ \t]+Task[ \t]+" n "([^0-9]|$)"))
+    } else if (line ~ /^##?#?[ \t]/) {
+      intask = 0
     }
   }
   intask { print }

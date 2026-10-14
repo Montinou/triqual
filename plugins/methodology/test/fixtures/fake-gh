@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+# A fake `gh` for stack.test.mjs. Tests reach it through a `gh` shim that runs `bash <this file> "$@"`.
+# Answers from gh-stack/*.json (real `gh stack` v0.1.1 output) and a membership file; never touches GitHub.
+#
+# Environment (all optional):
+#   FAKE_GH_LOG         append every argv, as one JSON array per line, to this file
+#   FAKE_GH_STACK       the membership file: first line the trunk, then one `branch[ pr-number]` per line
+#   FAKE_GH_REPO_VIEW   a file answering `repo view` instead of gh-stack/repo-view.json
+#   FAKE_GH_PR_VIEW     a file answering `pr view` instead of gh-stack/pr-view.json
+#   FAKE_GH_PR_HEADS    comma list of branches that have a PR: `pr list --head <b>` answers gh-stack/pr-list.json
+#                       for those and [] for any other
+#   FAKE_GH_SUBMIT_OUT  a file `stack submit` prints (on stderr, as the real tool does) instead of the default captured output (gh-stack/submit-2prs.txt for
+#                       two or more members, gh-stack/submit-1pr.txt for fewer)
+#   FAKE_GH_SUBMIT_STDOUT=1   print that output on stdout instead of stderr
+#   FAKE_GH_FAIL_<WORD1>_<WORD2>=1   exit 1 for that command, words upper-cased and stripped of dashes
+#                                    (FAKE_GH_FAIL_STACK_SUBMIT, FAKE_GH_FAIL_REPO_VIEW, FAKE_GH_FAIL_VERSION)
+#
+# Like the real `gh stack` (v0.1.1): `stack init` on a member exits 5; `stack add <b>` adopts the branch, moves HEAD onto
+# it and only works from the stack's top (exit 5 otherwise); `stack submit` gives every member without a PR the next
+# number (7, 8, ...). `stack add` also appends `<branch> <branch it was run from>` to "$FAKE_GH_STACK.add-from".
+set -u
+FIX="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gh-stack"
+
+if [ -n "${FAKE_GH_LOG:-}" ]; then
+  line="["
+  sep=""
+  for a in "$@"; do
+    e=${a//\\/\\\\}
+    e=${e//\"/\\\"}
+    line="$line$sep\"$e\""
+    sep=","
+  done
+  echo "$line]" >> "$FAKE_GH_LOG"
+fi
+
+key=""
+for w in "${1:-}" "${2:-}"; do
+  w=$(printf '%s' "$w" | tr -d -c 'A-Za-z0-9' | tr 'a-z' 'A-Z')
+  [ -n "$w" ] && key="${key}_${w}"
+done
+fail_var="FAKE_GH_FAIL${key}"
+if [ -n "${!fail_var:-}" ]; then
+  echo "fake gh: forced failure of: $*" >&2
+  exit 1
+fi
+
+stack_file="${FAKE_GH_STACK:-}"
+current="$(git branch --show-current 2>/dev/null || true)"
+trunk_of() { head -n 1 "$stack_file"; }
+is_member() { [ -n "$stack_file" ] && [ -f "$stack_file" ] && tail -n +2 "$stack_file" | awk '{print $1}' | grep -Fxq -- "$1"; }
+
+case "${1:-} ${2:-}" in
+  "--version "*) echo "gh version 2.99.0 (fake)"; exit 0 ;;
+  "stack --version") echo "gh stack version 0.1.1"; exit 0 ;;
+  "repo view") cat "${FAKE_GH_REPO_VIEW:-$FIX/repo-view.json}"; exit 0 ;;
+  "pr view") cat "${FAKE_GH_PR_VIEW:-$FIX/pr-view.json}"; exit 0 ;;
+  "pr list")
+    head=""
+    prev=""
+    for a in "$@"; do [ "$prev" = "--head" ] && head="$a"; prev="$a"; done
+    case ",${FAKE_GH_PR_HEADS:-}," in
+      *",$head,"*) cat "$FIX/pr-list.json" ;;
+      *) echo "[]" ;;
+    esac
+    exit 0 ;;
+  "stack view")
+    if [ -n "$stack_file" ] && [ -f "$stack_file" ] && { is_member "$current" || [ "$current" = "$(trunk_of)" ]; }; then
+      node -e '
+        const fs = require("fs");
+        const { execFileSync } = require("child_process");
+        const [file, current] = process.argv.slice(1);
+        const [trunk, ...rest] = fs.readFileSync(file, "utf8").split("\n").filter(Boolean);
+        const pushed = (b) => {
+          try { return execFileSync("git", ["for-each-ref", "--count=1", "--format=%(objectname)", "refs/remotes/*/" + b], { encoding: "utf8" }).trim(); } catch { return ""; }
+        };
+        const branches = rest.map((line, i) => {
+          const [name, pr] = line.split(" ");
+          const b = { name };
+          const head = pushed(name);
+          if (head) b.head = head;
+          b.base = i === 0 ? trunk : rest[i - 1].split(" ")[0];
+          Object.assign(b, { isCurrent: name === current, isMerged: false, isQueued: false, needsRebase: false });
+          if (pr) b.pr = { number: Number(pr), url: "https://example.invalid/pull/" + pr, state: "OPEN" };
+          return b;
+        });
+        console.log(JSON.stringify({ trunk, currentBranch: current, branches }, null, 2));
+      ' -- "$stack_file" "$current"
+      exit 0
+    fi
+    echo "✗ current branch \"$current\" is not part of a stack" >&2
+    exit 2 ;;
+  "stack init")
+    # stack init --base <trunk> <branch>...
+    if [ -n "$stack_file" ] && [ -f "$stack_file" ] && is_member "$current"; then
+      echo "✗ branch \"$current\" already exists in a stack" >&2
+      exit 5
+    fi
+    shift 2
+    base=""
+    [ "${1:-}" = "--base" ] && { base="$2"; shift 2; }
+    { echo "$base"; for b in "$@"; do echo "$b"; done; } > "$stack_file"
+    exit 0 ;;
+  "stack add")
+    # stack add <branch>: run from the top of the stack; adopts an existing branch and moves HEAD onto it
+    top="$(tail -n +2 "$stack_file" | awk '{print $1}' | tail -n 1)"
+    if [ "$current" != "$top" ]; then
+      echo "✗ current branch \"$current\" is not the top of the stack (\"$top\")" >&2
+      exit 5
+    fi
+    echo "$3 $current" >> "$stack_file.add-from"
+    echo "$3" >> "$stack_file"
+    git switch -q "$3" 2>/dev/null || git switch -q -c "$3"
+    exit 0 ;;
+  "stack submit")
+    [ -n "$stack_file" ] && [ -f "$stack_file" ] || { echo "✗ not in a stack" >&2; exit 5; }
+    count=$(tail -n +2 "$stack_file" | grep -c .)
+    nx=$(tail -n +2 "$stack_file" | awk 'BEGIN{m=6} NF>1 && $2>m {m=$2} END{print m+1}')
+    awk -v nx="$nx" 'NR==1{print;next} NF==1{print $1, nx++; next} {print}' "$stack_file" > "$stack_file.tmp"
+    mv "$stack_file.tmp" "$stack_file"
+    # Like the real tool, every status line goes to stderr and stdout stays empty (FAKE_GH_SUBMIT_STDOUT=1: stdout).
+    if [ -n "${FAKE_GH_SUBMIT_OUT:-}" ]; then
+      out="$FAKE_GH_SUBMIT_OUT"
+    elif [ "$count" -ge 2 ]; then
+      out="$FIX/submit-2prs.txt"
+    else
+      out="$FIX/submit-1pr.txt"
+    fi
+    if [ -n "${FAKE_GH_SUBMIT_STDOUT:-}" ]; then cat "$out"; else cat "$out" >&2; fi
+    exit 0 ;;
+esac
+exit 0

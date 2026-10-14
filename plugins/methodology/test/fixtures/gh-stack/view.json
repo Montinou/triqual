@@ -1,0 +1,28 @@
+{
+  "trunk": "main",
+  "currentBranch": "stacked-execution/02-phased-plans",
+  "branches": [
+    {
+      "name": "stacked-execution/01-opus-effort",
+      "head": "c45fb7a57ef97ec81f47798d70e53aecffb6a438",
+      "base": "3685ae3f8bcf03c36229f64a0d350ae90fe0382b",
+      "isCurrent": false,
+      "isMerged": false,
+      "isQueued": false,
+      "needsRebase": false,
+      "pr": {
+        "number": 7,
+        "url": "https://github.com/Montinou/triqual/pull/7",
+        "state": "OPEN"
+      }
+    },
+    {
+      "name": "stacked-execution/02-phased-plans",
+      "base": "c45fb7a57ef97ec81f47798d70e53aecffb6a438",
+      "isCurrent": true,
+      "isMerged": false,
+      "isQueued": false,
+      "needsRebase": false
+    }
+  ]
+}

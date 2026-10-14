@@ -87,7 +87,7 @@ test('parses the eight shipped roles', () => {
   const roles = shippedRoles();
   assert.deepEqual(roles.map((role) => role.name), ROLE_NAMES);
   const byName = Object.fromEntries(roles.map((role) => [role.name, role]));
-  assert.equal(byName['final-adversarial-reviewer'].effort, 'xhigh');
+  assert.equal(byName['final-adversarial-reviewer'].effort, 'high');
   assert.equal(byName['brief-writer'].effort, 'medium');
   assert.deepEqual(byName['safety-reviewer'].disallowedTools, ['Agent', 'Edit', 'Write', 'NotebookEdit']);
   assert.deepEqual(byName['tdd-implementer'].disallowedTools, ['Agent']);

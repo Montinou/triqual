@@ -27,6 +27,7 @@ Subagent (roles:final-adversarial-reviewer):
     | Clarity | Requirements ambiguous enough to cause someone to build the wrong thing |
     | Scope | Focused enough for a single plan — not covering multiple independent subsystems |
     | YAGNI | Unrequested features, over-engineering |
+    | Modularity | A unit with a missing interface or dependency line; a forward slice dependency (a slice that depends on a later slice); an uncovered unit (no slice delivers it); a slice that does not stand alone (trunk would break or carry half-built reachable code if it merged alone, in order); an oversized slice (more than about 6 atomic tasks); an operation that needs the merge listed as a slice instead of under the rollout |
 
     For a plan, also check:
 
@@ -36,6 +37,7 @@ Subagent (roles:final-adversarial-reviewer):
     | Interfaces | Names, signatures and types that differ between the tasks that produce and consume them |
     | Task format | Each task has `### Task N:`, a `**Role:**` line with a task role, and `**Depends on:**` only when it has dependencies |
     | Tests | A task whose tests would pass without the behavior it promises |
+    | Phases | A phase with no slice; a task depending on a later phase; a phase without a branch, PR title, Phase check or committing task; a merge-dependent operation written as a task instead of under `## After Merge` |
 
     ## Calibration
 

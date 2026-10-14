@@ -37,7 +37,10 @@ Subagent (<task role>):
     1. Implement exactly what the task specifies
     2. Write tests (following TDD if task says to)
     3. Verify implementation works
-    4. Commit your work
+    4. Commit your work as ONE commit on the branch you are on (the phase
+       branch), with the commit message the brief gives; never commit the
+       test and the fix separately. Never amend, rebase, reset or squash:
+       the controller squashes the task once its review is clean.
     5. Self-review (see below)
     6. Report back
 
@@ -152,6 +155,13 @@ Subagent (<task role>):
     rounds come back to you: fix
     and append the same way, then reply with the same short status contract
     as your first report.
+
+    A fix round is a new commit made with `git commit --fixup=<the task's first commit>`
+    (the controller names that commit in the fix dispatch), with the round's
+    entry when the Tracking section applies. It is never an amend, a rebase or
+    a reset: the controller folds the fixups into the task's one commit. The
+    one exception is the final review's fix wave, a single plain commit
+    `fix: address final review findings` on the top phase.
 
     ## Report Format
 

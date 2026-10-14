@@ -549,6 +549,36 @@ test('task-brief and parsePlan agree on the fence fixture', () => {
   }
 });
 
+const PHASED_PLAN = join(PLUGIN, 'test', 'fixtures', 'phased-plan.md');
+
+test('parsePlan reads the tasks of a phased plan and ignores phase blocks', () => {
+  assert.deepEqual(parsePlan(readFileSync(PHASED_PLAN, 'utf8')).map((t) => t.id), ['T1', 'T2', 'T3']);
+});
+
+test('task-brief ends a task at the next level 1-3 heading outside a fence', () => {
+  const r = repo();
+  try {
+    const brief = (n) => {
+      const out = join(r.dir, `phased-${n}.md`);
+      const res = r.run('task-brief', PHASED_PLAN, n, out);
+      assert.equal(res.status, 0, res.stderr);
+      return readFileSync(out, 'utf8').split('\n');
+    };
+    const two = brief('2');
+    assert.equal(two[0], '### Task 2: Two');
+    assert.ok(!two.some((l) => l.startsWith('## Phase 2')), 'Task 2 runs into the next phase heading');
+    assert.ok(two.includes('## Phase 9: inside a fence'), 'the fenced block is cut from Task 2');
+    assert.ok(two.includes('### Task 9: fake'), 'the fenced block is cut from Task 2');
+    const three = brief('3');
+    assert.equal(three[0], '### Task 3: Three');
+    assert.ok(three.includes('**Depends on:** T2'));
+    assert.ok(!three.some((l) => l.startsWith('## After Merge')), 'Task 3 runs into the After Merge section');
+    assert.equal(r.run('task-brief', PHASED_PLAN, '9', join(r.dir, 'none-9.md')).status, 3, 'Task 9 is inside a fence');
+  } finally {
+    r.cleanup();
+  }
+});
+
 // --- The two-round task review (plan role-tiers · T5, spec 4.1-4.6) -------------------------------------------------
 
 const SKILL = `${SDD}/SKILL.md`;
@@ -1141,4 +1171,217 @@ test('no store-mode clause of the SDD files pairs the tasks check with --plan, a
       }
     }
   }
+});
+
+// Stacked execution (spec U5, R1, R2, R4, R7): one branch and one draft PR per phase, one commit per task.
+const STACK = 'scripts/stack.mjs';
+const AUTH = 'Authorization: push phase branches and draft PRs — handoff';
+const AUTH_SETUP = 'Authorization: push phase branches and draft PRs — setup';
+// The text from Setup to the Example Workflow: the process digraph above it names the commands too, and this
+// is the prose that has to say when each one runs.
+const stackProse = () => {
+  const text = read(SKILL);
+  return text.slice(text.indexOf('## Setup'), text.indexOf('## Example Workflow'));
+};
+// The needles must appear in this order, each searched after the previous one.
+const assertInOrder = (text, needles, what) => {
+  let at = -1;
+  for (const needle of needles) {
+    const found = text.indexOf(needle, at + 1);
+    assert.ok(found > at, `${what}: "${needle}" is missing or out of order (searched after offset ${at})`);
+    at = found;
+  }
+};
+
+test('SDD setup runs stack init and stops on committed mode', () => {
+  const setup = squash(section('## Setup'));
+  assert.ok(setup.includes(`${STACK} init`), 'Setup does not run stack init');
+  const stop = blocks(SKILL).find((l) => l.includes('committed') && l.includes('triqual progress-init --store'));
+  assert.ok(stop, 'Setup does not stop on committed mode with the progress-init --store switch');
+  mustSay(stop, ['exits 3', 'before Task 1', '(or `--local`)'], 'the committed-mode stop');
+  const worktree = blocks(SKILL).find((l) => l.includes('methodology:using-git-worktrees'));
+  assert.ok(worktree, 'Setup does not mention a worktree');
+  mustSay(worktree, ['A worktree is optional', 'offered, not required', 'wt/<prefix>', 'detached HEAD', 'the phase branch'], 'the worktree rule');
+});
+
+test('SDD ledgers the push authorization and asks once without it', () => {
+  const setup = squash(section('## Setup'));
+  const block = blocks(SKILL).find((l) => l.includes(AUTH) && l.includes('ask once'));
+  assert.ok(block, 'the text does not name the ledgered authorization line and ask once without it');
+  assert.ok(setup.includes(AUTH), 'the authorization line is not in Setup');
+  mustSay(block, ['ask once', 'before Task 1', 'ledger lacks', 'never asks again', `${STACK} mode PLAN_FILE local`], 'the authorization rule');
+  assert.match(block, /A no[^.]*scripts\/stack\.mjs mode PLAN_FILE local/, 'a no does not switch to local mode');
+  // The line the yes path writes must be one the push exception and the lookup accept (R7: a resumed run finds it).
+  const yes = block.match(/A yes: write `(Authorization: [^`]+)`/);
+  assert.ok(yes, 'the yes path does not write an Authorization line');
+  assert.match(yes[1], /^Authorization: push phase branches and draft PRs — (handoff|setup) <date>$/, 'the yes line is not a handoff or setup line');
+  const accepted = (text, what) => {
+    for (const kind of ['handoff', 'setup']) {
+      assert.ok(text.includes(`Authorization: push phase branches and draft PRs — ${kind} <date>`), `${what} does not accept the ${kind} line`);
+    }
+  };
+  assert.ok(block.includes(AUTH_SETUP), 'the setup line is not in the authorization rule');
+  const look = block.match(/look in the ledger for [^.]*\./);
+  assert.ok(look, 'the lookup sentence is gone');
+  mustSay(look[0], ['Authorization: push phase branches and draft PRs —', '`handoff <date>`', '`setup <date>`'], 'the lookup');
+  const all = lines(SKILL);
+  const seventh = all[all.findIndex((l) => l.startsWith('Five things stop you')) + 6];
+  accepted(seventh, 'the push exception');
+  assert.ok(seventh.includes(yes[1]), 'the push exception does not cover the line the yes path writes');
+  // Any Authorization: line, the declined one included, means the question was answered.
+  mustSay(block, ['`Authorization: declined — stack in local mode`', 'any `Authorization:` line', 'declined one included', 'answered', 'never asked again'], 'the declined rule');
+});
+
+test('SDD per-phase lifecycle', () => {
+  const prose = stackProse();
+  assertInOrder(
+    prose,
+    [
+      `${STACK} phase`,
+      '--fixup=',
+      `${STACK} squash`,
+      'with `<sha>` the sha `scripts/stack.mjs squash` printed',
+      'Phase check',
+      'Ruling: <test> flaky — passed on re-run',
+      'triqual tasks reopen T<N>',
+      `${STACK} done`,
+      `${STACK} submit`,
+      'Phase <N>: submitted (<branch>, PR #<n> draft)',
+      'Phase <N>: complete (<branch>, local)',
+    ],
+    'the phase lifecycle',
+  );
+  // Step 5 keeps its move verbatim and adds the squashed-sha sentence on the same line.
+  const done = section('### 5. Complete the task').find((l) => l.includes('`triqual tasks done T<N> --commit <sha> --plan <plan>`'));
+  assert.ok(done, 'step 5 lost its done move');
+  mustSay(done, ['on approval', 'with `<sha>` the sha `scripts/stack.mjs squash` printed'], 'the done move');
+  assert.ok(!/the task's last commit/.test(done), 'the done move still names the pre-squash head');
+  // A real failure reopens the phase's last task with --plan.
+  const reopen = blocks(SKILL).find((l) => l.includes('triqual tasks reopen T<N>'));
+  assert.match(reopen, /triqual tasks reopen T<N> "<reason>" --plan <plan>/, reopen);
+  mustSay(reopen, ['real failure'], 'the reopen rule');
+  // submit exit 5: a Ruling, one retry, then local mode.
+  const exit5 = blocks(SKILL).find((l) => l.includes('exits 5'));
+  assert.ok(exit5, 'the text does not handle submit exit 5');
+  mustSay(exit5, ['`Ruling:`', 'retry once', `${STACK} mode PLAN_FILE local`], 'the submit exit 5 rule');
+  assert.ok(exit5.indexOf('`Ruling:`') < exit5.indexOf('retry once') && exit5.indexOf('retry once') < exit5.indexOf('mode PLAN_FILE local'), 'exit 5 steps are out of order');
+});
+
+test('SDD never rewrites a submitted phase', () => {
+  const prose = stackProse();
+  const defect = blocks(SKILL).find((l) => l.includes('submitted phase') && l.includes("current task's commit"));
+  assert.ok(defect, 'the text does not say a defect in a submitted phase is fixed in the current task\'s commit');
+  mustSay(defect, ['never', 'force push'], 'the no-rewrite rule');
+  const final = section('## Final Review').join('\n');
+  assertInOrder(final, ['one commit on the top phase', 'top Phase check', `${STACK} submit`, '--open'], 'the final fix wave');
+  assert.ok(prose.includes('`fix: address final review findings`'), 'the final fix commit message is not named');
+});
+
+test('SDD never batches tasks under stacks', () => {
+  const text = read(SKILL);
+  assert.ok(!text.includes('Batch small same-shape work'), 'the batch paragraph is still there');
+  assert.ok(
+    squash(lines(SKILL)).includes('each task is its own dispatch and its own commit; same-shape small edits are one task in the plan'),
+    'the one-task-one-commit rule is missing',
+  );
+});
+
+test('the push stop is narrowed, never removed', () => {
+  const all = lines(SKILL);
+  const start = all.findIndex((l) => l.startsWith('Five things stop you'));
+  assert.ok(start >= 0, 'the Five things paragraph is gone');
+  assert.equal(
+    squash(all.slice(start, start + 6)),
+    'Five things stop you, and only these: an irreversible or destructive operation; a security-sensitive action; a side effect outside this worktree that norms say you ask about first (a merge, a push to a shared branch, a publish); a task whose `**Role:**` is not a task role (see Role Dispatch); and a plan so broken that every path forward is a guess. For those, stop and ask.',
+  );
+  const seventh = all[start + 6];
+  assert.ok(seventh, 'there is no seventh line');
+  mustSay(seventh, [AUTH, 'only exception', 'draft PRs', 'ready for review after the final review', 'any merge', 'force push', 'still stop'], 'the push exception');
+  assert.equal(all[start + 7], '', 'the push exception is not the last line of the paragraph');
+});
+
+test('the After Merge checklist is listed, not run', () => {
+  const finish = section('## Finish').join(' ');
+  mustSay(finish, ['`## After Merge`', 'is not run', 'final message'], 'the After Merge rule in Finish');
+});
+
+test('recovery after compaction reads scripts/stack.mjs status', () => {
+  const line = blocks(SKILL).find((l) => l.includes(`${STACK} status`));
+  assert.ok(line, 'the text never reads stack status');
+  mustSay(line, ['compaction', 'ledger'], 'the stack recovery rule');
+  const entries = blocks(SKILL).find((l) => l.includes('pre-squash'));
+  assert.ok(entries, 'the text does not say fix-round entries keep their pre-squash shas');
+  mustSay(entries, ['fix-round', 'entries', 'squash'], 'the pre-squash sha rule');
+});
+
+test('the implementer prompt requires one commit and fix rounds use --fixup', () => {
+  const text = squash(lines(`${SDD}/implementer-prompt.md`));
+  mustSay(text, ['ONE commit', 'the commit message the brief gives', '`git commit --fixup=<the task\'s first commit>`', 'Never amend, rebase, reset or squash'], 'implementer-prompt.md');
+  assert.ok(!/4\. Commit your work\n/.test(read(`${SDD}/implementer-prompt.md`)), 'the one-commit rule did not replace the bare commit step');
+});
+
+test('the final review names each finding\'s phase', () => {
+  const text = squash(lines(`${SDD}/final-review-prompt.md`));
+  mustSay(text, ['Name the phase', '`Phase <N>`', 'trunk..top'], 'final-review-prompt.md');
+  const format = blocks(`${SDD}/final-review-prompt.md`).find((l) => l.startsWith('For each: file:line'));
+  assert.ok(format && format.includes('phase'), 'the finding format does not carry the phase');
+});
+
+test('the frontmatter description names the stacked execution', () => {
+  const description = lines(SKILL).find((l) => l.startsWith('description:'));
+  assert.match(description, /stacked/, description);
+  assert.match(description, /^description: Use when /, 'the description lost its trigger wording');
+});
+
+test('the process digraph and the Example Workflow show the phase loop', () => {
+  const text = read(SKILL);
+  const dot = /```dot\n(digraph process[\s\S]*?)```/.exec(text)[1];
+  for (const label of ['stack init', 'stack phase', 'Phase check', 'stack submit', 'stack squash']) {
+    assert.ok(dot.includes(label), `the digraph has no node for ${label}`);
+  }
+  const example = text.slice(text.indexOf('## Example Workflow'));
+  assertInOrder(example, [`${STACK} init`, `${STACK} phase`, `${STACK} squash`, 'Phase check', `${STACK} done`, `${STACK} submit`, 'Phase 1: submitted'], 'the example workflow');
+});
+
+test('SDD writes the handoff authorization line itself when the method was chosen at the plan handoff', () => {
+  const block = blocks(SKILL).find((l) => l.includes(AUTH) && l.includes('ask once'));
+  assert.ok(block, 'the authorization rule is gone');
+  mustSay(block, [
+    `${AUTH} <date>\`, which you write yourself at setup, before Task 1, when your human partner chose the execution method (or confirmed it) at the writing-plans handoff in this conversation`,
+    'and this conversation holds no such choice (a new session on an existing plan), ask once',
+  ], 'the handoff authorization');
+  assert.ok(!block.includes('the plan handoff writes'), 'the text still says the plan handoff writes the line');
+});
+
+// Final review fixes (plan stacked-execution): runs that began before stacked execution, the Phase check of an unphased
+// plan, the reopened task's first fix round, the consent scope and the Example Workflow's authorization line.
+test('SDD does not stack a run that began before stacked execution', () => {
+  const rule = blocks(SKILL).find((l) => l.startsWith('- **A run that began before stacked execution is not stacked.**'));
+  assert.ok(rule, 'Stack setup has no rule for a run that began before stacked execution');
+  mustSay(rule, [
+    `\`node ${STACK} path PLAN_FILE\``, 'does not exist', '`Task <N>: complete`', 'Skip `init`, `phase`, `squash`, `done` and `submit`',
+    '`Ruling: run began before stacked execution — no stack`', 'finish on the current branch', 'no state file',
+    '`scripts/stack.mjs phase 1` itself exits 3', "HEAD's branch",
+  ], 'the pre-stack rule');
+  assertInOrder(stackProse(), [rule.slice(0, 60), `node ${STACK} init PLAN_FILE`], 'the pre-stack check runs before init');
+});
+
+test('SDD Phase check names the full test command of an unphased plan and the reopened task skips its first rework', () => {
+  const check = blocks(SKILL).find((l) => l.startsWith('- **Phase check.**'));
+  assert.ok(check, 'the Phase check bullet is gone');
+  mustSay(check, ['no `## Phase` heading', 'no `**Branch prefix:**` line', "the repository's full test command"], 'the unphased Phase check');
+  mustSay(check, ["skipping the first round's `triqual tasks rework` move", '`reopen` already moved the task to `in_progress`', '`rework` only leaves `in_review`'], 'the reopened first fix round');
+});
+
+test('SDD Example Workflow writes the handoff authorization line at setup instead of finding it in a fresh ledger', () => {
+  const example = read(SKILL).slice(read(SKILL).indexOf('## Example Workflow'));
+  const stackLine = example.split('\n').find((l) => l.startsWith('[Stack: node scripts/stack.mjs init'));
+  assert.ok(stackLine, 'the Example Workflow has no stack line');
+  mustSay(stackLine, ['chosen at the handoff in this conversation', 'I write', 'to the ledger now'], 'the example stack line');
+  assert.ok(!stackLine.includes('the ledger holds'), 'a fresh ledger already holds the authorization line');
+});
+
+test('SDD consent texts say the PRs are marked ready for review after the final review', () => {
+  const auth = blocks(SKILL).find((l) => l.includes(AUTH) && l.includes('ask once'));
+  mustSay(auth, ['marking them ready for review after the final review', 'mark them ready for review after the final review'], 'the push authorization');
 });

@@ -1,1 +1,1 @@
-{ "name": "roles", "version": "0.3.1", "description": "Eight role agents for plan execution: brief-writer, tdd-implementer, complex-implementer, safety-reviewer, spec-reviewer, review-fixer, final-adversarial-reviewer, hunter.", "author": { "name": "Montinou" }, "license": "MIT" }
+{ "name": "roles", "version": "0.3.2", "description": "Eight role agents for plan execution: brief-writer, tdd-implementer, complex-implementer, safety-reviewer, spec-reviewer, review-fixer, final-adversarial-reviewer, hunter.", "author": { "name": "Montinou" }, "license": "MIT" }

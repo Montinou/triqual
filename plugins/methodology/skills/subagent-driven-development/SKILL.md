@@ -1,11 +1,11 @@
 ---
 name: subagent-driven-development
-description: Use when executing implementation plans with independent tasks in the current session
+description: Use when executing implementation plans with independent tasks in the current session, building one stacked branch and draft PR per plan phase
 ---
 
 # Subagent-Driven Development
 
-Execute plan by dispatching a fresh implementer subagent per task, in the task's role, a two-round task review after each, and a broad whole-branch review at the end. Round 1 sends Haiku hunters and the Haiku safety gate together; round 2 has the Opus spec reviewer verify every candidate and judge spec compliance and task quality. Every dispatch goes to a `roles:*` agent (see Role Dispatch).
+Execute plan by dispatching a fresh implementer subagent per task, in the task's role, a two-round task review after each, and a broad whole-branch review at the end. Execution is stacked: each plan phase is one git branch on top of the previous phase's (and, with `gh stack`, one draft PR), and each task is exactly one commit on its phase branch, driven by `scripts/stack.mjs`. Round 1 sends Haiku hunters and the Haiku safety gate together; round 2 has the Opus spec reviewer verify every candidate and judge spec compliance and task quality. Every dispatch goes to a `roles:*` agent (see Role Dispatch).
 
 **Why subagents:** You delegate tasks to specialized agents with isolated context. By precisely crafting their instructions and context, you ensure they stay focused and succeed at their task. They should never inherit your session's context or history — you construct exactly what they need. This also preserves your own context for coordination work.
 
@@ -30,6 +30,7 @@ that norms say you ask about first (a merge, a push to a shared branch, a
 publish); a task whose `**Role:**` is not a task role (see Role Dispatch);
 and a plan so broken that every path forward is a guess. For those, stop and
 ask.
+The only exception to the push stop is a ledgered authorization, either `Authorization: push phase branches and draft PRs — handoff <date>` or `Authorization: push phase branches and draft PRs — setup <date>` (see Setup): it covers pushing this plan's phase branches, opening or updating their draft PRs and marking them ready for review after the final review, and any other push, any merge and any force push still stop.
 
 ## When to Use
 
@@ -81,53 +82,74 @@ digraph process {
         "Any load-bearing finding?" [shape=diamond];
         "Rule and continue; stop only if every path forward is a guess" [shape=box];
         "Park findings in ledger with rulings" [shape=box];
+        "Squash the task to one commit: stack squash BASE, sha for the done move" [shape=box];
         "Append completion to ledger, mark todo complete" [shape=box];
     }
 
-    "Setup: worktree, tracking paths, ledger check, read plan, pre-flight review" [shape=box];
-    "More tasks remain?" [shape=diamond];
+    "Setup: stack init, worktree (optional), push authorization, tracking paths, ledger check, read plan, pre-flight review" [shape=box];
+    "Start phase N: stack phase N (branch on top of phase N-1)" [shape=box];
+    "More tasks in this phase?" [shape=diamond];
+    "Phase check at the tip (one re-run if it looks flaky)" [shape=box];
+    "Phase check passes?" [shape=diamond];
+    "Reopen the phase's last task: fix loop (fixups, re-review, squash)" [shape=box];
+    "Phase done: stack done N, stack submit N (draft PR)" [shape=box];
+    "More phases remain?" [shape=diamond];
     "Final review: 3 hunters, then roles:final-adversarial-reviewer (./final-review-prompt.md)" [shape=box];
     "Final findings? ONE fix dispatch, one scoped re-review, adjudicate residuals" [shape=box];
+    "Top Phase check again, then stack submit with --open" [shape=box];
     "Final review clean: delete this plan's workspace" [shape=box];
     "Use methodology:finishing-branch" [shape=box style=filled fillcolor=lightgreen];
 
-    "Setup: worktree, tracking paths, ledger check, read plan, pre-flight review" -> "Dispatch implementer in the task's role (./implementer-prompt.md); coordinator: run it yourself";
+    "Setup: stack init, worktree (optional), push authorization, tracking paths, ledger check, read plan, pre-flight review" -> "Start phase N: stack phase N (branch on top of phase N-1)";
+    "Start phase N: stack phase N (branch on top of phase N-1)" -> "Dispatch implementer in the task's role (./implementer-prompt.md); coordinator: run it yourself";
     "Dispatch implementer in the task's role (./implementer-prompt.md); coordinator: run it yourself" -> "Implementer asks questions?";
     "Implementer asks questions?" -> "Answer questions, provide context" [label="yes"];
     "Answer questions, provide context" -> "Implementer implements, tests, commits, self-reviews";
     "Implementer asks questions?" -> "Implementer implements, tests, commits, self-reviews" [label="no"];
     "Implementer implements, tests, commits, self-reviews" -> "Generate review package, size the review, round 1: hunters + safety gate together; round 2: spec reviewer verifies every candidate";
     "Generate review package, size the review, round 1: hunters + safety gate together; round 2: spec reviewer verifies every candidate" -> "Spec ✅, quality approved, safety clean?";
-    "Spec ✅, quality approved, safety clean?" -> "Append completion to ledger, mark todo complete" [label="yes"];
+    "Spec ✅, quality approved, safety clean?" -> "Squash the task to one commit: stack squash BASE, sha for the done move" [label="yes"];
     "Spec ✅, quality approved, safety clean?" -> "Finding conflicts with plan text?" [label="no"];
     "Finding conflicts with plan text?" -> "Rule on the conflict, ledger the ruling" [label="yes"];
     "Rule on the conflict, ledger the ruling" -> "Fix round R of 5 (roles:review-fixer): R≤3 resume the same fixer; R≥4 fresh fixer";
     "Finding conflicts with plan text?" -> "Fix round R of 5 (roles:review-fixer): R≤3 resume the same fixer; R≥4 fresh fixer" [label="no"];
     "Fix round R of 5 (roles:review-fixer): R≤3 resume the same fixer; R≥4 fresh fixer" -> "Dispatch scoped re-review to the raising role(s) (./re-review-prompt.md)";
     "Dispatch scoped re-review to the raising role(s) (./re-review-prompt.md)" -> "All findings addressed?";
-    "All findings addressed?" -> "Append completion to ledger, mark todo complete" [label="yes"];
+    "All findings addressed?" -> "Squash the task to one commit: stack squash BASE, sha for the done move" [label="yes"];
     "All findings addressed?" -> "R = 5?" [label="no"];
     "R = 5?" -> "Fix round R of 5 (roles:review-fixer): R≤3 resume the same fixer; R≥4 fresh fixer" [label="no - next round"];
     "R = 5?" -> "Adjudicate each open finding" [label="yes - breaker trips"];
     "Adjudicate each open finding" -> "Any load-bearing finding?";
     "Any load-bearing finding?" -> "Rule and continue; stop only if every path forward is a guess" [label="yes"];
     "Any load-bearing finding?" -> "Park findings in ledger with rulings" [label="no"];
-    "Park findings in ledger with rulings" -> "Append completion to ledger, mark todo complete";
-    "Append completion to ledger, mark todo complete" -> "More tasks remain?";
-    "More tasks remain?" -> "Dispatch implementer in the task's role (./implementer-prompt.md); coordinator: run it yourself" [label="yes"];
-    "More tasks remain?" -> "Final review: 3 hunters, then roles:final-adversarial-reviewer (./final-review-prompt.md)" [label="no"];
+    "Park findings in ledger with rulings" -> "Squash the task to one commit: stack squash BASE, sha for the done move";
+    "Squash the task to one commit: stack squash BASE, sha for the done move" -> "Append completion to ledger, mark todo complete";
+    "Append completion to ledger, mark todo complete" -> "More tasks in this phase?";
+    "More tasks in this phase?" -> "Dispatch implementer in the task's role (./implementer-prompt.md); coordinator: run it yourself" [label="yes"];
+    "More tasks in this phase?" -> "Phase check at the tip (one re-run if it looks flaky)" [label="no"];
+    "Phase check at the tip (one re-run if it looks flaky)" -> "Phase check passes?";
+    "Phase check passes?" -> "Reopen the phase's last task: fix loop (fixups, re-review, squash)" [label="no - real failure"];
+    "Reopen the phase's last task: fix loop (fixups, re-review, squash)" -> "Phase check at the tip (one re-run if it looks flaky)";
+    "Phase check passes?" -> "Phase done: stack done N, stack submit N (draft PR)" [label="yes"];
+    "Phase done: stack done N, stack submit N (draft PR)" -> "More phases remain?";
+    "More phases remain?" -> "Start phase N: stack phase N (branch on top of phase N-1)" [label="yes"];
+    "More phases remain?" -> "Final review: 3 hunters, then roles:final-adversarial-reviewer (./final-review-prompt.md)" [label="no"];
     "Final review: 3 hunters, then roles:final-adversarial-reviewer (./final-review-prompt.md)" -> "Final findings? ONE fix dispatch, one scoped re-review, adjudicate residuals";
-    "Final findings? ONE fix dispatch, one scoped re-review, adjudicate residuals" -> "Final review clean: delete this plan's workspace";
+    "Final findings? ONE fix dispatch, one scoped re-review, adjudicate residuals" -> "Top Phase check again, then stack submit with --open";
+    "Top Phase check again, then stack submit with --open" -> "Final review clean: delete this plan's workspace";
     "Final review clean: delete this plan's workspace" -> "Use methodology:finishing-branch";
 }
 ```
 
 ## Setup
 
-Ensure the work happens in an isolated workspace: use
-methodology:using-git-worktrees to create one or verify the existing one.
-Never start implementation on a main/master branch without your human
-partner's explicit consent.
+A worktree is optional: methodology:using-git-worktrees is offered, not
+required. When you use one, its branch must not be named exactly the plan's
+`**Branch prefix:**` (use another name, for example `wt/<prefix>`, or a
+detached HEAD): `scripts/stack.mjs init` exits 3 on a branch with the prefix's
+own name. Implementation never starts on the trunk: `scripts/stack.mjs phase`
+moves HEAD onto the phase branch, and on any other main/master branch you need
+your human partner's explicit consent.
 
 Conversation memory does not survive compaction. In real sessions,
 controllers that lost their place have re-dispatched entire completed task
@@ -155,7 +177,10 @@ a ledger file, not only in todos.
   `# SDD ledger — plan: <plan file path>`.
 - The ledger is your recovery map: the commits it names exist in git even
   when your context no longer remembers creating them. After compaction,
-  trust the ledger and `git log` over your own recollection.
+  trust the ledger and `git log` over your own recollection, and read
+  `node scripts/stack.mjs status PLAN_FILE` alongside the ledger: it prints
+  the stack state (each phase's branch and state, the mode, the PR numbers),
+  so a phase already submitted is never started again.
 - After compaction, when opted in, read `triqual tasks status --json` and the task's `status` in the plan's `*.tasks.json` before your next ledger move, and skip any move the ledger already shows: a `start` or `rework` on a task already `in_progress`, a `review` on one already `in_review`, a `done` on one already `done`. A resumed session never fails on a move it already made. In store mode (`"mode": "store"`) there is no `*.tasks.json` to read: take each task's state from `triqual tasks export --json` (per-task `status`; `triqual tasks status --json` lists only `inProgress` and `next` for each plan), and the entries from `triqual tracking log`.
 - `git clean -fdx` will destroy the workspace (it's git-ignored scratch); if
   that happens, recover from `git log`.
@@ -173,6 +198,65 @@ Opted in with `"mode": "store"` (details: `store-mode.md` under `references` in 
 
 The workspace ledger (`sdd-ledger.md`) is kept either way: it is this
 skill's recovery map, not a tracking file.
+
+### Stack setup
+
+Stacked execution builds one git branch per plan phase, each on top of the
+previous one, and exactly one commit per task. `scripts/stack.mjs` (run with
+`node`, from this skill's directory) owns the branches and the state file:
+`init`, `mode`, `path`, `status`, `phase`, `squash`, `done` and `submit`, each
+taking PLAN_FILE. Its exit codes: 0 ok, 2 usage or malformed plan, 3 a refused
+precondition (the message names it), 5 `gh` failed.
+
+- **A run that began before stacked execution is not stacked.** First run
+  `node scripts/stack.mjs path PLAN_FILE`. When the file it prints does not
+  exist and the workspace ledger already holds a `Task <N>: complete` line, the
+  run began before stacked execution: its completed tasks sit on an old feature
+  branch, and phase 1 would start from the trunk and strand them. Skip `init`,
+  `phase`, `squash`, `done` and `submit` for the whole run (the task loop's
+  squash and step 6 included), ledger `Ruling: run began before stacked
+  execution — no stack`, and finish on the current branch as before:
+  methodology:finishing-branch's menu with no state file applies. As a second
+  guard, `scripts/stack.mjs phase 1` itself exits 3, naming HEAD's branch, when
+  HEAD is on a branch other than the trunk that holds commits the trunk lacks.
+  A fresh run has no completion line and goes on below.
+- After `sdd-workspace` and the tracking paths, run
+  `node scripts/stack.mjs init PLAN_FILE` once, before Task 1. It prints the
+  stack state as JSON and writes it to `<repo root>/.methodology/stack/<plan file stem>.json`
+  (`scripts/stack.mjs path PLAN_FILE` prints the path). It picks the mode:
+  `github` (phase branches pushed, one draft PR each) when `gh`, `gh stack`
+  and a GitHub remote are all available, else `local`. `init` is safe to
+  re-run: when the state file exists it prints it and changes nothing, which
+  is how a resumed run finds its stack.
+- **Committed tracking mode stops the run.** `init` exits 3 with `committed
+  tracking mode cannot hold one commit per task: switch with triqual
+  progress-init --store (or --local)`: in committed mode every commit carries
+  the tracking files and every ledger move dirties the tree, so one commit per
+  task cannot hold. Stop before Task 1 and tell your human
+  partner to switch with `triqual progress-init --store` (or `--local`). A repo
+  that is not opted in, or in local or store mode, is supported. Any other
+  exit 3, and exit 2, names its cause: rule on it, ledger the `Ruling:`, and
+  fix it or stop if every path forward is a guess.
+- **Push authorization.** Pushing this plan's phase branches, opening their
+  draft PRs and marking them ready for review after the final review is allowed only with a ledger line `Authorization: push phase
+  branches and draft PRs — handoff <date>`, which you write yourself at setup,
+  before Task 1, when your human partner chose the execution method (or
+  confirmed it) at the writing-plans handoff in this conversation, or
+  `Authorization: push phase branches and draft PRs — setup <date>`, which you
+  write on a yes below. Before Task 1, look in the ledger for a line starting
+  `Authorization: push phase branches and draft PRs —` followed by `handoff
+  <date>` or `setup <date>`. When the ledger lacks any `Authorization:` line
+  and this conversation holds such a choice, write the `handoff <date>` line
+  now. When it lacks one and this conversation holds no such choice (a new
+  session on an existing plan), ask once, before Task 1, whether you may push
+  the plan's phase branches, open their draft PRs and mark them ready for
+  review after the final review. A yes: write
+  `Authorization: push phase branches and draft PRs — setup <date>` to the
+  ledger. A no: run `node scripts/stack.mjs mode PLAN_FILE local` and ledger
+  `Authorization: declined — stack in local mode`, and the run goes on with
+  local branches only. Any `Authorization:` line, the declined one included,
+  means the question was answered and is never asked again: a resumed run
+  finds the line and never asks again.
 
 Read the plan once, note its context and Global Constraints, and create a
 todo per task. If the plan names a Spec, read that too: the spec is the
@@ -223,13 +307,10 @@ touches, and nothing else.
 
 ## The Task Loop
 
-**Batch small same-shape work.** When the plan lists several tasks that are
-each a small, independent edit of the same kind — the same one-line fix,
-constant change, or field addition repeated across files — do not dispatch
-one subagent per task. Compose ONE dispatch brief listing every file and
-its change, send the whole batch to a single subagent, and review its diff
-as one unit. Reserve one-dispatch-per-task for work that needs its own
-judgment, its own tests, or its own review surface.
+**One task, one dispatch, one commit.** Under the stack, each task is its own
+dispatch and its own commit; same-shape small edits are one task in the plan,
+so you never compose a batch brief or send several tasks to one subagent. The
+plan sizes the tasks, and the commit is the unit the review and the squash read.
 
 Everything you paste into a dispatch prompt — and everything a subagent
 prints back — stays resident in your context for the rest of the session
@@ -247,6 +328,16 @@ all of a long wait's efficiency while guaranteeing a stuck or lost
 child is noticed within minutes, not at the end of the session.
 
 **Rate limits.** A dispatch to any role (an implementer, a fixer or a reviewer, on any model) that is rate-limited mid-plan is not a stop: wait in the bounded stretches above and retry the same dispatch, writing one `RateLimit: <role> <time>` ledger line per stretch, with `<time>` the local time as `HH:MM`. After about 6 stretches without success, end the run with a final message naming the task and listing the ledger's `Ruling:` lines (see Finish); the ledger makes the plan resumable, and that is the end of the session, not a question for your human partner. It never swaps the model in a dispatch: the dispatch keeps the same role and passes no model. A hunter or the safety gate with no Haiku quota is not this case: it is the skip rule (see Review the task, When the stage does not run).
+
+### Start the phase
+
+Before the first task of phase N, run `node scripts/stack.mjs phase PLAN_FILE N`.
+It prints the phase branch and leaves HEAD on it: it creates the branch on top
+of phase N−1's (the trunk's, for phase 1) and never leaves HEAD on the trunk.
+It needs a clean tree and phase N−1 submitted (in local mode, done) and exits 3
+otherwise. Every task of the phase then commits on that branch; BASE (step 1)
+is HEAD there. A resumed run starts the phase the stack state (`status`) shows
+active or pending, never one already submitted.
 
 ### 1. Dispatch the implementer
 
@@ -464,6 +555,7 @@ below), which fixes what is real and refutes with evidence what is not:
 
 - **Ledger move:** when opted in, run `triqual tasks rework T<N> --plan <plan>` at the start of each fix round, before the fix dispatch, and `triqual tasks review T<N> --plan <plan>` when the fixer reports back and the re-review starts.
 - Every fix dispatch to `roles:review-fixer` (or to `roles:complex-implementer`, for its own task) carries the implementer template's Tracking section when opted in, and its Task Skills section when the brief has a `**Skills:**` line.
+- **Fix commits fold into the task's own commit.** A fix round commits with `git commit --fixup=<the task's first commit>`, never an amend, a rebase or a reset: name that commit (`git rev-list --reverse BASE..HEAD | head -n 1`) in the fix dispatch. The review package stays `BASE..HEAD`, and step 5 folds the fixups into the one commit when the review is clean. While the task is the top of the stack that fold touches only this task's commit.
 
 **Rounds 1-3 — resume the same `roles:review-fixer`.** Round 1 dispatches
 a `roles:review-fixer` with the open findings verbatim, the brief path and
@@ -539,11 +631,13 @@ When the review comes back clean — or every open finding is parked with a
 ruling at the cap — append the completion line to the ledger in the same
 message as your other bookkeeping:
 
-- **Ledger move:** when opted in, run `triqual tasks done T<N> --commit <sha> --plan <plan>` on approval, with `<sha>` the task's last commit (the head the approving review saw).
+- **Squash first:** run `node scripts/stack.mjs squash PLAN_FILE BASE`. It folds every commit of `BASE..HEAD` (the implementer's and every fixup) into one, with `git commit-tree`: the tree of HEAD, the message and author of the range's first commit, never a rebase and never a `git commit`, so no hook runs and no gate fires. It prints the sha of that one commit, or `no commits` for a coordinator task that made none (then `<sha>` below is `git rev-parse HEAD`).
+- **Ledger move:** when opted in, run `triqual tasks done T<N> --commit <sha> --plan <plan>` on approval, with `<sha>` the sha `scripts/stack.mjs squash` printed.
+- Squash makes no commit through `git commit`, so it needs no `triqual tracking` entry and stamps none: fix-round entries keep their pre-squash shas, and only the task ledger's `done --commit` names the squashed sha.
 - The move leaves the task ledger and `status.md` dirty: the next task's commit stages them, and after the last task the closing commit of methodology:finishing-branch carries them.
 - In store mode the move leaves no file dirty (the ledger is in the store), so there is nothing to stage.
 
-- `Task <N>: complete (commits <base7>..<head7>, review clean)`
+- `Task <N>: complete (commits <base7>..<head7>, review clean)`, with `<head7>` the squashed sha
 - `Task <N>: complete (commits <base7>..<head7>, <K> parked)` after a
   tripped breaker
 
@@ -551,11 +645,20 @@ Then mark the todo complete and move on. Never move to the next task while
 the review has open Critical/Important issues that are neither fixed nor
 parked-with-ruling at the cap.
 
+### 6. End the phase
+
+When the phase's last task is complete, close the phase before starting the next:
+
+- **Phase check.** Run the phase's `**Phase check:**` command from the plan's phase block, at the tip of the phase branch; a plan with no `## Phase` heading (or no `**Branch prefix:**` line) is one phase whose check is the repository's full test command. A failure that passes on one re-run is flaky: ledger `Ruling: <test> flaky — passed on re-run — <what it costs if wrong>` and go on. A real failure reopens the phase's last task: when opted in, run `triqual tasks reopen T<N> "<reason>" --plan <plan>`, then run the fix loop on it, skipping the first round's `triqual tasks rework` move (`reopen` already moved the task to `in_progress`, and `rework` only leaves `in_review`; its re-review's `review` move runs as usual) (fixups, scoped re-review, and a squash with BASE the parent of the task's squashed commit, then its `done` move again), then run the Phase check again.
+- **Done and submit.** Run `node scripts/stack.mjs done PLAN_FILE N`, then `node scripts/stack.mjs submit PLAN_FILE N`. In GitHub mode `submit` pushes this plan's phase branches only (the ledgered authorization covers it) and opens or updates the draft PR, and prints `Phase <N>: submitted (<branch>, PR #<n> draft)`; ledger that line. In local mode it prints `local mode: nothing to submit`; ledger `Phase <N>: complete (<branch>, local)`.
+- **`submit` exits 5** when `gh` failed, and records nothing: ledger a `Ruling:` that names the `gh` message, retry once, and when it fails again run `node scripts/stack.mjs mode PLAN_FILE local`, ledger the `Ruling:`, and continue the plan in local mode.
+- **A submitted phase is final:** never amend it, never rebase it and never force push it. A defect found in the code of an earlier, submitted phase is fixed in the current task's commit; at the final review it is fixed in the final fix commit.
+
 ## Final Review
 
 The final whole-branch review gets a package too: run
 `bash scripts/review-package PLAN_FILE MERGE_BASE HEAD` (MERGE_BASE = the commit the
-branch started from, e.g. `git merge-base main HEAD`) and include the
+stack started from, e.g. `git merge-base <trunk> HEAD`: the review covers `trunk..top`, every phase) and include the
 printed path in the final review dispatch, so the final reviewer reads
 one file instead of re-deriving the branch diff with git commands.
 
@@ -582,6 +685,8 @@ the five classes above stop you here. There is no second fix wave —
 residual load-bearing findings surface to your human partner when
 methodology:finishing-branch presents the options.
 
+The reviewer names each finding's phase, and the fixer fixes them all in one commit on the top phase, whatever phase each finding sits in. The fix wave is one commit on the top phase (`fix: address final review findings`), made with its pending entry when opted in: the only commit of the stack that is not a task, and never a `--fixup`. After its scoped re-review, run the top phase's Phase check again (the top Phase check), then `node scripts/stack.mjs submit PLAN_FILE <top N> --open`, which pushes that commit and marks every phase's PR ready for review. A clean final review with no fix wave goes straight to that `submit` with `--open`.
+
 ## Finish
 
 Before you delete anything, collect every ledger line containing `Ruling:` —
@@ -607,6 +712,12 @@ delete this plan's workspace (`rm -rf <workspace>`) — the git history is
 the record now. Sibling directories belong to other plans; leave them
 alone.
 
+The plan's `## After Merge` checklist is not run: those operations need the
+merged trunk and are not tasks. Copy each one, with its command, into the final
+message under "After Merge" (methodology:finishing-branch runs them when the merge
+happens in its session). Leave the stack state file, `.methodology/stack/<plan file stem>.json`,
+in place: methodology:finishing-branch deletes it once the stack is merged.
+
 Use methodology:finishing-branch.
 
 ## Common Rationalizations
@@ -630,11 +741,16 @@ Use methodology:finishing-branch.
 ```
 You: I'm using Subagent-Driven Development to execute this plan.
 
-[Setup: worktree verified]
-[Tracking: triqual tasks paths --json → opted in, "mode": "committed"]
+[Setup: worktree optional, none used]
+[Tracking: triqual tasks paths --json → opted in, "mode": "store"]
 [Read plan file once: <plansDir>/feature-plan.md]
 [Resolve workspace: bash scripts/sdd-workspace <plansDir>/feature-plan.md — no sdd-ledger.md inside, fresh start]
+[Stack: node scripts/stack.mjs init <plansDir>/feature-plan.md → github mode, 1 phase; the method was chosen at the handoff in this conversation, so I write "Authorization: push phase branches and draft PRs — handoff 2026-10-14" to the ledger now, and ask nothing]
 [Create todos for all tasks]
+
+Phase 1: Hook installation (branch feature/01-hooks)
+
+[node scripts/stack.mjs phase <plansDir>/feature-plan.md 1 → feature/01-hooks, HEAD on it]
 
 Task 1: Hook installation script (no **Role:** line → roles:tdd-implementer)
 
@@ -659,6 +775,7 @@ Spec reviewer: Spec ✅ - all requirements met, nothing extra.
   correctness-1: refuted — the flag is handled at src/install.js:31.
 [Ledger: Round 2: T1 — verdicts 1/1; triqual role-eval record --plan <plan> for the hunters record]
 
+[Review clean: node scripts/stack.mjs squash <plan file> a1b2c3d → d4e5f6a, one commit]
 [Opted in: triqual tasks done T1 --commit d4e5f6a --plan <plan>]
 [Ledger: Task 1: complete (commits a1b2c3d..d4e5f6a, review clean)]
 
@@ -677,8 +794,8 @@ Spec reviewer: Spec ❌:
   Issues (Important): Magic number (100)
 Safety reviewer: Safety: clean.
 
-[Fix round 1 — opted in: triqual tasks rework T2 --plan <plan>; dispatch roles:review-fixer with both findings + Tracking section]
-Fixer: Added progress reporting, extracted PROGRESS_INTERVAL constant.
+[Fix round 1 — opted in: triqual tasks rework T2 --plan <plan>; dispatch roles:review-fixer with both findings, the task's first commit and the Tracking section]
+Fixer: Added progress reporting, extracted PROGRESS_INTERVAL constant, committed with git commit --fixup=<first commit>.
   Re-ran test/recovery.test.js — 10/10 passing. Fix report appended.
 
 [Opted in: triqual tasks review T2 --plan <plan>; run review-package PLAN_FILE FIX_BASE HEAD; dispatch scoped re-review to roles:spec-reviewer, which raised the findings]
@@ -687,18 +804,23 @@ Re-reviewer: Missing progress reporting — ADDRESSED (src/recovery.js:41).
   Verdict: all findings addressed.
 
 [Ledger: Task 2: fix round 1/5 (2 addressed, 0 open; commits d4e5f6a..b7c8d9e)]
-[Opted in: triqual tasks done T2 --commit b7c8d9e --plan <plan>]
-[Ledger: Task 2: complete (commits d4e5f6a..b7c8d9e, review clean)]
+[Review clean: node scripts/stack.mjs squash <plan file> d4e5f6a → e0f1a2b, the task and its fixup as one commit]
+[Opted in: triqual tasks done T2 --commit e0f1a2b --plan <plan>]
+[Ledger: Task 2: complete (commits d4e5f6a..e0f1a2b, review clean)]
+
+[Phase 1 ends: Phase check from the plan's phase block, at the tip → passes; node scripts/stack.mjs done <plan file> 1; node scripts/stack.mjs submit <plan file> 1]
+[Ledger: Phase 1: submitted (feature/01-hooks, PR #12 draft)]
 
 ...
 
 [After all tasks]
 [Run review-package PLAN_FILE MERGE_BASE HEAD; dispatch 3 roles:hunter; Ledger: Round 1: final — hunters 3/3; dispatch roles:final-adversarial-reviewer with final-review-prompt.md and their candidates files; Ledger: Round 2: final — verdicts 2/2]
 Final reviewer: No confirmed findings. Ledger triage: deferred minors accepted, none block merge. Merge: ready.
+[No fix wave: node scripts/stack.mjs submit <plan file> 1 --open marks the PR ready]
 
 [Delete this plan's workspace — the record now lives in git]
 
-Done! Using methodology:finishing-branch.
+Done! Final message lists the Ruling: lines and the plan's After Merge checklist. Using methodology:finishing-branch.
 ```
 
 Forked from superpowers 6.4.2 (skills/subagent-driven-development), MIT © Jesse Vincent — see LICENSE-superpowers.

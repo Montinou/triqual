@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -1112,4 +1113,488 @@ test('no store-mode clause of executing-plans pairs the tasks check with --plan'
       assert.ok(!(/\bcheck\b/.test(clause) && clause.includes('--plan')), `a store-mode clause pairs the check with --plan: ${clause}`);
     }
   }
+});
+
+// ---- finishing-branch integrates a stack (plan stacked-execution · T11; spec U6, R5, R6) -----------------------------
+
+const STACK_SCRIPT = '../subagent-driven-development/scripts/stack.mjs';
+// The script is not executable (mode 100644): every call goes through node.
+const STACK = `node ${STACK_SCRIPT}`;
+// One block of finishing-branch's text (a paragraph or one list item), joined on one line, found by a phrase it holds.
+const fbBlock = (phrase) => {
+  const found = blocks(`${FB}/SKILL.md`).filter((b) => b.includes(phrase));
+  assert.equal(found.length, 1, `finishing-branch has ${found.length} blocks holding ${phrase}`);
+  return found[0];
+};
+const mustHave = (text, needles, what) => {
+  for (const needle of needles) {
+    assert.ok(text.includes(needle), `${what} does not say ${needle}: ${text}`);
+  }
+};
+
+test('finishing-branch runs the suite at the top of the stack', () => {
+  const step = section(FB, '## Step 1: Verify Tests');
+  const rule = fbBlock('**Stacked plan:**');
+  assert.ok(step.some((l) => l.startsWith('**Stacked plan:**')), 'the stack rule is not inside Step 1');
+  mustHave(rule, [`\`${STACK} path PLAN_FILE\``, 'state file', 'the highest `n`', 'top branch', 'the suite'], 'the Step 1 stack rule');
+  assert.match(rule, /exists[^.]*stack/i, 'the stack rule is not keyed on the state file existing');
+  assert.match(rule, /no state file[^.]*(current|menu below)/i, 'a plan with no state file does not keep the current menu');
+  assert.match(rule, /check(s|ing)? out the top branch[^.]*before[^.]*suite|top branch[^.]*then[^.]*suite/i, 'the suite does not run on the top branch');
+});
+
+test('finishing-branch offers the GitHub stack menu', () => {
+  const menu = section(FB, '## Step 5: Present Options').join('\n');
+  const gh = /\*\*Stacked plan, GitHub mode[^\n]*\n+```\n([^]*?)```/.exec(menu);
+  assert.ok(gh, 'Step 5 has no GitHub-mode stack menu block');
+  const options = gh[1].split('\n').filter((l) => /^\d+\. /.test(l));
+  assert.equal(options.length, 2, `the GitHub menu has ${options.length} options: ${options}`);
+  assert.match(options[0], /^1\. Leave the stack open for review/i);
+  assert.match(options[1], /^2\. Merge now/i);
+  const exec = section(FB, '### Stacked plan: GitHub mode').join(' ');
+  mustHave(exec, ['`gh stack merge <pr> --yes --merge-method <m>`', 'the top PR to merge up to', 'the method'], 'the GitHub-mode execution');
+  assert.match(exec, /owner[^.]*(names|name)[^.]*PR[^.]*method|owner[^.]*PR[^.]*and the method/i, 'the owner does not name the PR and the method');
+  assert.match(exec, /never (pick|choose|guess)[^.]*(PR|method)/i, 'nothing forbids choosing the PR or the method for the owner');
+});
+
+test('finishing-branch offers the local stack menu', () => {
+  const menu = section(FB, '## Step 5: Present Options').join('\n');
+  const local = /\*\*Stacked plan, local mode[^\n]*\n+```\n([^]*?)```/.exec(menu);
+  assert.ok(local, 'Step 5 has no local-mode stack menu block');
+  const options = local[1].split('\n').filter((l) => /^\d+\. /.test(l));
+  assert.equal(options.length, 3, `the local menu has ${options.length} options: ${options}`);
+  assert.match(options[0], /^1\. Merge the stack into <trunk> locally/i);
+  assert.match(options[1], /^2\. Push and open it as stacked PRs/i);
+  assert.match(options[2], /^3\. Keep as is/i);
+  const exec = section(FB, '### Stacked plan: local mode').join(' ');
+  mustHave(exec, ['`git merge --ff-only <top branch>`', 'the suite'], 'the local merge');
+  const push = fbBlock(`\`${STACK} mode PLAN_FILE github\``);
+  mustHave(push, [`\`${STACK} submit PLAN_FILE <N>\``, 'each phase still `done`, in order', 'already `submitted`', '`--open`'], 'the push option');
+  assert.ok(!push.includes('each phase in order'), 'the push option still submits every phase, whatever its state');
+  const at = (needle) => push.indexOf(needle);
+  assert.ok(at(' mode PLAN_FILE github') < at(' submit PLAN_FILE <N>`') && at(' submit PLAN_FILE <N>`') < at('`--open`'), 'mode, submit per phase and --open are out of order');
+});
+
+test('a full merge runs the After Merge checklist, prunes and deletes the state; a partial merge refreshes the state with stack.mjs status and runs nothing', () => {
+  const after = section(FB, '### After a stack merge').join(' ');
+  mustHave(
+    after,
+    ['status PLAN_FILE', 'the top phase', '`merged`', '`## After Merge`', '`gh stack sync --prune`', 'delete the merged phase branches', 'STACK_STATE', 'state file'],
+    'After a stack merge',
+  );
+  const full = fbBlock('**Full merge**');
+  mustHave(full, ['the top phase', '`merged`', 'After Merge', '`gh stack sync --prune`', 'delete', 'state file'], 'the full-merge rule');
+  assert.ok(full.indexOf('After Merge') < full.indexOf('`gh stack sync --prune`') && full.indexOf('`gh stack sync --prune`') < full.lastIndexOf('state file'), 'the full-merge steps are out of order');
+  const partial = fbBlock('**Partial merge**');
+  mustHave(partial, ['status PLAN_FILE', 'refresh', 'runs nothing', 'the state file stays'], 'the partial-merge rule');
+  assert.match(partial, /no After Merge[^.]*(run|item)|does not run[^.]*After Merge|runs nothing/i, 'the partial merge may run something');
+  assert.match(partial, /not the top phase|below the top phase|short of the top phase/i, 'the partial merge is not defined against the top phase');
+});
+
+test('a stack always writes the After Merge checklist, marked to run once merged, into the closing entry and status Next; a merge that runs it adds a second entry', () => {
+  const rule = fbBlock('**Stacked plan, After Merge checklist:**');
+  mustHave(rule, ['`## After Merge`', 'closing progress entry', 'status `Next`', 'each operation with its command', 'to run once merged', 'always', 'second progress entry'], 'the checklist rule');
+  assert.match(rule, /opted in/, 'the checklist rule does not say what a repo not opted in does');
+  assert.match(rule, /final message/, 'a repo not opted in has no place for the checklist');
+  // Step 2 stays as U6 says: the entry and the roadmap are written there, before any option runs.
+  const step2 = section(FB, '## Step 2: Close the Plan');
+  assert.ok(step2.some((l) => l.startsWith('**Stacked plan, After Merge checklist:**')), 'the rule is not in Step 2');
+  assert.ok(!step2.join(' ').match(/steps? 3 and 4[^.]*wait|wait until Step 6|deferred closing/i), 'Step 2 still defers the closing entry and roadmap');
+  assert.ok(!/deferred closing entry/i.test(read(`${FB}/SKILL.md`)), 'the skill still writes a deferred closing entry');
+  const noOps = fbBlock('are not tasks');
+  mustHave(noOps, ['After Merge', 'never reach the task ledger'], 'the After Merge rule');
+  // The merge that runs the checklist records it in a second entry, after the checklist ran.
+  const full = fbBlock('**Full merge**');
+  mustHave(full, ['second progress entry'], 'the full-merge rule');
+  assert.ok(full.indexOf('`## After Merge`') < full.indexOf('second progress entry'), 'the second entry comes before the checklist ran');
+});
+
+test('a full merge refreshes the status section that named the checklist, so Next lists only what is still pending', () => {
+  const full = fbBlock('**Full merge**');
+  mustHave(
+    full,
+    ['refresh', 'status `Next`', '`triqual tracking status set --section <heading> <draft>`', '`triqual tracking write status <draft>`', 'store', 'local', 'still pending', 'final message'],
+    'the full-merge status refresh',
+  );
+  assert.ok(full.indexOf('second progress entry') < full.indexOf('Last, refresh'), 'the status refresh comes before the second entry');
+  assert.ok(full.indexOf('`## After Merge`') < full.indexOf('Last, refresh'), 'the status refresh comes before the checklist ran');
+  assert.match(full, /failing operation[^;)]*(it and every operation after it|the failed operation and the rest)[^;)]*(stay|remain) pending/i, 'a failing operation does not leave the failed one and the rest pending');
+  assert.match(full, /only (the operations still pending|what is still pending)|ran\b[^.]*checklist|checklist ran/i, 'the refreshed Next does not name only the pending operations or say the checklist ran');
+  assert.match(full, /not opted in[^.]*final message/i, 'a repo not opted in does not get the status in the final message');
+});
+
+test('every stack move runs through node, the script is not executable', () => {
+  for (const [, n, l] of numbered(FB).filter(([, , l]) => l.includes(STACK_SCRIPT))) {
+    const total = l.split(STACK_SCRIPT).length - 1;
+    const viaNode = l.split(`node ${STACK_SCRIPT}`).length - 1;
+    assert.equal(viaNode, total, `line ${n} runs stack.mjs without node (${viaNode} of ${total}): ${l}`);
+  }
+});
+
+test('the state file path is captured in Step 3 and read and deleted from there, never from the main repo root', () => {
+  // Not section(): the bash comments inside the block start with "# " and would end it.
+  const text = read(`${FB}/SKILL.md`);
+  const step3 = text.slice(text.indexOf('## Step 3: Detect Environment'), text.indexOf('## Step 4: Determine Base Branch'));
+  assert.ok(step3.includes(`STACK_STATE=$(${STACK} path PLAN_FILE)`), 'Step 3 does not capture the state path in STACK_STATE');
+  assert.ok(step3.indexOf('STACK_STATE') < step3.indexOf('```', step3.indexOf('```') + 3), 'STACK_STATE is not captured inside the Step 3 block');
+  const after = fbBlock('A merge with `gh stack merge <pr>` may stop short');
+  mustHave(after, ['cd "$WORKTREE_PATH"', 'status PLAN_FILE', 'never from `MAIN_ROOT`'], 'the status read');
+  const full = fbBlock('**Full merge**');
+  mustHave(full, ['rm -f "$STACK_STATE"'], 'the state deletion');
+  assert.ok(!/rm -f "\$\(/.test(read(`${FB}/SKILL.md`)), 'the state file is still resolved again after the directory change');
+  const partial = fbBlock('**Partial merge**');
+  mustHave(partial, ['cd "$WORKTREE_PATH"'], 'the partial-merge refresh');
+});
+
+test('a GitHub merge changes to the main repo root before cleanup, like the local merge', () => {
+  const full = fbBlock('**Full merge**');
+  mustHave(full, ['cd "$MAIN_ROOT"', 'Step 7'], 'the full-merge rule');
+  assert.ok(full.indexOf('cd "$MAIN_ROOT"') < full.indexOf('Step 7'), 'the directory change comes after the cleanup');
+  assert.ok(full.indexOf('cd "$MAIN_ROOT"') < full.indexOf('`gh stack sync --prune`'), 'the directory change comes after the prune');
+});
+
+test('a GitHub full merge brings the main checkout to the merged trunk before the After Merge checklist', () => {
+  const full = fbBlock('**Full merge**');
+  const at = (needle) => {
+    const i = full.indexOf(needle);
+    assert.ok(i >= 0, `the full-merge rule does not say ${needle}: ${full}`);
+    return i;
+  };
+  const order = ['cd "$MAIN_ROOT"', '--untracked-files=no', 'git fetch <remote>', 'git checkout <trunk>', 'git merge --ff-only <remote>/<trunk>', '`## After Merge`', '`gh stack sync --prune`'];
+  order.reduce((prev, needle) => {
+    assert.ok(at(needle) > prev, `${needle} is out of order in the full-merge rule: ${full}`);
+    return at(needle);
+  }, -1);
+  assert.match(full, /require a clean tree/i, 'a clean tree is not required');
+  assert.match(full, /refused, stop and report[^.]*nothing after it runs/i, 'a refused step does not stop the checklist');
+});
+
+test('finishing-branch names an unlinked stack before offering gh stack merge', () => {
+  const rule = fbBlock('**Stack link check (GitHub mode):**');
+  mustHave(rule, ['; stack link missing', 'ledger', 'say so', 'before offering `gh stack merge`', 'cannot be merged atomically'], 'the stack link check');
+  const menus = section(FB, '## Step 5: Present Options').join('\n');
+  assert.ok(menus.includes('**Stack link check (GitHub mode):**'), 'the stack link check is not in Step 5, where the menu is presented');
+});
+
+test('stacked execution makes no closing commit', () => {
+  const rule = fbBlock('**Stacked plan, no closing commit:**');
+  mustHave(rule, ['state file exists', 'step 5', 'closing commit', 'store', 'local', 'never'], 'the no-closing-commit rule');
+  assert.match(rule, /(skip|omit)[^.]*step 5/i, 'step 5 is not skipped');
+  assert.match(rule, /committed[^.]*stops/i, 'a committed-mode plan with a stack is not stopped');
+  assert.ok(section(FB, '## Step 2: Close the Plan').some((l) => l.startsWith('**Stacked plan, no closing commit:**')), 'the rule is not in Step 2');
+});
+
+test('finishing-branch keeps the current menu without a state file and every stack move carries PLAN_FILE', () => {
+  const menu = section(FB, '## Step 5: Present Options').join('\n');
+  mustHave(menu, ['Merge back to <base-branch> locally', 'Push and create a Pull Request', 'Keep the branch as-is'], 'Step 5');
+  assert.match(menu, /no state file[^]*current/i, 'Step 5 does not keep the current menu for a plan with no state file');
+  for (const [, n, l] of numbered(FB).filter(([, , l]) => l.includes(STACK_SCRIPT))) {
+    assert.match(l, /\b(path|status|mode|submit)\b/, `line ${n} runs stack.mjs with a command the plan does not give: ${l}`);
+    assert.match(l, /PLAN_FILE/, `line ${n} runs stack.mjs without PLAN_FILE: ${l}`);
+  }
+});
+
+// ---- stacked execution (spec U5, R1, R2, R4, R7): the same lifecycle as subagent-driven-development ----------------------
+
+const STACK_REAL = join(SKILLS, SDD, 'scripts', 'stack.mjs');
+const PHASED_PLAN = join(TEST, 'fixtures', 'phased-plan.md');
+const AUTH = 'Authorization: push phase branches and draft PRs —';
+
+// A repo whose stack was set up by the real stack.mjs (init in local mode, then phase 1) on phased-plan.md: no
+// hand-written state file. stack.mjs runs with a PATH that has no `triqual`, so init has no tracking mode to refuse.
+const stackedRepo = () => {
+  const r = repo();
+  const planFile = join(r.plansDir, 'phased-plan.md');
+  writeFileSync(planFile, readFileSync(PHASED_PLAN, 'utf8'));
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'add the phased plan');
+  const stack = (...args) => {
+    const res = spawnSync(process.execPath, [STACK_REAL, ...args, ...(args[0] === 'init' ? ['--mode', 'local'] : [])], {
+      cwd: r.dir,
+      env: { ...process.env, HOME: join(r.dir, '.no-home'), PATH: cleanPath(join(r.dir, '.no-tools')) },
+      encoding: 'utf8',
+    });
+    assert.equal(res.status, 0, `stack.mjs ${args.join(' ')}: ${res.stdout}${res.stderr}`);
+    return res.stdout.trim();
+  };
+  const plan = 'docs/plans/phased-plan.md';
+  stack('init', plan);
+  stack('phase', plan, '1');
+  return { r, plan, planFile, stack, workspace: join(r.dir, '.methodology', 'sdd', 'phased-plan') };
+};
+
+test('task-done squashes the task before its ledger move when the stack is active', () => {
+  const { r, plan, workspace } = stackedRepo();
+  try {
+    assert.equal(r.git('rev-parse', '--abbrev-ref', 'HEAD').trim(), 'demo/01-core', 'phase 1 did not leave HEAD on its branch');
+    const opts = { vars: { FAKE_TRIQUAL_PATHS: r.paths() } };
+    const base = r.git('rev-parse', 'HEAD').trim();
+    r.commit('one.txt', 'one\n');
+    const preSquash = r.commit('two.txt', 'two\n');
+    assert.equal(r.git('rev-list', '--count', `${base}..HEAD`).trim(), '2');
+    const res = r.run('task-done', [plan, '1', base, '--', 'echo', '2/2 pass'], opts);
+    assert.equal(res.status, 0, res.stdout + res.stderr);
+    assert.equal(r.git('rev-list', '--count', `${base}..HEAD`).trim(), '1', 'BASE..HEAD is not one commit');
+    const head = r.git('rev-parse', 'HEAD').trim();
+    assert.notEqual(head, preSquash, 'HEAD is still the pre-squash commit');
+    assert.equal(r.git('rev-parse', 'HEAD^').trim(), base, 'the squashed commit does not sit on BASE');
+    assert.equal(r.git('show', '--format=', '--name-only', 'HEAD').trim().split('\n').sort().join(','), 'one.txt,two.txt');
+    assert.deepEqual(r.moves(), [`tasks done T1 --commit ${head} --plan ${join(r.plansDir, 'phased-plan.md')}`]);
+    const short = (sha) => r.git('rev-parse', '--short=7', sha).trim();
+    const ledger = readFileSync(join(workspace, 'sdd-ledger.md'), 'utf8').split('\n');
+    assert.equal(ledger[1], `Task 1: complete (commits ${short(base)}..${short(head)}, tests: echo '2/2 pass' → 2/2 pass)`);
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('task-done squashes only after the test command passes, and a squash refusal records nothing', () => {
+  const { r, plan, workspace } = stackedRepo();
+  try {
+    const opts = { vars: { FAKE_TRIQUAL_PATHS: r.paths() } };
+    const base = r.git('rev-parse', 'HEAD').trim();
+    r.commit('one.txt', 'one\n');
+    const preSquash = r.commit('two.txt', 'two\n');
+    // A failing test command leaves the two commits alone.
+    const failed = r.run('task-done', [plan, '1', base, '--', 'false'], opts);
+    assert.notEqual(failed.status, 0);
+    assert.equal(r.git('rev-parse', 'HEAD').trim(), preSquash, 'a failing run squashed the task');
+    // HEAD off the active phase's branch: stack.mjs squash exits 3, which fails task-done with nothing recorded.
+    r.git('switch', '-q', '-c', 'elsewhere');
+    const refused = r.run('task-done', [plan, '1', base, '--', 'echo', 'ok'], opts);
+    assert.equal(refused.status, 3, refused.stdout + refused.stderr);
+    assert.match(refused.stderr, /NOT recorded/);
+    assert.deepEqual(r.moves(), [], 'a refused squash moved the ledger');
+    assert.equal(existsSync(join(workspace, 'sdd-ledger.md')), false, 'a refused squash wrote the completion line');
+    assert.equal(r.git('rev-parse', 'HEAD').trim(), preSquash);
+  } finally {
+    r.cleanup();
+  }
+});
+
+// The task ledger of phased-plan.md with T1 at `status`, and the `triqual tasks status --json` listing that names it.
+const phasedLedgerAt = (r, status) => {
+  const ledgerPath = join(r.plansDir, 'phased-plan.tasks.json');
+  // Never staged by `git add -A`, so rewriting it never dirties the tree stack.mjs squash checks.
+  appendFileSync(join(r.dir, '.git', 'info', 'exclude'), 'phased-plan.tasks.json\n');
+  const task = (id, st) => ({ id, title: id, status: st, deps: [], commits: [], history: [] });
+  writeFileSync(ledgerPath, `${JSON.stringify({ state: 'active', tasks: [task('T1', status), task('T2', 'pending')] })}\n`);
+  return JSON.stringify([{ name: 'phased-plan', ledgerPath, done: 0, total: 2, inProgress: [], next: 'T1' }]);
+};
+
+test('a task-done re-run of a recorded task never squashes again: after stack done, and after the next task committed', () => {
+  const { r, plan, stack, workspace } = stackedRepo();
+  try {
+    const done = (status, ...args) =>
+      r.run('task-done', [plan, ...args, '--', 'echo', 'ok'], {
+        vars: { FAKE_TRIQUAL_PATHS: r.paths(), ...(status ? { FAKE_TRIQUAL_STATUS: phasedLedgerAt(r, status) } : {}) },
+      });
+    const lines = () => readFileSync(join(workspace, 'sdd-ledger.md'), 'utf8').split('\n').filter((l) => l.startsWith('Task '));
+    const base = r.git('rev-parse', 'HEAD').trim();
+    r.commit('one.txt', 'one\n');
+    r.commit('two.txt', 'two\n');
+    const first = done(null, '1', base);
+    assert.equal(first.status, 0, first.stdout + first.stderr);
+    const squashed = r.git('rev-parse', 'HEAD').trim();
+    const movesAfterFirst = r.moves().length;
+    assert.equal(lines().length, 1);
+
+    // Re-run after `stack done 1`: stack.mjs squash would exit 3 (no phase is active), which used to fail a recorded task.
+    stack('done', plan, '1');
+    for (const status of [null, 'done']) {
+      const again = done(status, '1', base);
+      assert.equal(again.status, 0, `${status}: ${again.stdout}${again.stderr}`);
+      assert.doesNotMatch(again.stderr, /NOT recorded/, String(status));
+      assert.equal(r.git('rev-parse', 'HEAD').trim(), squashed, `${status}: the re-run moved HEAD`);
+      assert.equal(lines().length, 1, `${status}: the re-run wrote a second completion line`);
+    }
+    assert.equal(r.moves().length, movesAfterFirst + 1, 'only the first re-run (unknown ledger status) may move done again: not the one that shows it done');
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('a task-done re-run with an earlier task BASE after the next task committed does not fold the next task in', () => {
+  const { r, plan, workspace } = stackedRepo();
+  try {
+    const opts = (status) => ({ vars: { FAKE_TRIQUAL_PATHS: r.paths(), FAKE_TRIQUAL_STATUS: phasedLedgerAt(r, status) } });
+    const base1 = r.git('rev-parse', 'HEAD').trim();
+    r.commit('one.txt', 'one\n');
+    r.commit('one-more.txt', 'one more\n');
+    const first = r.run('task-done', [plan, '1', base1, '--', 'echo', 'ok'], opts('in_review'));
+    assert.equal(first.status, 0, first.stdout + first.stderr);
+    const squashed1 = r.git('rev-parse', 'HEAD').trim();
+    r.commit('two.txt', 'two\n');
+    r.commit('two-more.txt', 'two more\n');
+    const tip = r.git('rev-parse', 'HEAD').trim();
+    const again = r.run('task-done', [plan, '1', base1, '--', 'echo', 'ok'], opts('done'));
+    assert.equal(again.status, 0, again.stdout + again.stderr);
+    assert.equal(r.git('rev-parse', 'HEAD').trim(), tip, 'the re-run folded task 2 into task 1');
+    assert.equal(r.git('rev-list', '--count', `${squashed1}..HEAD`).trim(), '2', "task 2's commits were rewritten");
+    const ledger = readFileSync(join(workspace, 'sdd-ledger.md'), 'utf8');
+    assert.equal(ledger.split('\n').filter((l) => l.startsWith('Task 1: complete')).length, 1, 'a bogus second line names task 2 as task 1');
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('a reopened task is still squashed by task-done: its range has new commits and its status is in_progress', () => {
+  const { r, plan } = stackedRepo();
+  try {
+    const opts = (status) => ({ vars: { FAKE_TRIQUAL_PATHS: r.paths(), FAKE_TRIQUAL_STATUS: phasedLedgerAt(r, status) } });
+    const base = r.git('rev-parse', 'HEAD').trim();
+    r.commit('one.txt', 'one\n');
+    assert.equal(r.run('task-done', [plan, '1', base, '--', 'echo', 'ok'], opts('in_review')).status, 0);
+    const squashed = r.git('rev-parse', 'HEAD').trim();
+    r.commit('fix.txt', 'fix\n');
+    r.commit('fix2.txt', 'fix 2\n');
+    const res = r.run('task-done', [plan, '1', base, '--', 'echo', 'ok'], opts('in_progress'));
+    assert.equal(res.status, 0, res.stdout + res.stderr);
+    assert.notEqual(r.git('rev-parse', 'HEAD').trim(), squashed);
+    assert.equal(r.git('rev-list', '--count', `${base}..HEAD`).trim(), '1', 'the reopened task was not folded into one commit');
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('task-done without a stack state file does not squash', () => {
+  const r = repo();
+  try {
+    const opts = { vars: { FAKE_TRIQUAL_PATHS: r.paths() } };
+    const base = r.git('rev-parse', 'HEAD').trim();
+    r.commit('one.txt', 'one\n');
+    const head = r.commit('two.txt', 'two\n');
+    const res = r.run('task-done', [r.plan, '1', base, '--', 'echo', 'ok'], opts);
+    assert.equal(res.status, 0, res.stdout + res.stderr);
+    assert.equal(r.git('rev-list', '--count', `${base}..HEAD`).trim(), '2', 'the two commits were folded without a stack');
+    assert.equal(r.git('rev-parse', 'HEAD').trim(), head);
+    assert.deepEqual(r.moves(), [`tasks done T1 --commit ${head} --plan ${join(r.plansDir, 'demo-plan.md')}`]);
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('task-done locates the state file with stack.mjs path and squashes before the ledger move', () => {
+  const script = readFileSync(join(SCRIPTS, 'task-done'), 'utf8');
+  mustSay(script, ['node "$sdd/stack.mjs" path "$plan"', 'node "$sdd/stack.mjs" squash "$plan" "$base"'], 'task-done');
+  assert.ok(!/\.methodology\/stack/.test(script.replace(/^#.*$/gm, '')), 'task-done builds the state path itself');
+  const at = (needle) => script.indexOf(needle);
+  assert.ok(at('"$@" > "$log"') < at('stack.mjs" squash'), 'the squash runs before the test command');
+  assert.ok(at('stack.mjs" squash') < at('"$cli" tasks done'), 'the squash runs after the ledger move');
+});
+
+const EP_SETUP = () => squash(section(EP, '## Setup'));
+const epBlocks = () => blocks(`${EP}/SKILL.md`);
+
+test('executing-plans follows the SDD stack lifecycle', () => {
+  const text = read(`${EP}/SKILL.md`);
+  const prose = text.slice(text.indexOf('## Setup'), text.indexOf('## Common Rationalizations'));
+  const needles = [
+    `node ${STACK_SCRIPT} init`,
+    `node ${STACK_SCRIPT} phase`,
+    '--fixup=',
+    '`scripts/task-done`',
+    'Phase check',
+    'Ruling: <test> flaky — passed on re-run',
+    'triqual tasks reopen T<N>',
+    `node ${STACK_SCRIPT} done`,
+    `node ${STACK_SCRIPT} submit`,
+    'Phase <N>: submitted (<branch>, PR #<n> draft)',
+    'Phase <N>: complete (<branch>, local)',
+    'one commit on the top phase',
+    '`fix: address final review findings`',
+    'top Phase check',
+    '--open',
+  ];
+  let at = -1;
+  for (const needle of needles) {
+    const found = prose.indexOf(needle, at + 1);
+    assert.ok(found > at, `"${needle}" is missing or out of order (searched after offset ${at})`);
+    at = found;
+  }
+  // Committed tracking mode stops the run before Task 1 (R4).
+  const stop = epBlocks().find((l) => l.includes('committed') && l.includes('triqual progress-init --store'));
+  assert.ok(stop, 'Setup does not stop on committed mode with the progress-init --store switch');
+  mustSay(stop, ['exits 3', 'before Task 1', '(or `--local`)'], 'the committed-mode stop');
+  // The push authorization is ledgered and asked once (R7).
+  const auth = epBlocks().find((l) => l.includes(`${AUTH} handoff`) && l.includes('ask once'));
+  assert.ok(auth, 'the text does not name the ledgered authorization and ask once without it');
+  mustSay(auth, [`${AUTH} setup <date>`, '`handoff <date>`', '`setup <date>`', 'before Task 1', 'never asks again', `node ${STACK_SCRIPT} mode PLAN_FILE local`], 'the authorization rule');
+  assert.match(auth, /A yes: write `Authorization: push phase branches and draft PRs — setup <date>`/);
+  mustSay(auth, ['`Authorization: declined — stack in local mode`', 'any `Authorization:` line', 'declined one included'], 'the declined rule');
+  assert.ok(EP_SETUP().includes(`node ${STACK_SCRIPT} init`), 'stack init is not in Setup');
+  // A real Phase check failure reopens the phase's last task with --plan; submit exit 5 is ruled, retried once, then local.
+  const reopen = epBlocks().find((l) => l.includes('triqual tasks reopen T<N>'));
+  assert.match(reopen, /triqual tasks reopen T<N> "<reason>" --plan <plan>/, reopen);
+  mustSay(reopen, ['real failure'], 'the reopen rule');
+  const exit5 = epBlocks().find((l) => l.includes('exits 5'));
+  assert.ok(exit5, 'the text does not handle submit exit 5');
+  mustSay(exit5, ['`Ruling:`', 'retry once', `node ${STACK_SCRIPT} mode PLAN_FILE local`], 'the submit exit 5 rule');
+  // R1: a submitted phase is final; the defect is fixed in the current task's commit.
+  const final = epBlocks().find((l) => l.includes('submitted phase') && l.includes("current task's commit"));
+  assert.ok(final, 'the no-rewrite rule is missing');
+  mustSay(final, ['never', 'force push'], 'the no-rewrite rule');
+  // Recovery reads the stack state; the After Merge checklist is listed, not run.
+  const recovery = epBlocks().find((l) => l.includes(`${STACK_SCRIPT} status`));
+  assert.ok(recovery, 'recovery after compaction does not read stack status');
+  mustSay(recovery, ['compaction', 'ledger'], 'the recovery rule');
+  mustSay(squash(section(EP, '## Finish')), ['`## After Merge`', 'is not run', 'final message'], 'the After Merge rule');
+});
+
+test('executing-plans commits one commit per task, fix rounds as --fixup, and task-done squashes', () => {
+  const step2 = squash(section(EP, '### 2. Work the steps'));
+  mustSay(step2, ['one commit', 'never `HEAD~1`'], 'step 2');
+  const review = squash(reviewStep());
+  mustSay(review, ['`git commit --fixup=', 'first commit'], 'the fix round commit');
+  const done = squash(section(EP, '### 5. Complete the task'));
+  mustSay(done, [`${STACK_SCRIPT} path`, `${STACK_SCRIPT} squash`, 'before its ledger move', 'squashed', 'pre-squash', 'exits 3'], 'step 5');
+  assert.ok(!done.includes('(the head the approving review saw)'), 'step 5 still names the pre-squash head for the move');
+});
+
+test('the executing-plans push stop is narrowed', () => {
+  const all = lines(`${EP}/SKILL.md`);
+  const start = all.findIndex((l) => l.startsWith('Four things stop you'));
+  assert.ok(start >= 0, 'the Four things paragraph is gone');
+  assert.equal(
+    squash(all.slice(start, start + 5)),
+    'Four things stop you, and only these: an irreversible or destructive operation; a security-sensitive action; a side effect outside this worktree that norms say you ask about first (a merge, a push to a shared branch, a publish); and a plan so broken that every path forward is a guess. For those, stop and ask.',
+  );
+  const last = all[start + 5];
+  assert.ok(last, 'there is no line after the pinned five');
+  mustSay(last, [AUTH + ' handoff <date>', '`Authorization: push phase branches and draft PRs — setup <date>`', 'only exception', 'draft PRs', 'ready for review after the final review', 'any merge', 'force push', 'still stop'], 'the push exception');
+  assert.equal(all[start + 6], '', 'the push exception is not the last line of the paragraph');
+});
+
+test('executing-plans writes the handoff authorization line itself when the method was chosen at the plan handoff', () => {
+  const block = epBlocks().find((l) => l.includes(`${AUTH} handoff`) && l.includes('ask once'));
+  assert.ok(block, 'the authorization rule is gone');
+  mustSay(block, [
+    `${AUTH} handoff <date>\`, which you write yourself at setup, before Task 1, when your human partner chose the execution method (or confirmed it) at the writing-plans handoff in this conversation`,
+    'and this conversation holds no such choice (a new session on an existing plan), ask once',
+  ], 'the handoff authorization');
+  assert.ok(!block.includes('the plan handoff writes'), 'the text still says the plan handoff writes the line');
+});
+
+// Final review fixes (plan stacked-execution): the same rules as subagent-driven-development, in the inline skill.
+test('executing-plans does not stack a run that began before stacked execution', () => {
+  const rule = epBlocks().find((l) => l.startsWith('- **A run that began before stacked execution is not stacked.**'));
+  assert.ok(rule, 'Stack setup has no rule for a run that began before stacked execution');
+  mustSay(rule, [
+    `\`node ${STACK_SCRIPT} path PLAN_FILE\``, 'does not exist', '`Task <N>: complete`', 'Skip `init`, `phase`, `squash`, `done` and `submit`',
+    '`Ruling: run began before stacked execution — no stack`', 'finish on the current branch', 'no state file',
+    '`stack.mjs phase 1` itself exits 3', "HEAD's branch",
+  ], 'the pre-stack rule');
+  const setup = EP_SETUP();
+  assert.ok(setup.indexOf('A run that began before stacked execution is not stacked.') < setup.indexOf(`node ${STACK_SCRIPT} init PLAN_FILE`), 'the pre-stack check runs after init');
+});
+
+test('executing-plans Phase check names the full test command of an unphased plan and the reopened task skips its first rework', () => {
+  const check = epBlocks().find((l) => l.startsWith('- **Phase check.**'));
+  assert.ok(check, 'the Phase check bullet is gone');
+  mustSay(check, ['no `## Phase` heading', 'no `**Branch prefix:**` line', "the repository's full test command"], 'the unphased Phase check');
+  mustSay(check, ["skipping the first round's `triqual tasks rework` move", '`reopen` already moved the task to `in_progress`', '`rework` only leaves `in_review`'], 'the reopened first fix round');
+});
+
+test('executing-plans consent text says the PRs are marked ready for review after the final review', () => {
+  const auth = epBlocks().find((l) => l.includes(`${AUTH} handoff`) && l.includes('ask once'));
+  mustSay(auth, ['marking them ready for review after the final review', 'mark them ready for review after the final review'], 'the push authorization');
 });

@@ -37,14 +37,38 @@ Before defining tasks, map out which files will be created or modified and what 
 
 This structure informs the task decomposition. Each task should produce self-contained changes that make sense independently.
 
+## Phases
+
+A plan is a sequence of phases. Each phase is one pull request, built from atomic tasks. Map each phase to a delivery slice of the spec (its `## Delivery Slices`): the slice's reason to stand alone, refined with the real files, becomes the phase's. A spec without slices is one phase. Write each phase as:
+
+````markdown
+## Phase <N>: <name>
+**Slice:** S<n>
+**Branch:** <prefix>/<NN>-<phase-slug>
+**PR title:** <conventional title>
+**Stands alone because:** <the slice's reason, refined with real files>
+**Phase check:** `<command>` → <expected>
+
+### Task <M>: ...
+````
+
+Its `### Task <M>: …` blocks follow, and no other `###` heading appears inside a phase.
+
+- **Numbering and order:** task numbers are global across phases (T1…Tn). Each task belongs to exactly one phase, and its `**Depends on:**` names only tasks in the same or an earlier phase.
+- **One commit per task:** a task's work is exactly one commit on the phase branch, and its single Commit step gives the conventional message.
+- **Size:** about 6 tasks per phase. Going over means splitting the phase, and noting that the spec's slice should have been split.
+- **Coordinator tasks:** a `coordinator` task that makes no commit (a probe, a checkpoint) lives in the phase whose PR it accompanies. Every phase has at least one task that commits.
+- **`## After Merge`:** optional, after the last phase. A checklist of the operations that need the merged trunk (deploy, production migration, publish), each with its command and expected result. No `### Task` headings: these never reach the task ledger.
+
 ## Task Right-Sizing
 
-A task is the smallest unit that carries its own test cycle and is worth a
-fresh reviewer's gate. When drawing task boundaries: fold setup,
-configuration, scaffolding, and documentation steps into the task whose
-deliverable needs them; split only where a reviewer could meaningfully
-reject one task while approving its neighbor. Each task ends with an
-independently testable deliverable.
+A task is the smallest unit that carries its own test cycle, that a
+reviewer could reject alone, and that fits one commit. When drawing task
+boundaries: fold setup, configuration, scaffolding, and documentation
+steps into the task whose deliverable needs them; split only where a
+reviewer could meaningfully reject one task while approving its neighbor.
+Same-shape small edits are one task, never a batch of tasks. Each task
+ends with an independently testable deliverable and exactly one commit.
 
 ## Step Granularity
 
@@ -53,7 +77,7 @@ independently testable deliverable.
 - "Run it to make sure it fails" - step
 - "Implement the minimal code to make the test pass" - step
 - "Run the tests and make sure they pass" - step
-- "Commit" - step
+- "Commit" - step (the task's single one)
 
 ## Plan Document Header
 
@@ -72,6 +96,8 @@ independently testable deliverable.
 
 **Spec:** [path to the spec/design doc this plan implements — the plan
 argues from the spec, so the spec travels with it; executors read both]
+
+**Branch prefix:** [<topic>: the prefix of every phase branch, `<topic>/<NN>-<phase-slug>`]
 
 ## Global Constraints
 
@@ -199,6 +225,8 @@ After writing the complete plan, look at the spec with fresh eyes and check the 
 
 **5. Proportion:** Compare the plan's length to the spec's. A plan several times longer than the spec it implements is a transcript of the program, not a plan. If code blocks are most of the document, replace bodies with signatures, test names and assertions, and check that each step is still unambiguous.
 
+**6. Phases:** Does each phase map to a slice of the spec? Does any task depend on a later phase? Does every phase have a branch, a PR title, a Phase check and a task that commits? Is anything that needs the merged trunk a task instead of an `## After Merge` item?
+
 If you find issues, fix them inline. No need to re-review — just fix and move on. If you find a spec requirement with no task, add the task.
 
 ## Plan Audit
@@ -223,6 +251,15 @@ them to review the plan and confirm it captures what they want; wait for that
 review before implementation, then use the preserved method. Otherwise, ask
 them to review the plan and choose an execution method before implementation.
 
+Execution builds a stack: one branch and one draft PR per phase, one commit
+per task. In GitHub mode (a GitHub remote and `gh stack`) it pushes this
+plan's phase branches, opens and updates their draft PRs, and marks them
+ready for review after the final review; otherwise the stack stays local. Your human partner's choice of the method (or their
+confirmation of the plan, when the method was already supplied) authorizes
+that push of this plan's phase branches and draft PRs, and marking them ready for review after the final review, and nothing else; the
+execution skill records it in its ledger as `Authorization: push phase
+branches and draft PRs — handoff <date>`, and merging stays your human partner's.
+
 **When no execution method has already been supplied:**
 
 **"Plan complete and saved to `<plan path>`. Please review the plan. Which execution approach would you prefer?**
@@ -230,11 +267,11 @@ them to review the plan and choose an execution method before implementation.
 - **Subagent-driven** - A fresh subagent implements each task and a fresh reviewer checks it before the next one starts, then a whole-branch review at the end. Most thorough; costs a fresh context per task and per review.
 - **Native** - I implement every task myself in this session, the way this harness runs work; each task still gets its reviews, and the whole branch a final review. Cheapest and fastest; no fresh implementer context per task. Runs well with a mid-tier session model, since the plan carries the design.
 
-**For this plan I recommend <one of the two>, because <one sentence from the plan: how much the tasks depend on each other's interfaces, how many there are, what a shipped mistake would cost>. Does the plan capture what you want, and which approach should we use?"**
+**For this plan I recommend <one of the two>, because <one sentence from the plan: how much the tasks depend on each other's interfaces, how many there are, what a shipped mistake would cost>. Either approach builds a stack: one branch and one draft PR per phase. Choosing one authorizes the execution skill to push this plan's phase branches, to open and update their draft PRs, and to mark them ready for review after the final review (it records that in its ledger; without `gh stack` or a GitHub remote the stack stays local); merging stays yours. Does the plan capture what you want, and which approach should we use?"**
 
 **When an execution method has already been supplied:**
 
-**"Plan complete and saved to `<plan path>`. Please review the plan. Does it capture what you want?"**
+**"Plan complete and saved to `<plan path>`. Please review the plan. Execution builds a stack: one branch and one draft PR per phase. Confirming the plan authorizes the execution skill to push this plan's phase branches, to open and update their draft PRs, and to mark them ready for review after the final review (it records that in its ledger; without `gh stack` or a GitHub remote the stack stays local); merging stays yours. Does it capture what you want?"**
 
 **If Subagent-driven chosen:**
 - **REQUIRED SUB-SKILL:** Use methodology:subagent-driven-development

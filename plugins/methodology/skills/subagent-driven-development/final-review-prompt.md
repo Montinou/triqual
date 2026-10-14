@@ -40,8 +40,9 @@ Subagent (roles:final-adversarial-reviewer):
     **Package:** [PACKAGE_PATH]
 
     Read the package once: it holds the branch's commit list, a stat summary
-    and the full diff with context (MERGE_BASE..HEAD). Do not re-derive the
-    branch diff with git commands. Inspect code outside the diff to confirm
+    and the full diff with context (MERGE_BASE..HEAD). In stacked execution
+    that range is `trunk..top`: every phase of the stack, in order, one commit
+    per task. Do not re-derive the branch diff with git commands. Inspect code outside the diff to confirm
     a concrete candidate defect you can name, and say what you checked.
 
     ## Candidates to Verify
@@ -138,8 +139,12 @@ Subagent (roles:final-adversarial-reviewer):
     #### Important (Should Fix)
     #### Minor (Nice to Have)
 
-    For each: file:line, what is wrong, a concrete failure scenario, and how
-    to fix it (if not obvious).
+    For each: file:line, the phase it sits in, what is wrong, a concrete
+    failure scenario, and how to fix it (if not obvious). Name the phase
+    (`Phase <N>`; the package's commit list shows which commits belong to
+    which phase, and a plan without phases needs none): the controller fixes
+    every finding in one commit on the top phase and never rewrites a
+    submitted phase, so the phase tells the fixer where the code lives.
 
     ### Candidate Verdicts
 
@@ -169,7 +174,7 @@ Subagent (roles:final-adversarial-reviewer):
 
 **Placeholders:**
 - `[PACKAGE_PATH]` — the path `bash scripts/review-package PLAN_FILE MERGE_BASE HEAD`
-  printed (MERGE_BASE: the commit the branch started from, e.g. `git merge-base main HEAD`)
+  printed (MERGE_BASE: the commit the branch started from, e.g. `git merge-base <trunk> HEAD`)
 - `[PLAN_PATH]` — the plan file
 - `[SPEC_PATH]` — the spec the plan names; "none" when the plan has no reachable spec
 - `[REVIEW_FOCUS]` — the plan's Review Focus section, copied verbatim; "none" when the plan has none

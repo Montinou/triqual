@@ -251,3 +251,10 @@ test('README lists headjack as an optional external plugin', () => {
   }
   assert.doesNotMatch(row, /0\.1\.0/);
 });
+
+test('README states that the push consent also covers marking the PRs ready for review after the final review', () => {
+  const text = README.replace(/\s+/g, ' ');
+  const consent = text.slice(text.indexOf('Since 0.6.0 the methodology executes a plan as a stack'), text.indexOf('## Quick start'));
+  assert.match(consent, /open and update draft PRs and mark them ready for review after the final review/);
+  assert.match(consent, /authorizes that push of the plan's phase branches and draft PRs, and marking them ready for review after the final review, nothing else/);
+});

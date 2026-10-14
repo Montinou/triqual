@@ -144,7 +144,7 @@ your path and complete them in order.
 2. **Offer the visual companion just-in-time** — NOT upfront. The first time a question would genuinely be clearer shown than described, offer it then (its own message); on approval its browser tab opens for you. If no visual question ever arises, never offer it. See the Visual Companion section below.
 3. **Ask clarifying questions** — one at a time, understand purpose/constraints/success criteria
 4. **Propose 2-3 approaches** — with trade-offs and your recommendation
-5. **Present design** — in sections scaled to their complexity, get user approval after each section
+5. **Present design** — in sections scaled to their complexity, get user approval after each section; the design names its units and its delivery slices
 6. **Write design doc** — save to `<specs dir>/YYYY-MM-DD-<topic>-design.md` (the specs directory from the tracking paths above; in local mode drafted under that name in a `mktemp -d` dir and landed through `triqual tracking write spec <draft>`; in store mode the same route, then the entry through `triqual tracking add <draft> --no-commit`) and commit it when it lives in the working tree; when opted in with `"mode": "committed"`, that commit carries a new `progress` (`progress.md`) entry and an updated `status` (`status.md`)
 7. **Spec self-review** — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
 8. **Spec audit** — dispatch `roles:final-adversarial-reviewer` with `spec-document-reviewer-prompt.md`, then fix its findings (see below)
@@ -235,6 +235,7 @@ is the whole process.
 - Scale each section to its complexity: a few sentences if straightforward, up to 200-300 words if nuanced
 - Ask after each section whether it looks right so far
 - Cover: architecture, components, data flow, error handling, testing
+- Cover the units (one purpose, interface, dependencies and acceptance each) and the delivery slices (the ordered, independently mergeable pieces that together deliver every unit), so the written spec can carry them as `## Units` and `## Delivery Slices`
 - Be ready to go back and clarify if something doesn't make sense
 
 **Design for isolation and clarity:**
@@ -243,6 +244,36 @@ is the whole process.
 - For each unit, you should be able to answer: what does it do, how do you use it, and what does it depend on?
 - Can someone understand what a unit does without reading its internals? Can you change the internals without breaking consumers? If not, the boundaries need work.
 - Smaller, well-bounded units are also easier for you to work with - you reason better about code you can hold in context at once, and your edits are more reliable when files are focused. When a file grows large, that's often a signal that it's doing too much.
+- Write the units into the spec's `## Units` section and the order in which they ship into its `## Delivery Slices` section; both are required (see Units and Delivery Slices below).
+
+**Units and Delivery Slices (required in every architectural spec):**
+
+A spec is a mapping target for the plan, not a story. It carries two sections, with exactly these headings and line labels:
+
+```markdown
+## Units
+
+### U<n> — <name>
+**Purpose:** one sentence.
+**Interface:** names, signatures, commands, files and formats that others use.
+**Depends on:** units, or `none`.
+**Acceptance:** observable checks.
+
+## Delivery Slices
+
+### S<n> — <name>
+**Delivers:** what this slice puts on trunk.
+**Units:** units, or parts of units, it builds.
+**Stands alone because:** why trunk stays green and coherent if this slice merges alone, in order: no half-built reachable code; behind a feature flag where the global Feature Flags rule applies.
+**Acceptance:** observable checks.
+```
+
+Rules:
+
+- A slice depends only on earlier slices, never on a later one.
+- The slices together cover every unit.
+- A slice that would need more than about 6 atomic tasks is split.
+- Operations that need the merge (deploy, production migration, publish) are listed under the spec's rollout, not as a slice.
 
 **Working in existing codebases:**
 
@@ -266,6 +297,7 @@ After writing the spec document, look at it with fresh eyes:
 2. **Internal consistency:** Do any sections contradict each other? Does the architecture match the feature descriptions?
 3. **Scope check:** Is this focused enough for a single implementation plan, or does it need decomposition?
 4. **Ambiguity check:** Could any requirement be interpreted two different ways? If so, pick one and make it explicit.
+5. **Modularity:** Does every unit state its interface and what it depends on? Does every slice depend only on earlier slices, do the slices cover every unit, and does each slice state why it stands alone? Is any slice big enough (more than about 6 atomic tasks) to split?
 
 Fix any issues inline. No need to re-review — just fix and move on.
 
