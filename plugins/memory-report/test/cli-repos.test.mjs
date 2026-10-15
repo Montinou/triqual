@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
-import { main } from '../bin/memory.mjs';
+import { main } from '../cli/memory.mjs';
 import { canImportSqlite, withTempHome } from './helpers.mjs';
 import { createClaudeMemDb } from './fixtures/claude-mem-schema.mjs';
 

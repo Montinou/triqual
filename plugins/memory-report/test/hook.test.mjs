@@ -65,7 +65,7 @@ test('due: spawns the generator once, detached with ignored stdio, and unrefs it
     const { spawned, output } = run(ctx, { pluginRoot: '/some/plugin' });
     assert.equal(spawned.length, 1);
     assert.equal(spawned[0].cmd, process.execPath);
-    assert.deepEqual(spawned[0].args, [join('/some/plugin', 'bin', 'memory.mjs'), 'generate']);
+    assert.deepEqual(spawned[0].args, [join('/some/plugin', 'cli', 'memory.mjs'), 'generate']);
     assert.equal(spawned[0].opts.detached, true);
     assert.equal(spawned[0].opts.stdio, 'ignore');
     assert.equal(spawned[0].child.unrefCalls, 1);

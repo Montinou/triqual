@@ -1,5 +1,5 @@
 // The single source of brand strings: the triqual names and the legacy claude-methodology ones they replace.
-// Byte-identical copies live in plugins/methodology/bin/lib, plugins/progress-tracking/lib and
+// Byte-identical copies live in plugins/methodology/cli/lib, plugins/progress-tracking/lib and
 // plugins/memory-report/lib, because installed plugins cannot import each other. Only node: built-ins.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';

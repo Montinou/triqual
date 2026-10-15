@@ -1,3 +1,18 @@
 node_modules/
 .DS_Store
 .worktrees/
+
+# Paths that stay out of the public repository (FORBIDDEN_PATHS in bin/lib/content-gate.mjs, root-anchored). Ignoring does not
+# untrack a file that is already tracked: in the private repository these stay tracked.
+/docs/
+/probes/
+/CLAUDE.md
+/AGENTS.md
+/.githooks/
+/.methodology/
+/progress.md
+/status.md
+/test/no-personal-data.test.mjs
+/test/brand-guard.test.mjs
+/test/e2e-probe.test.mjs
+/test/provider-probes.test.mjs

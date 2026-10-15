@@ -13,7 +13,7 @@ import { parseStatusSections } from '../lib/status-sections.mjs';
 import { loadSqlite, openStore } from '../lib/store.mjs';
 
 const PLUGIN = join(dirname(fileURLToPath(import.meta.url)), '..');
-const BIN = join(PLUGIN, 'bin', 'tracking.mjs');
+const BIN = join(PLUGIN, 'cli', 'tracking.mjs');
 const ID = ['-c', 'user.name=t', '-c', 'user.email=t@t'];
 const NOT_IN_STORE = 'not in store mode: run triqual progress-init --store';
 

@@ -5,16 +5,16 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { hook, backgroundRun, mergeContext } from '../bin/hook.mjs';
-import { sessionContext as driftContext } from '../bin/drift.mjs';
+import { hook, backgroundRun, mergeContext } from '../cli/hook.mjs';
+import { sessionContext as driftContext } from '../cli/drift.mjs';
 import { sessionContext as gateContext } from '../../progress-tracking/scripts/gate.mjs';
 import { NO_PENDING } from '../../progress-tracking/lib/store-hooks.mjs';
-import { formatBlock, formatContext } from '../bin/lib/harnesses.mjs';
-import { BRAND } from '../bin/lib/brand.mjs';
+import { formatBlock, formatContext } from '../cli/lib/harnesses.mjs';
+import { BRAND } from '../cli/lib/brand.mjs';
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(TEST_DIR, '..');
-const HOOK = join(PLUGIN_ROOT, 'bin', 'hook.mjs');
+const HOOK = join(PLUGIN_ROOT, 'cli', 'hook.mjs');
 const FIXTURES = join(TEST_DIR, 'fixtures', 'harness');
 
 // The fixture home knows no marketplace and has nothing installed: the plugins resolve under triqual.
@@ -22,7 +22,7 @@ const METHODOLOGY = `methodology@${BRAND.marketplace}`;
 const TRACKING = `progress-tracking@${BRAND.marketplace}`;
 const M_ROOT = '/installs/methodology/0.3.0';
 const PT_ROOT = '/installs/progress-tracking/0.2.3';
-const DRIFT = join(M_ROOT, 'bin', 'drift.mjs');
+const DRIFT = join(M_ROOT, 'cli', 'drift.mjs');
 const GATE = join(PT_ROOT, 'scripts', 'gate.mjs');
 const resolve = (id) => ({ [METHODOLOGY]: M_ROOT, [TRACKING]: PT_ROOT })[id] ?? null;
 
@@ -474,10 +474,10 @@ async function inStoreRepo(home, fn) {
   git('commit', '-qm', 'init');
   const node = (script, ...args) => execFileSync(process.execPath, [join(TRACKING_ROOT, script), ...args],
     { cwd: repo, env: spawnEnv, stdio: 'ignore' });
-  node('bin/progress-init.mjs', '--store');
+  node('cli/progress-init.mjs', '--store');
   const draft = join(home, 'status.md');
   writeFileSync(draft, '# Status\n\n## Notes\nstore-status-marker\n');
-  node('bin/tracking.mjs', 'status', 'set', draft);
+  node('cli/tracking.mjs', 'status', 'set', draft);
   const saved = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]]));
   Object.assign(process.env, env);
   try {
@@ -562,7 +562,7 @@ test('concurrent pre-tool-use emits once across processes', () => withHome({}, a
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, body);
   };
-  fakeScript(join(installs, 'm', 'bin', 'drift.mjs'), [
+  fakeScript(join(installs, 'm', 'cli', 'drift.mjs'), [
     'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);',
     `process.stdout.write(${JSON.stringify(contextJson('M-CONTEXT'))});`,
   ].join('\n'));

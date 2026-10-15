@@ -131,7 +131,7 @@ function sessionRun(ctx) {
     const pending = ctx.background({ home: ctx.home, harness: ctx.harness });
     if (pending && typeof pending.catch === 'function') pending.catch(() => {});
   } catch { /* background work never affects the hook */ }
-  const m = additionalContext(runPart(ctx, METHODOLOGY, join('bin', 'drift.mjs'), ['--harness', ctx.harness]) ?? '');
+  const m = additionalContext(runPart(ctx, METHODOLOGY, join('cli', 'drift.mjs'), ['--harness', ctx.harness]) ?? '');
   const budget = gateRoom(m, TOTAL);
   // No room left next to the methodology part: the gate is not run at all.
   const gateArgs = ['session-start', '--budget', String(budget)];

@@ -12,9 +12,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import {
   RETIRED_KINDS, appendRecord, formatSummary, recordKey, storePath, summarize, takeOverStale, validateRecord,
   withStoreLock,
-} from '../bin/lib/role-eval.mjs';
+} from '../cli/lib/role-eval.mjs';
 
-const LIB_URL = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'lib', 'role-eval.mjs')).href;
+const LIB_URL = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'cli', 'lib', 'role-eval.mjs')).href;
 const SENTINEL = 'zz-sentinel';
 
 function withDir(fn) {

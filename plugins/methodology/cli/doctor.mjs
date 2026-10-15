@@ -25,6 +25,9 @@ import { realRun } from './lib/run.mjs';
 import { configPath, readMethodologyConfig, supersededEnabled } from './lib/settings.mjs';
 import { legacyHeadingsOutside } from './sync.mjs';
 
+// A progress-tracking script: cli/ since the plugins stopped shipping a top-level bin/, bin/ in an older install.
+const ptScript = (root, name) => (existsSync(join(root, 'cli', name)) || !existsSync(join(root, 'bin', name)) ? join(root, 'cli', name) : join(root, 'bin', name));
+
 // The system plugins, methodology first (installing it brings in the other three). Bootstrap reuses this list.
 export const PLUGINS = ['methodology', 'progress-tracking', 'workflow-gate', 'roles'];
 const ROLES = ['brief-writer', 'tdd-implementer', 'complex-implementer', 'safety-reviewer', 'spec-reviewer',
@@ -76,18 +79,18 @@ const NODE_FLOOR = [22, 13];
 export const idOf = (home, name) => pluginId(home, name);
 // The shim's command map (bin/triqual-shim.mjs COMMANDS, which a test keeps equal): command → [plugin, file it runs].
 export const SHIM_COMMANDS = {
-  tasks: ['progress-tracking', 'bin/tasks.mjs'],
-  'progress-init': ['progress-tracking', 'bin/progress-init.mjs'],
-  suggest: ['skill-suggest', 'bin/suggest.mjs'],
-  doctor: ['methodology', 'bin/doctor.mjs'],
-  sync: ['methodology', 'bin/sync.mjs'],
-  'upstream-diff': ['methodology', 'bin/upstream-diff.mjs'],
-  ui: ['progress-tracking', 'bin/ui.mjs'],
-  tracking: ['progress-tracking', 'bin/tracking.mjs'],
-  hook: ['methodology', 'bin/hook.mjs'],
-  memory: ['memory-report', 'bin/memory.mjs'],
-  'role-eval': ['methodology', 'bin/role-eval.mjs'],
-  migrate: ['methodology', 'bin/migrate.mjs'],
+  tasks: ['progress-tracking', 'cli/tasks.mjs'],
+  'progress-init': ['progress-tracking', 'cli/progress-init.mjs'],
+  suggest: ['skill-suggest', 'cli/suggest.mjs'],
+  doctor: ['methodology', 'cli/doctor.mjs'],
+  sync: ['methodology', 'cli/sync.mjs'],
+  'upstream-diff': ['methodology', 'cli/upstream-diff.mjs'],
+  ui: ['progress-tracking', 'cli/ui.mjs'],
+  tracking: ['progress-tracking', 'cli/tracking.mjs'],
+  hook: ['methodology', 'cli/hook.mjs'],
+  memory: ['memory-report', 'cli/memory.mjs'],
+  'role-eval': ['methodology', 'cli/role-eval.mjs'],
+  migrate: ['methodology', 'cli/migrate.mjs'],
 };
 
 // { value } for a parsed JSON file, { missing: true } when it does not exist, { error } when it cannot be read or
@@ -644,7 +647,7 @@ function snapshotCheck(store, warnings) {
 // export that fails or prints something else gives no notes: the listing is information, not a check.
 async function trackingModes(progressTrackingPath, run, cwd) {
   if (progressTrackingPath === null) return [];
-  const tasks = join(progressTrackingPath, 'bin', 'tasks.mjs');
+  const tasks = ptScript(progressTrackingPath, 'tasks.mjs');
   if (!existsSync(tasks)) return [];
   const exported = await runTasks(run, tasks, ['export', '--json', '--all'], cwd);
   if (exported.code !== 0) return [];
@@ -665,7 +668,7 @@ async function trackingModes(progressTrackingPath, run, cwd) {
 // for a repo with progress.md at its root.
 async function repoChecks(home, cwd, progressTrackingPath, run, failures, warnings) {
   if (progressTrackingPath === null) return; // the missing plugin is already reported
-  const tasks = join(progressTrackingPath, 'bin', 'tasks.mjs');
+  const tasks = ptScript(progressTrackingPath, 'tasks.mjs');
   if (!existsSync(tasks)) {
     const root = git(cwd, ['rev-parse', '--show-toplevel']) ?? cwd;
     if (existsSync(join(root, 'progress.md'))) gateCheck(home, root, progressTrackingPath, failures);
@@ -703,7 +706,7 @@ async function repoChecks(home, cwd, progressTrackingPath, run, failures, warnin
   } else if (t.mode === 'store') {
     storeAvailable = await storeChecks({
       cwd, root: t.root, store: typeof t.store === 'string' ? t.store : null,
-      tracking: join(progressTrackingPath, 'bin', 'tracking.mjs'), run,
+      tracking: ptScript(progressTrackingPath, 'tracking.mjs'), run,
     }, failures, warnings);
   } else {
     localChecks(home, cwd, t.root, progressTrackingPath, hookLines, failures, warnings);

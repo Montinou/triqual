@@ -33,9 +33,19 @@ run a single file: `node --test plugins/progress-tracking/test/tasks-line.test.m
 
 ## How changes are merged
 
-`main` is protected: every change goes through a pull request that the maintainer reviews and approves. This
-repository is published from a private development repository, so the maintainer carries a merged change back there
-by hand; a change merged here that is not carried back would be lost at the next publication.
+Development happens in this repository, `Montinou/triqual`, and pull requests from outside are welcome. `main` is
+protected: every change goes through a pull request that the maintainer merges once the `ci` check passes.
+
+### For the maintainer
+
+- After `triqual progress-init --store`, `node bin/install-hooks.mjs` installs the local hooks after the store gate that
+  `progress-init --store` installs: the content gate on every commit and the identity check on every push.
+- The deny list is never in the repository. It lives in the file named by `PUBLIC_EXPORT_DENY`, else in
+  `~/.config/triqual/public-export-deny.txt`, plus the `clientTerms` and `neverSend` of the memory-report config; never
+  commit it. After changing it, run `node bin/lib/content-gate.mjs --all`, so the new entries are checked against the
+  files that already exist.
+- The maintainer's own pull requests need every commit authored and committed with the public `noreply` identity, and CI
+  checks it. A GitHub "Update branch" merge commit fails that check: rebase or merge locally instead.
 
 ## Layout
 
@@ -46,7 +56,7 @@ by hand; a change merged here that is not carried back would be lost at the next
 | `plugins/roles/` | The role agents |
 | `plugins/workflow-gate/` | The guard on Workflow scripts |
 | `plugins/memory-report/` | The optional weekly memory report |
-| `bin/` | `bootstrap`, the `triqual` shim and the exporter that builds this repository |
+| `bin/` | `bootstrap`, the `triqual` shim, the maintainer hooks and the content gate |
 | `test/` | Tests that cover the repository as a whole |
 
 ## License

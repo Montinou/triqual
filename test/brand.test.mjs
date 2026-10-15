@@ -4,16 +4,16 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BRAND, installedIds, userInstalledIds, activeMarketplace, pluginId, readEnv, brandDir } from '../plugins/methodology/bin/lib/brand.mjs';
-import { MARKERS } from '../plugins/methodology/bin/lib/fsx.mjs';
-import { GENERATED_MARK } from '../plugins/methodology/bin/lib/agents.mjs';
+import { BRAND, installedIds, userInstalledIds, activeMarketplace, pluginId, readEnv, brandDir } from '../plugins/methodology/cli/lib/brand.mjs';
+import { MARKERS } from '../plugins/methodology/cli/lib/fsx.mjs';
+import { GENERATED_MARK } from '../plugins/methodology/cli/lib/agents.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 // Frozen captures of what the pre-rename code (HEAD a3223d4) wrote into installed files: a CLAUDE.md managed section
 // and a generated Codex agent. They are the source of truth for the legacy strings, now that the code writes the new ones.
 const LEGACY_FIXTURES = join(ROOT, 'plugins', 'methodology', 'test', 'fixtures', 'legacy');
 const COPIES = [
-  'plugins/methodology/bin/lib/brand.mjs',
+  'plugins/methodology/cli/lib/brand.mjs',
   'plugins/progress-tracking/lib/brand.mjs',
   'plugins/memory-report/lib/brand.mjs',
 ].map((p) => join(ROOT, p));

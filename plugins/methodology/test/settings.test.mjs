@@ -5,7 +5,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { editSettings, readMethodologyConfig, setHarnessEnabled, supersededEnabled } from '../bin/lib/settings.mjs';
+import { editSettings, readMethodologyConfig, setHarnessEnabled, supersededEnabled } from '../cli/lib/settings.mjs';
 
 function withTmp(fn) {
   const dir = mkdtempSync(join(tmpdir(), 'cm-settings-'));

@@ -8,11 +8,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import { BRAND } from '../bin/lib/brand.mjs';
+import { BRAND } from '../cli/lib/brand.mjs';
 import {
   firstTableHeaderIndex, hasTopLevelKey, insertTopLevel, setTableKey, tableNames,
   removeTopLevelKey, removeTableKey, removeTable, editTomlFile,
-} from '../bin/lib/toml-edit.mjs';
+} from '../cli/lib/toml-edit.mjs';
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = readFileSync(join(TEST_DIR, 'fixtures', 'legacy', 'codex-config.toml'), 'utf8');

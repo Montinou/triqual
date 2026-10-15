@@ -11,10 +11,10 @@ import { fileURLToPath } from 'node:url';
 import {
   GENERATED_MARK, CODEX_XHIGH, CODEX_READONLY_REVIEWERS, CODEX_TOOL_NAMES,
   parseRole, tomlString, codexAgentToml, rolesSha, isGenerated,
-} from '../bin/lib/agents.mjs';
-import { applyAgents, codexAgentText } from '../bin/lib/harness-links.mjs';
-import { sha256 } from '../bin/lib/fsx.mjs';
-import { BRAND } from '../bin/lib/brand.mjs';
+} from '../cli/lib/agents.mjs';
+import { applyAgents, codexAgentText } from '../cli/lib/harness-links.mjs';
+import { sha256 } from '../cli/lib/fsx.mjs';
+import { BRAND } from '../cli/lib/brand.mjs';
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const ROLES_AGENTS = join(TEST_DIR, '..', '..', 'roles', 'agents');

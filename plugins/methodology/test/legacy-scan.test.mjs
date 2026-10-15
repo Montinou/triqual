@@ -7,8 +7,8 @@ import {
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isGrokLeftover, isUnreadable, legacyScan } from '../bin/lib/legacy-scan.mjs';
-import { BRAND } from '../bin/lib/brand.mjs';
+import { isGrokLeftover, isUnreadable, legacyScan } from '../cli/lib/legacy-scan.mjs';
+import { BRAND } from '../cli/lib/brand.mjs';
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(TEST_DIR, '..', '..', '..');

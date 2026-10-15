@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, exist
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BRAND } from '../plugins/methodology/bin/lib/brand.mjs';
+import { BRAND } from '../plugins/methodology/cli/lib/brand.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const LAUNCHER = join(ROOT, 'bin', 'triqual-hook');

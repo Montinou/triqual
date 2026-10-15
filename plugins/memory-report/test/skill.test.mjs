@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { IDENTITY_NOTE } from '../bin/memory.mjs';
+import { IDENTITY_NOTE } from '../cli/memory.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const raw = readFileSync(join(root, 'skills', 'setup', 'SKILL.md'), 'utf8');
@@ -22,7 +22,7 @@ test('frontmatter names the skill setup and says how to ask for it', () => {
 });
 
 test('every `triqual memory <subcommand>` in the body is listed by --help', () => {
-  const help = spawnSync(process.execPath, [join(root, 'bin', 'memory.mjs'), '--help'], { encoding: 'utf8' });
+  const help = spawnSync(process.execPath, [join(root, 'cli', 'memory.mjs'), '--help'], { encoding: 'utf8' });
   assert.equal(help.status, 0, help.stderr);
   const listed = new Set([...help.stdout.matchAll(/^ {2}([a-z][a-z-]*)\b/gm)].map((m) => m[1]));
   assert.ok(listed.has('setup') && listed.has('allow'), [...listed].join(','));
@@ -63,7 +63,7 @@ test('no absolute home path', () => {
 });
 
 test('--help lists triqual memory repos', () => {
-  const help = spawnSync(process.execPath, [join(root, 'bin', 'memory.mjs'), '--help'], { encoding: 'utf8' });
+  const help = spawnSync(process.execPath, [join(root, 'cli', 'memory.mjs'), '--help'], { encoding: 'utf8' });
   assert.equal(help.status, 0, help.stderr);
   assert.match(help.stdout, /^ {2}repos \[--json\] /m);
 });
@@ -140,7 +140,7 @@ test('the skill quotes the identity note the code prints', () => {
 });
 
 test('--help names entries, not projects, for allow, deny, never and unnever, and gives the three kinds', () => {
-  const help = spawnSync(process.execPath, [join(root, 'bin', 'memory.mjs'), '--help'], { encoding: 'utf8' });
+  const help = spawnSync(process.execPath, [join(root, 'cli', 'memory.mjs'), '--help'], { encoding: 'utf8' });
   assert.equal(help.status, 0, help.stderr);
   for (const line of ['allow <entry>...', 'deny <entry>...', 'never <entry>...', 'unnever <entry>...']) {
     assert.ok(help.stdout.includes(line), line);

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { main } from '../bin/memory.mjs';
+import { main } from '../cli/memory.mjs';
 import { readSeen, readState } from '../lib/state.mjs';
 import { summaryLine } from '../lib/render.mjs';
 import { canImportSqlite, openConfig, withTempHome } from './helpers.mjs';

@@ -17,10 +17,10 @@ import { resolveTracking } from '../lib/tracking.mjs';
 import { storeNotice } from '../scripts/gate.mjs';
 
 const PLUGIN = join(dirname(fileURLToPath(import.meta.url)), '..');
-const TASKS = join(PLUGIN, 'bin', 'tasks.mjs');
-const TRACKING = join(PLUGIN, 'bin', 'tracking.mjs');
+const TASKS = join(PLUGIN, 'cli', 'tasks.mjs');
+const TRACKING = join(PLUGIN, 'cli', 'tracking.mjs');
 const GATE = join(PLUGIN, 'scripts', 'gate.mjs');
-const UI = join(PLUGIN, 'bin', 'ui.mjs');
+const UI = join(PLUGIN, 'cli', 'ui.mjs');
 const ID = ['-c', 'user.name=t', '-c', 'user.email=t@t'];
 const NOT_IN_STORE = 'not in store mode: run triqual progress-init --store';
 const NAME = '2026-10-11-example';

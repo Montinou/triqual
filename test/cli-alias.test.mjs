@@ -7,7 +7,7 @@ import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpath
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BRAND } from '../plugins/methodology/bin/lib/brand.mjs';
+import { BRAND } from '../plugins/methodology/cli/lib/brand.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SHIM = join(ROOT, 'bin', 'triqual-shim.mjs');

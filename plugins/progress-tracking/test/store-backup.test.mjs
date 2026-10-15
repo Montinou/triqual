@@ -13,10 +13,10 @@ import { fileURLToPath } from 'node:url';
 import { loadSqlite, openStore } from '../lib/store.mjs';
 import { BRAND } from '../lib/brand.mjs';
 import { buildHistory } from './fixtures/progress-history.mjs';
-import { restoreCommand } from '../bin/tracking.mjs';
+import { restoreCommand } from '../cli/tracking.mjs';
 import { placeExclusive, RestoreError } from '../lib/store-backup.mjs';
 
-const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'tracking.mjs');
+const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'cli', 'tracking.mjs');
 
 await loadSqlite();
 

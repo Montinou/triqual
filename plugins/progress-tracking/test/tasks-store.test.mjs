@@ -15,8 +15,8 @@ import { SNAPSHOT_SCHEMA, buildSnapshot } from '../lib/snapshot.mjs';
 import { resolveTracking } from '../lib/tracking.mjs';
 
 const PLUGIN = join(dirname(fileURLToPath(import.meta.url)), '..');
-const TASKS = join(PLUGIN, 'bin', 'tasks.mjs');
-const TRACKING = join(PLUGIN, 'bin', 'tracking.mjs');
+const TASKS = join(PLUGIN, 'cli', 'tasks.mjs');
+const TRACKING = join(PLUGIN, 'cli', 'tracking.mjs');
 const ID = ['-c', 'user.name=t', '-c', 'user.email=t@t'];
 // A Node 22 binary for the variants that run on it; TRIQUAL_TEST_NODE22 overrides the Homebrew location.
 const NODE22 = process.env.TRIQUAL_TEST_NODE22 ?? '/opt/homebrew/opt/node@22/bin/node';

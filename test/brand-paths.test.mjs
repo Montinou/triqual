@@ -8,9 +8,9 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BRAND } from '../plugins/methodology/bin/lib/brand.mjs';
-import { configPath } from '../plugins/methodology/bin/lib/settings.mjs';
-import { manifestPath } from '../plugins/methodology/bin/lib/harness-manifest.mjs';
+import { BRAND } from '../plugins/methodology/cli/lib/brand.mjs';
+import { configPath } from '../plugins/methodology/cli/lib/settings.mjs';
+import { manifestPath } from '../plugins/methodology/cli/lib/harness-manifest.mjs';
 import { registerRepo, registryPath } from '../plugins/progress-tracking/lib/registry.mjs';
 import { withLock } from '../plugins/progress-tracking/lib/lock.mjs';
 import { resolvePaths } from '../plugins/memory-report/lib/config.mjs';

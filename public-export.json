@@ -1,12 +1,12 @@
 {
-  "include": [".claude-plugin/", ".agents/", "bin/", "plugins/", "test/", "package.json", "README.md", "CONTRIBUTING.md", "SECURITY.md", ".gitignore", "LICENSE", "public-export.json"],
+  "include": [".claude-plugin/", ".agents/", ".github/", "bin/", "plugins/", "test/", "package.json", "README.md", "CONTRIBUTING.md", "SECURITY.md", ".gitignore", "LICENSE", "public-export.json"],
   "exclude": ["test/e2e-probe.test.mjs", "test/provider-probes.test.mjs", "test/no-personal-data.test.mjs", "test/brand-guard.test.mjs"],
   "keepInTarget": [".github/"],
   "allowLegacy": [
     {"path": "bin/triqual-hook", "contains": "claude-methodolog"},
     {"path": "bin/triqual-shim.mjs", "contains": "claude-methodolog"},
     {"path": "plugins/memory-report/lib/brand.mjs", "contains": "claude-methodolog"},
-    {"path": "plugins/methodology/bin/lib/brand.mjs", "contains": "claude-methodolog"},
+    {"path": "plugins/methodology/cli/lib/brand.mjs", "contains": "claude-methodolog"},
     {"path": "plugins/methodology/test/fixtures/legacy/claude-md.md", "contains": "claude-methodolog"},
     {"path": "plugins/methodology/test/fixtures/legacy/codex-agent.toml", "contains": "claude-methodolog"},
     {"path": "plugins/methodology/test/fixtures/legacy/codex-config.toml", "contains": "claude-methodolog"},

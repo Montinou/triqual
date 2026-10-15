@@ -79,6 +79,29 @@ export function registerRepo(home, { root, mode, now }) {
   }
 }
 
+// A checkout moved: drops the entry whose root is `from` (its realpath when it exists, else `from` as given) and upserts
+// `to` (stored as its realpath) with mode and lastSeen refreshed and the old entry's shareable (else the existing `to`
+// entry's, else false). Same lock, same untouched unreadable file, and like registerRepo it never throws or prints.
+export function moveRepo(home, { from, to, mode, now }) {
+  try {
+    const abs = realpathSync(to);
+    let old = from;
+    try { old = realpathSync(from); } catch { /* gone: matched as given */ }
+    const file = registryPath(home);
+    mkdirSync(dirname(file), { recursive: true });
+    withLock(registryLockPath(home), () => {
+      const repos = readRaw(home);
+      if (repos === null) return;
+      const prev = repos.find((r) => isEntry(r) && r.root === old) ?? repos.find((r) => isEntry(r) && r.root === abs);
+      const kept = repos.filter((r) => !(isEntry(r) && (r.root === old || r.root === abs)));
+      kept.push({ root: abs, mode, lastSeen: now.toISOString(), shareable: prev !== undefined && prev.shareable === true });
+      writeAtomic(file, `${JSON.stringify({ version: REGISTRY_VERSION, repos: kept }, null, 2)}\n`);
+    });
+  } catch {
+    // swallowed: the registry is a convenience, never a gate
+  }
+}
+
 // The registered repos that still resolve to an opted-in repo, each with its `tracking` (resolveTracking, run once per
 // repo). Read-only: a dropped root stays in the file and is only filtered out here.
 export function listResolved(home) {

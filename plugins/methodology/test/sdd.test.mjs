@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { parsePlan } from '../../progress-tracking/lib/ledger.mjs';
-import { validateRecord } from '../bin/lib/role-eval.mjs';
+import { validateRecord } from '../cli/lib/role-eval.mjs';
 
 const PLUGIN = join(dirname(fileURLToPath(import.meta.url)), '..');
 const FENCES_PLAN = join(PLUGIN, 'test', 'fixtures', 'fences-plan.md');

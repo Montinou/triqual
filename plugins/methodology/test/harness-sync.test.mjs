@@ -11,21 +11,21 @@ import { fileURLToPath } from 'node:url';
 import {
   grokHooksFile, readManifest, refreshHarness, removeHarness, syncHarness, userInstalls, VALIDATE_TIMEOUT_MS,
   writeManifest,
-} from '../bin/lib/harness-sync.mjs';
-import { runCli, syncCli } from '../bin/sync.mjs';
-import { expectedRules, harnessPaths, HOOK_TIMEOUTS } from '../bin/lib/harnesses.mjs';
+} from '../cli/lib/harness-sync.mjs';
+import { runCli, syncCli } from '../cli/sync.mjs';
+import { expectedRules, harnessPaths, HOOK_TIMEOUTS } from '../cli/lib/harnesses.mjs';
 import {
   codexAgentToml, CODEX_READONLY_REVIEWERS, CODEX_XHIGH, GENERATED_MARK, parseRole, rolesSha,
-} from '../bin/lib/agents.mjs';
-import { backupDirFor, readManagedSection, sha256 as sha } from '../bin/lib/fsx.mjs';
-import { BRAND } from '../bin/lib/brand.mjs';
-import { firstTableHeaderIndex, hasTopLevelKey } from '../bin/lib/toml-edit.mjs';
-import { LOCK_STALE_MS, withLock } from '../bin/lib/lock.mjs';
+} from '../cli/lib/agents.mjs';
+import { backupDirFor, readManagedSection, sha256 as sha } from '../cli/lib/fsx.mjs';
+import { BRAND } from '../cli/lib/brand.mjs';
+import { firstTableHeaderIndex, hasTopLevelKey } from '../cli/lib/toml-edit.mjs';
+import { LOCK_STALE_MS, withLock } from '../cli/lib/lock.mjs';
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(TEST_DIR, '..');
 const ROLES_AGENTS = join(PLUGIN_ROOT, '..', 'roles', 'agents');
-const HOOK = join(PLUGIN_ROOT, 'bin', 'hook.mjs');
+const HOOK = join(PLUGIN_ROOT, 'cli', 'hook.mjs');
 const CONFIG_FIXTURE = readFileSync(join(TEST_DIR, 'fixtures', 'legacy', 'codex-config.toml'), 'utf8');
 const MARKET = BRAND.legacy.marketplace;
 const pid = (name) => `${name}@${MARKET}`;
@@ -738,7 +738,7 @@ test('parallel refreshHarness loses no manifest records', () => withHome({}, asy
   const third = { ...next, methodology: { installPath: installMethodology(home, '0.3.2'), version: '0.3.2' } };
   writeInstalled(home, third);
   const { XDG_CONFIG_HOME: _, ...env } = process.env;
-  const script = `import(${JSON.stringify(join(PLUGIN_ROOT, 'bin', 'lib', 'harness-sync.mjs'))})`
+  const script = `import(${JSON.stringify(join(PLUGIN_ROOT, 'cli', 'lib', 'harness-sync.mjs'))})`
     + `.then((m) => m.refreshHarness({ home: process.env.HOME, id: 'codex' }))`
     + '.then((r) => process.stdout.write(JSON.stringify(r)))';
   const child = () => new Promise((resolveChild) => {

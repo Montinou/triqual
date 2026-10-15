@@ -18,7 +18,7 @@ import { loadSqlite, openStore } from '../lib/store.mjs';
 import { EXEMPT, NO_PENDING, STORE_HOOK_LINES, stopVerdictStore } from '../lib/store-hooks.mjs';
 
 const PLUGIN = join(dirname(fileURLToPath(import.meta.url)), '..');
-const BIN = join(PLUGIN, 'bin', 'tracking.mjs');
+const BIN = join(PLUGIN, 'cli', 'tracking.mjs');
 const GATE = join(PLUGIN, 'scripts', 'gate.mjs');
 const TEMPLATES = join(PLUGIN, 'templates');
 const GIT_BIN = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();

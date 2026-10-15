@@ -54,7 +54,7 @@ function lockIsFree(paths, { nowMs, isAlive }) {
 }
 
 function startGenerator({ spawn, env, pluginRoot }) {
-  const child = spawn(process.execPath, [join(pluginRoot, 'bin', 'memory.mjs'), 'generate'], {
+  const child = spawn(process.execPath, [join(pluginRoot, 'cli', 'memory.mjs'), 'generate'], {
     detached: true,
     stdio: 'ignore',
     env,

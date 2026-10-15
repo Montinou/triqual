@@ -11,7 +11,7 @@ import { registerRepo } from '../lib/registry.mjs';
 import { resolveTracking } from '../lib/tracking.mjs';
 import { createLedger } from '../lib/ledger.mjs';
 
-const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'tasks.mjs');
+const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'cli', 'tasks.mjs');
 const ID = ['-c', 'user.name=t', '-c', 'user.email=t@t'];
 const HINT = 'not opted in: run triqual progress-init (or triqual progress-init --local)';
 const NOW = new Date('2026-09-27T12:00:00.000Z');

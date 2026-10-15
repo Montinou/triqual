@@ -68,7 +68,7 @@ function isStoreMarked(cwd) {
 
 // The git facts a store row and its entries are keyed by: the clone's common dir, this worktree's own git dir and the
 // checked-out branch (null on a detached HEAD). The paths are realpath-normalized; null outside git.
-function gitFacts(cwd) {
+export function gitFacts(cwd) {
   const gitCommonDir = gitPath(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
   const gitDir = gitPath(cwd, ['rev-parse', '--absolute-git-dir']);
   if (gitCommonDir === null || gitDir === null) return null;

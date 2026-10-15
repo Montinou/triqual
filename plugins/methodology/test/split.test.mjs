@@ -6,11 +6,11 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readManifest, splitAgentsMd, syncHarness } from '../bin/lib/harness-sync.mjs';
-import { legacyHeadingsOutside, syncCli } from '../bin/sync.mjs';
-import { expectedRules } from '../bin/lib/harnesses.mjs';
-import { backupDirFor, MARKERS, readManagedSection } from '../bin/lib/fsx.mjs';
-import { BRAND } from '../bin/lib/brand.mjs';
+import { readManifest, splitAgentsMd, syncHarness } from '../cli/lib/harness-sync.mjs';
+import { legacyHeadingsOutside, syncCli } from '../cli/sync.mjs';
+import { expectedRules } from '../cli/lib/harnesses.mjs';
+import { backupDirFor, MARKERS, readManagedSection } from '../cli/lib/fsx.mjs';
+import { BRAND } from '../cli/lib/brand.mjs';
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(TEST_DIR, '..');

@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { drift, sessionContext } from '../bin/drift.mjs';
-import { MARKERS } from '../bin/lib/fsx.mjs';
-import { expectedRules, harnessPaths } from '../bin/lib/harnesses.mjs';
+import { drift, sessionContext } from '../cli/drift.mjs';
+import { MARKERS } from '../cli/lib/fsx.mjs';
+import { expectedRules, harnessPaths } from '../cli/lib/harnesses.mjs';
 
 const PLUGIN_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const GLOBAL = readFileSync(join(PLUGIN_ROOT, 'rules', 'global.md'), 'utf8');
@@ -94,7 +94,7 @@ test('drift never throws on missing or broken files', () => {
 const RESUME_NOTE = 'triqual: methodology skills are active (methodology:using-methodology); superpowers is disabled';
 
 test('drift.mjs as a hook on resume prints the drift lines, or the resume note, and exits 0', () => {
-  const cli = join(PLUGIN_ROOT, 'bin', 'drift.mjs');
+  const cli = join(PLUGIN_ROOT, 'cli', 'drift.mjs');
   // Never log into a real plugin data dir, and never reach the real config through XDG_CONFIG_HOME.
   const { CLAUDE_PLUGIN_DATA: _, XDG_CONFIG_HOME: __, ...env } = process.env;
   const run = (home) => spawnSync(process.execPath, [cli], {
@@ -121,7 +121,7 @@ test('hooks.json registers drift.mjs on SessionStart', () => {
       SessionStart: [
         {
           matcher: 'startup|resume|clear|compact',
-          hooks: [{ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/bin/drift.mjs"', timeout: 10 }],
+          hooks: [{ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/cli/drift.mjs"', timeout: 10 }],
         },
       ],
     },
@@ -172,7 +172,7 @@ test('drift.mjs as a hook logs to ${CLAUDE_PLUGIN_DATA}/log and still exits 0', 
   const data = mkdtempSync(join(tmpdir(), 'cm-drift-data-'));
   try {
     withHome((home) => {
-      const r = spawnSync(process.execPath, [join(PLUGIN_ROOT, 'bin', 'drift.mjs')], {
+      const r = spawnSync(process.execPath, [join(PLUGIN_ROOT, 'cli', 'drift.mjs')], {
         env: { ...process.env, HOME: home, CLAUDE_PLUGIN_DATA: data }, input: '{"source":"resume"}', encoding: 'utf8',
       });
       assert.equal(r.status, 0, r.stderr);
@@ -194,7 +194,7 @@ const BOTH_DRIFT = { claudeMd: '# Machine\n', settings: JSON.stringify({ enabled
 function runHook(pluginRoot, home, input, extraEnv = {}) {
   // Never log into a real plugin data dir, and never reach the real config through XDG_CONFIG_HOME.
   const { CLAUDE_PLUGIN_DATA: _, XDG_CONFIG_HOME: __, ...env } = process.env;
-  return spawnSync(process.execPath, [join(pluginRoot, 'bin', 'drift.mjs')], {
+  return spawnSync(process.execPath, [join(pluginRoot, 'cli', 'drift.mjs')], {
     env: { ...env, HOME: home, ...extraEnv }, input, encoding: 'utf8',
   });
 }
@@ -433,14 +433,14 @@ test('drift --harness grok compares the whole rules file', () => {
 test('drift.mjs --harness codex as a hook names triqual sync --harness codex', () => {
   withHarnessRules('codex', '# Codex only\n', (home) => {
     const { CLAUDE_PLUGIN_DATA: _, XDG_CONFIG_HOME: __, ...env } = process.env;
-    const r = spawnSync(process.execPath, [join(PLUGIN_ROOT, 'bin', 'drift.mjs'), '--harness', 'codex'], {
+    const r = spawnSync(process.execPath, [join(PLUGIN_ROOT, 'cli', 'drift.mjs'), '--harness', 'codex'], {
       env: { ...env, HOME: home }, input: JSON.stringify({ session_id: 's', cwd: home, source: 'startup' }), encoding: 'utf8',
     });
     const context = contextOf(r);
     assert.ok(context.includes(HARNESS_FIX('codex')), context);
     assert.ok(context.includes(WRAPPED(SKILL_TEXT)));
     // resume keeps today's rule: no skill.
-    const resumed = spawnSync(process.execPath, [join(PLUGIN_ROOT, 'bin', 'drift.mjs'), '--harness', 'codex'], {
+    const resumed = spawnSync(process.execPath, [join(PLUGIN_ROOT, 'cli', 'drift.mjs'), '--harness', 'codex'], {
       env: { ...env, HOME: home }, input: JSON.stringify({ source: 'resume' }), encoding: 'utf8',
     });
     assert.equal(contextOf(resumed).includes('EXTREMELY_IMPORTANT'), false);

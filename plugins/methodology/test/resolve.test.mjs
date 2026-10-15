@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveInstallPath, resolvePlugin, enabledInClaude } from '../bin/lib/resolve.mjs';
+import { resolveInstallPath, resolvePlugin, enabledInClaude } from '../cli/lib/resolve.mjs';
 import { resolveInstallPath as shimResolveInstallPath } from '../../../bin/triqual-shim.mjs';
 
 const ID = 'methodology@triqual';
@@ -105,7 +105,7 @@ test('enabledInClaude is true only for enabledPlugins[id] === true in ~/.claude/
 
 test('lib/resolve.mjs imports only node: built-ins (the installed plugin carries it alone)', async () => {
   const { readFileSync } = await import('node:fs');
-  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'lib', 'resolve.mjs'), 'utf8');
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'cli', 'lib', 'resolve.mjs'), 'utf8');
   const specifiers = [...src.matchAll(/^import .* from '([^']+)';$/gm)].map((m) => m[1]);
   assert.ok(specifiers.length > 0);
   for (const s of specifiers) assert.ok(s.startsWith('node:'), s);

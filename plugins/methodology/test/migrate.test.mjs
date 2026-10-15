@@ -8,12 +8,12 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { MIGRATE_STEPS, migrate } from '../bin/lib/migrate-steps.mjs';
-import { migrateCli } from '../bin/migrate.mjs';
-import { BRAND } from '../bin/lib/brand.mjs';
-import { readManifest } from '../bin/lib/harness-manifest.mjs';
-import { legacyScan } from '../bin/lib/legacy-scan.mjs';
-import { doctor } from '../bin/doctor.mjs';
+import { MIGRATE_STEPS, migrate } from '../cli/lib/migrate-steps.mjs';
+import { migrateCli } from '../cli/migrate.mjs';
+import { BRAND } from '../cli/lib/brand.mjs';
+import { readManifest } from '../cli/lib/harness-manifest.mjs';
+import { legacyScan } from '../cli/lib/legacy-scan.mjs';
+import { doctor } from '../cli/doctor.mjs';
 import { bootstrap, installCli } from '../../../bin/bootstrap.mjs';
 import {
   ALL_PLUGINS, BRIDGE_NAME, GLOBAL, cachePath, cloneDir, codexConfigFile, dataDir, fakeMachine, installedFile, knownFile,
@@ -21,7 +21,7 @@ import {
 } from './fixtures/migrate-machine.mjs';
 
 const L = BRAND.legacy;
-const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'migrate.mjs');
+const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'cli', 'migrate.mjs');
 const NOW = new Date(2026, 9, 10, 9, 0, 0);
 const LATER = new Date(2026, 9, 10, 10, 0, 0);
 const BACKUP = (home) => join(home, '.claude', 'backups', `${BRAND.dir}-migration-20261010-090000`);

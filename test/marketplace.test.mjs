@@ -7,8 +7,8 @@ import {
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BRIDGE_VERSION, HOOK_TIMEOUTS } from '../plugins/methodology/bin/lib/harnesses.mjs';
-import { BRAND } from '../plugins/methodology/bin/lib/brand.mjs';
+import { BRIDGE_VERSION, HOOK_TIMEOUTS } from '../plugins/methodology/cli/lib/harnesses.mjs';
+import { BRAND } from '../plugins/methodology/cli/lib/brand.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const readJson = (rel) => JSON.parse(readFileSync(join(ROOT, rel), 'utf8'));
@@ -153,7 +153,7 @@ test('plugin versions are the ones this release ships', () => {
   const versions = Object.fromEntries(readJson('.claude-plugin/marketplace.json').plugins
     .filter((p) => !isExternal(p)).map((p) => [p.name, p.version]));
   assert.deepEqual(versions, {
-    'progress-tracking': '0.4.0',
+    'progress-tracking': '0.4.1',
     'workflow-gate': '0.1.1',
     roles: '0.3.2',
     methodology: '0.6.0',
@@ -217,5 +217,14 @@ test('the marketplace and methodology descriptions say Triqual, not the personal
   for (const description of [marketplace.metadata.description, manifest.description]) {
     assert.match(description, /Triqual/, description);
     assert.doesNotMatch(description, /personal methodology/i, description);
+  }
+});
+
+// claude.ai refuses a hosted plugin that ships a top-level bin/ (its executables would reach PATH unreviewed).
+test('no plugin with a local source ships a top-level bin/ directory', () => {
+  const { plugins } = readJson('.claude-plugin/marketplace.json');
+  for (const { name, source } of plugins) {
+    if (typeof source !== 'string') continue;
+    assert.equal(existsSync(join(ROOT, source, 'bin')), false, `${name} ships ${source}/bin`);
   }
 });

@@ -15,12 +15,14 @@ import {
   assertStagedUnchanged, buildStaging, checkContent, checkTarget, commitTarget, ExportError, headShortSha, listExportFiles, loadLocalTerms,
   privateSlug, readManifest, resolveHead, runStagedTests, stagedDigests, updateTarget,
 } from './lib/export.mjs';
-import { BRAND } from '../plugins/methodology/bin/lib/brand.mjs';
+import { BRAND } from '../plugins/methodology/cli/lib/brand.mjs';
 import { localDay } from '../plugins/memory-report/lib/policy.mjs';
 
 // The repository this script belongs to, found from the script's own location, never from the working directory.
 export const SCRIPT_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const USAGE = 'usage: node bin/export-public.mjs --to <dir> --public-repo <owner/name> [--dry-run] [--no-local-terms]';
+
+export const DEPRECATION = 'export-public: deprecated: development moves to the public repository; this export is retired by a follow-up';
 
 const VALUE_FLAGS = { '--to': 'to', '--public-repo': 'publicRepo' };
 const BOOLEAN_FLAGS = { '--dry-run': 'dryRun', '--no-local-terms': 'noLocalTerms' };
@@ -72,6 +74,7 @@ const sameSafety = (a, b) => a.unborn === b.unborn && a.identity.author === b.id
 export function main(argv, { env = process.env, stdout = process.stdout, stderr = process.stderr, repoRoot = SCRIPT_REPO_ROOT, afterCopy } = {}) {
   const out = (line) => stdout.write(`${line}\n`);
   const err = (line) => stderr.write(`${line}\n`);
+  err(DEPRECATION);
   const opts = parseArgs(argv);
   if (opts.error) {
     err(`error: ${opts.error}`);

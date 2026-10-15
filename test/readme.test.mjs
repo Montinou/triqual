@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { BRAND } from '../plugins/methodology/cli/lib/brand.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const README = readFileSync(join(ROOT, 'README.md'), 'utf8');
@@ -257,4 +258,24 @@ test('README states that the push consent also covers marking the PRs ready for 
   const consent = text.slice(text.indexOf('Since 0.6.0 the methodology executes a plan as a stack'), text.indexOf('## Quick start'));
   assert.match(consent, /open and update draft PRs and mark them ready for review after the final review/);
   assert.match(consent, /authorizes that push of the plan's phase branches and draft PRs, and marking them ready for review after the final review, nothing else/);
+});
+
+test('README and CONTRIBUTING say development happens in the public repository, name the maintainer hooks and carry no private name', () => {
+  const contributing = readFileSync(join(ROOT, 'CONTRIBUTING.md'), 'utf8');
+  // The forbidden names are built at runtime: the export rewrites the private slug to the public one in every tracked file, so
+  // neither BRAND.source (public after the rewrite) nor a literal here may stand for the private name.
+  const forbidden = [['triqual', 'private'].join('-'), BRAND.legacy.marketplace];
+  for (const [name, text] of [['README', README], ['CONTRIBUTING', contributing]]) {
+    const flat = text.replace(/\s+/g, ' ');
+    // The public slug must stand alone: `Montinou/triqual` does not satisfy it.
+    assert.match(flat, /Montinou\/triqual(?![\w-])/, `${name} names the public repository`);
+    assert.match(flat, /development happens in this (public )?repository/i, `${name}: development happens here`);
+    assert.match(flat, /pull requests? from outside[^.]*welcome|outside (contributors|pull requests?)[^.]*welcome/i, `${name}: outside pull requests are welcome`);
+    assert.ok(flat.includes('node bin/install-hooks.mjs') && flat.includes('triqual progress-init --store'), `${name}: the hooks install`);
+    assert.ok(flat.includes('node bin/lib/content-gate.mjs --all'), `${name}: the full gate run after a deny-list change`);
+    assert.match(flat, /noreply/, `${name}: the public noreply identity`);
+    assert.match(flat, /Update branch/, `${name}: the Update branch merge commit`);
+    for (const term of forbidden) assert.ok(!text.includes(term), `${name}: no private or legacy name (${term})`);
+  }
+  assert.doesNotMatch(contributing, /published from a private/);
 });

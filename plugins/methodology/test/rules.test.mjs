@@ -4,7 +4,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { BRAND } from '../bin/lib/brand.mjs';
+import { BRAND } from '../cli/lib/brand.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const RULES = join(REPO, 'plugins', 'methodology', 'rules');

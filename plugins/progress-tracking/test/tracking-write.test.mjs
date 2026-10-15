@@ -12,7 +12,7 @@ import { stopVerdict } from '../scripts/gate.mjs';
 import { BRAND } from '../lib/brand.mjs';
 
 const PLUGIN = join(dirname(fileURLToPath(import.meta.url)), '..');
-const BIN = join(PLUGIN, 'bin', 'tracking.mjs');
+const BIN = join(PLUGIN, 'cli', 'tracking.mjs');
 const ID = ['-c', 'user.name=t', '-c', 'user.email=t@t'];
 const NOT_OPTED_IN = 'not opted in: run triqual progress-init (or triqual progress-init --local)';
 const HEADER = '# Progress\n\nAppend-only log: one entry per task, newest on top.\n';

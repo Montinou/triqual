@@ -12,11 +12,11 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { paxCommit, run, tarballUrl, upstreamDiff } from '../bin/upstream-diff.mjs';
-import { writeAtomic } from '../bin/lib/fsx.mjs';
+import { paxCommit, run, tarballUrl, upstreamDiff } from '../cli/upstream-diff.mjs';
+import { writeAtomic } from '../cli/lib/fsx.mjs';
 
 const PLUGIN = join(dirname(fileURLToPath(import.meta.url)), '..');
-const CLI = join(PLUGIN, 'bin', 'upstream-diff.mjs');
+const CLI = join(PLUGIN, 'cli', 'upstream-diff.mjs');
 const FORK_MD = readFileSync(join(PLUGIN, 'FORK.md'), 'utf8');
 
 const temps = [];

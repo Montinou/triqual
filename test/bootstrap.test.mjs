@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { basename, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bootstrap, installCli, makeAsk, runSteps, STEPS } from '../bin/bootstrap.mjs';
-import { BRAND } from '../plugins/methodology/bin/lib/brand.mjs';
+import { BRAND } from '../plugins/methodology/cli/lib/brand.mjs';
 import { fakeMachine, legacyMachine } from '../plugins/methodology/test/fixtures/migrate-machine.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -144,9 +144,9 @@ test('each call gets its timeout: 300 s for plugin calls, 60 s for --version che
   }
 });
 
-test('bootstrap uses the realRun of plugins/methodology/bin/doctor.mjs', async () => {
+test('bootstrap uses the realRun of plugins/methodology/cli/doctor.mjs', async () => {
   const bootstrapModule = await import('../bin/bootstrap.mjs');
-  const doctorModule = await import('../plugins/methodology/bin/doctor.mjs');
+  const doctorModule = await import('../plugins/methodology/cli/doctor.mjs');
   assert.equal(bootstrapModule.realRun, doctorModule.realRun);
 });
 

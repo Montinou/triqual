@@ -11,5 +11,5 @@ It is listed only in the Codex marketplace, `.agents/plugins/marketplace.json`, 
 Codex asks the user to trust each hook and records that trust under keys tied to this file
 (`methodology-codex@triqual:hooks/hooks.json:session_start:0:0` and `…:stop:0:0`). Changing
 `hooks/hooks.json` in any way is a **breaking release**: the user must re-approve the hooks in Codex, and the plugin's
-version in `.codex-plugin/plugin.json` (and `BRIDGE_VERSION` in `plugins/methodology/bin/lib/harnesses.mjs`) moves
+version in `.codex-plugin/plugin.json` (and `BRIDGE_VERSION` in `plugins/methodology/cli/lib/harnesses.mjs`) moves
 only then. `test/marketplace.test.mjs` pins the file's sha256 to catch an accidental edit.

@@ -16,7 +16,7 @@ session; whatever is not in them is lost.
 They live at the repo root (committed mode) or in `.git/methodology/` (local mode). Never guess paths:
 `triqual tasks paths --json` prints `mode`, `progress`, `status`, `plansDir` and `specsDir`; outside an opted-in repo it
 prints `"optedIn": false` and exits 0. Both carry `notOptedInMessage` and `localHookLines`. Without `triqual` on PATH, run
-`node "${CLAUDE_PLUGIN_ROOT}/bin/tasks.mjs" <subcommand> …` instead.
+`node "${CLAUDE_PLUGIN_ROOT}/cli/tasks.mjs" <subcommand> …` instead.
 
 ## The rule
 

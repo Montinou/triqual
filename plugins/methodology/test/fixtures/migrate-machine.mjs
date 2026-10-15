@@ -14,9 +14,9 @@ import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BRAND } from '../../bin/lib/brand.mjs';
-import { expectedRules } from '../../bin/lib/harnesses.mjs';
-import { removeTable } from '../../bin/lib/toml-edit.mjs';
+import { BRAND } from '../../cli/lib/brand.mjs';
+import { expectedRules } from '../../cli/lib/harnesses.mjs';
+import { removeTable } from '../../cli/lib/toml-edit.mjs';
 
 const L = BRAND.legacy;
 const PLUGIN_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');

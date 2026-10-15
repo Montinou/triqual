@@ -7,7 +7,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parsePlan, createLedger, transition } from '../lib/ledger.mjs';
 
-const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'tasks.mjs');
+const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'cli', 'tasks.mjs');
 const ID = ['-c', 'user.name=t', '-c', 'user.email=t@t'];
 const NAME = '2026-09-28-example';
 const AT = '2026-09-28T00:00:00Z';

@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bootstrap, runSteps, STEPS } from '../bin/bootstrap.mjs';
-import { BRAND } from '../plugins/methodology/bin/lib/brand.mjs';
+import { BRAND } from '../plugins/methodology/cli/lib/brand.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const RULES = join(ROOT, 'plugins', 'methodology', 'rules');

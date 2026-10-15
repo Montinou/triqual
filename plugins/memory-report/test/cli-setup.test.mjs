@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { main } from '../bin/memory.mjs';
+import { main } from '../cli/memory.mjs';
 import { REASON_INCOMPLETE, REASON_NOT_SET_UP, loadConfig } from '../lib/config.mjs';
 import { canImportSqlite, withTempHome } from './helpers.mjs';
 import { createClaudeMemDb } from './fixtures/claude-mem-schema.mjs';

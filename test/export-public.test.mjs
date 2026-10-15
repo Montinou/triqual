@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as ex from '../bin/lib/export.mjs';
-import { BRAND } from '../plugins/methodology/bin/lib/brand.mjs';
+import { BRAND } from '../plugins/methodology/cli/lib/brand.mjs';
 
 // Built into the URL forms below so no line of this file reads as an email address.
 const AT = '@';
@@ -981,6 +981,59 @@ test('checkContent reports a bare Stripe-style key (built at runtime), not a sho
   assert.deepEqual(categories(check({ 'a.txt': [live, restricted, publishable, short].map((k) => `key ${k}\n`).join('') })), ['a.txt:1 secret', 'a.txt:2 secret', 'a.txt:3 secret']);
 });
 
+// ---- scanText ----
+
+// The hits scanText returns for `text` as a file `path`, next to the ones checkContent returns for the same one staged file.
+const scanBoth = (text, over = {}, path = 'a.txt') => {
+  const opts = { ...base, ...over };
+  return { scanned: ex.scanText(text, path, opts), checked: check({ [path]: text }, over) };
+};
+const asScan = (hits) => hits.map(({ line, category }) => ({ line, category }));
+
+test('scanText returns the hits checkContent returns for one staged file, without the path', () => {
+  const key = fakeKey();
+  const cases = [
+    ['term on one line', 'ok\nthe Globex plan\n', { terms: [TERM_A] }, [{ line: 2, category: 'local-term' }]],
+    ['term wrapped over two lines', 'ok\nthe Globex\nCorp team\n', { terms: ['Globex Corp'] }, [{ line: 2, category: 'local-term' }]],
+    ['term wrapped over three lines (whole text)', 'alpha\nbeta\ngamma\n', { terms: ['alpha beta gamma'] }, [{ line: 0, category: 'local-term' }]],
+    ['term wrapped behind comment markers', '// Globex\n// Corp team\n', { terms: ['Globex Corp'] }, [{ line: 1, category: 'local-term' }]],
+    ['home path', 'see /home/tester/x\n', {}, [{ line: 1, category: 'home-path' }]],
+    ['email', `mail ${addr('someone', 'globex.com')}\n`, {}, [{ line: 1, category: 'email' }]],
+    ['ssh URL is not an email', `${addr('git', 'globex.com')}:owner/repo\n`, {}, []],
+    ['secret', `key ${key}\n`, {}, [{ line: 1, category: 'secret' }]],
+    ['allowlisted secret', `key ${key}\n`, { allowSecrets: [{ path: 'a.txt', contains: `key ${key.slice(0, 5)}` }] }, []],
+    ['private slug', 'x acme/tools\nacme/tools-public\n', {}, [{ line: 1, category: 'private-slug' }]],
+  ];
+  for (const [name, text, over, expected] of cases) {
+    const { scanned, checked } = scanBoth(text, over);
+    assert.deepEqual(scanned, expected, name);
+    assert.deepEqual(scanned, asScan(checked), `${name}: same as checkContent`);
+  }
+});
+
+test('scanText checks the path at line 0 and counts text lines from 1 across LF and CRLF', () => {
+  const { scanned, checked } = scanBoth(`a\r\n${addr('p', 'umbrella.org')}\r\n`, { terms: [TERM_A] }, 'dir/globex.txt');
+  assert.deepEqual(scanned, [{ line: 0, category: 'local-term' }, { line: 2, category: 'email' }]);
+  assert.deepEqual(scanned, asScan(checked));
+  assert.deepEqual(ex.scanText('clean\n', 'acme/tools/x.txt', base), [{ line: 0, category: 'private-slug' }]);
+});
+
+test('scanText applies allowLegacy to the path and the text like checkContent', () => {
+  const over = { legacyTerms: ['oldname'], allowLegacy: [{ path: 'a.txt', contains: 'oldname kept' }] };
+  const { scanned, checked } = scanBoth('oldname here\noldname kept\n', over);
+  assert.deepEqual(scanned, [{ line: 1, category: 'old-name' }]);
+  assert.deepEqual(scanned, asScan(checked));
+});
+
+test('scanText without privateSlug reports no private-slug and does not throw', () => {
+  const { privateSlug, ...noSlug } = base;
+  assert.equal(privateSlug, 'acme/tools');
+  assert.deepEqual(ex.scanText('x acme/tools\n', 'acme/tools.txt', noSlug), []);
+  assert.deepEqual(ex.scanText('x acme/tools\n', 'a.txt', { ...noSlug, publicSlug: undefined }), []);
+  assert.deepEqual(ex.scanText('see /home/tester/x\n', 'a.txt', noSlug), [{ line: 1, category: 'home-path' }]);
+  assert.deepEqual(ex.scanText('x\n', 'a.txt', {}), []);
+});
+
 // ---- runStagedTests ----
 
 const fixturePackage = (script) => JSON.stringify({ name: 'fixture', version: '0.0.0', private: true, type: 'module', scripts: { test: script } });
@@ -1872,4 +1925,18 @@ test('the run prints the derived private slug', async () => {
   assert.equal(result.code, 0, result.err);
   assert.match(result.out, /^private slug: acme\/tools \(from origin\)$/m);
   assert.ok(result.out.indexOf('private slug:') < result.out.indexOf('author:'), 'printed before the checks');
+});
+
+const DEPRECATION = 'export-public: deprecated: development moves to the public repository; this export is retired by a follow-up';
+
+test('the export prints its deprecation line once on stderr, on a usage error and on a run, and nothing on stdout', async () => {
+  const count = (text) => text.split('\n').filter((line) => line === DEPRECATION).length;
+  const bad = await exportRun(['--to'], { repoRoot: privateRepo() });
+  assert.equal(bad.code, 2);
+  assert.equal(count(bad.err), 1, bad.err);
+  const s = scenario();
+  const result = await s.run(s.args());
+  assert.equal(result.code, 0, result.err);
+  assert.equal(count(result.err), 1, result.err);
+  assert.ok(!result.out.includes('deprecated'), result.out);
 });

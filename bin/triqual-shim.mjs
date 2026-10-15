@@ -4,7 +4,7 @@
 // symlink to it), so it imports only node: built-ins; ~/.local/bin/cm.mjs is the deprecated alias that runs it. It
 // finds each plugin's installPath in ~/.claude/plugins/installed_plugins.json (never the newest cache directory: old
 // versions linger there), picks the entry that applies to the cwd with Claude Code's scope precedence (local, then
-// project, then user), and runs that plugin's bin/ script.
+// project, then user), and runs that plugin's cli/ script (bin/ in a plugin installed before the move).
 // `triqual`, `triqual help`, `triqual --help` and `triqual -h` print every command's description with its installed
 // `--help` beneath (0); `triqual help <command>`, `triqual --help <command>` and `triqual -h <command>` run
 // `triqual <command> --help`. A command that does not resolve is marked, and `triqual <command>` explains, per command:
@@ -20,23 +20,23 @@ import { join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 // The marketplace names, as literals: this file is copied alone and imports only node: built-ins, so it keeps its own
-// copy of the plugin id rule in plugins/methodology/bin/lib/brand.mjs.
+// copy of the plugin id rule in plugins/methodology/cli/lib/brand.mjs.
 const MARKETPLACE = 'triqual';
 const LEGACY_MARKETPLACE = 'claude-methodology';
 
 export const COMMANDS = {
-  tasks: ['progress-tracking', 'bin/tasks.mjs'],
-  'progress-init': ['progress-tracking', 'bin/progress-init.mjs'],
-  suggest: ['skill-suggest', 'bin/suggest.mjs'],
-  doctor: ['methodology', 'bin/doctor.mjs'],
-  sync: ['methodology', 'bin/sync.mjs'],
-  'upstream-diff': ['methodology', 'bin/upstream-diff.mjs'],
-  ui: ['progress-tracking', 'bin/ui.mjs'],
-  tracking: ['progress-tracking', 'bin/tracking.mjs'],
-  hook: ['methodology', 'bin/hook.mjs'],
-  memory: ['memory-report', 'bin/memory.mjs'],
-  'role-eval': ['methodology', 'bin/role-eval.mjs'],
-  migrate: ['methodology', 'bin/migrate.mjs'],
+  tasks: ['progress-tracking', 'cli/tasks.mjs'],
+  'progress-init': ['progress-tracking', 'cli/progress-init.mjs'],
+  suggest: ['skill-suggest', 'cli/suggest.mjs'],
+  doctor: ['methodology', 'cli/doctor.mjs'],
+  sync: ['methodology', 'cli/sync.mjs'],
+  'upstream-diff': ['methodology', 'cli/upstream-diff.mjs'],
+  ui: ['progress-tracking', 'cli/ui.mjs'],
+  tracking: ['progress-tracking', 'cli/tracking.mjs'],
+  hook: ['methodology', 'cli/hook.mjs'],
+  memory: ['memory-report', 'cli/memory.mjs'],
+  'role-eval': ['methodology', 'cli/role-eval.mjs'],
+  migrate: ['methodology', 'cli/migrate.mjs'],
 };
 
 // One line per command for the help; kept apart from COMMANDS, whose shape tests pin.
@@ -167,7 +167,9 @@ export function resolveCommand({ home, cwd, cmd }) {
       marker: '(not installed)',
     };
   }
-  const file = join(installPath, rel);
+  // A plugin installed before its scripts moved from bin/ to cli/ still has them under bin/.
+  const legacy = join(installPath, rel.replace(/^cli\//, 'bin/'));
+  const file = existsSync(join(installPath, rel)) || !existsSync(legacy) ? join(installPath, rel) : legacy;
   if (!existsSync(file)) {
     if (listed === false) return unreleased(`triqual ${cmd}: requires ${id}, which is not released yet`);
     if (listed === null) {
@@ -181,7 +183,7 @@ export function resolveCommand({ home, cwd, cmd }) {
       };
     }
     const source = copy.sources.get(plugin);
-    if (source === null || !existsSync(join(copy.location, source, rel))) {
+    if (source === null || (!existsSync(join(copy.location, source, rel)) && !existsSync(join(copy.location, source, rel.replace(/^cli\//, 'bin/'))))) {
       return unreleased(`triqual ${cmd}: not released yet: the ${plugin} release lacks ${rel}`);
     }
     return {

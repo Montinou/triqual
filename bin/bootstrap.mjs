@@ -23,15 +23,15 @@ import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { idOf, marketplaceVersions, PLUGINS, realRun } from '../plugins/methodology/bin/doctor.mjs';
-import { BRAND } from '../plugins/methodology/bin/lib/brand.mjs';
-import { legacyCliPresent, ownsCliFile } from '../plugins/methodology/bin/lib/cli-files.mjs';
-import { backupDirFor, backupFile, sha256, writeAtomic } from '../plugins/methodology/bin/lib/fsx.mjs';
-import { syncHarness } from '../plugins/methodology/bin/lib/harness-sync.mjs';
-import { detect } from '../plugins/methodology/bin/lib/harnesses.mjs';
-import { migrate } from '../plugins/methodology/bin/lib/migrate-steps.mjs';
-import { editSettings, readMethodologyConfig, setHarnessEnabled } from '../plugins/methodology/bin/lib/settings.mjs';
-import { sync } from '../plugins/methodology/bin/sync.mjs';
+import { idOf, marketplaceVersions, PLUGINS, realRun } from '../plugins/methodology/cli/doctor.mjs';
+import { BRAND } from '../plugins/methodology/cli/lib/brand.mjs';
+import { legacyCliPresent, ownsCliFile } from '../plugins/methodology/cli/lib/cli-files.mjs';
+import { backupDirFor, backupFile, sha256, writeAtomic } from '../plugins/methodology/cli/lib/fsx.mjs';
+import { syncHarness } from '../plugins/methodology/cli/lib/harness-sync.mjs';
+import { detect } from '../plugins/methodology/cli/lib/harnesses.mjs';
+import { migrate } from '../plugins/methodology/cli/lib/migrate-steps.mjs';
+import { editSettings, readMethodologyConfig, setHarnessEnabled } from '../plugins/methodology/cli/lib/settings.mjs';
+import { sync } from '../plugins/methodology/cli/sync.mjs';
 
 // The floor for the CLI and hooks: node:sqlite (the tracking store) needs 22.13. Compared on major and minor.
 const MIN_NODE = { major: 22, minor: 13 };

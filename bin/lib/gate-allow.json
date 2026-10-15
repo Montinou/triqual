@@ -1,0 +1,50 @@
+[
+  {
+    "path": "plugins/memory-report/lib/insights.mjs",
+    "contains": "selection.secret + dropped.secret"
+  },
+  {
+    "path": "plugins/memory-report/lib/policy.mjs",
+    "contains": "BEGIN/,"
+  },
+  {
+    "path": "plugins/memory-report/test/insights-runner.test.mjs",
+    "contains": "NOTE-TEXT-' + 'zq'"
+  },
+  {
+    "path": "plugins/memory-report/test/policy.test.mjs",
+    "contains": "u0070'.repeat(3)}"
+  },
+  {
+    "path": "plugins/memory-report/test/repo-resolve.test.mjs",
+    "contains": "user:hunter2@Example.invalid"
+  },
+  {
+    "path": "plugins/methodology/rules/global.md",
+    "contains": "TOKEN = \"sk-123"
+  },
+  {
+    "path": "plugins/methodology/skills/brainstorming/scripts/server.cjs",
+    "contains": "tokenInfo.value"
+  },
+  {
+    "path": "plugins/methodology/skills/brainstorming/scripts/server.cjs",
+    "contains": "N = generateToken();"
+  },
+  {
+    "path": "plugins/methodology/test/doctor.test.mjs",
+    "contains": "ghp_SecretLooking"
+  },
+  {
+    "path": "plugins/methodology/test/doctor.test.mjs",
+    "contains": "sk-live-SecretLook"
+  },
+  {
+    "path": "plugins/methodology/test/doctor.test.mjs",
+    "contains": "xai-SECRET-TOKEN-inspect"
+  },
+  {
+    "path": "plugins/methodology/test/fork.test.mjs",
+    "contains": "randomBytes(32).toString('hex')"
+  }
+]

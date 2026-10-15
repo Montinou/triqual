@@ -16,7 +16,7 @@ import {
   buildHistory, buildLocal, buildTreesame, ENTRIES, HEADINGS, HOTEL, LEDGER_PATH, progressOf, sha256, STATUS,
 } from './fixtures/progress-history.mjs';
 
-const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'tracking.mjs');
+const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'cli', 'tracking.mjs');
 
 await loadSqlite();
 

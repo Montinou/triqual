@@ -152,7 +152,7 @@ const repo = ({ local = false } = {}) => {
 
 // ---- temp store repo with the branch code as `triqual` -------------------------------------------------------------
 
-const PROGRESS_BIN = join(PLUGIN, '..', 'progress-tracking', 'bin');
+const PROGRESS_BIN = join(PLUGIN, '..', 'progress-tracking', 'cli');
 const STORE_PLAN_NAME = 'demo-plan.md';
 
 // A temp repo opted in to the store (one `progress-init --store`), with a `triqual` first on PATH that runs this

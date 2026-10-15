@@ -7,10 +7,10 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { main } from '../bin/role-eval.mjs';
-import { recordKey } from '../bin/lib/role-eval.mjs';
+import { main } from '../cli/role-eval.mjs';
+import { recordKey } from '../cli/lib/role-eval.mjs';
 
-const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'role-eval.mjs');
+const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), '..', 'cli', 'role-eval.mjs');
 const SENTINEL = 'zz-sentinel';
 const mode = (path) => statSync(path).mode & 0o777;
 const lines = (file) => readFileSync(file, 'utf8').split('\n').filter((l) => l !== '');

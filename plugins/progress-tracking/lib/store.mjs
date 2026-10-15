@@ -18,6 +18,15 @@ export class StoreError extends Error {
   }
 }
 
+// relocateRepo's refusal: `reason` says why nothing was changed.
+export class RelocateRefused extends Error {
+  constructor(reason) {
+    super(`cannot relocate the repository: ${reason}`);
+    this.name = 'RelocateRefused';
+    this.reason = reason;
+  }
+}
+
 const NODE_FLOOR = [22, 13];
 const NODE_MESSAGE = 'triqual store mode needs Node 22.13 or newer';
 const DIR_MODE = 0o700;
@@ -292,6 +301,48 @@ class Store {
       );
       return this.get('SELECT id, repo_key FROM repos WHERE git_common_dir = ?', dir);
     });
+  }
+
+  // Re-points the row whose root is `oldRoot` (its canonical path, else the string as given) at a new checkout: its
+  // repo_key, git_common_dir and root become the new checkout's canonical values, and the old documents dir
+  // <dataDir>/repos/<oldKey> is renamed to <newKey>. Every id (row, entries, plans, tasks) is kept; nothing is deleted
+  // and no entry is touched. Throws RelocateRefused, changing nothing, when no single row has the old root, the new
+  // checkout already has a row, an entry is pending, a plan is not done, or <newKey>/ already exists. A failed rename
+  // rolls the row back; a failed COMMIT after the rename renames the dir back before rethrowing.
+  relocateRepo({ oldRoot, gitCommonDir, root, dataDir }) {
+    const dir = canonical(gitCommonDir);
+    const newRoot = canonical(root);
+    const newKey = repoKey(dir);
+    let renamed = null;
+    try {
+      return this.tx(() => {
+        let rows = this.all('SELECT id, repo_key FROM repos WHERE root = ?', canonical(oldRoot));
+        if (rows.length === 0) rows = this.all('SELECT id, repo_key FROM repos WHERE root = ?', oldRoot);
+        if (rows.length === 0) throw new RelocateRefused(`no repository row has the root ${oldRoot}`);
+        if (rows.length > 1) throw new RelocateRefused(`${rows.length} repository rows have the root ${oldRoot}`);
+        const [{ id: repoId, repo_key: oldKey }] = rows;
+        if (this.get('SELECT id FROM repos WHERE git_common_dir = ? OR repo_key = ?', dir, newKey)) {
+          throw new RelocateRefused(`the new checkout ${dir} already has a row`);
+        }
+        const pending = this.get("SELECT COUNT(*) AS n FROM entries WHERE repo_id = ? AND state = 'pending'", repoId).n;
+        if (pending > 0) throw new RelocateRefused(`${pending} pending entr${pending === 1 ? 'y' : 'ies'}: commit or resolve them first`);
+        const active = this.all("SELECT path FROM plans WHERE repo_id = ? AND state <> 'done' ORDER BY id", repoId);
+        if (active.length > 0) throw new RelocateRefused(`active plan(s) not done: ${active.map((p) => p.path).join(', ')}`);
+        const from = docsDirs(dataDir, oldKey).docsDir;
+        const to = docsDirs(dataDir, newKey).docsDir;
+        if (existsSync(to)) throw new RelocateRefused(`the documents dir ${to} already exists`);
+        this.run('UPDATE repos SET repo_key = ?, git_common_dir = ?, root = ? WHERE id = ?', newKey, dir, newRoot, repoId);
+        if (existsSync(from)) {
+          renameSync(from, to);
+          renamed = { from, to };
+        }
+        return { repoId, oldKey, newKey };
+      });
+    } catch (e) {
+      // Only the COMMIT can throw after the rename: the row is back to the old values, so the dir goes back too.
+      if (renamed) renameSync(renamed.to, renamed.from);
+      throw e;
+    }
   }
 
   // ---- Entries ----

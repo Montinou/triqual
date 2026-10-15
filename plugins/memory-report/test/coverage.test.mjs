@@ -17,7 +17,7 @@ import { collectHygiene } from '../lib/collect/hygiene.mjs';
 import { suggestCandidates } from '../lib/suggest.mjs';
 import { closeSources, openSources } from '../lib/sources.mjs';
 import { readState } from '../lib/state.mjs';
-import { main } from '../bin/memory.mjs';
+import { main } from '../cli/memory.mjs';
 
 const hasSqlite = await canImportSqlite();
 const skip = !hasSqlite && 'node:sqlite is not available on this Node';

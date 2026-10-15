@@ -8,14 +8,14 @@ import { tmpdir } from 'node:os';
 import { basename, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { doctor, git, nodeCheck, realRun, SHIM_COMMANDS, STORE_HOOKS, STORE_SCRIPTS } from '../bin/doctor.mjs';
+import { doctor, git, nodeCheck, realRun, SHIM_COMMANDS, STORE_HOOKS, STORE_SCRIPTS } from '../cli/doctor.mjs';
 import { STORE_HOOK_LINES } from '../../progress-tracking/lib/store-hooks.mjs';
 import { COMMANDS } from '../../../bin/triqual-shim.mjs';
-import { MARKERS } from '../bin/lib/fsx.mjs';
-import { codexBridgeDir } from '../bin/lib/harnesses.mjs';
-import { codexPluginTable, grokStaleEntries, syncHarness } from '../bin/lib/harness-sync.mjs';
-import { manifestPath, readManifest } from '../bin/lib/harness-manifest.mjs';
-import { BRAND } from '../bin/lib/brand.mjs';
+import { MARKERS } from '../cli/lib/fsx.mjs';
+import { codexBridgeDir } from '../cli/lib/harnesses.mjs';
+import { codexPluginTable, grokStaleEntries, syncHarness } from '../cli/lib/harness-sync.mjs';
+import { manifestPath, readManifest } from '../cli/lib/harness-manifest.mjs';
+import { BRAND } from '../cli/lib/brand.mjs';
 import { installCli } from '../../../bin/bootstrap.mjs';
 
 const PLUGIN_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -72,7 +72,7 @@ function withHome(fn, tweak = () => {}) {
       shimText: SHIM_TEXT, // the installed triqual.mjs
       aliasText: ALIAS_TEXT, // the installed alias, behind its link; null leaves both out
       forwarderText: FORWARDER_TEXT, // the installed forwarder; null leaves it out
-      ships: {}, // plugin name → files under its install dir (e.g. { 'progress-tracking': ['bin/tracking.mjs'] })
+      ships: {}, // plugin name → files under its install dir (e.g. { 'progress-tracking': ['cli/tracking.mjs'] })
       agents: { 'my-helper.md': '---\nname: my-helper\n---\n' },
       // The installed marketplace copy's plugin versions; null leaves known_marketplaces.json out.
       marketplace: Object.fromEntries(IDS.map((id) => [id.split('@')[0], '0.1.0'])),
@@ -450,7 +450,7 @@ for (const name of ROLES) {
 }
 
 // An older shim copy, from before `triqual tracking` shipped.
-const TRACKING_LINE = "  tracking: ['progress-tracking', 'bin/tracking.mjs'],\n";
+const TRACKING_LINE = "  tracking: ['progress-tracking', 'cli/tracking.mjs'],\n";
 const OLD_SHIM_TEXT = SHIM_TEXT.replace(TRACKING_LINE, '');
 const SHIPPED = Object.values(COMMANDS).reduce((acc, [plugin, rel]) => {
   (acc[plugin] ??= []).push(rel);
@@ -480,7 +480,7 @@ test('doctor reports a triqual shim that lacks a command the installed plugins s
     assert.deepEqual(await diagnose({ home, cwd: home, run: fakeRun().run }), { failures: [], warnings: [] });
   }, (p) => {
     p.shimText = OLD_SHIM_TEXT;
-    p.ships = { ...SHIPPED, 'progress-tracking': SHIPPED['progress-tracking'].filter((f) => f !== 'bin/tracking.mjs') };
+    p.ships = { ...SHIPPED, 'progress-tracking': SHIPPED['progress-tracking'].filter((f) => f !== 'cli/tracking.mjs') };
   });
 });
 
@@ -965,7 +965,7 @@ test('the real tasks.mjs prints optedIn false with the facts doctor keeps copies
   const dir = mkdtempSync(join(tmpdir(), 'cm-doctor-optin-'));
   try {
     execFileSync('git', ['init', '-q'], { cwd: dir });
-    const tasks = join(REPO_ROOT, 'plugins', 'progress-tracking', 'bin', 'tasks.mjs');
+    const tasks = join(REPO_ROOT, 'plugins', 'progress-tracking', 'cli', 'tasks.mjs');
     const env = { ...process.env, HOME: dir };
     delete env.XDG_CONFIG_HOME;
     const r = spawnSync(process.execPath, [tasks, 'paths', '--json'], { cwd: dir, encoding: 'utf8', env });
@@ -1171,7 +1171,7 @@ test('git gives up after its timeout and returns null', () => {
   }
 });
 
-const CLI = join(PLUGIN_ROOT, 'bin', 'doctor.mjs');
+const CLI = join(PLUGIN_ROOT, 'cli', 'doctor.mjs');
 // PATH holds no headjack, so the CLI's real run warns instead of reaching the network.
 const cli = (home, args = []) => spawnSync(process.execPath, [CLI, ...args], {
   cwd: home, encoding: 'utf8', env: { HOME: home, PATH: join(home, 'empty-path') },
@@ -2102,7 +2102,7 @@ async function inStoreEnv(env, fn) {
 // scripts as the installed plugin. `snapshotDaysAgo` writes the newest backup (none when null).
 function makeStoreRepo(home, installPath, { snapshotDaysAgo = 0 } = {}) {
   const pt = installPath('progress-tracking');
-  for (const dir of ['bin', 'lib', 'scripts', 'templates']) {
+  for (const dir of ['cli', 'lib', 'scripts', 'templates']) {
     cpSync(join(REPO_ROOT, 'plugins', 'progress-tracking', dir), join(pt, dir), { recursive: true });
   }
   const data = join(home, 'data');
@@ -2125,7 +2125,7 @@ function makeStoreRepo(home, installPath, { snapshotDaysAgo = 0 } = {}) {
   writeFileSync(join(repo, 'README'), 'demo\n');
   git('add', '-A');
   git('commit', '-qm', 'init');
-  execFileSync(process.execPath, [join(REPO_ROOT, 'plugins', 'progress-tracking', 'bin', 'progress-init.mjs'), '--store'],
+  execFileSync(process.execPath, [join(REPO_ROOT, 'plugins', 'progress-tracking', 'cli', 'progress-init.mjs'), '--store'],
     { cwd: repo, env: spawnEnv, stdio: 'ignore' });
   if (snapshotDaysAgo !== null) {
     mkdirSync(join(data, 'backups'), { recursive: true });

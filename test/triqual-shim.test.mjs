@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { COMMANDS, DESCRIPTIONS, HELP_BUDGET_MS, resolveInstallPath, resolveCommand, helpText } from '../bin/triqual-shim.mjs';
-import { BRAND } from '../plugins/methodology/bin/lib/brand.mjs';
+import { BRAND } from '../plugins/methodology/cli/lib/brand.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SHIM = join(ROOT, 'bin', 'triqual-shim.mjs');
@@ -55,21 +55,36 @@ const shimEnv = (home) => {
 const runShim = (shim, args, { home, cwd }) =>
   spawnSync(process.execPath, [shim, ...args], { cwd, env: shimEnv(home), encoding: 'utf8' });
 
-test('COMMANDS maps every triqual command to its plugin and bin file', () => {
+test('COMMANDS maps every triqual command to its plugin and cli file', () => {
   assert.deepEqual(COMMANDS, {
-    tasks: ['progress-tracking', 'bin/tasks.mjs'],
-    'progress-init': ['progress-tracking', 'bin/progress-init.mjs'],
-    suggest: ['skill-suggest', 'bin/suggest.mjs'],
-    doctor: ['methodology', 'bin/doctor.mjs'],
-    sync: ['methodology', 'bin/sync.mjs'],
-    'upstream-diff': ['methodology', 'bin/upstream-diff.mjs'],
-    ui: ['progress-tracking', 'bin/ui.mjs'],
-    tracking: ['progress-tracking', 'bin/tracking.mjs'],
-    hook: ['methodology', 'bin/hook.mjs'],
-    memory: ['memory-report', 'bin/memory.mjs'],
-    'role-eval': ['methodology', 'bin/role-eval.mjs'],
-    migrate: ['methodology', 'bin/migrate.mjs'],
+    tasks: ['progress-tracking', 'cli/tasks.mjs'],
+    'progress-init': ['progress-tracking', 'cli/progress-init.mjs'],
+    suggest: ['skill-suggest', 'cli/suggest.mjs'],
+    doctor: ['methodology', 'cli/doctor.mjs'],
+    sync: ['methodology', 'cli/sync.mjs'],
+    'upstream-diff': ['methodology', 'cli/upstream-diff.mjs'],
+    ui: ['progress-tracking', 'cli/ui.mjs'],
+    tracking: ['progress-tracking', 'cli/tracking.mjs'],
+    hook: ['methodology', 'cli/hook.mjs'],
+    memory: ['memory-report', 'cli/memory.mjs'],
+    'role-eval': ['methodology', 'cli/role-eval.mjs'],
+    migrate: ['methodology', 'cli/migrate.mjs'],
   });
+});
+
+test('resolveCommand runs cli/ and falls back to bin/ for a plugin installed before the move', () => {
+  const home = fixtureHome({
+    'progress-tracking': { 'cli/tasks.mjs': '// new layout\n' },
+    methodology: { 'bin/doctor.mjs': '// old layout\n' },
+  });
+  try {
+    const tasks = resolveCommand({ home, cwd: home, cmd: 'tasks' });
+    assert.ok(tasks.file?.endsWith(join('progress-tracking', '0.1.0', 'cli', 'tasks.mjs')), JSON.stringify(tasks));
+    const doctor = resolveCommand({ home, cwd: home, cmd: 'doctor' });
+    assert.ok(doctor.file?.endsWith(join('methodology', '0.1.0', 'bin', 'doctor.mjs')), JSON.stringify(doctor));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test('line 2 of bin/triqual-shim.mjs is BRAND.ownership.shim', () => {
@@ -77,7 +92,7 @@ test('line 2 of bin/triqual-shim.mjs is BRAND.ownership.shim', () => {
 });
 
 test('COMMANDS includes ui', () => {
-  assert.deepEqual(COMMANDS.ui, ['progress-tracking', 'bin/ui.mjs']);
+  assert.deepEqual(COMMANDS.ui, ['progress-tracking', 'cli/ui.mjs']);
 });
 
 test('resolveInstallPath prefers a local entry for the cwd', () => {
@@ -208,7 +223,7 @@ test('resolveCommand reports a missing command file in an older install', () => 
   try {
     const r = resolveCommand({ home, cwd: home, cmd: 'tasks' });
     assert.equal(r.file, undefined);
-    assert.match(r.error, /installed version of progress-tracking lacks bin\/tasks\.mjs/);
+    assert.match(r.error, /installed version of progress-tracking lacks cli\/tasks\.mjs/);
     // No marketplace copy to tell whether an update would help: no update hint.
     assert.doesNotMatch(r.error, /update/i);
     assert.equal(r.marker, '(not in the installed progress-tracking)');
@@ -365,7 +380,7 @@ test('triqual, triqual help, triqual --help and triqual -h print the full help t
       assert.doesNotMatch(row(cmd)[0], /\(not (installed|released yet)\)/, cmd);
     }
     assert.ok(help.includes(`${row('doctor')[0]}\n${indented(FAKE_DOCTOR_USAGE)}\n`), 'doctor usage beneath its row');
-    for (const [cmd, bin] of [['tasks', 'bin/tasks.mjs'], ['progress-init', 'bin/progress-init.mjs'], ['ui', 'bin/ui.mjs']]) {
+    for (const [cmd, bin] of [['tasks', 'cli/tasks.mjs'], ['progress-init', 'cli/progress-init.mjs'], ['ui', 'cli/ui.mjs']]) {
       const usage = execFileSync(process.execPath, [join(ROOT, 'plugins', 'progress-tracking', bin), '--help'], { encoding: 'utf8', env: shimEnv(home) });
       assert.match(usage, new RegExp(`^usage: triqual ${cmd} `), cmd);
       assert.ok(help.includes(`${row(cmd)[0]}\n${indented(usage)}\n`), `${cmd} usage beneath its row`);
@@ -460,9 +475,9 @@ test('triqual progress-init runs the progress-tracking init in the cwd repo', ()
   }
 });
 
-test('progress-tracking is at version 0.4.0', () => {
+test('progress-tracking is at version 0.4.1', () => {
   const manifest = JSON.parse(readFileSync(join(ROOT, 'plugins', 'progress-tracking', '.claude-plugin', 'plugin.json'), 'utf8'));
-  assert.equal(manifest.version, '0.4.0');
+  assert.equal(manifest.version, '0.4.1');
 });
 
 // Before methodology 0.1.2 and progress-tracking 0.2.1 the commands ignored --help: sync ran and wrote
@@ -692,13 +707,13 @@ test('HELP_SINCE is per command: tasks forwards --help on progress-tracking 0.2.
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
-test("hook resolves to methodology's bin/hook.mjs, and triqual --help lists its description", () => {
+test("hook resolves to methodology's cli/hook.mjs, and triqual --help lists its description", () => {
   const home = fixtureHome({ methodology: { 'bin/hook.mjs': '', ...plugin('methodology', '0.3.0') } });
   const file = join(home, '.claude', 'plugins', 'cache', BRAND.legacy.marketplace, 'methodology', '0.1.0', 'bin', 'hook.mjs');
   writeFileSync(file, recorder(join(home, 'ran')));
   try {
     marketplaceCopy(home, RELEASED);
-    assert.deepEqual(COMMANDS.hook, ['methodology', 'bin/hook.mjs']);
+    assert.deepEqual(COMMANDS.hook, ['methodology', 'cli/hook.mjs']);
     assert.equal(resolveCommand({ home, cwd: home, cmd: 'hook' }).file, file);
     const help = runShim(SHIM, ['--help'], { home, cwd: home });
     assert.equal(help.status, 0, help.stderr);

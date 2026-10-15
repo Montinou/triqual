@@ -9,14 +9,14 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readManifest, removeHarness, splitAgentsMd, syncHarness, writeManifest } from '../bin/lib/harness-sync.mjs';
-import { syncCli } from '../bin/sync.mjs';
-import { backupDirFor, MARKERS } from '../bin/lib/fsx.mjs';
-import { BRAND } from '../bin/lib/brand.mjs';
+import { readManifest, removeHarness, splitAgentsMd, syncHarness, writeManifest } from '../cli/lib/harness-sync.mjs';
+import { syncCli } from '../cli/sync.mjs';
+import { backupDirFor, MARKERS } from '../cli/lib/fsx.mjs';
+import { BRAND } from '../cli/lib/brand.mjs';
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(TEST_DIR, '..');
-const SYNC = join(PLUGIN_ROOT, 'bin', 'sync.mjs');
+const SYNC = join(PLUGIN_ROOT, 'cli', 'sync.mjs');
 const ROLES_AGENTS = join(PLUGIN_ROOT, '..', 'roles', 'agents');
 const CONFIG_FIXTURE = readFileSync(join(TEST_DIR, 'fixtures', 'legacy', 'codex-config.toml'), 'utf8');
 const SPLIT_FIXTURE = readFileSync(join(TEST_DIR, 'fixtures', 'codex-agents-layout.md'), 'utf8');

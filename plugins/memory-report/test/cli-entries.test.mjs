@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { main } from '../bin/memory.mjs';
+import { main } from '../cli/memory.mjs';
 import { loadConfig } from '../lib/config.mjs';
 import { withTempHome } from './helpers.mjs';
 

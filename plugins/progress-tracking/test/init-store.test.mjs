@@ -19,7 +19,7 @@ import { buildHistory, ENTRIES, HEADINGS, LEDGER_PATH, progressOf } from './fixt
 
 const PLUGIN = join(dirname(fileURLToPath(import.meta.url)), '..');
 const INIT = join(PLUGIN, 'scripts', 'init.mjs');
-const BIN = join(PLUGIN, 'bin', 'tracking.mjs');
+const BIN = join(PLUGIN, 'cli', 'tracking.mjs');
 const TEMPLATES = join(PLUGIN, 'templates');
 const MESSAGE = 'the commit has changes but this worktree has no pending progress entry: add one with `triqual tracking add <draft>`';
 const PRE_SCRIPT = 'progress-store-pre-commit.sh';

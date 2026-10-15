@@ -10,7 +10,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parsePlan, createLedger, renderSection, upsertStatusSection } from '../lib/ledger.mjs';
 
-const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'tasks.mjs');
+const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'cli', 'tasks.mjs');
 const GATE = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'gate.mjs');
 const ID = ['-c', 'user.name=t', '-c', 'user.email=t@t'];
 const HINT = 'not opted in: run triqual progress-init (or triqual progress-init --local)';

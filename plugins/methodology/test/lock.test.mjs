@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { withLock } from '../bin/lib/lock.mjs';
+import { withLock } from '../cli/lib/lock.mjs';
 
 function withDir(fn) {
   const dir = mkdtempSync(join(tmpdir(), 'cm-lock-'));

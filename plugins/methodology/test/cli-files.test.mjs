@@ -4,8 +4,8 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, w
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { legacyCliPresent, ownsCliFile } from '../bin/lib/cli-files.mjs';
-import { BRAND } from '../bin/lib/brand.mjs';
+import { legacyCliPresent, ownsCliFile } from '../cli/lib/cli-files.mjs';
+import { BRAND } from '../cli/lib/brand.mjs';
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(TEST_DIR, '..');
@@ -137,7 +137,7 @@ test('legacyCliPresent: foreign files at the three names, and the triqual files,
 test('plugin self-containment: the static import graph of doctor.mjs stays under plugins/methodology/', () => {
   const IMPORT = /(?:^|\n)\s*(?:import|export)\s[^;]*?from\s+['"]([^'"]+)['"]|(?:^|\n)\s*import\s+['"]([^'"]+)['"]/g;
   const seen = new Set();
-  const queue = [join(PLUGIN_ROOT, 'bin', 'doctor.mjs')];
+  const queue = [join(PLUGIN_ROOT, 'cli', 'doctor.mjs')];
   while (queue.length > 0) {
     const file = queue.pop();
     if (seen.has(file)) continue;
@@ -149,6 +149,6 @@ test('plugin self-containment: the static import graph of doctor.mjs stays under
     }
   }
   assert.ok(seen.size > 5, 'the walk found the graph');
-  assert.ok(seen.has(join(PLUGIN_ROOT, 'bin', 'lib', 'cli-files.mjs')), 'doctor reaches the predicate');
+  assert.ok(seen.has(join(PLUGIN_ROOT, 'cli', 'lib', 'cli-files.mjs')), 'doctor reaches the predicate');
   for (const file of seen) assert.ok(file.startsWith(`${PLUGIN_ROOT}/`), `${file} is outside ${PLUGIN_ROOT}`);
 });

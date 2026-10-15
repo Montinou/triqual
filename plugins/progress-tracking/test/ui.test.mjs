@@ -7,13 +7,13 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
-import { startServer } from '../bin/ui.mjs';
+import { startServer } from '../cli/ui.mjs';
 import { BRAND } from '../lib/brand.mjs';
 import { registerRepo } from '../lib/registry.mjs';
 import { createLedger } from '../lib/ledger.mjs';
 
 const PLUGIN = join(dirname(fileURLToPath(import.meta.url)), '..');
-const BIN = join(PLUGIN, 'bin', 'ui.mjs');
+const BIN = join(PLUGIN, 'cli', 'ui.mjs');
 const INDEX = join(PLUGIN, 'ui', 'index.html');
 const APP = join(PLUGIN, 'ui', 'app.js');
 const ID = ['-c', 'user.name=t', '-c', 'user.email=t@t'];

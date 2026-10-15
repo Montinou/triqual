@@ -7,9 +7,9 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { sync } from '../bin/sync.mjs';
-import { MARKERS, readManagedSection, outsideManagedSection } from '../bin/lib/fsx.mjs';
-import { BRAND } from '../bin/lib/brand.mjs';
+import { sync } from '../cli/sync.mjs';
+import { MARKERS, readManagedSection, outsideManagedSection } from '../cli/lib/fsx.mjs';
+import { BRAND } from '../cli/lib/brand.mjs';
 
 const PLUGIN_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const GLOBAL = readFileSync(join(PLUGIN_ROOT, 'rules', 'global.md'), 'utf8');
@@ -296,7 +296,7 @@ test('sync leaves a CLAUDE.md holding both the legacy and the new marker pairs u
 });
 
 test('triqual sync prints one line per step and exits 0 when ok, 1 otherwise', () => {
-  const cli = join(PLUGIN_ROOT, 'bin', 'sync.mjs');
+  const cli = join(PLUGIN_ROOT, 'cli', 'sync.mjs');
   withHome((home) => {
     const ok = spawnSync(process.execPath, [cli], { env: { ...process.env, HOME: home }, encoding: 'utf8' });
     assert.equal(ok.status, 0, ok.stderr);
@@ -314,7 +314,7 @@ test('triqual sync prints one line per step and exits 0 when ok, 1 otherwise', (
 const syncCli = (home, args) => {
   const env = { ...process.env, HOME: home };
   delete env.XDG_CONFIG_HOME;
-  return spawnSync(process.execPath, [join(PLUGIN_ROOT, 'bin', 'sync.mjs'), ...args], { env, encoding: 'utf8' });
+  return spawnSync(process.execPath, [join(PLUGIN_ROOT, 'cli', 'sync.mjs'), ...args], { env, encoding: 'utf8' });
 };
 // Every path under the dir with its bytes, so a test sees any write, backup or new file.
 const tree = (dir) => Object.fromEntries(readdirSync(dir, { recursive: true }).sort()

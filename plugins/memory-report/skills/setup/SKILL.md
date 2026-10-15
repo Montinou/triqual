@@ -7,7 +7,7 @@ description: Use when the user asks to "set up memory-report", when a session no
 
 The weekly report only sends notes to a model after a local setup: an allowlist of projects, a never-send list and
 client terms. This skill collects those choices and writes them with `triqual memory`. Without `triqual` on PATH, run
-`node "<plugin>/bin/memory.mjs" <command>` instead of `triqual memory <command>` (`<plugin>` is the memory-report plugin
+`node "<plugin>/cli/memory.mjs" <command>` instead of `triqual memory <command>` (`<plugin>` is the memory-report plugin
 directory, `${CLAUDE_PLUGIN_ROOT}` when set).
 
 Every change goes through `triqual memory`. Never edit the config file by hand.

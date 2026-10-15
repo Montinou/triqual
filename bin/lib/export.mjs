@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve, sep } from 'node:path';
-import { BRAND, brandDir } from '../../plugins/methodology/bin/lib/brand.mjs';
+import { BRAND, brandDir } from '../../plugins/methodology/cli/lib/brand.mjs';
 import { loadConfig, resolvePaths } from '../../plugins/memory-report/lib/config.mjs';
 import { classifyEntry, normalizeEntrySync } from '../../plugins/memory-report/lib/entries.mjs';
 import { SECRET_PATTERNS, foldTerm, termHits } from '../../plugins/memory-report/lib/policy.mjs';
@@ -477,29 +477,8 @@ const stripLead = (line) => line.replace(LEADING_MARKERS, '');
 // `legacyTerms` (default none) are old names: each matches case-insensitively where no slug character ([A-Za-z0-9_-]) touches
 // it on either side, and a line (or the path) is an `old-name` hit when one of its matches is not covered by an `allowLegacy`
 // entry for that path, under the allowSecrets overlap rule.
-export function checkContent(stagingDir, files, { terms = [], home, privateSlug: privSlug, publicSlug, allowSecrets = [], legacyTerms = [], allowLegacy = [] }) {
-  const termList = terms.map(String);
-  const homePath = typeof home === 'string' ? home.replace(/\/+$/, '').toLowerCase() : '';
-  // The mask is anchored like the private slug's lookahead (a `.` too), so a public slug that is a prefix of the private one
-  // (acme/tools masking acme/tools-private) never hides it.
-  const publicMask = publicSlug ? new RegExp(`${slugSource(publicSlug)}(?![A-Za-z0-9_.-])`, 'gi') : null;
-  const slugLeft = new RegExp(`${slugSource(privSlug)}(?![A-Za-z0-9_-])`, 'i');
-  const legacyPatterns = legacyTerms.map(String).filter((term) => term !== '').map((term) => new RegExp(`(?<![A-Za-z0-9_-])${escapeRegExp(term)}(?![A-Za-z0-9_-])`, 'gi'));
-  const oldNameHit = (text, allowed) => legacyPatterns.length > 0 && anyUncovered(text, patternSpans(text, legacyPatterns), allowed);
-  const isHomePath = (text) => homePath !== '' && text.toLowerCase().includes(homePath);
-  const found = (text) => {
-    const categories = [];
-    if (termHits(text, termList)) categories.push('local-term');
-    if (isHomePath(text)) categories.push('home-path');
-    return categories;
-  };
-  // The slug is tested as written, with its escaped slash forms normalized, and on the canonical form a reader or parser would
-  // see (decoded escapes, percent-encoding and numeric entities, NFKC, default-ignorable characters removed), each to a fixed
-  // point; the public slug is masked after that in each copy. The extra copies can only add hits.
-  const slugHit = (text) => {
-    const copies = [text, slashNormalized(text), canonicalText(text)];
-    return copies.some((copy) => slugLeft.test(publicMask ? copy.replace(publicMask, '\0') : copy));
-  };
+export function checkContent(stagingDir, files, { terms = [], home, privateSlug, publicSlug, allowSecrets = [], legacyTerms = [], allowLegacy = [] }) {
+  const options = { terms, home, privateSlug, publicSlug, allowSecrets, legacyTerms, allowLegacy };
   const hits = [];
   for (const { path } of files) {
     let data;
@@ -509,43 +488,76 @@ export function checkContent(stagingDir, files, { terms = [], home, privateSlug:
       throw new ExportError(`${path}: cannot read the staged file (${err.code ?? 'error'})`, 1);
     }
     if (isBinary(data)) throw new ExportError(BINARY_MESSAGE(path), 1);
-    const allowed = allowSecrets.filter((entry) => entry.path === path).map((entry) => entry.contains);
-    const allowedLegacy = allowLegacy.filter((entry) => entry.path === path).map((entry) => entry.contains);
-    const pathCategories = [...found(path), ...(slugHit(path) ? ['private-slug'] : []), ...(oldNameHit(path, allowedLegacy) ? ['old-name'] : [])];
-    for (const category of pathCategories) hits.push({ path, line: 0, category });
     let text;
     try {
       text = strictUtf8.decode(data);
     } catch {
       throw new ExportError(`${path}: not valid UTF-8, so its content cannot be checked`, 1);
     }
-    const lines = text.split('\n').map((raw) => (raw.endsWith('\r') ? raw.slice(0, -1) : raw));
-    // A term can wrap across lines, also inside a comment or quote block where every line starts with a marker. Besides each
-    // line (checked as written), check each pair of consecutive lines joined with one space (a hit that neither line has alone
-    // is reported at the pair's first line) and finally the whole text (line 0), which also catches a term wrapped over three
-    // or more lines. The pair and the whole text are checked with the leading markers stripped (`stripLead`), and as written
-    // when stripping changed a line, so the marker never splits or hides a term.
-    const own = lines.map((line) => termHits(line, termList));
-    const bare = lines.map(stripLead);
-    const joined = (a, b) => termHits(`${a} ${b}`, termList);
-    const paired = lines.map((line, index) => {
-      if (own[index] || index + 1 >= lines.length || own[index + 1]) return false;
-      const next = lines[index + 1];
-      return joined(bare[index], bare[index + 1]) || ((bare[index] !== line || bare[index + 1] !== next) && joined(line, next));
-    });
-    lines.forEach((line, index) => {
-      const categories = [];
-      if (own[index] || paired[index]) categories.push('local-term');
-      if (isHomePath(line)) categories.push('home-path');
-      if (hasEmail(line)) categories.push('email');
-      if (anyUncovered(line, secretSpans(line), allowed)) categories.push('secret');
-      if (slugHit(line)) categories.push('private-slug');
-      if (oldNameHit(line, allowedLegacy)) categories.push('old-name');
-      for (const category of categories) hits.push({ path, line: index + 1, category });
-    });
-    const prefixed = bare.some((line, index) => line !== lines[index]);
-    if (!own.includes(true) && !paired.includes(true) && (termHits(text, termList) || (prefixed && termHits(bare.join('\n'), termList)))) hits.push({ path, line: 0, category: 'local-term' });
+    for (const { line, category } of scanText(text, path, options)) hits.push({ path, line, category });
   }
+  return hits;
+}
+
+// The checks of checkContent on one text that is published as the file `path`: returns [{ line, category }], the path's hits
+// first (line 0), then the text's line by line, then the whole-text term hit (line 0). Same options as checkContent, and the same
+// categories; `privateSlug` is optional here: without it there is no private-slug check. `text` is the decoded content: refusing
+// binary or non-UTF-8 bytes stays with the caller that reads them.
+export function scanText(text, path, { terms = [], home, privateSlug, publicSlug, allowSecrets = [], legacyTerms = [], allowLegacy = [] } = {}) {
+  const termList = terms.map(String);
+  const homePath = typeof home === 'string' ? home.replace(/\/+$/, '').toLowerCase() : '';
+  // The mask is anchored like the private slug's lookahead (a `.` too), so a public slug that is a prefix of the private one
+  // (acme/tools masking acme/tools-private) never hides it.
+  const publicMask = publicSlug ? new RegExp(`${slugSource(publicSlug)}(?![A-Za-z0-9_.-])`, 'gi') : null;
+  const slugLeft = privateSlug ? new RegExp(`${slugSource(privateSlug)}(?![A-Za-z0-9_-])`, 'i') : null;
+  const legacyPatterns = legacyTerms.map(String).filter((term) => term !== '').map((term) => new RegExp(`(?<![A-Za-z0-9_-])${escapeRegExp(term)}(?![A-Za-z0-9_-])`, 'gi'));
+  const oldNameHit = (value, allowed) => legacyPatterns.length > 0 && anyUncovered(value, patternSpans(value, legacyPatterns), allowed);
+  const isHomePath = (value) => homePath !== '' && value.toLowerCase().includes(homePath);
+  const found = (value) => {
+    const categories = [];
+    if (termHits(value, termList)) categories.push('local-term');
+    if (isHomePath(value)) categories.push('home-path');
+    return categories;
+  };
+  // The slug is tested as written, with its escaped slash forms normalized, and on the canonical form a reader or parser would
+  // see (decoded escapes, percent-encoding and numeric entities, NFKC, default-ignorable characters removed), each to a fixed
+  // point; the public slug is masked after that in each copy. The extra copies can only add hits.
+  const slugHit = (value) => {
+    if (slugLeft === null) return false;
+    const copies = [value, slashNormalized(value), canonicalText(value)];
+    return copies.some((copy) => slugLeft.test(publicMask ? copy.replace(publicMask, '\0') : copy));
+  };
+  const hits = [];
+  const allowed = allowSecrets.filter((entry) => entry.path === path).map((entry) => entry.contains);
+  const allowedLegacy = allowLegacy.filter((entry) => entry.path === path).map((entry) => entry.contains);
+  const pathCategories = [...found(path), ...(slugHit(path) ? ['private-slug'] : []), ...(oldNameHit(path, allowedLegacy) ? ['old-name'] : [])];
+  for (const category of pathCategories) hits.push({ line: 0, category });
+  const lines = text.split('\n').map((raw) => (raw.endsWith('\r') ? raw.slice(0, -1) : raw));
+  // A term can wrap across lines, also inside a comment or quote block where every line starts with a marker. Besides each
+  // line (checked as written), check each pair of consecutive lines joined with one space (a hit that neither line has alone
+  // is reported at the pair's first line) and finally the whole text (line 0), which also catches a term wrapped over three
+  // or more lines. The pair and the whole text are checked with the leading markers stripped (`stripLead`), and as written
+  // when stripping changed a line, so the marker never splits or hides a term.
+  const own = lines.map((line) => termHits(line, termList));
+  const bare = lines.map(stripLead);
+  const joined = (a, b) => termHits(`${a} ${b}`, termList);
+  const paired = lines.map((line, index) => {
+    if (own[index] || index + 1 >= lines.length || own[index + 1]) return false;
+    const next = lines[index + 1];
+    return joined(bare[index], bare[index + 1]) || ((bare[index] !== line || bare[index + 1] !== next) && joined(line, next));
+  });
+  lines.forEach((line, index) => {
+    const categories = [];
+    if (own[index] || paired[index]) categories.push('local-term');
+    if (isHomePath(line)) categories.push('home-path');
+    if (hasEmail(line)) categories.push('email');
+    if (anyUncovered(line, secretSpans(line), allowed)) categories.push('secret');
+    if (slugHit(line)) categories.push('private-slug');
+    if (oldNameHit(line, allowedLegacy)) categories.push('old-name');
+    for (const category of categories) hits.push({ line: index + 1, category });
+  });
+  const prefixed = bare.some((line, index) => line !== lines[index]);
+  if (!own.includes(true) && !paired.includes(true) && (termHits(text, termList) || (prefixed && termHits(bare.join('\n'), termList)))) hits.push({ line: 0, category: 'local-term' });
   return hits;
 }
 

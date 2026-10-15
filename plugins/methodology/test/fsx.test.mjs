@@ -9,8 +9,8 @@ import { join } from 'node:path';
 import {
   realTarget, writeAtomic, backupFile, backupDirFor, sha256, MARKERS,
   readManagedSection, upsertManagedSection, outsideManagedSection,
-} from '../bin/lib/fsx.mjs';
-import { BRAND } from '../bin/lib/brand.mjs';
+} from '../cli/lib/fsx.mjs';
+import { BRAND } from '../cli/lib/brand.mjs';
 
 const S = MARKERS.start;
 const E = MARKERS.end;

@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url';
 import {
   HARNESS_IDS, EVENTS, HOOK_TIMEOUTS, GROK_RULES_HEAD, BRIDGE_VERSION, bridgeId, codexTrustKeys,
   harnessPaths, codexBridgeDir, detect, normalize, formatContext, formatBlock, expectedRules,
-} from '../bin/lib/harnesses.mjs';
-import { BRAND } from '../bin/lib/brand.mjs';
+} from '../cli/lib/harnesses.mjs';
+import { BRAND } from '../cli/lib/brand.mjs';
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(TEST_DIR, '..');

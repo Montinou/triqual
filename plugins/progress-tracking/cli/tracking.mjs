@@ -43,13 +43,20 @@
 //   export [--out <file>]   the repository's rows as JSONL, one {table, row} per line (stdout, or a 0600 file)
 //   restore <snapshot> [--yes]   replaces every row of the database with a snapshot's; asks first on a terminal and
 //           refuses without --yes anywhere else
+//   relocate <old-root>   run in the checkout that replaces <old-root> (before `progress-init --store` there): re-points
+//           the store row of <old-root> at this checkout (ids, entries, plans and documents kept), records one off-plan
+//           entry (already recorded, as `add --no-commit`), moves the registry entry, saves a snapshot
+//           `backups/tracking-relocate-<timestamp>.db` after the move and unsets the store marker in <old-root>. Exit 0 moved, 3 refused
+//           (pending entries, active plans, no row for <old-root>, this checkout already has one), 2 usage
 //
 // The store-mode git hooks (lib/store-hooks.mjs; the hook lines `progress-init --store` installs run them):
 //   hook pre-commit    exit 1 when the commit stages changes and this worktree has no pending entry, or the store
 //           fails; otherwise records the commit handshake (or clears it for a merge, a replay or nothing staged)
 //   hook post-commit   stamps the handshake's entries with HEAD when `git commit` made it with the recorded tree;
 //           always exits 0
-import { closeSync, linkSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync, closeSync, linkSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync,
+} from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -59,8 +66,11 @@ import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { NOT_OPTED_IN } from '../scripts/init.mjs';
 import { BRAND } from '../lib/brand.mjs';
-import { resolveTracking, storeContext } from '../lib/tracking.mjs';
-import { docsDirs, loadSqlite, maybeDailySnapshot, storePaths, StoreError } from '../lib/store.mjs';
+import { gitFacts, mainWorktreeRoot, resolveTracking, storeContext } from '../lib/tracking.mjs';
+import {
+  docsDirs, loadSqlite, maybeDailySnapshot, openStore, RelocateRefused, storePaths, StoreError,
+} from '../lib/store.mjs';
+import { moveRepo } from '../lib/registry.mjs';
 import {
   importRecords, parseExport, prepareImport, reportLines, runImport, UnparsedEntries,
 } from '../lib/store-import.mjs';
@@ -92,6 +102,7 @@ moving data into and out of the store (any tracking mode):
   triqual tracking import [--ref <branch>] [--accept-unparsed] [--replace [--from <jsonl>]]
   triqual tracking export [--out <file>]
   triqual tracking restore <snapshot> [--yes]
+  triqual tracking relocate <old-root>   (run in the new checkout, then run triqual progress-init --store there)
 the store-mode git hooks (installed by triqual progress-init --store):
   triqual tracking hook pre-commit|post-commit`;
 
@@ -480,6 +491,95 @@ export async function restoreCommand(p, io = {}) {
   return 0;
 }
 
+// ---- Relocate ----
+
+const RELOCATE_MARKER = `${BRAND.cli}.tracking`;
+
+// The root of the git checkout `cwd` is in: the clone's main worktree (as storeContext names a new row's root), else
+// the current worktree's top level (a bare clone). Throws a Refusal outside a git checkout.
+function relocateTarget(cwd) {
+  const facts = gitFacts(cwd);
+  if (facts === null) throw new Refusal(`relocate: not inside a git checkout: ${cwd}`);
+  let root = mainWorktreeRoot(cwd, facts.gitCommonDir);
+  if (root === null) {
+    try {
+      const env = { ...process.env };
+      for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE']) delete env[key];
+      root = realpathSync(execFileSync('git', ['rev-parse', '--show-toplevel'], {
+        cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim());
+    } catch {
+      throw new Refusal(`relocate: not inside a git checkout: ${cwd}`);
+    }
+  }
+  return { ...facts, root };
+}
+
+// Unsets the store marker in the old checkout when it is still there and marked; true when it did. Best effort: an old
+// checkout that is gone or not a repository has nothing to unset.
+function unsetOldMarker(oldRoot) {
+  const env = { ...process.env };
+  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE']) delete env[key];
+  const git = (...args) => execFileSync('git', ['-C', oldRoot, ...args], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  try {
+    if (git('config', '--local', '--get', RELOCATE_MARKER).trim() !== 'store') return false;
+    git('config', '--local', '--unset', RELOCATE_MARKER);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// `relocate <old-root>`, run in the new checkout. The store is opened directly, never through withStore/storeContext:
+// they would create this checkout's row first, which relocateRepo refuses. The snapshot is taken after the move and the
+// entry, so it holds the database as it now is; relocateRepo runs outside any other transaction; the registry moves and
+// the old marker go only once the row has moved. The entry is written as `add --no-commit` writes one (state no_commit).
+async function relocateCommand(p) {
+  const target = relocateTarget(process.cwd());
+  await loadSqlite();
+  const home = homedir();
+  const store = openStore({ home, env: process.env });
+  try {
+    const { dataDir } = storePaths({ home, env: process.env });
+    const now = new Date();
+    const backups = join(dataDir, 'backups');
+    mkdirSync(backups, { recursive: true, mode: 0o700 });
+    chmodSync(backups, 0o700);
+    const stamp = now.toISOString().replace(/[:.]/g, '-');
+    const snapshot = join(backups, `tracking-relocate-${stamp}.db`);
+    let moved;
+    try {
+      moved = store.relocateRepo({ oldRoot: p.oldRoot, gitCommonDir: target.gitCommonDir, root: target.root, dataDir });
+    } catch (err) {
+      if (!(err instanceof RelocateRefused)) throw err;
+      process.stderr.write(`${err.message}\n`);
+      return 3;
+    }
+    moveRepo(home, { from: p.oldRoot, to: target.root, mode: 'store', now });
+    const entry = {
+      title: 'Relocate the tracking store row',
+      stage_task: 'off-plan',
+      done: `moved the store row of ${p.oldRoot} to ${target.root} (repo ${moved.repoId}, key ${moved.oldKey} -> ${moved.newKey}); `
+        + 'entries, plans, tasks and documents kept',
+      files: 'none (store row, documents dir and registry only)',
+      verification: `snapshot ${snapshot}`,
+      next: `run ${BRAND.cli} progress-init --store in ${target.root}`,
+    };
+    const ctx = { repoId: moved.repoId, gitDir: target.gitDir, branch: target.branch };
+    store.tx(() => store.addEntry(ctx, entry, {
+      state: 'no_commit', createdAt: now.toISOString(), entryDate: now.toISOString().slice(0, 10),
+    }));
+    // After the move and the entry: a restore of this snapshot matches repos by git common dir, so a snapshot from before
+    // the move would bring back the old row with the history and leave the moved one empty.
+    store.snapshotTo(snapshot);
+    out(`relocated ${p.oldRoot} -> ${target.root}`);
+    if (unsetOldMarker(p.oldRoot)) out(`unset the store marker in ${p.oldRoot}`);
+    return 0;
+  } finally {
+    store.close();
+  }
+}
+
 // ---- Arguments ----
 
 const OPTIONS = {
@@ -510,7 +610,7 @@ const FLAG_TAKEN_BY = {
 // The flags each command takes; any other command is checked as `write`.
 const TAKES = {
   add: ['no-commit', 'commit', 'corrects'], status: ['section', 'json'], log: ['last', 'plan', 'since', 'grep', 'json'], write: ['replace'],
-  import: ['ref', 'accept-unparsed', 'replace', 'from'], export: ['out'], restore: ['yes'], hook: [],
+  import: ['ref', 'accept-unparsed', 'replace', 'from'], export: ['out'], restore: ['yes'], relocate: [], hook: [],
 };
 
 // The `log` filters from the parsed flags: { last, plan, since, grep }, the absent ones null (last: the default).
@@ -566,6 +666,12 @@ function parse(argv) {
     if (snapshot === undefined) throw new UsageError('restore: the snapshot path is missing');
     if (extra.length) throw new UsageError(`restore: unexpected argument ${extra[0]}`);
     return { verb, snapshot: resolve(process.cwd(), snapshot), yes: values.yes === true };
+  }
+  if (verb === 'relocate') {
+    const [oldRoot, ...extra] = rest;
+    if (oldRoot === undefined) throw new UsageError('relocate: the old checkout root is missing');
+    if (extra.length) throw new UsageError(`relocate: unexpected argument ${extra[0]}`);
+    return { verb, oldRoot: resolve(process.cwd(), oldRoot) };
   }
   if (verb === 'hook') {
     const [name, ...extra] = rest;
@@ -626,6 +732,7 @@ async function hookCommand(t, p) {
 async function main(argv) {
   const p = parse(argv);
   if (p.verb === 'restore') return restoreCommand(p);
+  if (p.verb === 'relocate') return relocateCommand(p);
   const t = resolveTracking(process.cwd());
   if (p.verb === 'hook') return hookCommand(t, p);
   const storeMode = t?.mode === 'store';

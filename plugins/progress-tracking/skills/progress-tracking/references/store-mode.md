@@ -135,6 +135,21 @@ the plans directory and the stored ledger is reconciled (same state, no second r
 `--replace`; later ones do. From then on name the plan by its bare file name (`triqual tasks start T3 --plan x.md`, or
 `--plan x`): a path such as `task-start docs/plans/x.md` would find the stale copy left in the working tree first.
 
+## Moving a repository to a new checkout
+
+`triqual tracking relocate <old-root>`, run in the new checkout, re-points the store row of `<old-root>` at it: the row
+keeps its id, so every entry, plan, task and document follows (the documents directory is renamed to the new
+repo key). Run it **before** `triqual progress-init --store` in the new checkout, which would otherwise create an
+empty row for it that relocate refuses to replace.
+
+- It moves the row, writes one off-plan entry naming both roots (recorded like `tracking add --no-commit`: never
+  pending), moves the registry entry, then saves the database as `backups/tracking-relocate-<timestamp>.db` (after the
+  move, so restoring it keeps the row under the new root) and unsets the store marker in `<old-root>` when that
+  checkout is still there. Output: `relocated <old-root> -> <root>`,
+  and `unset the store marker in <old-root>` when it unset it.
+- Exit 3, nothing changed, with the reason: an entry of the repository is pending, a plan is not done, no row has the
+  root `<old-root>`, or the new checkout already has a row. Exit 2: no argument, or not inside a git checkout.
+
 ## Recovery, export and the daily snapshot
 
 - **Snapshots.** The first store write of each day saves `backups/tracking-YYYY-MM-DD.db` beside the database and keeps
