@@ -612,6 +612,20 @@ function failingTests(lines) {
       else if (named) failed.push(`failed: ${at} ${named[1]}`);
     }
   }
+  if (failed.length === 0) {
+    // TAP (node --test's output when stdout is not a terminal on Node 22): `not ok <n> - <name>`, then its YAML block's
+    // `location: '<file>:<line>:<col>'`.
+    let name = null;
+    for (const line of lines) {
+      const notOk = /^\s*not ok \d+ - (.+)$/.exec(line);
+      const location = /^\s*location: '(.+)'$/.exec(line);
+      if (notOk) name = notOk[1];
+      else if (location && name !== null) {
+        failed.push(`failed: ${location[1]} ${name}`);
+        name = null;
+      }
+    }
+  }
   return failed.slice(0, MAX_FAILED_LISTED);
 }
 
