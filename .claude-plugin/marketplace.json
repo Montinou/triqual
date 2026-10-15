@@ -25,13 +25,13 @@
       "name": "methodology",
       "source": "./plugins/methodology",
       "description": "Methodology core: the workflow skills forked from superpowers (roles dispatch, task ledger and progress tracking), global rules, triqual sync, doctor and upstream-diff, drift notices; installs the other plugins",
-      "version": "0.6.0"
+      "version": "0.6.1"
     },
     {
       "name": "memory-report",
       "source": "./plugins/memory-report",
       "description": "Optional weekly local report on the health of the claude-mem memory (hygiene, storage and growth, Chroma health) plus LLM insights on proposed rules, skill changes and stale notes from allowlisted personal projects. Runs lazily from a SessionStart hook and shows one line until the report is read.",
-      "version": "0.4.0"
+      "version": "0.4.1"
     },
     {
       "name": "headjack",
