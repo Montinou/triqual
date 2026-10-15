@@ -60,7 +60,8 @@ const gitEnv = (home) => {
 const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
 
 // A repo on `main` with the plan committed and pushed to a bare `origin`. `withGh` puts the fake gh on the PATH; the
-// PATH is a temp bin dir plus /usr/bin:/bin, so the real gh (next to node in /opt/homebrew/bin) is never reachable.
+// PATH is a temp bin dir plus /usr/bin:/bin. Without the fake, a gh that always fails stands in that dir, so a real gh
+// in /usr/bin (GitHub's Linux runners ship one) is never reached either.
 const rig = ({ withGh = true, plan = PHASED, planRel = PLAN_REL } = {}) => {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'stack-')));
   const home = join(base, 'home');
@@ -71,10 +72,8 @@ const rig = ({ withGh = true, plan = PHASED, planRel = PLAN_REL } = {}) => {
   for (const d of [home, dir, origin, bin, work]) mkdirSync(d);
   symlinkSync(realGit, join(bin, 'git'));
   symlinkSync(process.execPath, join(bin, 'node'));
-  if (withGh) {
-    writeFileSync(join(bin, 'gh'), `#!/bin/sh\nexec bash '${FAKE_GH}' "$@"\n`);
-    chmodSync(join(bin, 'gh'), 0o755);
-  }
+  writeFileSync(join(bin, 'gh'), withGh ? `#!/bin/sh\nexec bash '${FAKE_GH}' "$@"\n` : '#!/bin/sh\nexit 127\n');
+  chmodSync(join(bin, 'gh'), 0o755);
   const log = join(work, 'gh.log');
   const membership = join(work, 'membership');
   const env = {
