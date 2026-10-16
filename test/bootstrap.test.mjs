@@ -10,9 +10,9 @@ import { BRAND } from '../plugins/methodology/cli/lib/brand.mjs';
 import { fakeMachine, legacyMachine } from '../plugins/methodology/test/fixtures/migrate-machine.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const SHIM = join(ROOT, 'bin', 'triqual-shim.mjs');
-const ALIAS = join(ROOT, 'bin', 'cm-alias.mjs');
-const FORWARDER = join(ROOT, 'bin', `${BRAND.legacy.launcher}-forwarder`);
+const SHIM = join(ROOT, 'plugins', 'methodology', 'setup', 'triqual-shim.mjs');
+const ALIAS = join(ROOT, 'plugins', 'methodology', 'setup', 'cm-alias.mjs');
+const FORWARDER = join(ROOT, 'plugins', 'methodology', 'setup', `${BRAND.legacy.launcher}-forwarder`);
 const BOOTSTRAP = join(ROOT, 'bin', 'bootstrap.mjs');
 
 // Bootstrap adds or updates BRAND.marketplace only (a legacy-only marketplace is left to migrate), so the fixtures
@@ -32,7 +32,7 @@ const launcherPath = inBin(BRAND.launcher);
 const cmPath = inBin(BRAND.legacy.cli);
 const cmMjsPath = inBin(BRAND.legacy.cliFile);
 const forwarderPath = inBin(BRAND.legacy.launcher);
-const LAUNCHER = join(ROOT, 'bin', 'triqual-hook');
+const LAUNCHER = join(ROOT, 'plugins', 'methodology', 'setup', 'triqual-hook');
 const doctorCall = (home) => `${process.execPath} ${triqualPath(home)} doctor`;
 
 // A recorded fake run: every call is logged as "cmd arg1 arg2 ...", and the timeoutMs it received is kept by key. A
@@ -593,7 +593,7 @@ test('installCli is the shim step, exported for the migration', async () => {
 const OLDER = `#!/usr/bin/env node\n${BRAND.ownership.shim} An older version.\n`;
 const OLDER_LEGACY = `#!/usr/bin/env node\n${BRAND.legacy.ownership.shim} Bootstrap copies this file, alone and verbatim.\n`;
 
-test('shim installs bin/triqual-hook verbatim (0755), replaces an older or legacy one, and is already after', async () => {
+test('shim installs setup/triqual-hook verbatim (0755), replaces an older or legacy one, and is already after', async () => {
   const home = tempHome();
   try {
     const steps1 = byId(await boot(home, fakeRun().run));
@@ -1519,4 +1519,41 @@ test('importing bin/bootstrap.mjs has no side effects', () => {
   });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, '');
+});
+
+const SETUP = join(ROOT, 'plugins', 'methodology', 'setup');
+const MOVED = ['bootstrap.mjs', 'triqual-shim.mjs', 'triqual-hook', 'cm-alias.mjs', 'cm-hook-forwarder', 'legacy.json'];
+
+test('the installer ships in plugins/methodology/setup/', () => {
+  for (const name of MOVED) assert.ok(existsSync(join(SETUP, name)), `${name} is missing from plugins/methodology/setup/`);
+  for (const name of MOVED.filter((n) => n !== 'bootstrap.mjs')) {
+    assert.ok(!existsSync(join(ROOT, 'bin', name)), `bin/${name} is still there`);
+  }
+});
+
+test('bin/bootstrap.mjs re-exports the setup module', async () => {
+  const w = await import('../bin/bootstrap.mjs');
+  const s = await import('../plugins/methodology/setup/bootstrap.mjs');
+  assert.deepEqual(Object.keys(w).sort(), Object.keys(s).sort());
+  assert.equal(typeof s.main, 'function');
+  assert.equal(w.main, s.main);
+});
+
+test('running bin/bootstrap.mjs through a symlink runs main', () => {
+  const tmp = tempHome();
+  try {
+    const link = join(tmp, 'bs.mjs');
+    symlinkSync(BOOTSTRAP, link);
+    const tmpHome = join(tmp, 'home');
+    const emptyDir = join(tmp, 'empty');
+    mkdirSync(tmpHome);
+    mkdirSync(emptyDir);
+    const r = spawnSync(process.execPath, [link, '--yes'], {
+      env: { HOME: tmpHome, PATH: emptyDir }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /prereqs: failed/);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 });

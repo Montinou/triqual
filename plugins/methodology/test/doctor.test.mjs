@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { doctor, git, nodeCheck, realRun, SHIM_COMMANDS, STORE_HOOKS, STORE_SCRIPTS } from '../cli/doctor.mjs';
 import { STORE_HOOK_LINES } from '../../progress-tracking/lib/store-hooks.mjs';
-import { COMMANDS } from '../../../bin/triqual-shim.mjs';
+import { COMMANDS } from '../setup/triqual-shim.mjs';
 import { MARKERS } from '../cli/lib/fsx.mjs';
 import { codexBridgeDir } from '../cli/lib/harnesses.mjs';
 import { codexPluginTable, grokStaleEntries, syncHarness } from '../cli/lib/harness-sync.mjs';
@@ -28,9 +28,9 @@ const ROLES = ['brief-writer', 'tdd-implementer', 'complex-implementer', 'safety
 const SUPERSEDED = 'superpowers@superpowers-marketplace';
 const HEADJACK_ARGS = ['headjack', ['search', 'ping', '-k', '1', '--json'], { timeoutMs: 10000 }];
 // The shim as released on this branch: a clean machine's ~/.local/bin/triqual.mjs; the alias and the forwarder beside it.
-const SHIM_TEXT = readFileSync(join(REPO_ROOT, 'bin', 'triqual-shim.mjs'), 'utf8');
-const ALIAS_TEXT = readFileSync(join(REPO_ROOT, 'bin', `${BRAND.legacy.cli}-alias.mjs`), 'utf8');
-const FORWARDER_TEXT = readFileSync(join(REPO_ROOT, 'bin', `${BRAND.legacy.launcher}-forwarder`), 'utf8');
+const SHIM_TEXT = readFileSync(join(REPO_ROOT, 'plugins', 'methodology', 'setup', 'triqual-shim.mjs'), 'utf8');
+const ALIAS_TEXT = readFileSync(join(REPO_ROOT, 'plugins', 'methodology', 'setup', `${BRAND.legacy.cli}-alias.mjs`), 'utf8');
+const FORWARDER_TEXT = readFileSync(join(REPO_ROOT, 'plugins', 'methodology', 'setup', `${BRAND.legacy.launcher}-forwarder`), 'utf8');
 const section = (body = GLOBAL.trim()) => `# Machine\n\n${MARKERS.start}\n${body}\n${MARKERS.end}\n`;
 
 // A run that records its calls and answers every command with `result` (or throws it when it is an Error).
@@ -458,7 +458,7 @@ const SHIPPED = Object.values(COMMANDS).reduce((acc, [plugin, rel]) => {
 }, {});
 
 test("doctor's command map is the shim's", () => {
-  assert.notEqual(OLD_SHIM_TEXT, SHIM_TEXT, 'the tracking line was not found in bin/triqual-shim.mjs');
+  assert.notEqual(OLD_SHIM_TEXT, SHIM_TEXT, 'the tracking line was not found in setup/triqual-shim.mjs');
   assert.deepEqual(SHIM_COMMANDS, COMMANDS);
 });
 
@@ -1382,7 +1382,7 @@ test('an older exit-2 install falls back to its own copies', async () => {
 // A config.toml without the legacy bridge's table: the triqual bridge, and its trust keys (F.11 P5a).
 const BRIDGE = `methodology-codex@${BRAND.marketplace}`;
 const CODEX_TRUST_KEYS = ['session_start', 'stop'].map((event) => `${BRIDGE}:hooks/hooks.json:${event}:0:0`);
-const LAUNCHER_TEXT = readFileSync(join(REPO_ROOT, 'bin', 'triqual-hook'));
+const LAUNCHER_TEXT = readFileSync(join(REPO_ROOT, 'plugins', 'methodology', 'setup', 'triqual-hook'));
 const TRUST_FIX = 'start Codex and approve the triqual hooks in its trust prompt';
 const STAMP_WARNING = 'no methodology hook has run since the bridge was installed or updated: '
   + 'start Codex and approve its hooks if prompted';

@@ -98,8 +98,8 @@ function snapshot(dir) {
   return out;
 }
 
-test('bin/legacy.json lists the known legacy agent and workflow-gate hashes', () => {
-  const legacy = JSON.parse(readFileSync(join(ROOT, 'bin', 'legacy.json'), 'utf8'));
+test('setup/legacy.json lists the known legacy agent and workflow-gate hashes', () => {
+  const legacy = JSON.parse(readFileSync(join(ROOT, 'plugins', 'methodology', 'setup', 'legacy.json'), 'utf8'));
   assert.deepEqual(legacy, {
     agents: {
       'brief-writer.md': 'd2abb02392678786d66ce5c181323ef0f85add79f2292e01da1f7924f33d8d3c',

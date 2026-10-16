@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveInstallPath, resolvePlugin, enabledInClaude } from '../cli/lib/resolve.mjs';
-import { resolveInstallPath as shimResolveInstallPath } from '../../../bin/triqual-shim.mjs';
+import { resolveInstallPath as shimResolveInstallPath } from '../setup/triqual-shim.mjs';
 
 const ID = 'methodology@triqual';
 const PROJECT = join(tmpdir(), 'acme-project');

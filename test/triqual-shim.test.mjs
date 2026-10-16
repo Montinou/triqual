@@ -5,11 +5,11 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, syml
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { COMMANDS, DESCRIPTIONS, HELP_BUDGET_MS, resolveInstallPath, resolveCommand, helpText } from '../bin/triqual-shim.mjs';
+import { COMMANDS, DESCRIPTIONS, HELP_BUDGET_MS, resolveInstallPath, resolveCommand, helpText } from '../plugins/methodology/setup/triqual-shim.mjs';
 import { BRAND } from '../plugins/methodology/cli/lib/brand.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const SHIM = join(ROOT, 'bin', 'triqual-shim.mjs');
+const SHIM = join(ROOT, 'plugins', 'methodology', 'setup', 'triqual-shim.mjs');
 
 // Shaped like the real agent-sdk-dev@claude-plugins-official record: one user entry and one local entry whose
 // projectPath contains a space.
@@ -87,7 +87,7 @@ test('resolveCommand runs cli/ and falls back to bin/ for a plugin installed bef
   }
 });
 
-test('line 2 of bin/triqual-shim.mjs is BRAND.ownership.shim', () => {
+test('line 2 of setup/triqual-shim.mjs is BRAND.ownership.shim', () => {
   assert.equal(readFileSync(SHIM, 'utf8').split('\n')[1], BRAND.ownership.shim);
 });
 

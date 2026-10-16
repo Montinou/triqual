@@ -1,4 +1,4 @@
-// The deprecated `cm` alias (bin/cm-alias.mjs, installed under BRAND.legacy.cliFile behind the cm symlink): one stderr
+// The deprecated `cm` alias (setup/cm-alias.mjs, installed under BRAND.legacy.cliFile behind the cm symlink): one stderr
 // line, then the triqual shim beside it with the same args, stdout and exit code.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,8 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { BRAND } from '../plugins/methodology/cli/lib/brand.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const SHIM = join(ROOT, 'bin', 'triqual-shim.mjs');
-const ALIAS = join(ROOT, 'bin', 'cm-alias.mjs');
+const SHIM = join(ROOT, 'plugins', 'methodology', 'setup', 'triqual-shim.mjs');
+const ALIAS = join(ROOT, 'plugins', 'methodology', 'setup', 'cm-alias.mjs');
 const DEPRECATION = `${BRAND.legacy.cli} is deprecated: use ${BRAND.cli} (${BRAND.legacy.cli} will be removed in a later release)`;
 const USAGE = 'usage: doctor FAKE\n';
 // Prints its usage on --help; any other call exits 7.
@@ -50,7 +50,7 @@ const run = (file, args, home) => spawnSync(process.execPath, [file, ...args], {
   cwd: home, env: { ...process.env, HOME: home }, encoding: 'utf8',
 });
 
-test('line 2 of bin/cm-alias.mjs is BRAND.ownership.alias', () => {
+test('line 2 of setup/cm-alias.mjs is BRAND.ownership.alias', () => {
   assert.equal(readFileSync(ALIAS, 'utf8').split('\n')[1], BRAND.ownership.alias);
 });
 
