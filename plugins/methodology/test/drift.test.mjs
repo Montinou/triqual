@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, cpSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, cpSync, existsSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,10 +16,15 @@ const RULES_NOTICE = 'global rules out of date: run `triqual sync`';
 const PLUGIN_NOTICE = `superseded plugin still enabled: ${SUPERSEDED} — run \`triqual sync\``;
 const current = (body = GLOBAL.trim()) => `# Machine\n\n${MARKERS.start}\n${body}\n${MARKERS.end}\n`;
 
-function withHome(fn, { claudeMd = current(), settings = '{}\n' } = {}) {
+// cli: write ~/.local/bin/triqual.mjs, the installed CLI; without it sessionContext gives the setup notice instead.
+function withHome(fn, { claudeMd = current(), settings = '{}\n', cli = true } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'cm-drift-'));
   try {
     mkdirSync(join(home, '.claude'));
+    if (cli) {
+      mkdirSync(join(home, '.local', 'bin'), { recursive: true });
+      writeFileSync(join(home, '.local', 'bin', 'triqual.mjs'), '// The `triqual` shim.\n');
+    }
     if (claudeMd !== null) writeFileSync(join(home, '.claude', 'CLAUDE.md'), claudeMd);
     if (settings !== null) writeFileSync(join(home, '.claude', 'settings.json'), settings);
     return fn(home);
@@ -444,5 +449,62 @@ test('drift.mjs --harness codex as a hook names triqual sync --harness codex', (
       env: { ...env, HOME: home }, input: JSON.stringify({ source: 'resume' }), encoding: 'utf8',
     });
     assert.equal(contextOf(resumed).includes('EXTREMELY_IMPORTANT'), false);
+  });
+});
+
+// Setup notice: with no triqual CLI at ~/.local/bin/triqual.mjs the session is told to offer /methodology:setup, and no
+// line points at `triqual sync`, which does not exist yet.
+const SETUP_NOTICE = 'triqual: setup incomplete (triqual CLI not installed): offer the user /methodology:setup';
+
+test('setup notice when the triqual CLI is missing, on every source', () => {
+  withPluginCopy([SUPERSEDED], (pluginRoot) => {
+    withHome((home) => {
+      for (const source of ['startup', 'resume', 'clear', 'compact']) {
+        const context = sessionContext({ home, pluginRoot, source });
+        assert.equal(context.split('\n')[0], SETUP_NOTICE, source);
+        assert.equal(context.includes('triqual sync'), false, source);
+      }
+      // The skill introduction is unchanged.
+      assert.equal(sessionContext({ home, pluginRoot, source: 'startup' }), `${SETUP_NOTICE}\n\n${WRAPPED(SKILL_TEXT)}`);
+      assert.equal(sessionContext({ home, pluginRoot, source: 'resume' }), SETUP_NOTICE);
+    }, { claudeMd: '# Machine\n', settings: TWO_MARKETS, cli: false });
+  });
+  // Under keepSuperseded the short note still follows the setup notice.
+  withHome((home) => {
+    writeConfig(home, { keepSuperseded: true });
+    assert.equal(sessionContext({ home, pluginRoot: PLUGIN_ROOT, source: 'startup' }), `${SETUP_NOTICE}\n\n${KEEP_NOTE}`);
+  }, { cli: false });
+});
+
+test('no setup notice on a harness path', () => {
+  withHarnessRules('codex', '# Codex\n', (home) => {
+    const context = sessionContext({ home, pluginRoot: PLUGIN_ROOT, source: 'startup', harness: 'codex' });
+    assert.equal(context.includes('setup incomplete'), false);
+    assert.ok(context.includes(HARNESS_FIX('codex')));
+  });
+  withHome((home) => {
+    const context = sessionContext({ home, pluginRoot: PLUGIN_ROOT, source: 'startup', harness: 'grok' });
+    assert.equal(context.includes('setup incomplete'), false);
+  }, { cli: false });
+});
+
+test('setup notice on a dangling triqual.mjs symlink', () => {
+  withHome((home) => {
+    mkdirSync(join(home, '.local', 'bin'), { recursive: true });
+    symlinkSync(join(home, 'gone.mjs'), join(home, '.local', 'bin', 'triqual.mjs'));
+    const context = sessionContext({ home, pluginRoot: PLUGIN_ROOT, source: 'startup' });
+    assert.equal(context, `${SETUP_NOTICE}\n\n${WRAPPED(SKILL_TEXT)}`);
+  }, { cli: false });
+});
+
+test('no setup notice when the CLI is installed', () => {
+  withPluginCopy([SUPERSEDED], (pluginRoot) => {
+    withHome((home) => {
+      const lines = drift({ home, pluginRoot });
+      const context = sessionContext({ home, pluginRoot, source: 'startup' });
+      assert.equal(context.includes('setup incomplete'), false);
+      assert.equal(context, `${lines}\n\n${WRAPPED(SKILL_TEXT)}`);
+      assert.ok(context.includes('triqual sync'));
+    }, BOTH_DRIFT);
   });
 });

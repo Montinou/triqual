@@ -3,19 +3,24 @@
 // enabled at user scope (not under keepSuperseded). On startup, clear and compact the hook injects those lines followed
 // by the wrapped using-methodology skill, or under keepSuperseded by a short note instead; on resume, the lines only, plus
 // a one-line note naming using-methodology once superpowers is disabled.
+// On Claude's path (no --harness), when the triqual CLI file ~/.local/bin/triqual.mjs is missing, the output starts with
+// SETUP_NOTICE and drops every line that names `triqual sync`, a command that is not installed yet.
 // With `--harness <id>` (Codex, Grok; spec Addendum F.3) the rules line checks that harness's rules target instead of
 // ~/.claude/CLAUDE.md, and names `triqual sync --harness <id>`.
 // Never throws; the hook always exits 0. A swallowed error (not a missing settings or CLAUDE.md file) is logged as one
 // line to ${CLAUDE_PLUGIN_DATA}/log when that is set.
-import { appendFileSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { BRAND } from './lib/brand.mjs';
 import { readManagedSection, sha256 } from './lib/fsx.mjs';
 import { readMethodologyConfig, supersededEnabled } from './lib/settings.mjs';
 import { HARNESS_IDS, expectedRules, harnessPaths } from './lib/harnesses.mjs';
 
 const RULES_NOTICE = 'triqual: global rules out of date: run `triqual sync`';
+// Injected first, on Claude's path, while the triqual CLI is not installed (/methodology:setup installs it).
+export const SETUP_NOTICE = 'triqual: setup incomplete (triqual CLI not installed): offer the user /methodology:setup';
 const harnessRulesNotice = (id) => `triqual: ${id} rules out of date: run \`triqual sync --harness ${id}\``;
 // Injected instead of using-methodology when the user keeps superpowers as the entry point (spec Addendum E.3).
 const KEEP_NOTE = "triqual: superpowers is active by keepSuperseded; methodology's skills stay available as methodology:*";
@@ -76,12 +81,23 @@ function methodologyConfig(home, dataDir) {
   return config;
 }
 
+// Whether the triqual CLI file is installed: a regular file, or a symlink that resolves to one. A dangling link, a
+// directory or any error reads as missing.
+function cliInstalled(home) {
+  try {
+    return statSync(join(home, '.local', 'bin', BRAND.cliFile)).isFile();
+  } catch {
+    return false;
+  }
+}
+
 // The drift lines for an already read config and superseded state (supersededState; null reads as none enabled).
-function driftLines({ home, pluginRoot, dataDir, config, state, harness = null }) {
+// syncAvailable false drops the lines that name `triqual sync`: all of them on Claude's path.
+function driftLines({ home, pluginRoot, dataDir, config, state, harness = null, syncAvailable = true }) {
   try {
     const lines = [];
-    if (!rulesCurrent(home, pluginRoot, dataDir, harness)) lines.push(harness === null ? RULES_NOTICE : harnessRulesNotice(harness));
-    const superseded = config.keepSuperseded ? [] : state?.enabled ?? [];
+    if (syncAvailable && !rulesCurrent(home, pluginRoot, dataDir, harness)) lines.push(harness === null ? RULES_NOTICE : harnessRulesNotice(harness));
+    const superseded = config.keepSuperseded || !syncAvailable ? [] : state?.enabled ?? [];
     for (const id of superseded) {
       lines.push(`triqual: superseded plugin still enabled: ${id} — run \`triqual sync\``);
     }
@@ -120,11 +136,12 @@ function wrappedSkill(pluginRoot, dataDir) {
 export function sessionContext({ home, pluginRoot, dataDir = null, source, harness = null }) {
   const config = methodologyConfig(home, dataDir); // read once for the drift lines and the introduction
   const state = config.keepSuperseded ? null : supersededState(home, pluginRoot, dataDir);
-  const lines = driftLines({ home, pluginRoot, dataDir, config, state, harness });
+  const setupIncomplete = harness === null && !cliInstalled(home);
+  const lines = driftLines({ home, pluginRoot, dataDir, config, state, harness, syncAvailable: !setupIncomplete });
   let skill = null;
   if (source !== 'resume') skill = config.keepSuperseded ? KEEP_NOTE : wrappedSkill(pluginRoot, dataDir);
   else if (state && state.supersedes.length > 0 && state.enabled.length === 0) skill = RESUME_NOTE;
-  const parts = [lines, skill].filter((part) => part !== null);
+  const parts = [setupIncomplete ? SETUP_NOTICE : null, lines, skill].filter((part) => part !== null);
   return parts.length > 0 ? parts.join('\n\n') : null;
 }
 
