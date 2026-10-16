@@ -458,7 +458,7 @@ async function directoriesStep({ home }) {
 // ours is left to that step, which reports it; on one without, a file at those names is someone else's and not this
 // step's business.
 async function cliStep({ home, installCli }) {
-  if (typeof installCli !== 'function') return { status: 'skipped', detail: 'run node bin/bootstrap.mjs from the clone' };
+  if (typeof installCli !== 'function') return { status: 'skipped', detail: 'run /methodology:setup (or node bin/bootstrap.mjs from a clone)' };
   const { old, foreign, present } = cliState(home);
   if (foreign.length) {
     return { status: 'skipped', detail: `${foreign.join(', ')}: not a file ${BRAND.marketplace} installed, left to the `

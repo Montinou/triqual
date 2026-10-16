@@ -23,7 +23,7 @@ const legacyId = (id) => typeof id === 'string' && (id === L.marketplace || id.e
 const UNREADABLE = 'could not read ';
 const GROK_LEFTOVER = ' is a legacy-named Grok file';
 const MIGRATE = `run ${BRAND.cli} migrate`;
-const BOOTSTRAP = 'run node bin/bootstrap.mjs';
+const BOOTSTRAP = 'run /methodology:setup (or node bin/bootstrap.mjs from a clone)';
 const fail = (out, line, fix = MIGRATE) => {
   out.failures.push(line);
   out.fixes[line] = fix;

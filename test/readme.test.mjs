@@ -100,7 +100,7 @@ test('README doctor row mentions the project-scope superseded warning and the un
   const row = README.split('\n').find((line) => line.startsWith('| `triqual doctor [--repo]` |'));
   assert.match(row, /`\.claude\/settings\.json`/);
   assert.match(row, /`\.claude\/settings\.local\.json`/);
-  assert.match(row, /split, then rerun bootstrap/);
+  assert.match(row, /split, then rerun \/methodology:setup/);
 });
 
 test('README documents triqual tracking write and the allow rule bootstrap offers', () => {

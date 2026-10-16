@@ -242,7 +242,7 @@ function rulesCheck(home, methodologyPath, failures) {
   } else if (legacy.length > 0) {
     // triqual sync refuses such a file, so its fix is the one-time split (spec §9.1).
     failures.push(`${claudeMd} is not split, legacy headings sit outside the managed section (${legacy.join(', ')}): `
-      + 'split, then rerun bootstrap');
+      + 'split, then rerun /methodology:setup (or node bin/bootstrap.mjs from a clone)');
   } else if (body === null) {
     failures.push(`${claudeMd} has no triqual managed section: run triqual sync`);
   } else if (body !== expected) {
@@ -377,7 +377,7 @@ function aliasCheck(home, bin, fix, failures) {
 // legacy CLI names are aliasCheck's, checked first.
 function shimCheck(home, installs, failures) {
   const bin = join(home, '.local', 'bin');
-  const fix = 'run node bin/bootstrap.mjs';
+  const fix = 'run /methodology:setup (or node bin/bootstrap.mjs from a clone)';
   aliasCheck(home, bin, fix, failures);
   const shim = join(bin, BRAND.cli);
   let isFile = false;
@@ -397,7 +397,7 @@ function shimCheck(home, installs, failures) {
   }
   for (const [plugin, cmds] of lacking) {
     failures.push(`${BRAND.cli} shim is stale: ${shim} lacks ${cmds.join(', ')}, which the installed ${plugin} ships: `
-      + 'rerun node bin/bootstrap.mjs');
+      + 'rerun /methodology:setup (or node bin/bootstrap.mjs from a clone)');
   }
 }
 
@@ -831,14 +831,16 @@ function launcherCheck(home, installs, failures, warnings) {
   const launcher = join(home, '.local', 'bin', BRAND.launcher);
   const mine = readBytes(launcher);
   if (mine === null) {
-    failures.push(`the hook launcher ${launcher} is missing: run node bin/bootstrap.mjs`);
+    failures.push(`the hook launcher ${launcher} is missing: run /methodology:setup (or node bin/bootstrap.mjs from a clone)`);
     return;
   }
   const installedPath = installs.methodology?.installPath;
   let source = typeof installedPath === 'string' ? join(installedPath, 'setup', BRAND.launcher) : null;
   let theirs = source === null ? null : readBytes(source);
+  let copy = 'installed copy';
   let error;
   if (theirs === null) {
+    copy = 'marketplace copy';
     const located = marketplaceLocation(home);
     error = located.error;
     source = located.location ? join(located.location, 'plugins', 'methodology', 'setup', BRAND.launcher) : null;
@@ -849,8 +851,8 @@ function launcherCheck(home, installs, failures, warnings) {
     warnings.push(`cannot compare the hook launcher ${launcher} with the ${marketplace} marketplace copy: `
       + `${error ?? `cannot read ${source}`}: run claude plugin marketplace update ${marketplace}`);
   } else if (sha256(mine) !== sha256(theirs)) {
-    failures.push(`the hook launcher ${launcher} differs from the marketplace copy ${source}: `
-      + 'rerun node bin/bootstrap.mjs');
+    failures.push(`the hook launcher ${launcher} differs from the ${copy} ${source}: `
+      + 'rerun /methodology:setup (or node bin/bootstrap.mjs from a clone)');
   }
 }
 
