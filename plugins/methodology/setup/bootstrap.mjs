@@ -115,8 +115,8 @@ async function prereqs({ run, nodeVersion }) {
     notes.push(`node ${nodeVersion}`);
   }
   const required = [
-    ['claude', 'install Claude Code (npm install -g @anthropic-ai/claude-code), then run bootstrap again'],
-    ['git', 'install git, then run bootstrap again'],
+    ['claude', 'install Claude Code (npm install -g @anthropic-ai/claude-code), then rerun /methodology:setup (or node bin/bootstrap.mjs from a clone)'],
+    ['git', 'install git, then rerun /methodology:setup (or node bin/bootstrap.mjs from a clone)'],
   ];
   for (const [cmd, hint] of required) {
     const r = await tryRun(run, cmd, ['--version'], CHECK_TIMEOUT_MS);
@@ -197,7 +197,7 @@ function lstatOrNull(path) {
 }
 
 const notOurs = (path) => ({
-  status: 'failed', detail: `${path} is not a file ${BRAND.marketplace} installed; move it aside, then rerun bootstrap`,
+  status: 'failed', detail: `${path} is not a file ${BRAND.marketplace} installed; move it aside, then rerun /methodology:setup (or node bin/bootstrap.mjs from a clone)`,
 });
 
 // Builds `target` under a temp name in its dir with make(tmp), then renames it over `target`.

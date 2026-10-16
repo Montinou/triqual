@@ -25,9 +25,13 @@ test('commands/setup.md runs the bootstrap and lists what it changes', () => {
     'restore --yes',
     'import --replace',
     '~/.claude/backups/',
+    'sort -V | tail -n 1',
   ]) {
     assert.ok(text.includes(needle), `setup.md is missing: ${needle}`);
   }
+  const flat = text.replace(/\s+/g, ' ');
+  assert.ok(flat.includes('Run this only when the user typed `/methodology:setup` or explicitly agreed to it in the conversation, never on your own'),
+    'setup.md says to run only when asked');
   assert.ok(existsSync(BOOTSTRAP), 'the bootstrap the command runs exists');
 });
 

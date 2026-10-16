@@ -790,7 +790,7 @@ test(`shim replaces an older extensionless cm that carries the marker with the c
   }
 });
 
-const NOT_OURS = (path) => `${path} is not a file ${BRAND.marketplace} installed; move it aside, then rerun bootstrap`;
+const NOT_OURS = (path) => `${path} is not a file ${BRAND.marketplace} installed; move it aside, then rerun /methodology:setup (or node bin/bootstrap.mjs from a clone)`;
 // A foreign file at a legacy CLI path of a legacy machine is left to the shim step: migrate's cli step skips it
 // (installCli would refuse it), so the shim step reports it as it did before migrate.
 function assertRefused(steps, home, pick) {
