@@ -1444,7 +1444,7 @@ function withHarnessHome(fn, { harnesses = ['codex', 'grok'], tweak = () => {}, 
     put(join(installPath('progress-tracking'), 'skills', 'progress-tracking', 'SKILL.md'), '# progress-tracking\n');
     cpSync(join(REPO_ROOT, 'plugins', 'roles', 'agents'), join(installPath('roles'), 'agents'), { recursive: true });
     const market = join(home, '.claude', 'plugins', 'marketplaces', BRAND.marketplace);
-    put(join(market, 'bin', 'triqual-hook'), LAUNCHER_TEXT, 0o755);
+    put(join(market, 'plugins', 'methodology', 'setup', 'triqual-hook'), LAUNCHER_TEXT, 0o755);
     put(join(home, '.local', 'bin', 'triqual-hook'), LAUNCHER_TEXT, 0o755);
     put(join(home, '.config', BRAND.dir, 'config.json'),
       JSON.stringify({ harnesses: Object.fromEntries(harnesses.map((id) => [id, { enabled: true }])) }));
@@ -1525,7 +1525,24 @@ test('launcher check: a missing triqual-hook or one that differs from the market
     writeFileSync(launcher, `${LAUNCHER_TEXT}# edited\n`);
     r = await harnessDoctor(ctx);
     assert.deepEqual(r.failures, [`the hook launcher ${launcher} differs from the marketplace copy `
-      + `${join(ctx.market, 'bin', 'triqual-hook')}: rerun node bin/bootstrap.mjs`]);
+      + `${join(ctx.market, 'plugins', 'methodology', 'setup', 'triqual-hook')}: rerun node bin/bootstrap.mjs`]);
+  }, { harnesses: ['grok'] });
+});
+
+test('launcher check uses the installed methodology setup/ copy, with no marketplace clone', async () => {
+  await withHarnessHome(async (ctx) => {
+    const launcher = join(ctx.home, '.local', 'bin', 'triqual-hook');
+    const installed = join(ctx.installPath('methodology'), 'setup', 'triqual-hook');
+    mkdirSync(dirname(installed), { recursive: true });
+    writeFileSync(installed, LAUNCHER_TEXT, { mode: 0o755 });
+    rmSync(ctx.market, { recursive: true, force: true });
+    let r = await harnessDoctor(ctx);
+    assert.deepEqual(r.failures.filter((f) => f.includes('launcher')), []);
+    assert.deepEqual(r.warnings.filter((w) => w.includes('launcher')), []);
+    writeFileSync(launcher, `${LAUNCHER_TEXT}# edited\n`);
+    r = await harnessDoctor(ctx);
+    assert.deepEqual(r.failures.filter((f) => f.includes('launcher')), [`the hook launcher ${launcher} differs from the `
+      + `marketplace copy ${installed}: rerun node bin/bootstrap.mjs`]);
   }, { harnesses: ['grok'] });
 });
 

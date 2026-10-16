@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, statSync, lstatSyn
 import { tmpdir } from 'node:os';
 import { basename, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bootstrap, installCli, makeAsk, runSteps, STEPS } from '../bin/bootstrap.mjs';
+import { bootstrap, cliSourceDir, installCli, makeAsk, runSteps, STEPS } from '../bin/bootstrap.mjs';
 import { BRAND } from '../plugins/methodology/cli/lib/brand.mjs';
 import { fakeMachine, legacyMachine } from '../plugins/methodology/test/fixtures/migrate-machine.mjs';
 
@@ -587,6 +587,118 @@ test('installCli is the shim step, exported for the migration', async () => {
     for (const [path] of SIX(home)) assert.ok(lstatSync(path), path);
   } finally {
     rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// An installed methodology at <root>/<version> (user scope) whose setup/ holds a shim and a launcher with distinct
+// bodies, each with the ownership line 2 the real files carry.
+const fakeShimBody = (version) => `#!/usr/bin/env node\n${BRAND.ownership.shim} methodology ${version} shim.\n`;
+const fakeHookBody = (version) => `#!/usr/bin/env bash\n${BRAND.ownership.launcher}\n# methodology ${version} launcher\n`;
+
+function methodologyAt(root, version, { setup = true } = {}) {
+  const installPath = join(root, version);
+  mkdirSync(installPath, { recursive: true });
+  if (setup) {
+    mkdirSync(join(installPath, 'setup'));
+    writeFileSync(join(installPath, 'setup', 'triqual-shim.mjs'), fakeShimBody(version));
+    writeFileSync(join(installPath, 'setup', 'triqual-hook'), fakeHookBody(version));
+  }
+  return installPath;
+}
+
+function installedMethodologyAt(home, installPath, version) {
+  writePlugins(home, 'installed_plugins.json', {
+    version: 2,
+    plugins: { [`methodology@${BRAND.marketplace}`]: [{ scope: 'user', installPath, version }] },
+  });
+}
+
+test('the shim step copies from the installed methodology setup/', async () => {
+  const home = tempHome();
+  const root = tempHome();
+  try {
+    installedMethodologyAt(home, methodologyAt(root, '0.9.9'), '0.9.9');
+    const r = await installCli({ home });
+    assert.equal(r.status, 'done', r.detail);
+    assert.equal(readFileSync(triqualMjsPath(home), 'utf8'), fakeShimBody('0.9.9'));
+    assert.equal(readFileSync(launcherPath(home), 'utf8'), fakeHookBody('0.9.9'));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the shim step falls back to its own directory for a pre-move install', async () => {
+  const home = tempHome();
+  const root = tempHome();
+  try {
+    installedMethodologyAt(home, methodologyAt(root, '0.6.1', { setup: false }), '0.6.1');
+    assert.equal(cliSourceDir(home), dirname(SHIM));
+    const r = await installCli({ home });
+    assert.equal(r.status, 'done', r.detail);
+    assert.equal(readFileSync(triqualMjsPath(home), 'utf8'), readFileSync(SHIM, 'utf8'));
+    assert.equal(readFileSync(launcherPath(home), 'utf8'), readFileSync(LAUNCHER, 'utf8'));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('cliSourceDir falls back to its own directory with no methodology at user scope, and names the installed setup/ otherwise', () => {
+  const home = tempHome();
+  const root = tempHome();
+  try {
+    assert.equal(cliSourceDir(home), dirname(SHIM)); // no installed_plugins.json at all
+    writePlugins(home, 'installed_plugins.json', {
+      version: 2,
+      plugins: { [`methodology@${BRAND.marketplace}`]: [{ scope: 'project', installPath: methodologyAt(root, '0.9.9'), version: '0.9.9', projectPath: '/p' }] },
+    });
+    assert.equal(cliSourceDir(home), dirname(SHIM)); // a project-scope entry is not the user's install
+    installedMethodologyAt(home, join(root, '0.9.9'), '0.9.9');
+    assert.equal(cliSourceDir(home), join(root, '0.9.9', 'setup'));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('setup installs the CLI of the methodology version install moves to', async () => {
+  const home = tempHome();
+  const root = tempHome();
+  try {
+    const older = methodologyAt(root, '0.9.8');
+    const newer = methodologyAt(root, '0.9.9');
+    installedMethodologyAt(home, older, '0.9.8');
+    marketplaceCopy(home, { methodology: '0.9.9', 'progress-tracking': '0.1.1', 'workflow-gate': '0.1.0', roles: '0.1.0' });
+    // A harness set up, so doctor checks the launcher against the installed copy too.
+    mkdirSync(join(home, '.grok'), { recursive: true });
+    mkdirSync(join(home, '.config', BRAND.dir), { recursive: true });
+    writeFileSync(join(home, '.config', BRAND.dir, 'config.json'), JSON.stringify({ harnesses: { grok: { enabled: true } } }));
+    const doctorLines = [];
+    const { run } = fakeRun({
+      [updateCall('methodology')]: () => {
+        installedMethodologyAt(home, newer, '0.9.9');
+        return { code: 0, stdout: '', stderr: '' };
+      },
+      [doctorCall(home)]: async () => {
+        // The real doctor of this checkout, against the machine as the earlier steps left it.
+        const { doctor } = await import('../plugins/methodology/cli/doctor.mjs');
+        const { failures, warnings } = await doctor({ home, cwd: home, run: async () => ({ code: 0, stdout: '', stderr: '' }) });
+        doctorLines.push(...failures);
+        return { code: 0, stdout: `doctor: ${failures.length} failure(s), ${warnings.length} warning(s)\n`, stderr: '' };
+      },
+    });
+    const steps = byId(await boot(home, run));
+    assert.equal(steps.install.status, 'done', steps.install.detail);
+    assert.ok(steps.install.detail.includes('0.9.8 -> 0.9.9'), steps.install.detail);
+    assert.equal(steps.shim.status, 'done', steps.shim.detail);
+    assert.equal(readFileSync(triqualMjsPath(home), 'utf8'), fakeShimBody('0.9.9'));
+    assert.equal(readFileSync(launcherPath(home), 'utf8'), fakeHookBody('0.9.9'));
+    assert.equal(steps.doctor.status, 'done', steps.doctor.detail);
+    assert.deepEqual(doctorLines.filter((l) => /shim|launcher/.test(l)), []);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

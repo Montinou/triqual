@@ -77,7 +77,7 @@ const STORE_SNAPSHOT = /^tracking-(\d{4}-\d{2}-\d{2})\.db$/;
 const NODE_FLOOR = [22, 13];
 // The id of system plugin `name` as installed on this machine (lib/brand.mjs pluginId).
 export const idOf = (home, name) => pluginId(home, name);
-// The shim's command map (bin/triqual-shim.mjs COMMANDS, which a test keeps equal): command → [plugin, file it runs].
+// The shim's command map (setup/triqual-shim.mjs COMMANDS, which a test keeps equal): command → [plugin, file it runs].
 export const SHIM_COMMANDS = {
   tasks: ['progress-tracking', 'cli/tasks.mjs'],
   'progress-init': ['progress-tracking', 'cli/progress-init.mjs'],
@@ -824,17 +824,26 @@ function readBytes(path) {
   }
 }
 
-// ~/.local/bin/triqual-hook must be there and equal (sha256) to the installed marketplace copy's bin/triqual-hook.
-function launcherCheck(home, failures, warnings) {
+// ~/.local/bin/triqual-hook must be there and equal (sha256) to the launcher the installed methodology ships in its
+// setup/ (what the shim step copies); an install that predates setup/ is compared with the marketplace clone's
+// plugins/methodology/setup/triqual-hook instead. `installs` is userInstalls(home).
+function launcherCheck(home, installs, failures, warnings) {
   const launcher = join(home, '.local', 'bin', BRAND.launcher);
   const mine = readBytes(launcher);
   if (mine === null) {
     failures.push(`the hook launcher ${launcher} is missing: run node bin/bootstrap.mjs`);
     return;
   }
-  const { location, error } = marketplaceLocation(home);
-  const source = location ? join(location, 'bin', BRAND.launcher) : null;
-  const theirs = source === null ? null : readBytes(source);
+  const installedPath = installs.methodology?.installPath;
+  let source = typeof installedPath === 'string' ? join(installedPath, 'setup', BRAND.launcher) : null;
+  let theirs = source === null ? null : readBytes(source);
+  let error;
+  if (theirs === null) {
+    const located = marketplaceLocation(home);
+    error = located.error;
+    source = located.location ? join(located.location, 'plugins', 'methodology', 'setup', BRAND.launcher) : null;
+    theirs = source === null ? null : readBytes(source);
+  }
   if (theirs === null) {
     const marketplace = activeMarketplace(home);
     warnings.push(`cannot compare the hook launcher ${launcher} with the ${marketplace} marketplace copy: `
@@ -1163,7 +1172,7 @@ async function harnessChecks({ home, run, config }, failures, warnings) {
   const methodologyPath = installs.methodology?.installPath ?? null;
   const patterns = (methodologyPath === null ? null : supersedesPatterns(home, methodologyPath, [])) ?? [];
   const ctx = { home, run, config, installs, patterns };
-  launcherCheck(home, failures, warnings);
+  launcherCheck(home, installs, failures, warnings);
   versionCheck(home, installs, failures);
   if (present.includes('codex')) await codexChecks(ctx, failures, warnings);
   if (present.includes('grok')) await grokChecks(ctx, failures, warnings);

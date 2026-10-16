@@ -17,7 +17,7 @@
 // ~/.claude is first backed up: the migrate step's files into its triqual-migration-<stamp> dir, the other steps' into
 // one backupDirFor dir per run; a legacy file is deleted only when its sha256 matches setup/legacy.json.
 import {
-  chmodSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync,
+  chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
@@ -39,10 +39,10 @@ const MIN_NODE = { major: 22, minor: 13 };
 const CHECK_TIMEOUT_MS = 60_000; // --version checks and doctor
 const PLUGIN_TIMEOUT_MS = 300_000; // claude plugin marketplace add|update and claude plugin install|update
 const BIN = dirname(fileURLToPath(import.meta.url));
-const SHIM_SOURCE = join(BIN, 'triqual-shim.mjs');
-const LAUNCHER_SOURCE = join(BIN, 'triqual-hook');
-const ALIAS_SOURCE = join(BIN, `${BRAND.legacy.cli}-alias.mjs`);
-const FORWARDER_SOURCE = join(BIN, `${BRAND.legacy.launcher}-forwarder`);
+const SHIM_FILE = 'triqual-shim.mjs';
+const LAUNCHER_FILE = 'triqual-hook';
+const ALIAS_FILE = `${BRAND.legacy.cli}-alias.mjs`;
+const FORWARDER_FILE = `${BRAND.legacy.launcher}-forwarder`;
 const DOCTOR_REPORT = /^doctor: \d+ failure\(s\), \d+ warning\(s\)$/;
 const LEGACY_PATH = join(dirname(fileURLToPath(import.meta.url)), 'legacy.json');
 const GATE_HOOK = 'hooks/workflow-gate.mjs';
@@ -229,21 +229,33 @@ function installCopy(file, info, body, notes) {
   notes.push(`${file} ${info ? 'updated' : 'installed'}`);
 }
 
+// The directory the shim step copies the CLI files from: the `setup/` of the INSTALLED methodology (user scope), so a
+// run of version X that updates methodology to X+1 installs X+1's files; this file's own directory when no methodology
+// is installed at user scope or its install predates setup/ (it holds no shim).
+export function cliSourceDir(home) {
+  const entry = userInstall(home, idOf(home, 'methodology'));
+  if (entry && typeof entry.installPath === 'string') {
+    const dir = join(entry.installPath, 'setup');
+    if (existsSync(join(dir, SHIM_FILE))) return dir;
+  }
+  return BIN;
+}
+
 // The shim step: installs the CLI in <home>/.local/bin, each copy verbatim with mode 0755 and each link relative:
-// shimFile (SHIM_SOURCE) behind shimLink, launcherFile (LAUNCHER_SOURCE), and for one release, only when `legacyCli` (a
+// shimFile (SHIM_FILE) behind shimLink, launcherFile (LAUNCHER_FILE), and for one release, only when `legacyCli` (a
 // legacy CLI file was present when the run began; by default, when one is present now), the deprecated alias aliasFile
-// (ALIAS_SOURCE) behind aliasLink and the old launcher name forwarderFile (FORWARDER_SOURCE), which forwards to
+// (ALIAS_FILE) behind aliasLink and the old launcher name forwarderFile (FORWARDER_FILE), which forwards to
 // launcherFile. A fresh machine never gets a cm that could shadow another tool, and a foreign file at a legacy name
 // there is left alone (legacyCliPresent is true only when one of those files is ours). An extensionless copy would run
 // as CommonJS, and do nothing, under a {"type":"commonjs"} package.json in ~ or above. An existing copy or link is
 // replaced only when it is ours by ownsCliFile (a regular file with an ownership line 2, so an older full shim at
 // aliasFile becomes the alias) or is that symlink already. Anything else fails the step before any file is written.
-// Exported for the migration.
-export async function installCli({ home, legacyCli = legacyCliPresent(home) }) {
+// The four sources are read from `sourceDir` (cliSourceDir, resolved when the step runs). Exported for the migration.
+export async function installCli({ home, legacyCli = legacyCliPresent(home), sourceDir = cliSourceDir(home) }) {
   const copies = [
-    [shimFile(home), SHIM_SOURCE], [launcherFile(home), LAUNCHER_SOURCE],
-    ...(legacyCli ? [[aliasFile(home), ALIAS_SOURCE], [forwarderFile(home), FORWARDER_SOURCE]] : []),
-  ].map(([file, source]) => ({ file, body: readFileSync(source), info: lstatOrNull(file) }));
+    [shimFile(home), SHIM_FILE], [launcherFile(home), LAUNCHER_FILE],
+    ...(legacyCli ? [[aliasFile(home), ALIAS_FILE], [forwarderFile(home), FORWARDER_FILE]] : []),
+  ].map(([file, source]) => ({ file, body: readFileSync(join(sourceDir, source)), info: lstatOrNull(file) }));
   const linkPairs = [[shimLink(home), BRAND.cliFile], ...(legacyCli ? [[aliasLink(home), BRAND.legacy.cliFile]] : [])];
   const links = linkPairs.map(([link, target]) => {
     const info = lstatOrNull(link);
