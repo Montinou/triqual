@@ -223,12 +223,28 @@ test('README opens with what Triqual is, a quick start and what bootstrap change
     assert.ok(intro.includes(`(\`${plugin}\``), `the front matter names ${plugin}`);
   }
   const quick = README.slice(at('## Quick start'), at('### What `bootstrap` changes on your machine'));
-  assert.ok(quick.includes('git clone https://github.com/') && quick.includes('node bin/bootstrap.mjs'));
-  assert.ok(quick.includes('Node 22.13') && quick.includes('/reload-plugins'));
+  // The quick start is the marketplace path, in this order, with no clone.
+  const commands = ['/plugin marketplace add Montinou/triqual', '/plugin install methodology@triqual', '/methodology:setup', '/reload-plugins'];
+  const positions = commands.map((command) => quick.indexOf(command));
+  assert.ok(positions.every((position) => position !== -1), `the quick start has ${commands.join(', ')}`);
+  assert.deepEqual([...positions].sort((a, b) => a - b), positions, 'the quick-start commands are in order');
+  assert.ok(!quick.includes('git clone'), 'the quick start has no git clone');
+  assert.ok(!quick.includes('node bin/bootstrap.mjs'), 'the quick start does not run bootstrap from a clone');
+  assert.ok(quick.includes('Node 22.13'));
+  // The clone and bootstrap are the full setup, in Install, and say what only they add.
+  const install = README.slice(at('## Install'), at('## `triqual` commands'));
+  assert.ok(install.includes('git clone https://github.com/') && install.includes('node bin/bootstrap.mjs'));
+  assert.ok(install.indexOf('git clone https://github.com/') < install.indexOf('node bin/bootstrap.mjs'));
+  assert.match(install, /full setup/i);
+  assert.match(install, /Codex/);
+  assert.match(install, /Grok/);
+  assert.match(install, /`language`/);
+  assert.ok(README.indexOf('node bin/bootstrap.mjs') > at('## Install'), 'the first node bin/bootstrap.mjs is in Install');
   const changes = README.slice(at('### What `bootstrap` changes on your machine'), at('## Plugins'));
   for (const touched of ['~/.local/bin/', '~/.claude/CLAUDE.md', '~/.claude/settings.json', '~/.claude/backups/']) {
     assert.ok(changes.includes(touched), `names ${touched}`);
   }
+  assert.ok(changes.includes('/methodology:setup'), 'names the command whose changes it lists');
 });
 
 test('CONTRIBUTING.md and SECURITY.md exist, link each other and are published by the export manifest', () => {

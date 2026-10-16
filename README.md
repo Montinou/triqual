@@ -28,27 +28,35 @@ switch the repo with `triqual progress-init --store` or `--local` first.
 
 ## Quick start
 
-```bash
-git clone https://github.com/Montinou/triqual.git triqual
-cd triqual
-node bin/bootstrap.mjs
+In Claude Code:
+
+```text
+/plugin marketplace add Montinou/triqual
+/plugin install methodology@triqual
+/methodology:setup
+/reload-plugins
 ```
 
-It needs Node 22.13 or newer, git 2.31 or newer and the `claude` CLI. When it finishes, run `/reload-plugins` in
-Claude Code or start a new session: a SessionStart hook loads the methodology on its own. [Install](#install) lists
-every step and flag.
+It needs Node 22.13 or newer, git 2.31 or newer and the `claude` CLI. Installing `methodology` brings in the other
+three system plugins, `/methodology:setup` finishes the machine-level setup, and `/reload-plugins` loads what it
+installed into the session you are in (or start a new session). A SessionStart hook then loads the methodology on its
+own. Codex, Grok and the `language` question need the full setup from a clone: see [Install](#install).
 
 ### What `bootstrap` changes on your machine
 
-- Adds the `triqual` marketplace and installs `methodology`, `progress-tracking`, `roles` and `workflow-gate` at user
-  scope.
+`/methodology:setup` runs the same installer as the full setup, minus the `language` question and the Codex and Grok
+step. It changes this, and is safe to rerun:
+
+- Installs `methodology`, `progress-tracking`, `roles` and `workflow-gate` at user scope, and updates any whose
+  installed version differs from the marketplace's.
 - Writes the `triqual` command and the hook launcher into `~/.local/bin/`.
 - Writes the global rules into a managed section of `~/.claude/CLAUDE.md`, and disables any `superpowers@*` plugin,
   which `methodology` replaces.
-- Edits `~/.claude/settings.json` (an allow rule for `triqual tracking`; the `language` key, removed after asking) and
-  sets up Codex and Grok when it finds them; it asks first (`--yes` answers yes to every question).
+- Edits `~/.claude/settings.json`: the allow rule `Bash(triqual tracking:*)`, added without a prompt because the command passes `--yes`.
 - Backs up every file under `~/.claude` that it edits or removes into `~/.claude/backups/triqual-<YYYYMMDD-HHMMSS>/`.
-  It is safe to rerun.
+
+The full setup from a clone also removes the `language` key from `settings.json` after asking, and sets up Codex and
+Grok when it finds them.
 
 ## Plugins
 
@@ -62,6 +70,10 @@ every step and flag.
 | `headjack` | external | Optional, and not in this repository: [Headjack](https://github.com/Montinou/headjack) is the vault for agent skills, listed in this marketplace as an external plugin. Install it with `claude plugin install headjack@triqual`. Headjack sets its own version, so an installed copy updates only when Headjack bumps the `version` in its `plugin.json`. Its local mode needs Node 22.16 or newer (the 22.13 floor above is Triqual's own). Its `bin/` is on the Bash tool's `PATH` only on Claude Code 2.1.275 or later; to run it from a terminal or from Codex, link `bin/headjack` from a clone of the [Headjack repository](https://github.com/Montinou/headjack) into `~/.local/bin` (see its README), not from the installed plugin's directory, which changes on every update. |
 
 ## Install
+
+The [Quick start](#quick-start) is the marketplace path. This is the full setup, from a clone: it runs everything
+`/methodology:setup` does and also sets up Codex and Grok and asks about the `language` key in
+`~/.claude/settings.json`, which the command leaves alone.
 
 Requires Node 22.13 or newer (the CLI and hooks; store mode's database is `node:sqlite`, which that release made available without a flag), git 2.31 or newer (progress tracking reads `git rev-parse --path-format=absolute`) and the
 `claude` CLI.
@@ -130,7 +142,7 @@ Older installs show only descriptions in the full help until the plugins are upd
 
 | Command | What it does |
 |---|---|
-| `triqual doctor [--repo]` | Read-only diagnosis of the install. It fails while a superseded plugin is enabled at user scope (a warning under `keepSuperseded`), and on a `CLAUDE.md` whose old-layout rules still sit outside the managed section, with the fix "split, then rerun /methodology:setup (or node bin/bootstrap.mjs from a clone)". It also fails on a stale `triqual` shim, one that lacks a command an installed plugin ships (such as `triqual tracking` from progress-tracking 0.2.2): rerun `/methodology:setup` (or `node bin/bootstrap.mjs` from a clone). `--repo` also checks the current repo's tracking, in committed, local or store mode: its git gate against the installed progress-tracking template (and, in local mode, the chained hook lines; in store mode, the store hook scripts and their chain, and that the database opens and is not disabled, naming `triqual tracking restore` when it does not), a duplicate tracking root, and `triqual tasks check` drift, and it prints an `INFO tracking: <root> <mode>` line for each registered repository; and it warns when the repo's `.claude/settings.json` or `.claude/settings.local.json` enables a superseded plugin (never edited; not reported under `keepSuperseded`). |
+| `triqual doctor [--repo]` | Read-only diagnosis of the install. It fails while a superseded plugin is enabled at user scope (a warning under `keepSuperseded`), and on a `CLAUDE.md` whose old-layout rules still sit outside the managed section, with the fix "split, then rerun /methodology:setup (or node bin/bootstrap.mjs from a clone)". It also fails on a stale `triqual` shim, one that lacks a command an installed plugin ships (such as `triqual tracking` from progress-tracking 0.2.2), with the fix "rerun /methodology:setup (or node bin/bootstrap.mjs from a clone)". `--repo` also checks the current repo's tracking, in committed, local or store mode: its git gate against the installed progress-tracking template (and, in local mode, the chained hook lines; in store mode, the store hook scripts and their chain, and that the database opens and is not disabled, naming `triqual tracking restore` when it does not), a duplicate tracking root, and `triqual tasks check` drift, and it prints an `INFO tracking: <root> <mode>` line for each registered repository; and it warns when the repo's `.claude/settings.json` or `.claude/settings.local.json` enables a superseded plugin (never edited; not reported under `keepSuperseded`). |
 | `triqual sync` | Writes the installed rules into the managed section of `~/.claude/CLAUDE.md` and disables at user scope the plugins its manifest lists as superseded (`superpowers@*`, from any marketplace, since 0.2.0), after backing up `settings.json`. To roll back, set `"keepSuperseded": true` in `~/.config/triqual/config.json`, then run `claude plugin enable superpowers@superpowers-marketplace`: sync leaves superpowers enabled, the drift notice stays quiet, `triqual doctor` warns instead of failing, and the SessionStart hook injects a short note instead of `using-methodology`. `--harness <id>` syncs only Codex or Grok, and `--remove-harness <id>` undoes a harness setup: see [Codex and Grok](#codex-and-grok). |
 | `triqual progress-init [--local \| --store]` | Opts the current repo into progress tracking. `--local` keeps the tracking files under `<git-common-dir>/methodology/` instead of the working tree; `--local --remove` deletes them and unhooks the local gate. `--store [--accept-unparsed]` switches the repo to store mode (any repo, a fresh one included): it imports the existing tracking files into the database, installs the store git hooks, and deletes a committed repo's tracking files from the working tree, printing the commit that records the switch and never making it. |
 | `triqual tasks <subcommand>` | The per-plan task ledger: `init <plan.md>` (`--adopt` first copies a plan drafted anywhere into the plans directory, refusing an existing name), `start`, `review`, `rework`, `restore`, `done T<N> --commit <sha>`, `block`, `drop`, `reopen`, `retitle`, `close`, `status [--json]`, `next` (with the task's role), `check [--staged]`, `render`, `paths --json`, `export --json [--all]` and `line`. A task's role is its plan `**Role:**` line (`coordinator`, `roles:tdd-implementer` by default, `roles:complex-implementer` or `roles:review-fixer`); `check` flags any other. `init` refuses a dependency on an unknown task. `paths --json` also answers outside an opted-in repo, with `"optedIn": false`. It exits 0 on success, 1 when `check` finds drift, and 2 on an invalid transition, bad arguments, an ambiguous ledger or a repo that is not opted in. |
