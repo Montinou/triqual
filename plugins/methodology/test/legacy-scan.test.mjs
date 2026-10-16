@@ -99,9 +99,9 @@ function migratedHome() {
   put(join(bin, BRAND.cliFile), `#!/usr/bin/env node\n${BRAND.ownership.shim}\n// was ${L.marketplace}\n`);
   symlinkSync(BRAND.cliFile, join(bin, BRAND.cli));
   put(join(bin, BRAND.launcher), `#!/usr/bin/env bash\n${BRAND.ownership.launcher}\n`, 0o755);
-  cpSync(join(REPO_ROOT, 'bin', `${L.cli}-alias.mjs`), join(bin, L.cliFile));
+  cpSync(join(REPO_ROOT, 'plugins', 'methodology', 'setup', `${L.cli}-alias.mjs`), join(bin, L.cliFile));
   symlinkSync(L.cliFile, join(bin, L.cli));
-  cpSync(join(REPO_ROOT, 'bin', `${L.launcher}-forwarder`), join(bin, L.launcher));
+  cpSync(join(REPO_ROOT, 'plugins', 'methodology', 'setup', `${L.launcher}-forwarder`), join(bin, L.launcher));
   put(join(claude, 'plugins', 'cache', L.marketplace, 'methodology', '0.3.0', 'README.md'), 'old\n');
   put(join(claude, 'plugins', 'data', `memory-report-${L.marketplace}`, 'state.json'), '{}\n');
   put(join(home, '.codex', 'plugins', 'cache', L.marketplace, 'methodology-codex', '0.1.0', 'x.json'), '{}\n');

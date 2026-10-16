@@ -1,6 +1,7 @@
 // Where a triqual plugin is installed for a cwd, and whether Claude has it enabled (spec Addendum F.3).
-// resolveInstallPath is a copy of bin/triqual-shim.mjs's export: the shim is not part of the installed plugin, so the
-// hook cannot import it. A parity test keeps the two equal. node: built-ins only.
+// resolveInstallPath is a copy of setup/triqual-shim.mjs's export: the shim ships in the plugin's setup/ but runs as a
+// copy in ~/.local/bin, outside cli/, so the hook does not import it. A parity test keeps the two equal. node: built-ins
+// only.
 import { readFileSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 

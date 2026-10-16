@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { doctor, git, nodeCheck, realRun, SHIM_COMMANDS, STORE_HOOKS, STORE_SCRIPTS } from '../cli/doctor.mjs';
 import { STORE_HOOK_LINES } from '../../progress-tracking/lib/store-hooks.mjs';
-import { COMMANDS } from '../../../bin/triqual-shim.mjs';
+import { COMMANDS } from '../setup/triqual-shim.mjs';
 import { MARKERS } from '../cli/lib/fsx.mjs';
 import { codexBridgeDir } from '../cli/lib/harnesses.mjs';
 import { codexPluginTable, grokStaleEntries, syncHarness } from '../cli/lib/harness-sync.mjs';
@@ -28,9 +28,9 @@ const ROLES = ['brief-writer', 'tdd-implementer', 'complex-implementer', 'safety
 const SUPERSEDED = 'superpowers@superpowers-marketplace';
 const HEADJACK_ARGS = ['headjack', ['search', 'ping', '-k', '1', '--json'], { timeoutMs: 10000 }];
 // The shim as released on this branch: a clean machine's ~/.local/bin/triqual.mjs; the alias and the forwarder beside it.
-const SHIM_TEXT = readFileSync(join(REPO_ROOT, 'bin', 'triqual-shim.mjs'), 'utf8');
-const ALIAS_TEXT = readFileSync(join(REPO_ROOT, 'bin', `${BRAND.legacy.cli}-alias.mjs`), 'utf8');
-const FORWARDER_TEXT = readFileSync(join(REPO_ROOT, 'bin', `${BRAND.legacy.launcher}-forwarder`), 'utf8');
+const SHIM_TEXT = readFileSync(join(REPO_ROOT, 'plugins', 'methodology', 'setup', 'triqual-shim.mjs'), 'utf8');
+const ALIAS_TEXT = readFileSync(join(REPO_ROOT, 'plugins', 'methodology', 'setup', `${BRAND.legacy.cli}-alias.mjs`), 'utf8');
+const FORWARDER_TEXT = readFileSync(join(REPO_ROOT, 'plugins', 'methodology', 'setup', `${BRAND.legacy.launcher}-forwarder`), 'utf8');
 const section = (body = GLOBAL.trim()) => `# Machine\n\n${MARKERS.start}\n${body}\n${MARKERS.end}\n`;
 
 // A run that records its calls and answers every command with `result` (or throws it when it is an Error).
@@ -151,7 +151,8 @@ const matching = (list, re) => list.filter((line) => re.test(line));
 // here keeps the cm alias and the forwarder, so `diagnose` drops that line (there is at most one) for the tests of
 // doctor's other checks; the legacy-scan tests below call doctor itself.
 const LEGACY_FIX = `run ${BRAND.cli} migrate`;
-const BOOTSTRAP_FIX = 'run node bin/bootstrap.mjs';
+const BOOTSTRAP_FIX = 'run /methodology:setup (or node bin/bootstrap.mjs from a clone)';
+const RERUN_FIX = 'rerun /methodology:setup (or node bin/bootstrap.mjs from a clone)';
 const kept = (n) => `${n} legacy items kept on purpose (cm alias, compatibility links, old caches, backups)`;
 const KEPT = /^\d+ legacy items kept on purpose \(cm alias, compatibility links, old caches, backups\)$/;
 async function diagnose(opts) {
@@ -421,7 +422,7 @@ test('doctor reports a triqual shim that is missing, a dangling symlink or not a
       const r = await diagnose({ home, cwd: home, run: fakeRun().run });
       assert.equal(r.failures.length, 1, r.failures.join('\n'));
       assert.ok(r.failures[0].includes(join(home, '.local', 'bin', BRAND.cli)), r.failures[0]);
-      assert.match(r.failures[0], /run node bin\/bootstrap\.mjs/);
+      assert.ok(r.failures[0].includes(BOOTSTRAP_FIX), r.failures[0]);
     }, (p) => { p.shim = shim; });
   }
 });
@@ -458,7 +459,7 @@ const SHIPPED = Object.values(COMMANDS).reduce((acc, [plugin, rel]) => {
 }, {});
 
 test("doctor's command map is the shim's", () => {
-  assert.notEqual(OLD_SHIM_TEXT, SHIM_TEXT, 'the tracking line was not found in bin/triqual-shim.mjs');
+  assert.notEqual(OLD_SHIM_TEXT, SHIM_TEXT, 'the tracking line was not found in setup/triqual-shim.mjs');
   assert.deepEqual(SHIM_COMMANDS, COMMANDS);
 });
 
@@ -469,7 +470,7 @@ test('doctor reports a triqual shim that lacks a command the installed plugins s
     assert.ok(r.failures[0].startsWith(`${BRAND.cli} shim is stale: `), r.failures[0]);
     assert.ok(r.failures[0].includes(join(home, '.local', 'bin', BRAND.cli)), r.failures[0]);
     assert.ok(r.failures[0].includes(`lacks ${BRAND.cli} tracking, which the installed progress-tracking ships`), r.failures[0]);
-    assert.match(r.failures[0], /: rerun node bin\/bootstrap\.mjs$/);
+    assert.ok(r.failures[0].endsWith(`: ${RERUN_FIX}`), r.failures[0]);
     assert.deepEqual(r.warnings, []);
   }, (p) => { p.shimText = OLD_SHIM_TEXT; p.ships = SHIPPED; });
   // The current shim, or an old one while no installed plugin ships the missing command: nothing to report.
@@ -511,9 +512,9 @@ test('doctor reports a cm alias or a forwarder that is missing or not ours by li
   const legacyShim = SHIM_TEXT.split('\n').with(1, BRAND.legacy.ownership.shim).join('\n');
   const legacyLauncher = `#!/usr/bin/env bash\n${BRAND.legacy.ownership.launcher}\nexit 0\n`;
   const aliasFailure = (home, name) => `${bin(home, name)} is missing or is not the ${BRAND.legacy.cli} alias of `
-    + `${BRAND.cli}: run node bin/bootstrap.mjs`;
+    + `${BRAND.cli}: ${BOOTSTRAP_FIX}`;
   const forwarderFailure = (home) => `${bin(home, BRAND.legacy.launcher)} is missing or is not the `
-    + `${BRAND.legacy.launcher} forwarder of ${BRAND.cli}: run node bin/bootstrap.mjs`;
+    + `${BRAND.legacy.launcher} forwarder of ${BRAND.cli}: ${BOOTSTRAP_FIX}`;
   const run = fakeRun().run;
   await withHome(async ({ home }) => {
     const r = await doctor({ home, cwd: home, run });
@@ -650,14 +651,14 @@ test('doctor warns on an invalid config.json and reads it as no keepSuperseded',
   }, superseding);
 });
 
-test('doctor\'s unsplit fix says "split, then rerun bootstrap"', async () => {
+test('doctor\'s unsplit fix says "split, then rerun /methodology:setup"', async () => {
   const unsplit = '# Global Instructions\n\n## UNIVERSAL DEVELOPMENT RULES\n\n### Never Assume - Always Verify\n\n- verify\n';
   for (const claudeMd of [unsplit, `${unsplit}\n${section().replace('# Machine\n\n', '')}`]) {
     await withHome(async ({ home }) => {
       const r = await diagnose({ home, cwd: home, run: fakeRun().run });
       assert.equal(r.failures.length, 1, r.failures.join('\n'));
       assert.match(r.failures[0], /## UNIVERSAL DEVELOPMENT RULES, ### Never Assume - Always Verify/);
-      assert.ok(r.failures[0].endsWith(': split, then rerun bootstrap'), r.failures[0]);
+      assert.ok(r.failures[0].endsWith(`: split, then ${RERUN_FIX}`), r.failures[0]);
       assert.doesNotMatch(r.failures[0], /run triqual sync/);
     }, (p) => { p.claudeMd = claudeMd; });
   }
@@ -1183,7 +1184,7 @@ test('the CLI prints FAIL and WARN lines and the summary, and exits 1 on failure
     assert.equal(r.status, 1, r.stderr);
     const lines = r.stdout.trimEnd().split('\n');
     assert.equal(lines.filter((l) => l.startsWith('FAIL ')).length, 1, r.stdout);
-    assert.match(r.stdout, /^FAIL .*run node bin\/bootstrap\.mjs$/m);
+    assert.ok(r.stdout.split('\n').some((l) => l.startsWith('FAIL ') && l.endsWith(BOOTSTRAP_FIX)), r.stdout);
     assert.match(r.stdout, /^WARN .*headjack/m);
     assert.ok(lines.includes(`WARN ${kept(2)}`), r.stdout);
     assert.equal(lines.at(-1), 'doctor: 1 failure(s), 2 warning(s)');
@@ -1382,7 +1383,7 @@ test('an older exit-2 install falls back to its own copies', async () => {
 // A config.toml without the legacy bridge's table: the triqual bridge, and its trust keys (F.11 P5a).
 const BRIDGE = `methodology-codex@${BRAND.marketplace}`;
 const CODEX_TRUST_KEYS = ['session_start', 'stop'].map((event) => `${BRIDGE}:hooks/hooks.json:${event}:0:0`);
-const LAUNCHER_TEXT = readFileSync(join(REPO_ROOT, 'bin', 'triqual-hook'));
+const LAUNCHER_TEXT = readFileSync(join(REPO_ROOT, 'plugins', 'methodology', 'setup', 'triqual-hook'));
 const TRUST_FIX = 'start Codex and approve the triqual hooks in its trust prompt';
 const STAMP_WARNING = 'no methodology hook has run since the bridge was installed or updated: '
   + 'start Codex and approve its hooks if prompted';
@@ -1444,7 +1445,7 @@ function withHarnessHome(fn, { harnesses = ['codex', 'grok'], tweak = () => {}, 
     put(join(installPath('progress-tracking'), 'skills', 'progress-tracking', 'SKILL.md'), '# progress-tracking\n');
     cpSync(join(REPO_ROOT, 'plugins', 'roles', 'agents'), join(installPath('roles'), 'agents'), { recursive: true });
     const market = join(home, '.claude', 'plugins', 'marketplaces', BRAND.marketplace);
-    put(join(market, 'bin', 'triqual-hook'), LAUNCHER_TEXT, 0o755);
+    put(join(market, 'plugins', 'methodology', 'setup', 'triqual-hook'), LAUNCHER_TEXT, 0o755);
     put(join(home, '.local', 'bin', 'triqual-hook'), LAUNCHER_TEXT, 0o755);
     put(join(home, '.config', BRAND.dir, 'config.json'),
       JSON.stringify({ harnesses: Object.fromEntries(harnesses.map((id) => [id, { enabled: true }])) }));
@@ -1521,11 +1522,28 @@ test('launcher check: a missing triqual-hook or one that differs from the market
     const launcher = join(ctx.home, '.local', 'bin', 'triqual-hook');
     rmSync(launcher);
     let r = await harnessDoctor(ctx);
-    assert.deepEqual(r.failures, [`the hook launcher ${launcher} is missing: run node bin/bootstrap.mjs`]);
+    assert.deepEqual(r.failures, [`the hook launcher ${launcher} is missing: ${BOOTSTRAP_FIX}`]);
     writeFileSync(launcher, `${LAUNCHER_TEXT}# edited\n`);
     r = await harnessDoctor(ctx);
     assert.deepEqual(r.failures, [`the hook launcher ${launcher} differs from the marketplace copy `
-      + `${join(ctx.market, 'bin', 'triqual-hook')}: rerun node bin/bootstrap.mjs`]);
+      + `${join(ctx.market, 'plugins', 'methodology', 'setup', 'triqual-hook')}: ${RERUN_FIX}`]);
+  }, { harnesses: ['grok'] });
+});
+
+test('launcher check uses the installed methodology setup/ copy, with no marketplace clone', async () => {
+  await withHarnessHome(async (ctx) => {
+    const launcher = join(ctx.home, '.local', 'bin', 'triqual-hook');
+    const installed = join(ctx.installPath('methodology'), 'setup', 'triqual-hook');
+    mkdirSync(dirname(installed), { recursive: true });
+    writeFileSync(installed, LAUNCHER_TEXT, { mode: 0o755 });
+    rmSync(ctx.market, { recursive: true, force: true });
+    let r = await harnessDoctor(ctx);
+    assert.deepEqual(r.failures.filter((f) => f.includes('launcher')), []);
+    assert.deepEqual(r.warnings.filter((w) => w.includes('launcher')), []);
+    writeFileSync(launcher, `${LAUNCHER_TEXT}# edited\n`);
+    r = await harnessDoctor(ctx);
+    assert.deepEqual(r.failures.filter((f) => f.includes('launcher')), [`the hook launcher ${launcher} differs from the `
+      + `installed copy ${installed}: ${RERUN_FIX}`]);
   }, { harnesses: ['grok'] });
 });
 
@@ -2270,4 +2288,21 @@ test('the CLI prints the INFO tracking lines before the summary', async () => {
     assert.equal(lines.at(-2), `INFO tracking: ${s.root} store`, r.stdout);
     assert.deepEqual(lines.filter((l) => l.startsWith('FAIL ')), []);
   });
+});
+
+// setup/bootstrap.mjs documents its own usage in its header; every other CLI and setup file that names the clone's
+// installer must also name the command a plugin install runs, since bin/ exists only in a clone.
+test('no bootstrap hint without /methodology:setup', () => {
+  const files = [
+    ...readdirSync(join(PLUGIN_ROOT, 'cli'), { recursive: true }).filter((f) => f.endsWith('.mjs')).map((f) => join('cli', f)),
+    ...readdirSync(join(PLUGIN_ROOT, 'setup')).filter((f) => f.endsWith('.mjs') && f !== 'bootstrap.mjs').map((f) => join('setup', f)),
+  ];
+  assert.ok(files.length > 10, files.join(', '));
+  const bare = [];
+  for (const file of files) {
+    readFileSync(join(PLUGIN_ROOT, file), 'utf8').split('\n').forEach((line, i) => {
+      if (line.includes('bin/bootstrap.mjs') && !line.includes('/methodology:setup')) bare.push(`${file}:${i + 1}: ${line.trim()}`);
+    });
+  }
+  assert.deepEqual(bare, []);
 });

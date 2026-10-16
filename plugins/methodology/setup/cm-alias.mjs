@@ -14,7 +14,7 @@ process.stderr.write('cm is deprecated: use triqual (cm will be removed in a lat
 // Node resolves the cm symlink for the main module, so this is the dir of cm.mjs.
 const target = join(dirname(fileURLToPath(import.meta.url)), 'triqual.mjs');
 if (!existsSync(target)) {
-  process.stderr.write(`cm: ${target} is missing: run node bin/bootstrap.mjs from the triqual clone\n`);
+  process.stderr.write(`cm: ${target} is missing: run /methodology:setup (or node bin/bootstrap.mjs from a clone)\n`);
   process.exit(3);
 }
 const child = spawnSync(process.execPath, [target, ...process.argv.slice(2)], { stdio: 'inherit' });

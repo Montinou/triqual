@@ -8,8 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { BRAND } from '../plugins/methodology/cli/lib/brand.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const LAUNCHER = join(ROOT, 'bin', 'triqual-hook');
-const FORWARDER = join(ROOT, 'bin', `${BRAND.legacy.launcher}-forwarder`);
+const LAUNCHER = join(ROOT, 'plugins', 'methodology', 'setup', 'triqual-hook');
+const FORWARDER = join(ROOT, 'plugins', 'methodology', 'setup', `${BRAND.legacy.launcher}-forwarder`);
 const BASH = '/bin/bash'; // absolute: the child's PATH is under test
 // A PATH that finds this node and the base tools (date, mkdir, wc, mv), and nothing from the test's HOME.
 const TOOLS_PATH = `${dirname(process.execPath)}:/usr/bin:/bin`;
@@ -39,7 +39,7 @@ function launch(home, args, { path = TOOLS_PATH, input = '' } = {}) {
 
 const ECHO_SHIM = "process.stdout.write(process.argv.slice(2).join(' ') + '\\n');\nprocess.stdin.pipe(process.stdout);\n";
 
-test('line 2 of bin/triqual-hook is BRAND.ownership.launcher', () => {
+test('line 2 of setup/triqual-hook is BRAND.ownership.launcher', () => {
   assert.equal(readFileSync(LAUNCHER, 'utf8').split('\n')[1], BRAND.ownership.launcher);
 });
 

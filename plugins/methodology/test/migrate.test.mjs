@@ -741,7 +741,7 @@ test('triqual migrate --help prints the usage; an unknown argument exits 2; run 
   const lines = [];
   const r = await migrateCli([], { home, run: fakeMachine(home).run, now: NOW, log: (l) => lines.push(l) });
   const s = parse(lines);
-  assert.deepEqual(s.cli, { status: 'skipped', detail: 'run node bin/bootstrap.mjs from the clone' });
+  assert.deepEqual(s.cli, { status: 'skipped', detail: 'run /methodology:setup (or node bin/bootstrap.mjs from a clone)' });
   // The older shim is still at the legacy CLI file, so the scan names it and the run exits 1.
   assert.equal(s.verify.status, 'failed');
   assert.equal(r.code, 1);

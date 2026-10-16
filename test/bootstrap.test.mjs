@@ -5,14 +5,14 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, statSync, lstatSyn
 import { tmpdir } from 'node:os';
 import { basename, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bootstrap, installCli, makeAsk, runSteps, STEPS } from '../bin/bootstrap.mjs';
+import { bootstrap, cliSourceDir, installCli, makeAsk, runSteps, STEPS } from '../bin/bootstrap.mjs';
 import { BRAND } from '../plugins/methodology/cli/lib/brand.mjs';
 import { fakeMachine, legacyMachine } from '../plugins/methodology/test/fixtures/migrate-machine.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const SHIM = join(ROOT, 'bin', 'triqual-shim.mjs');
-const ALIAS = join(ROOT, 'bin', 'cm-alias.mjs');
-const FORWARDER = join(ROOT, 'bin', `${BRAND.legacy.launcher}-forwarder`);
+const SHIM = join(ROOT, 'plugins', 'methodology', 'setup', 'triqual-shim.mjs');
+const ALIAS = join(ROOT, 'plugins', 'methodology', 'setup', 'cm-alias.mjs');
+const FORWARDER = join(ROOT, 'plugins', 'methodology', 'setup', `${BRAND.legacy.launcher}-forwarder`);
 const BOOTSTRAP = join(ROOT, 'bin', 'bootstrap.mjs');
 
 // Bootstrap adds or updates BRAND.marketplace only (a legacy-only marketplace is left to migrate), so the fixtures
@@ -32,7 +32,7 @@ const launcherPath = inBin(BRAND.launcher);
 const cmPath = inBin(BRAND.legacy.cli);
 const cmMjsPath = inBin(BRAND.legacy.cliFile);
 const forwarderPath = inBin(BRAND.legacy.launcher);
-const LAUNCHER = join(ROOT, 'bin', 'triqual-hook');
+const LAUNCHER = join(ROOT, 'plugins', 'methodology', 'setup', 'triqual-hook');
 const doctorCall = (home) => `${process.execPath} ${triqualPath(home)} doctor`;
 
 // A recorded fake run: every call is logged as "cmd arg1 arg2 ...", and the timeoutMs it received is kept by key. A
@@ -590,10 +590,122 @@ test('installCli is the shim step, exported for the migration', async () => {
   }
 });
 
+// An installed methodology at <root>/<version> (user scope) whose setup/ holds a shim and a launcher with distinct
+// bodies, each with the ownership line 2 the real files carry.
+const fakeShimBody = (version) => `#!/usr/bin/env node\n${BRAND.ownership.shim} methodology ${version} shim.\n`;
+const fakeHookBody = (version) => `#!/usr/bin/env bash\n${BRAND.ownership.launcher}\n# methodology ${version} launcher\n`;
+
+function methodologyAt(root, version, { setup = true } = {}) {
+  const installPath = join(root, version);
+  mkdirSync(installPath, { recursive: true });
+  if (setup) {
+    mkdirSync(join(installPath, 'setup'));
+    writeFileSync(join(installPath, 'setup', 'triqual-shim.mjs'), fakeShimBody(version));
+    writeFileSync(join(installPath, 'setup', 'triqual-hook'), fakeHookBody(version));
+  }
+  return installPath;
+}
+
+function installedMethodologyAt(home, installPath, version) {
+  writePlugins(home, 'installed_plugins.json', {
+    version: 2,
+    plugins: { [`methodology@${BRAND.marketplace}`]: [{ scope: 'user', installPath, version }] },
+  });
+}
+
+test('the shim step copies from the installed methodology setup/', async () => {
+  const home = tempHome();
+  const root = tempHome();
+  try {
+    installedMethodologyAt(home, methodologyAt(root, '0.9.9'), '0.9.9');
+    const r = await installCli({ home });
+    assert.equal(r.status, 'done', r.detail);
+    assert.equal(readFileSync(triqualMjsPath(home), 'utf8'), fakeShimBody('0.9.9'));
+    assert.equal(readFileSync(launcherPath(home), 'utf8'), fakeHookBody('0.9.9'));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the shim step falls back to its own directory for a pre-move install', async () => {
+  const home = tempHome();
+  const root = tempHome();
+  try {
+    installedMethodologyAt(home, methodologyAt(root, '0.6.1', { setup: false }), '0.6.1');
+    assert.equal(cliSourceDir(home), dirname(SHIM));
+    const r = await installCli({ home });
+    assert.equal(r.status, 'done', r.detail);
+    assert.equal(readFileSync(triqualMjsPath(home), 'utf8'), readFileSync(SHIM, 'utf8'));
+    assert.equal(readFileSync(launcherPath(home), 'utf8'), readFileSync(LAUNCHER, 'utf8'));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('cliSourceDir falls back to its own directory with no methodology at user scope, and names the installed setup/ otherwise', () => {
+  const home = tempHome();
+  const root = tempHome();
+  try {
+    assert.equal(cliSourceDir(home), dirname(SHIM)); // no installed_plugins.json at all
+    writePlugins(home, 'installed_plugins.json', {
+      version: 2,
+      plugins: { [`methodology@${BRAND.marketplace}`]: [{ scope: 'project', installPath: methodologyAt(root, '0.9.9'), version: '0.9.9', projectPath: '/p' }] },
+    });
+    assert.equal(cliSourceDir(home), dirname(SHIM)); // a project-scope entry is not the user's install
+    installedMethodologyAt(home, join(root, '0.9.9'), '0.9.9');
+    assert.equal(cliSourceDir(home), join(root, '0.9.9', 'setup'));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('setup installs the CLI of the methodology version install moves to', async () => {
+  const home = tempHome();
+  const root = tempHome();
+  try {
+    const older = methodologyAt(root, '0.9.8');
+    const newer = methodologyAt(root, '0.9.9');
+    installedMethodologyAt(home, older, '0.9.8');
+    marketplaceCopy(home, { methodology: '0.9.9', 'progress-tracking': '0.1.1', 'workflow-gate': '0.1.0', roles: '0.1.0' });
+    // A harness set up, so doctor checks the launcher against the installed copy too.
+    mkdirSync(join(home, '.grok'), { recursive: true });
+    mkdirSync(join(home, '.config', BRAND.dir), { recursive: true });
+    writeFileSync(join(home, '.config', BRAND.dir, 'config.json'), JSON.stringify({ harnesses: { grok: { enabled: true } } }));
+    const doctorLines = [];
+    const { run } = fakeRun({
+      [updateCall('methodology')]: () => {
+        installedMethodologyAt(home, newer, '0.9.9');
+        return { code: 0, stdout: '', stderr: '' };
+      },
+      [doctorCall(home)]: async () => {
+        // The real doctor of this checkout, against the machine as the earlier steps left it.
+        const { doctor } = await import('../plugins/methodology/cli/doctor.mjs');
+        const { failures, warnings } = await doctor({ home, cwd: home, run: async () => ({ code: 0, stdout: '', stderr: '' }) });
+        doctorLines.push(...failures);
+        return { code: 0, stdout: `doctor: ${failures.length} failure(s), ${warnings.length} warning(s)\n`, stderr: '' };
+      },
+    });
+    const steps = byId(await boot(home, run));
+    assert.equal(steps.install.status, 'done', steps.install.detail);
+    assert.ok(steps.install.detail.includes('0.9.8 -> 0.9.9'), steps.install.detail);
+    assert.equal(steps.shim.status, 'done', steps.shim.detail);
+    assert.equal(readFileSync(triqualMjsPath(home), 'utf8'), fakeShimBody('0.9.9'));
+    assert.equal(readFileSync(launcherPath(home), 'utf8'), fakeHookBody('0.9.9'));
+    assert.equal(steps.doctor.status, 'done', steps.doctor.detail);
+    assert.deepEqual(doctorLines.filter((l) => /shim|launcher/.test(l)), []);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 const OLDER = `#!/usr/bin/env node\n${BRAND.ownership.shim} An older version.\n`;
 const OLDER_LEGACY = `#!/usr/bin/env node\n${BRAND.legacy.ownership.shim} Bootstrap copies this file, alone and verbatim.\n`;
 
-test('shim installs bin/triqual-hook verbatim (0755), replaces an older or legacy one, and is already after', async () => {
+test('shim installs setup/triqual-hook verbatim (0755), replaces an older or legacy one, and is already after', async () => {
   const home = tempHome();
   try {
     const steps1 = byId(await boot(home, fakeRun().run));
@@ -678,7 +790,7 @@ test(`shim replaces an older extensionless cm that carries the marker with the c
   }
 });
 
-const NOT_OURS = (path) => `${path} is not a file ${BRAND.marketplace} installed; move it aside, then rerun bootstrap`;
+const NOT_OURS = (path) => `${path} is not a file ${BRAND.marketplace} installed; move it aside, then rerun /methodology:setup (or node bin/bootstrap.mjs from a clone)`;
 // A foreign file at a legacy CLI path of a legacy machine is left to the shim step: migrate's cli step skips it
 // (installCli would refuse it), so the shim step reports it as it did before migrate.
 function assertRefused(steps, home, pick) {
@@ -1519,4 +1631,41 @@ test('importing bin/bootstrap.mjs has no side effects', () => {
   });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, '');
+});
+
+const SETUP = join(ROOT, 'plugins', 'methodology', 'setup');
+const MOVED = ['bootstrap.mjs', 'triqual-shim.mjs', 'triqual-hook', 'cm-alias.mjs', 'cm-hook-forwarder', 'legacy.json'];
+
+test('the installer ships in plugins/methodology/setup/', () => {
+  for (const name of MOVED) assert.ok(existsSync(join(SETUP, name)), `${name} is missing from plugins/methodology/setup/`);
+  for (const name of MOVED.filter((n) => n !== 'bootstrap.mjs')) {
+    assert.ok(!existsSync(join(ROOT, 'bin', name)), `bin/${name} is still there`);
+  }
+});
+
+test('bin/bootstrap.mjs re-exports the setup module', async () => {
+  const w = await import('../bin/bootstrap.mjs');
+  const s = await import('../plugins/methodology/setup/bootstrap.mjs');
+  assert.deepEqual(Object.keys(w).sort(), Object.keys(s).sort());
+  assert.equal(typeof s.main, 'function');
+  assert.equal(w.main, s.main);
+});
+
+test('running bin/bootstrap.mjs through a symlink runs main', () => {
+  const tmp = tempHome();
+  try {
+    const link = join(tmp, 'bs.mjs');
+    symlinkSync(BOOTSTRAP, link);
+    const tmpHome = join(tmp, 'home');
+    const emptyDir = join(tmp, 'empty');
+    mkdirSync(tmpHome);
+    mkdirSync(emptyDir);
+    const r = spawnSync(process.execPath, [link, '--yes'], {
+      env: { HOME: tmpHome, PATH: emptyDir }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /prereqs: failed/);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 });

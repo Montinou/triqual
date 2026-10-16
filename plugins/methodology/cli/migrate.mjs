@@ -1,6 +1,6 @@
 // `triqual migrate [--help]`: moves this machine from the legacy marketplace to the triqual one (spec 4), one line per
 // step as it runs (lib/migrate-steps.mjs). Idempotent: a second run changes nothing. Bootstrap runs it as its migrate
-// step with the CLI installer; run alone, the CLI step is skipped (run node bin/bootstrap.mjs from the clone).
+// step with the CLI installer; run alone, the CLI step is skipped (run /methodology:setup (or node bin/bootstrap.mjs from a clone)).
 // Exit codes: 0 done (and for --help/-h, which writes nothing), 1 a step failed, 2 an unknown argument (nothing run).
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';

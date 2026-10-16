@@ -3,8 +3,8 @@
   "exclude": ["test/e2e-probe.test.mjs", "test/provider-probes.test.mjs", "test/no-personal-data.test.mjs", "test/brand-guard.test.mjs"],
   "keepInTarget": [".github/"],
   "allowLegacy": [
-    {"path": "bin/triqual-hook", "contains": "claude-methodolog"},
-    {"path": "bin/triqual-shim.mjs", "contains": "claude-methodolog"},
+    {"path": "plugins/methodology/setup/triqual-hook", "contains": "claude-methodolog"},
+    {"path": "plugins/methodology/setup/triqual-shim.mjs", "contains": "claude-methodolog"},
     {"path": "plugins/memory-report/lib/brand.mjs", "contains": "claude-methodolog"},
     {"path": "plugins/methodology/cli/lib/brand.mjs", "contains": "claude-methodolog"},
     {"path": "plugins/methodology/test/fixtures/legacy/claude-md.md", "contains": "claude-methodolog"},
