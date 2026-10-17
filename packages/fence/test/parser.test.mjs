@@ -301,9 +301,6 @@ test('redirections > >> >| &> < <> and fd duplication', () => {
 
   opaque('cmd >');
   opaque('cmd > ;');
-  // heredocs and herestrings are not modelled yet
-  assert.equal(opaque('cat <<EOF\nx\nEOF').construct, 'heredoc');
-  assert.equal(opaque('cat <<< x').construct, 'herestring');
 });
 
 test("quote-split r''m reads as rm", () => {
@@ -426,4 +423,192 @@ test('construct labels for ( after a word', () => {
   assert.notEqual(opaque('=(ls)').construct, 'function');
   assert.equal(opaque('f() { a; }').construct, 'function');
   assert.equal(opaque('f ( ) { a; }').construct, 'function');
+});
+
+// The fields of a heredoc redirection that the tests compare.
+function hd(r) {
+  return { op: r.op, delimiter: r.delimiter, quoted: r.quoted, body: r.body };
+}
+
+test('heredoc with quoted delimiter keeps the body literal', () => {
+  const body = 'rm $(x) `y` $HOME \\$z \\\n';
+  for (const open of ["<<'EOF'", '<<"EOF"', '<<\\EOF', "<<E'O'F", '<< "EOF"']) {
+    const text = `cat ${open}\n${body}EOF`;
+    const root = ok(text);
+    // the body lines are data, not commands
+    assert.equal(root.items.length, 1, text);
+    const n = root.items[0].node;
+    assert.deepEqual(argv(n), ['cat']);
+    assert.deepEqual(hd(n.redirs[0]), { op: '<<', delimiter: 'EOF', quoted: true, body }, text);
+    assert.deepEqual(n.redirs[0].parts, [{ type: 'lit', text: body, quoted: true }]);
+  }
+  // commands after the terminator line are parsed again
+  const two = ok("cat <<'EOF' > out\nx; rm -rf /\nEOF\necho after");
+  assert.equal(two.items.length, 2);
+  assert.equal(two.items[0].node.redirs[0].body, 'x; rm -rf /\n');
+  assert.equal(two.items[0].node.redirs[1].op, '>');
+  assert.deepEqual(argv(two.items[1].node), ['echo', 'after']);
+  // an fd before the operator, an empty body, an empty delimiter
+  const fd = only("cat 3<<'X'\nX").redirs[0];
+  assert.equal(fd.fd, 3);
+  assert.equal(fd.body, '');
+  // an empty delimiter ends at the first empty line; `b` is the next command
+  const empty = ok("cat <<''\na\n\nb");
+  assert.equal(empty.items[0].node.redirs[0].body, 'a\n');
+  assert.deepEqual(argv(empty.items[1].node), ['b']);
+  // a quoted delimiter part makes the whole delimiter quoted
+  const mixed = only('cat <<E"O"F\n$x\nEOF').redirs[0];
+  assert.equal(mixed.quoted, true);
+  assert.equal(mixed.body, '$x\n');
+});
+
+test('heredoc with unquoted delimiter marks expansions', () => {
+  const text = 'cat <<EOF\nhi $USER $(rm -rf x) `id` \\$HOME \\\\ "q" \\n\nEOF';
+  const r = only(text).redirs[0];
+  assert.deepEqual(hd(r), {
+    op: '<<',
+    delimiter: 'EOF',
+    quoted: false,
+    body: 'hi $USER $(rm -rf x) `id` \\$HOME \\\\ "q" \\n\n',
+  });
+  assert.deepEqual(r.parts.map((p) => p.type), ['lit', 'var', 'lit', 'cmdsub', 'lit', 'cmdsub', 'lit']);
+  assert.equal(r.parts[0].text, 'hi ');
+  assert.deepEqual([r.parts[1].name, r.parts[1].quoted], ['USER', true]);
+  assert.deepEqual(argv(r.parts[3].program.items[0].node), ['rm', '-rf', 'x']);
+  assert.equal(r.parts[5].backtick, true);
+  assert.deepEqual(argv(r.parts[5].program.items[0].node), ['id']);
+  // \$ \` \\ are escapes; " and other backslashes stay as they are
+  assert.deepEqual(r.parts[6], { type: 'lit', text: ' $HOME \\ "q" \\n\n', quoted: true });
+
+  // a command substitution may span body lines
+  const multi = only('cat <<EOF\n$(\nrm x\n)\nEOF').redirs[0];
+  assert.deepEqual(argv(multi.parts[0].program.items[0].node), ['rm', 'x']);
+  // a body with no expansion is one literal part
+  assert.deepEqual(only('cat <<EOF\nplain\nEOF').redirs[0].parts, [{ type: 'lit', text: 'plain\n', quoted: true }]);
+  // zsh-only and unterminated forms inside the body are opaque
+  assert.equal(opaque('cat <<EOF\n${(f)x}\nEOF').construct, 'zsh-syntax');
+  assert.equal(opaque('cat <<EOF\n$(rm x\nEOF').reason, 'unterminated');
+  // a body line ending in a backslash joins lines in some shells: never guess
+  assert.equal(opaque('cat <<EOF\na\\\nEOF\nrm -rf /\nEOF').construct, 'heredoc');
+  assert.equal(only('cat <<EOF\na\\\\\nEOF').redirs[0].body, 'a\\\\\n');
+  assert.equal(only("cat <<'EOF'\na\\\nEOF").redirs[0].body, 'a\\\n');
+  // errors inside the body point into the original text, tabs stripped or not
+  const t1 = 'cat <<EOF\nok $(a ;; b)\nEOF';
+  assert.equal(opaque(t1).offset, t1.indexOf(';;'));
+  const t2 = 'cat <<-EOF\n\t\tok $(a ;; b)\n\tEOF';
+  assert.equal(opaque(t2).offset, t2.indexOf(';;'));
+  // linear: a body near the cap and many heredocs parse quickly
+  const t0 = Date.now();
+  ok('cat <<EOF\n' + 'line $x `y` $(z)\n'.repeat(1800) + 'EOF');
+  ok('cat <<A\nA\n'.repeat(2700));
+  ok('cat <<EOF\n' + 'x'.repeat(32 * 1024 - 20) + '\nEOF');
+  assert.ok(Date.now() - t0 < 1000);
+});
+
+test('<<- strips tabs', () => {
+  const r = only('cat <<-EOF\n\tone\n\t\ttwo $x\n  three\n\tEOF').redirs[0];
+  assert.deepEqual(hd(r), { op: '<<-', delimiter: 'EOF', quoted: false, body: 'one\ntwo $x\n  three\n' });
+  assert.equal(r.parts[1].type, 'var');
+  assert.equal(only("cat <<-'EOF'\n\t$x\n\t\tEOF").redirs[0].body, '$x\n');
+  // plain << keeps tabs, so a tab-indented delimiter is body text
+  assert.equal(only('cat <<EOF\n\tx\n\tEOF\nEOF').redirs[0].body, '\tx\n\tEOF\n');
+  // a word starting with - after << is the delimiter of <<-
+  assert.equal(only('cat <<-x\nx').redirs[0].delimiter, 'x');
+});
+
+test('two heredocs on one line', () => {
+  const r = only("cat <<A <<'B'\na $x\nA\nb $x\nB").redirs;
+  assert.deepEqual(r.map(hd), [
+    { op: '<<', delimiter: 'A', quoted: false, body: 'a $x\n' },
+    { op: '<<', delimiter: 'B', quoted: true, body: 'b $x\n' },
+  ]);
+  assert.equal(r[0].parts[1].type, 'var');
+  const root = ok('cat <<A && cat <<-B; echo mid\none\nA\n\ttwo\n\tB\necho z');
+  assert.equal(root.items.length, 3);
+  const and = root.items[0].node;
+  assert.equal(and.type, 'and');
+  assert.equal(and.left.redirs[0].body, 'one\n');
+  assert.equal(and.right.redirs[0].body, 'two\n');
+  assert.deepEqual(argv(root.items[1].node), ['echo', 'mid']);
+  assert.deepEqual(argv(root.items[2].node), ['echo', 'z']);
+});
+
+test('heredoc inside a pipeline', () => {
+  const p = only('cat <<EOF | grep x\nbody\nEOF');
+  assert.equal(p.type, 'pipeline');
+  assert.equal(p.commands[0].redirs[0].body, 'body\n');
+  assert.deepEqual(argv(p.commands[1]), ['grep', 'x']);
+  // the pipeline continues after the body
+  const q = only('cat <<EOF |\nbody\nEOF\ngrep x');
+  assert.equal(q.type, 'pipeline');
+  assert.equal(q.commands[0].redirs[0].body, 'body\n');
+  assert.deepEqual(argv(q.commands[1]), ['grep', 'x']);
+  // inside $( ) and a subshell
+  const a = only("x=$(cat <<'EOF'\nrm -rf /\nEOF\n)").assigns[0].value.parts[0];
+  assert.equal(a.type, 'cmdsub');
+  assert.equal(a.program.items[0].node.redirs[0].body, 'rm -rf /\n');
+  const s = only('(cat <<EOF\nin\nEOF\n) | sh');
+  assert.equal(s.commands[0].body.items[0].node.redirs[0].body, 'in\n');
+  // inside backticks
+  const b = only('echo `cat <<EOF\nhi\nEOF\n`').words[1].parts[0];
+  assert.equal(b.program.items[0].node.redirs[0].body, 'hi\n');
+  // herestrings take one word, parsed like any word
+  const h = only('cat <<< "$x y" | sh').commands[0].redirs[0];
+  assert.equal(h.op, '<<<');
+  assert.deepEqual(h.target.parts.map((x) => x.type), ['var', 'lit']);
+  const h0 = only("cat 0<<<'rm -rf /'").redirs[0];
+  assert.deepEqual([h0.op, h0.fd, literalValue(h0.target)], ['<<<', 0, 'rm -rf /']);
+  opaque('cat <<<');
+});
+
+test('zsh glob qualifier *(e:cmd:) is opaque', () => {
+  for (const text of ["ls *(e:'rm -rf x':)", 'ls *(e:cmd:)', '*(e:x:)', 'print -l **/*(.)', 'rm -rf x(N)']) {
+    assert.equal(opaque(text).construct, 'zsh-syntax', text);
+  }
+  // a function definition and a spaced ( keep their own labels
+  assert.equal(opaque('f() { a; }').construct, 'function');
+  assert.equal(opaque('time ( rm x )').construct, '(');
+});
+
+test('=cmd and =(…) are opaque', () => {
+  for (const text of ['=ls', '=rm -rf x', 'echo =ls', 'cat =(ls)', '=(ls)', '[ a == b ]', 'echo x > =f', 'X==ls cmd', 'echo =$x', 'echo ="ls"', 'for f in =ls; do a; done']) {
+    assert.equal(opaque(text).construct, 'zsh-syntax', text);
+  }
+  // a lone =, a quoted or escaped =, and = inside a word are plain
+  assert.deepEqual(argv(only("echo = a=b '=ls' \\=ls \"=x\" [ a = b ]")), ['echo', '=', 'a=b', '=ls', '=ls', '=x', '[', 'a', '=', 'b', ']']);
+  assert.deepEqual(only('X= cmd').assigns.map((a) => literalValue(a.value)), ['']);
+});
+
+test('${~x} and ${(f)x} are opaque', () => {
+  for (const text of ['echo ${~x}', 'echo ${(f)x}', 'echo "${(f)x}"', 'rm ${=x}', 'echo ${^x}', 'echo ${+x}']) {
+    assert.equal(opaque(text).construct, 'zsh-syntax', text);
+  }
+  // bash forms keep their labels
+  assert.equal(opaque('echo ${#x}').construct, 'parameter-expansion');
+  assert.equal(opaque('echo ${!x}').construct, 'parameter-expansion');
+});
+
+test('missing heredoc terminator is opaque', () => {
+  for (const text of ['cat <<EOF\nx', 'cat <<EOF', 'cat <<EOF\nx\nEOF ', 'cat <<EOF\n\tEOF', 'x=$(cat <<EOF\nbody\nEOF)', 'echo `cat <<EOF`', 'cat <<A <<B\na\nA']) {
+    const o = opaque(text);
+    assert.deepEqual([o.reason, o.construct], ['unterminated', 'heredoc'], text);
+  }
+  assert.equal(opaque('cat <<EOF\nx').offset, 4);
+  assert.equal(opaque('cat <<A <<B\na\nA').offset, 'cat <<A '.length);
+  // a body that cannot be placed exactly is opaque too
+  for (const text of [
+    '$(cat <<EOF)\nx\nEOF',
+    'cat <<EOF $(echo\n)\nx\nEOF',
+    "cat <<EOF 'a\nb'\nx\nEOF",
+    'cat <<EOF \\\n| sh\nx\nEOF',
+    'cat <<$X\nx\n$X',
+    'cat <<`x`\nx\n`x`',
+    "cat <<'a\nb'\nx",
+  ]) {
+    assert.equal(opaque(text).construct, 'heredoc', text);
+  }
+  // many pending heredocs fail fast
+  const t0 = Date.now();
+  assert.equal(opaque('cat ' + '<<A '.repeat(8000) + '\n').construct, 'heredoc');
+  assert.ok(Date.now() - t0 < 1000);
 });

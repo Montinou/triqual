@@ -20,8 +20,11 @@ import { Lexer, Opaque, MAX_DEPTH, MAX_BYTES, isName } from './tokenize.mjs';
  * @typedef {import('./tokenize.mjs').CmdSub} CmdSub
  * @typedef {import('./tokenize.mjs').Arith} Arith
  * @typedef {import('./tokenize.mjs').Glob} Glob
- * @typedef {{op:string, fd?:number, target:Word}} Redir
- *   op is one of `>` `>>` `>|` `&>` `&>>` `<` `<>` `>&` `<&`.
+ * @typedef {import('./tokenize.mjs').HeredocRedir} HeredocRedir
+ * @typedef {{op:string, fd?:number, target:Word}|HeredocRedir} Redir
+ *   op is one of `>` `>>` `>|` `&>` `&>>` `<` `<>` `>&` `<&` `<<<` (herestring,
+ *   the target is the word), or `<<` `<<-` for a heredoc (HeredocRedir, no
+ *   target).
  * @typedef {{type:'simple', assigns:{name:string, value:Word}[], words:Word[], redirs:Redir[]}} SimpleNode
  * @typedef {{type:'list', items:{node:Node, async:boolean}[]}} ListNode
  *   `async` is true for a command ended by `&`.
@@ -169,6 +172,12 @@ class Parser {
     return new Parser(text, 0, this.shared, map).parseProgram();
   }
 
+  // Called by the lexer for an unquoted heredoc body; map[i] is the original
+  // offset of text[i]. A `$( … )` in the body parses from the body's lexer.
+  parseHeredocBody(text, map) {
+    return new Parser(text, 0, this.shared, map).lex.readHeredocParts();
+  }
+
   skipNewlines() {
     while (isOp(this.lex.peek(), '\n')) this.lex.next();
   }
@@ -268,6 +277,7 @@ class Parser {
     const r = this.lex.next();
     const target = this.lex.next();
     if (target.t !== 'word') throw this.syntax(target);
+    if (r.op === '<<' || r.op === '<<-') return this.lex.heredoc(r, target);
     const redir = { op: r.op, target: target.word };
     if (r.fd !== undefined) redir.fd = r.fd;
     return redir;
@@ -452,6 +462,8 @@ class Parser {
       return null;
     }
     const rest = first.text.slice(eq + 1);
+    // zsh EQUALS expands a value starting with `=` (`X==ls`)
+    if (rest.startsWith('=') && (rest.length > 1 || ps.length > 1)) throw new Opaque('unsupported', 'zsh-syntax', t.off);
     const parts = rest ? [{ type: 'lit', text: rest, quoted: false }, ...ps.slice(1)] : ps.slice(1);
     return { name, value: { parts, assign: true } };
   }
@@ -495,6 +507,8 @@ class Parser {
           // `name ( )` is a function definition; `time ( … )` is not
           if (isOp(this.lex.peek(), ')')) throw new Opaque('unsupported', 'function', t.off);
         }
+        // `(` touching a word: a zsh glob qualifier `*(e:cmd:)` or grouping
+        if (t.adj) throw new Opaque('unsupported', 'zsh-syntax', t.off);
         throw this.syntax(t);
       } else {
         break;

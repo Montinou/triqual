@@ -24,11 +24,20 @@
  *   A glob character outside quotes (`[` and `]` only when they pair up).
  * @typedef {{parts:(Lit|Var|CmdSub|Arith|Glob)[], assign?:boolean}} Word
  *   `assign` marks an assignment value (where `~` after `:` also expands).
+ * @typedef {{op:'<<'|'<<-', fd?:number, delimiter:string, quoted:boolean, body:string,
+ *   parts:(Lit|Var|CmdSub|Arith)[]}} HeredocRedir
+ *   `body` is the raw body text (after `<<-` tab stripping), every line ending
+ *   in a newline, without the terminator line. With a quoted delimiter `parts`
+ *   is the body as one quoted literal; otherwise it is the body parsed for
+ *   `$x`, `${…}`, `$( … )`, backticks and `$(( … ))`, every part quoted (a
+ *   heredoc body is never split or globbed). The body is data for the command
+ *   it feeds; whether to re-parse it as a script is the caller's decision.
  * @typedef {{t:'op', v:string, off:number, adj:boolean}
  *   | {t:'redir', op:string, fd?:number, off:number, adj:boolean}
- *   | {t:'word', word:Word, off:number, adj:boolean}
+ *   | {t:'word', word:Word, off:number, adj:boolean, lo:number, hi:number}
  *   | {t:'eof', off:number, adj:boolean}} Token
  *   `adj` is true when no blank separates the token from the previous one.
+ *   `lo`/`hi` are the word's bounds in this lexer's own text.
  */
 
 export const MAX_DEPTH = 64;
@@ -47,6 +56,8 @@ const SPECIAL_PARAMS = new Set(['@', '*', '#', '?', '-', '$', '!']);
 const PARAM_OPS1 = new Set(['-', '=', '+', '?']);
 // zsh `$=x` `$~x` `$^x` `$+x`: flags with no bash meaning.
 const ZSH_DOLLAR_FLAGS = new Set(['=', '~', '^', '+']);
+// zsh `${~x}` `${=x}` `${^x}` `${+x}` and `${(flags)x}`.
+const ZSH_BRACE_FLAGS = new Set(['=', '~', '^', '+', '(']);
 
 function isNameStart(c) {
   return c !== undefined && ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c === '_');
@@ -128,7 +139,8 @@ export class Lexer {
    * @param {number[]|null} map when set, map[i] is the original offset of text[i]
    *   (backtick text, whose unescaping shifts positions)
    * @param {{enter(construct:string, off:number):void, leave():void,
-   *   parseCmdSubBody(off:number):any, parseNested(text:string, base:number):any}} host
+   *   parseCmdSubBody(off:number):any, parseNested(text:string, map:number[]):any,
+   *   parseHeredocBody(text:string, map:number[]):any[]}} host
    */
   constructor(text, base, host, map = null) {
     this.text = text;
@@ -138,6 +150,10 @@ export class Lexer {
     this.pos = 0;
     this.la = null;
     this.lastEnd = -1;
+    // heredocs whose body starts after the next newline token, in order
+    this.pending = [];
+    // `$( … )` nesting inside this lexer's text (the same lexer reads it)
+    this.subDepth = 0;
   }
 
   peek() {
@@ -185,7 +201,10 @@ export class Lexer {
   lexAt(start, adj) {
     const s = this.text;
     const off = this.off(start);
-    if (start >= s.length) return { t: 'eof', off, adj };
+    if (start >= s.length) {
+      if (this.pending.length) throw new Opaque('unterminated', 'heredoc', this.pending[0].off);
+      return { t: 'eof', off, adj };
+    }
     const c = s[start];
     const c1 = s[start + 1];
     const c2 = s[start + 2];
@@ -194,8 +213,11 @@ export class Lexer {
       return { t: 'op', v, off, adj };
     };
     switch (c) {
-      case '\n':
-        return op('\n');
+      case '\n': {
+        const tok = op('\n');
+        if (this.pending.length) this.readHeredocBodies(start);
+        return tok;
+      }
       case ';':
         if (c1 === ';') return op(c2 === '&' ? ';;&' : ';;');
         return op(c1 === '&' ? ';&' : ';');
@@ -222,7 +244,8 @@ export class Lexer {
         return this.redirAt(j, Number(s.slice(start, j)), off, adj);
       }
     }
-    return { t: 'word', word: this.readWord(), off, adj };
+    const word = this.readWord();
+    return { t: 'word', word, off, adj, lo: start, hi: this.pos };
   }
 
   // A redirection operator starting at i (which holds `<` or `>`).
@@ -233,8 +256,8 @@ export class Lexer {
     if (c1 === '(') throw this.unsupported('process-substitution', i);
     if (c === '<') {
       if (c1 === '<') {
-        if (s[i + 2] === '<') throw this.unsupported('herestring', i);
-        throw this.unsupported('heredoc', i);
+        if (s[i + 2] === '<') return this.redir(i, '<<<', fd, off, adj);
+        return this.redir(i, s[i + 2] === '-' ? '<<-' : '<<', fd, off, adj);
       }
       if (c1 === '>') return this.redir(i, '<>', fd, off, adj);
       if (c1 === '&') return this.redir(i, '<&', fd, off, adj);
@@ -263,6 +286,11 @@ export class Lexer {
   // An unquoted word, from this.pos up to the first unquoted word end.
   readWord() {
     const s = this.text;
+    // zsh EQUALS: a word starting with an unquoted `=` followed by anything
+    // expands (`=ls` is the path of ls, `==` fails); a lone `=` is plain
+    if (s[this.pos] === '=' && this.pos + 1 < s.length && !WORD_END.has(s[this.pos + 1])) {
+      throw this.unsupported('zsh-syntax', this.pos);
+    }
     const parts = [];
     let lit = '';
     const flush = () => {
@@ -492,7 +520,13 @@ export class Lexer {
     const off = this.off(at);
     this.pos = at + 2;
     this.host.enter('command-substitution', off);
+    this.subDepth++;
     const program = this.host.parseCmdSubBody(off);
+    this.subDepth--;
+    // a heredoc opened inside `$( … )` whose body did not start before the
+    // closing `)`: where its body lies differs between shells
+    const last = this.pending[this.pending.length - 1];
+    if (last && last.level > this.subDepth) throw new Opaque('unsupported', 'heredoc', last.off);
     this.host.leave();
     parts.push({ type: 'cmdsub', program, quoted, backtick: false });
   }
@@ -544,6 +578,9 @@ export class Lexer {
     } else if (SPECIAL_PARAMS.has(c) && (s[i + 1] === '}' || (c !== '#' && c !== '!'))) {
       name = c;
       i++;
+    } else if (ZSH_BRACE_FLAGS.has(c)) {
+      // zsh `${~x}` `${=x}` `${^x}` `${+x}` `${(f)x}`
+      throw this.unsupported('zsh-syntax', at);
     } else {
       throw this.unsupported('parameter-expansion', at);
     }
@@ -632,8 +669,9 @@ export class Lexer {
   }
 
   // At a backtick: collect the inner text (undoing \` \\ \$ and, inside
-  // double quotes, \") and parse it as a nested program.
-  readBacktick(parts, quoted) {
+  // double quotes, \") and parse it as a nested program. In a heredoc body
+  // (`inBody`) a \" is not modelled.
+  readBacktick(parts, quoted, inBody = false) {
     const s = this.text;
     const at = this.pos;
     let inner = '';
@@ -651,6 +689,7 @@ export class Lexer {
       }
       if (c === '\\') {
         const n = s[i + 1];
+        if (inBody && n === '"') throw this.unsupported('heredoc', i);
         if (n === '`' || n === '\\' || n === '$' || (quoted && n === '"')) {
           inner += n;
           map.push(this.off(i + 1));
@@ -668,5 +707,117 @@ export class Lexer {
     const program = this.host.parseNested(inner, map);
     this.host.leave();
     parts.push({ type: 'cmdsub', program, quoted, backtick: true });
+  }
+
+  /**
+   * Called by the parser after a `<<`/`<<-` token and its delimiter word: a
+   * heredoc redirection whose body is filled in when the next newline token
+   * is read.
+   * @returns {HeredocRedir}
+   */
+  heredoc(r, target) {
+    const raw = this.text.slice(target.lo, target.hi);
+    // shells keep `$x` or a backtick in a delimiter as text, with differences
+    // in detail: never guess
+    if (raw.includes('$') || raw.includes('`')) throw new Opaque('unsupported', 'heredoc', target.off);
+    let delimiter = '';
+    let quoted = false;
+    for (const p of target.word.parts) {
+      if (p.type !== 'lit' && p.type !== 'glob') throw new Opaque('unsupported', 'heredoc', target.off);
+      delimiter += p.text;
+      if (p.quoted) quoted = true;
+    }
+    if (delimiter.includes('\n')) throw new Opaque('unsupported', 'heredoc', target.off);
+    const node = { op: r.op, delimiter, quoted, body: '', parts: [] };
+    if (r.fd !== undefined) node.fd = r.fd;
+    this.pending.push({ node, regPos: this.pos, level: this.subDepth, off: r.off });
+    return node;
+  }
+
+  // At the newline token at nl, with heredocs pending: read their bodies in
+  // order from the next line and move past the last terminator line. Each
+  // body character is read once, so this stays linear.
+  readHeredocBodies(nl) {
+    const s = this.text;
+    const first = this.pending[0];
+    // the body starts after the newline that ends the redirection's line; a
+    // newline inside a quoted word, a line continuation or a `$( … )` before
+    // it places the body differently in different shells
+    for (const p of this.pending) {
+      if (p.level !== this.subDepth) throw new Opaque('unsupported', 'heredoc', p.off);
+    }
+    if (s.indexOf('\n', first.regPos) !== nl) throw new Opaque('unsupported', 'heredoc', first.off);
+    let pos = nl + 1;
+    for (const p of this.pending) {
+      const { node } = p;
+      const strip = node.op === '<<-';
+      let body = '';
+      const map = node.quoted ? null : [];
+      for (;;) {
+        if (pos >= s.length) throw new Opaque('unterminated', 'heredoc', p.off);
+        let end = s.indexOf('\n', pos);
+        if (end < 0) end = s.length;
+        let from = pos;
+        if (strip) while (from < end && s[from] === '\t') from++;
+        const line = s.slice(from, end);
+        pos = end + 1;
+        if (line === node.delimiter) break;
+        if (!node.quoted) {
+          // `\` at the end of a line joins it with the next in some shells,
+          // which can hide the terminator: never guess
+          let k = end - 1;
+          while (k >= from && s[k] === '\\') k--;
+          if ((end - 1 - k) % 2 === 1) throw new Opaque('unsupported', 'heredoc', this.off(end - 1));
+          for (let i = from; i <= end; i++) map.push(this.off(Math.min(i, s.length - 1)));
+        }
+        body += line + '\n';
+      }
+      node.body = body;
+      if (node.quoted || body === '') node.parts = [{ type: 'lit', text: body, quoted: true }];
+      else node.parts = this.host.parseHeredocBody(body, map);
+    }
+    this.pending = [];
+    this.pos = Math.min(pos, s.length);
+  }
+
+  // The whole text as an unquoted heredoc body: like double quotes, except
+  // that `"` is plain and `\` escapes only `$` `` ` `` and `\`.
+  readHeredocParts() {
+    const s = this.text;
+    const parts = [];
+    let buf = '';
+    const flush = () => {
+      if (buf) {
+        pushLit(parts, buf, true);
+        buf = '';
+      }
+    };
+    while (this.pos < s.length) {
+      const c = s[this.pos];
+      if (c === '\\') {
+        const n = s[this.pos + 1];
+        if (n === '$' || n === '`' || n === '\\') {
+          buf += n;
+          this.pos += 2;
+        } else {
+          buf += '\\';
+          this.pos++;
+        }
+      } else if (c === '$') {
+        flush();
+        if (!this.readDollar(parts, true)) {
+          buf += '$';
+          this.pos++;
+        }
+      } else if (c === '`') {
+        flush();
+        this.readBacktick(parts, true, true);
+      } else {
+        buf += c;
+        this.pos++;
+      }
+    }
+    flush();
+    return parts;
   }
 }
