@@ -186,11 +186,12 @@ test("env -S 'rm x' yields a script", () => {
   assert.deepEqual(strip('watch', 'rm', 'x').scripts, ['rm x']);
   assert.deepEqual(strip('watch', '-n', '1', 'ls -l').scripts, ['ls -l']);
   assert.deepEqual(strip('sudo', 'env', '-S', 'rm x').wrappers, ['sudo']);
-  // until nested shells exist (T16) every script is opaque
-  assert.equal(opaque("env -S 'rm x'").construct, 'nested-script');
-  assert.equal(opaque("flock /tmp/l -c 'rm x'").construct, 'nested-script');
-  assert.equal(opaque('watch rm x').construct, 'nested-script');
-  assert.equal(opaque('sudo -s rm x').construct, 'nested-script');
+  // T16 re-parses script layers after the layer itself; sudo -s stays opaque (sudo's escaping of
+  // the joined words is not reconstructed)
+  assert.deepEqual(cmds("env -S 'touch ./marker'").map((c) => c.argv), [['env', '-S', 'touch ./marker'], ['touch', './marker']]);
+  assert.deepEqual(cmds("flock /tmp/l -c 'echo ok'").at(-1).argv, ['echo', 'ok']);
+  assert.deepEqual(cmds('watch ls').at(-1).argv, ['ls']);
+  assert.equal(opaque('sudo -s ls').construct, 'nested-script');
   // watch -x runs its argv directly
   assert.deepEqual(inner('watch', '-x', 'rm', 'x'), ['rm', 'x']);
 });
@@ -319,10 +320,11 @@ test('xargs -0 -I{} rm {}', () => {
   assert.ok(c.classes.includes('delete'));
 });
 
-test("find . -execdir sh -c 'rm {}' \\; is a nested script (opaque until T16)", () => {
-  assert.deepEqual(strip('find', '.', '-execdir', 'sh', '-c', 'rm {}', ';').execs, [{ argv: ['sh', '-c', UNKNOWN], dir: 'unknown' }]);
-  assert.equal(opaque("find . -execdir sh -c 'rm {}' \\;").construct, 'nested-script');
-  assert.equal(opaque("find . -exec bash -ec 'rm \"$1\"' _ {} ';'").construct, 'nested-script');
+test("find . -execdir sh -c 'cat {}' \\; is a non-literal nested script (opaque)", () => {
+  assert.deepEqual(strip('find', '.', '-execdir', 'sh', '-c', 'cat {}', ';').execs, [{ argv: ['sh', '-c', UNKNOWN], dir: 'unknown' }]);
+  assert.equal(opaque("find . -execdir sh -c 'cat {}' \\;").construct, 'nested-script');
+  // T16: literal code is re-parsed; the clause's extra words are $0 $1 (UNKNOWN inside)
+  assert.deepEqual(cmds("find . -exec bash -ec 'cat \"$1\"' _ {} ';'").at(-1).argv, ['cat', UNKNOWN]);
 });
 
 test('find exec clauses inherit outer wrappers and strip their own', () => {
@@ -403,8 +405,8 @@ test('shellScript reads option values before -c (bash -eo pipefail -c, bash -O e
   assert.equal(shellScript(['bash', '+O', 'extglob', '-o', 'errexit', '-c', 'rm x']), 'rm x');
   assert.equal(shellScript(['bash', '+o', 'posix', '-ec', 'rm x']), 'rm x');
   assert.equal(shellScript(['bash', '-o', 'pipefail', 'script.sh']), null);
-  assert.equal(opaque("find . -exec bash -eo pipefail -c 'rm {}' \\;").construct, 'nested-script');
-  assert.equal(opaque("find . -exec bash -O extglob -c 'rm x' ';'").construct, 'nested-script');
+  assert.equal(opaque("find . -exec bash -eo pipefail -c 'cat {}' \\;").construct, 'nested-script');
+  assert.deepEqual(cmds("find . -exec bash -O extglob -c 'cat ./notes' ';'").at(-1).argv, ['cat', './notes']);
 });
 
 test('flock 9 cmd: a numeric operand followed by a command is a lock file flock creates', () => {

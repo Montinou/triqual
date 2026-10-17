@@ -47,8 +47,8 @@
 //   CERTAIN_CD_PREDECESSORS; otherwise the commands after it that do not depend on its success
 //   (`;`) see an UNKNOWN cwd. `builtin cd`/`command cd` are cd. With a tracked pushd stack, a cd
 //   (zsh AUTO_PUSHD) or `pushd ±N` makes the stack UNKNOWN; popd on an unknown stack, UNKNOWN cwd.
-// - eval, source and `.` (not re-parsed until T16) leave cwd, pushd stack, branches and the set of
-//   repositories UNKNOWN for later commands.
+// - eval, source and `.` leave cwd, pushd stack, branches and the set of repositories UNKNOWN for
+//   later commands (eval's literal text is re-parsed as nested commands; source/`.` is T31's).
 // - After an in-command mv or ln, a later word, redirect target, cd target or git -C directory whose
 //   path names one of its operands, a path under one, or passes through one (`d/../x`, read
 //   lexically and resolved; every prefix before a `..` is also resolved, so a path through another
@@ -75,9 +75,15 @@
 //   (env, nice, sudo, …) does not move the shell. env -C / sudo -D move the inner command (its
 //   words resolve there; redirections stay in the shell's cwd). find -exec clauses are effective
 //   commands of their own, under the wrappers around find. noglob keeps glob words literal (UNKNOWN).
-// - A command word that is UNKNOWN, may split, or is a glob is opaque. A shell or interpreter whose
-//   stdin is a pipe, heredoc, herestring or file is opaque `stdin-interpreter` (T16 replaces this
-//   with re-parsing of literal feeds).
+// - A command word that is UNKNOWN, may split, or is a glob is opaque. An interpreter whose stdin is
+//   a pipe, heredoc, herestring or file is opaque `stdin-interpreter`; a shell (or eval) goes to
+//   unwrap.mjs, which re-parses a literal feed (echo/printf/cat/base64/xxd output, a literal or
+//   tracked heredoc or herestring) and is opaque on any other.
+// - Nested shells (T16): `sh|bash|zsh|dash|ksh -c CODE`, eval, a fed shell and wrapper scripts
+//   (env -S, flock -c, watch, find -exec sh -c) are re-parsed by reparse() after the command itself
+//   is recorded: a child walk on the same state (a subshell's changes undone, only exported values
+//   inherited), nesting counted up to MAX_REPARSE_DEPTH, MAX_REPARSE_BYTES re-parsed per call.
+//   Inside sh/bash/dash/ksh code a `**` glob is UNKNOWN (bash without globstar reads it as `*`).
 // - Linear time: the parser is linear; the walker visits each node once except for loop unrolling,
 //   which is bounded by UNROLL_BUDGET per loop and MAX_STEPS overall (past it: opaque `size`), and
 //   glob expansion shares one time budget per call. Never throws: internal errors are opaque
@@ -86,7 +92,7 @@
 import nodeFs from 'node:fs';
 
 import { parseShell, literalValue, literalText } from './parser.mjs';
-import { Opaque, isName } from './tokenize.mjs';
+import { Opaque, isName, MAX_BYTES } from './tokenize.mjs';
 import { UNKNOWN, isUnknown } from './unknown.mjs';
 import {
   Env,
@@ -96,17 +102,30 @@ import {
   forValues,
   POISON_COMMANDS,
   DECLARE_COMMANDS,
+  MAX_VALUE,
 } from './values.mjs';
+import {
+  unwrap as unwrapNested,
+  shellInvocation,
+  appletArgv,
+  pipeFeeds,
+  heredocLiteral,
+  bashGlobUnknown,
+  resetsEnv,
+  MAX_REPARSE_DEPTH,
+} from './unwrap.mjs';
 import { opsOf } from './ops.mjs';
 import { resolvePath, foldCase, isCaseInsensitive } from '../resolve/paths.mjs';
 import { expandGlob as defaultExpandGlob } from '../resolve/glob.mjs';
 import { repoOf, hasLocalBranch } from '../resolve/repo.mjs';
 import { classesOf, fileEffects, domainsOf, hostToDomain, urlDomainOf, isEnvironPath, writesNothing, READ_ONLY_PROGRAMS } from '../tables/classes.mjs';
 import { checkPathWrite } from '../eval/builtin.mjs';
-import { stripOne, findExecs, shellScript, MAX_WRAP_DEPTH } from '../tables/wrappers.mjs';
+import { stripOne, findExecs, MAX_WRAP_DEPTH } from '../tables/wrappers.mjs';
 
 /** Most nodes walked in one call (loop unrolling included); past it the call is opaque. */
 export const MAX_STEPS = 200000;
+/** Total text re-parsed by nested shells, eval and feeds in one call: the command cap per level. */
+export const MAX_REPARSE_BYTES = MAX_BYTES * MAX_REPARSE_DEPTH;
 /** A `for` loop unrolls only while values × body size × enclosing unrolled iterations stays under this. */
 export const UNROLL_BUDGET = 20000;
 /** Total glob expansion time per call; later globs are UNKNOWN. */
@@ -138,8 +157,10 @@ const NET_PATH = /^\/dev\/(?:tcp|udp)\/([^/]*)/;
 // Most wrapper layers PRE_STEPS may strip from one command (find counts as one for its clauses).
 const MAX_UNWRAP = MAX_WRAP_DEPTH;
 
-// Programs that run code read from stdin (carry rule 2; T16 re-parses literal feeds).
+// Programs that run code read from stdin (carry rule 2). Shells and eval are left to unwrap.mjs,
+// which re-parses a literal feed and is opaque on any other.
 const STDIN_INTERPRETERS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'eval', 'source', '.', 'node', 'nodejs', 'perl', 'ruby']);
+const NESTED_HANDLED = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'eval']);
 const PYTHON = /^python[0-9.]*$/;
 
 // git global options that take a separate value.
@@ -290,6 +311,10 @@ class Shell {
     this.stdin = false;
     // set by `exec < f` (only redirections): stdin stays fed for the rest of this shell
     this.stdinPersist = false;
+    // what a pipe hands one pipeline member: {node, text} (text: literal string, null, or a feed error)
+    this.feed = null;
+    // 'zsh' (the host shell) or 'bash' (sh, bash, dash, ksh run through a nested shell): glob rules
+    this.kind = 'zsh';
     // the possible failure of the last simple command walked here: {node, verified, keys, fail}
     this.lastRisk = null;
     // names exported inside each open scope (removed on rollback)
@@ -318,6 +343,8 @@ function scoped(sh, fn, sticky = false) {
     stdinPersist: sh.stdinPersist,
     lastRisk: sh.lastRisk,
     touched: sh.env.touched,
+    feed: sh.feed,
+    kind: sh.kind,
   };
   const exported = [];
   sh.exportJournal.push(exported);
@@ -335,6 +362,8 @@ function scoped(sh, fn, sticky = false) {
     sh.stdinPersist = saved.stdinPersist || (sticky && sh.stdinPersist);
     sh.lastRisk = saved.lastRisk;
     sh.env.touched = saved.touched;
+    sh.feed = saved.feed;
+    sh.kind = saved.kind;
   }
   return { touched: t, u };
 }
@@ -574,8 +603,11 @@ function scanSimple(node, out, globalOnly) {
   try {
     const u = unwrap(node.words.map((w) => literalValue(w) ?? UNKNOWN), {}, node, null, null);
     inner = u.argv;
-    // a find -exec clause may run git (a branch change) like any other command
-    if (u.execs.length > 0) scanAdd(out, BRALL, globalOnly);
+    // a find -exec clause, or a wrapper script (env -S, flock -c, watch), may run git (a branch
+    // change) like any other command
+    if (u.execs.length > 0 || u.scripts.length > 0) scanAdd(out, BRALL, globalOnly);
+    // a nested shell is a subshell: only file system keys (branches) escape it
+    if (shellInvocation(u.argv) !== null) scanAdd(out, BRALL, globalOnly);
   } catch (e) {
     if (e instanceof Opaque) throw e; // as opaque as in the walk
     return everything();
@@ -1143,6 +1175,8 @@ function cdTargetPath(op, sh, g, cdpath) {
 }
 
 function homeTarget(sh, g) {
+  // a poisoned env (eval, source, or a nested shell under sudo/env) may hold any HOME
+  if (sh.env.poisoned) return UNKNOWN;
   const v = sh.env.has('HOME') ? sh.env.get('HOME') : g.home;
   return isAbs(v) ? logicalCd('/', v, g.fs) : UNKNOWN;
 }
@@ -1285,9 +1319,12 @@ function redirEffects(redirs, targets, eff, sh, g) {
 // command, add commands to g.commands, or throw an Opaque.
 
 function stdinInterpreterStep(eff, info) {
-  const prog = programName(eff.argv[0]);
+  // a busybox/toybox applet is the program it names
+  const prog = programName(appletArgv(eff.argv)[0]);
   if (!info.stdin || prog === null) return;
   const base = prog.toLowerCase(); // case-insensitive volumes run `BASH` as bash
+  // a shell (or eval) spelled exactly as unwrap.mjs reads it: its feed is judged there
+  if (NESTED_HANDLED.has(base) && (base !== 'eval' || eff.argv[0] === 'eval')) return;
   if (STDIN_INTERPRETERS.has(base) || PYTHON.test(base)) {
     throw new Opaque('unsupported', 'stdin-interpreter', info.off);
   }
@@ -1383,21 +1420,18 @@ export const FINISH_STEPS = [stdinInterpreterStep, commandEffectsStep];
 // (not -v/-V), builtin, exec, setsid, flock, watch, xargs, noglob, nocorrect. One layer per retry.
 // `builtin X` / `command X` (and a leading `time`, the reserved word) run X in this shell (so
 // `builtin cd` and `time cd` are cd); the others run X as a new process (`external`), where a cd
-// cannot move the shell. A script layer (env -S, flock -c, watch,
-// sudo -s) goes to ctx.reparse when present (T16 provides it) and is opaque until then. Any doubt
-// (an unknown flag, an UNKNOWN word where a flag or the program goes) is opaque, in the walk and in
-// the loop scan alike.
-function wrapperStep({ argv, node, first }, sh, g) {
+// cannot move the shell. A script layer (env -S, flock -c, watch, sudo -s) stops the stripping:
+// the layer stays the command and its script is recorded in `scripts` for unwrap.mjs, which
+// re-parses it after the command is finished (or is opaque). Any doubt (an unknown flag, an
+// UNKNOWN word where a flag or the program goes) is opaque, in the walk and in the loop scan alike.
+function wrapperStep({ argv, node, first, scripts }, sh, g) {
   const r = stripOne(argv, { bareHead: first === true && bareHead(node) });
   if (r === null) return null;
   const off = node && node.off ? node.off : 0;
   if (r.opaque) throw new Opaque(r.opaque.reason, r.opaque.construct, off);
   if (r.script !== undefined) {
-    if (g && typeof g.reparse === 'function') {
-      g.reparse(r.script, 1);
-      return null;
-    }
-    throw new Opaque('unsupported', 'nested-script', off);
+    if (Array.isArray(scripts)) scripts.push({ name: r.name, text: r.script, exact: exactScript(r.name, argv, r.script) });
+    return null;
   }
   return {
     argv: r.inner,
@@ -1411,6 +1445,20 @@ function wrapperStep({ argv, node, first }, sh, g) {
   };
 }
 
+// Is the script the whole story of the layer? `env -S TEXT` must be exactly that (other env flags,
+// such as -C or -u, or words after TEXT change what runs); flock's TEXT must be its last word
+// (nothing is appended); watch joins all its words.
+function exactScript(name, argv, text) {
+  if (typeof text !== 'string') return false;
+  const last = argv[argv.length - 1];
+  if (name === 'env') {
+    if (argv.length === 2) return last === `-S${text}` || last === `--split-string=${text}`;
+    return argv.length === 3 && (argv[1] === '-S' || argv[1] === '--split-string') && last === text;
+  }
+  if (name === 'flock') return last === text || last === `-c${text}` || last === `--command=${text}`;
+  return true;
+}
+
 // The command's first word is a bare unquoted literal (no quote, backslash, expansion) with no
 // assignment before it: what the shell needs to see to read `time` as its reserved word.
 function bareHead(node) {
@@ -1422,7 +1470,7 @@ function bareHead(node) {
 
 /**
  * Steps that unwrap a command BEFORE cd/git/ops/taint dispatch. Each is
- * step({argv, env, node, first}, sh, g) -> null (not mine) | {argv, env?, external?, chdirs?, reads?, writes?}:
+ * step({argv, env, node, first, scripts}, sh, g) -> null (not mine) | {argv, env?, external?, chdirs?, reads?, writes?}:
  * the inner command, assignments it adds to the command's environment, whether it runs as a new
  * process, directories it is moved to, and paths the wrapper's own flags read or write (words,
  * relative to where the wrapper runs). Steps are retried from the first after every unwrap, up to
@@ -1450,10 +1498,12 @@ function pathAt(sh, g, w) {
 
 // {argv, env, layers, external, cwd, reads, writes, execs}: cwd is undefined unless a wrapper moved
 // the command (then a realpath or UNKNOWN); reads/writes are the wrappers' own resolved paths;
-// execs are find's -exec clauses. depth counts layers already stripped around this command.
+// execs are find's -exec clauses; scripts are wrapper script layers ({name, text, exact}, see
+// wrapperStep). depth counts layers already stripped around this command.
 function unwrap(argv, env, node, sh, g, depth = 0) {
   let cur = { argv, env };
   const layers = [];
+  const scripts = [];
   const reads = [];
   const writes = [];
   let external = false;
@@ -1463,7 +1513,7 @@ function unwrap(argv, env, node, sh, g, depth = 0) {
     let next = null;
     for (const step of PRE_STEPS) {
       // first: the command as the shell sees it (a leading `time` is the reserved word)
-      next = step({ argv: cur.argv, env: cur.env, node, first: layers.length === 0 && depth === 0 }, sh, g);
+      next = step({ argv: cur.argv, env: cur.env, node, first: layers.length === 0 && depth === 0, scripts }, sh, g);
       if (next) break;
     }
     if (!next) break;
@@ -1493,7 +1543,7 @@ function unwrap(argv, env, node, sh, g, depth = 0) {
   }
   const f = findExecs(cur.argv);
   if (f && f.opaque) throw new Opaque(f.opaque.reason, f.opaque.construct, node.off);
-  return { ...cur, layers, external, timeProgram, cwd, reads, writes, execs: f ? f.execs : [] };
+  return { ...cur, layers, external, timeProgram, cwd, reads, writes, execs: f ? f.execs : [], scripts };
 }
 
 function predecessorOk(argv) {
@@ -1515,6 +1565,94 @@ function finish(eff, info, sh, g) {
   for (const step of FINISH_STEPS) step(eff, info, sh, g);
   g.commands.push(eff);
   if (!predecessorOk(eff.argv)) g.allSafe = false;
+  nestedCommands(eff, info, sh, g);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Nested shells, eval, feeds and wrapper scripts (unwrap.mjs decides what to re-parse; reparse
+// walks it). The parent command is already in g.commands; the nested commands follow it, with
+// their own classes. Nesting is counted in g.nest across every kind of re-parse.
+
+// info.feed: what the command's stdin holds when info.stdin (walkSimple computes it for simple
+// commands; anything else fed is not literal).
+function nestedCommands(eff, info, sh, g) {
+  const off = info.off || 0;
+  const fed = info.stdin === true;
+  const r = unwrapNested(eff, g.nest, {
+    fed,
+    feed: fed && info.feed !== undefined ? info.feed : null,
+    kind: sh.kind,
+    scripts: info.scripts || [],
+    reset: resetsEnv(info.unwrapped),
+    reparse: (text, depth, child) => reparse(text, depth, { ...child, cwd: eff.cwd, env: eff.env, sh, g, off }),
+  });
+  if (!Array.isArray(r)) throw new Opaque(r.opaque.reason, r.opaque.construct, off);
+}
+
+/**
+ * Parse text as shell code and walk it as a child of the current shell; its effective commands are
+ * appended to g.commands and returned, or {opaque} (offset: the parent command's). child = {kind,
+ * subshell, stdin, reset, cwd, env, sh, g, off}: a subshell (bash -c, a fed shell, a wrapper
+ * script) keeps its cd, pushd stack and variables to itself and sees only exported values plus the
+ * command's prefix assignments (none at all after sudo/doas/env: `reset`); eval (not a subshell)
+ * sees the shell as it is. The file system state (repositories, branches, mv/ln taint) is shared;
+ * branch changes inside are uncertain afterwards (the nested code may stop early). The text counts
+ * against the 32 KiB parser cap per level and MAX_REPARSE_BYTES per call.
+ */
+function reparse(text, depth, child) {
+  const { sh, g, off } = child;
+  const fail = (reason, construct) => ({ opaque: { reason, construct, offset: off } });
+  if (typeof text !== 'string') return fail('unknown', 'nested-script');
+  // text parsed after an alias was defined may expand it (eval reads aliases; so do shells that source rc files)
+  if (g.aliases.all || g.aliases.names.size > 0) return fail('unsupported', 'alias');
+  if (!Number.isInteger(depth) || depth > MAX_REPARSE_DEPTH) return fail('depth', 'nested-shell');
+  g.reparseBytes += text.length;
+  if (g.reparseBytes > MAX_REPARSE_BYTES) return fail('size', 'nested-shell');
+  const tree = parseShell(text);
+  if (!tree || Object.hasOwn(tree, 'opaque')) {
+    const o = tree && tree.opaque ? tree.opaque : { reason: 'internal', construct: 'parse' };
+    return fail(o.reason, o.construct);
+  }
+  const start = g.commands.length;
+  const savedNest = g.nest;
+  g.nest = depth;
+  try {
+    const r = inSubshell(sh, g, () => {
+      enterChild(sh, g, child);
+      return walk(tree, sh, g);
+    });
+    forgetGlobals(sh, g, r.touched);
+  } catch (e) {
+    if (e instanceof Opaque) return fail(e.opaque.reason, e.opaque.construct);
+    throw e;
+  } finally {
+    g.nest = savedNest;
+  }
+  return g.commands.slice(start);
+}
+
+// The child's starting state, inside the scope reparse opened (undone afterwards).
+function enterChild(sh, g, child) {
+  sh.cwd = isAbs(child.cwd) ? child.cwd : UNKNOWN;
+  sh.stdin = child.stdin === true;
+  sh.stdinPersist = false;
+  sh.feed = null;
+  sh.lastRisk = null;
+  sh.kind = child.kind === 'bash' ? 'bash' : 'zsh';
+  if (!child.subshell) return;
+  sh.dirs = [];
+  if (child.reset) {
+    sh.env.poison();
+    return;
+  }
+  // a new shell process inherits only the environment: exported names and the host's own
+  for (const name of [...sh.env.vars.keys()]) {
+    if (!sh.exported.has(name) && !Object.hasOwn(g.hostEnv, name)) sh.env.set(name, UNKNOWN);
+  }
+  sh.env.forget('PWD'); // the child's PWD is its cwd
+  sh.env.set('OLDPWD', UNKNOWN);
+  const env = child.env !== null && typeof child.env === 'object' ? child.env : {};
+  for (const k of Object.keys(env)) sh.env.set(k, env[k]);
 }
 
 function newEff(argv, env, sh, g) {
@@ -1535,7 +1673,7 @@ function newEff(argv, env, sh, g) {
 // The walk. Every walk function returns U (see the header).
 
 function vctxOf(sh, g) {
-  return { home: g.home, cwd: sh.cwd, expandGlob: g.expandGlob };
+  return { home: g.home, cwd: sh.cwd, expandGlob: sh.kind === 'zsh' ? g.expandGlob : g.expandGlobBash };
 }
 
 function walkParts(parts, sh, g) {
@@ -1571,6 +1709,34 @@ function noteExports(argv, sh) {
   }
 }
 
+// Aliases defined earlier in the same call. `alias NAME=…` is remembered by name (-g and -s forms,
+// and names that are not literal, make every later command suspect); `unalias` forgets exact names.
+// A later command whose first word is a defined name is opaque, and so is any re-parsed text.
+function aliasStep(argv, inner, g, off) {
+  const al = g.aliases;
+  const prog = inner.argv[0];
+  const isDef = prog === 'alias' || prog === 'unalias';
+  if (!isDef) {
+    const heads = [argv[0], ...inner.layers.map((l) => l[0]), prog];
+    if (al.all || heads.some((h) => typeof h === 'string' && al.names.has(h))) throw new Opaque('unsupported', 'alias', off);
+    return;
+  }
+  const args = inner.argv.slice(1);
+  if (prog === 'unalias') {
+    for (const a of args) {
+      if (a === '-a') al.names.clear();
+      else if (typeof a === 'string' && !a.startsWith('-')) al.names.delete(a);
+    }
+    return;
+  }
+  for (const a of args) {
+    if (typeof a !== 'string') al.all = true;
+    else if (a.startsWith('-')) {
+      if (/[gs]/.test(a)) al.all = true;
+    } else if (a.includes('=')) al.names.add(a.slice(0, a.indexOf('=')));
+  }
+}
+
 function walkSimple(node, sh, g) {
   sh.lastRisk = null;
   // command substitutions run during expansion, each in a subshell
@@ -1603,6 +1769,7 @@ function walkSimple(node, sh, g) {
   if (splitsOnWhitespace(w0, env, vctx)) throw new Opaque('unknown', 'command-word', node.off);
   const argv = [];
   const prefix = {};
+  const heredocs = [];
   const literalGlobs = noglobPrefix(node);
   const targets = reading(() => {
     for (let i = 0; i < node.words.length; i++) {
@@ -1614,11 +1781,13 @@ function walkSimple(node, sh, g) {
         if (Array.isArray(vals)) argv.push(...vals);
         else argv.push(UNKNOWN);
       } else {
-        argv.push(resolveWord(w, env, vctx));
+        argv.push(longLiteral(resolveWord(w, env, vctx), w));
       }
     }
     // words are expanded first, then redirections, then assignment values
     const ts = node.redirs.map((r) => (r.target ? resolveWord(r.target, env, vctx) : null));
+    // heredoc bodies as the command reads them (a nested shell may run them)
+    for (const r of node.redirs) heredocs.push(r.op === '<<' || r.op === '<<-' ? heredocText(r, env, vctx) : null);
     for (const a of node.assigns) {
       const value = resolveWord(a.value, env, vctx);
       Object.defineProperty(prefix, a.name, { value, enumerable: true, writable: true, configurable: true });
@@ -1635,6 +1804,7 @@ function walkSimple(node, sh, g) {
 
   // wrappers are stripped before the dispatch, so cd/git/ops/taint see the real command
   const inner = unwrap(argv, prefix, node, sh, g);
+  aliasStep(argv, inner, g, node.off);
   const cmdArgv = inner.argv;
   const eff = newEff(cmdArgv, inner.env, sh, g);
   // redirections are opened by the shell, in its own cwd
@@ -1660,12 +1830,47 @@ function walkSimple(node, sh, g) {
     else if (kind === 'opaque-run') post = () => opaqueRun(sh, g);
     const opsRaw = opsOf(cmdArgv);
     eff.ops = opsRaw.map((o) => ({ path: resolveIn(sh, g, o.path), op: o.op }));
-    finish(eff, { node, off: node.off, stdin, unwrapped: inner.layers }, sh, g);
+    const feed = stdin ? feedOf(node, sh, targets, heredocs) : undefined;
+    finish(eff, { node, off: node.off, stdin, unwrapped: inner.layers, feed, scripts: inner.scripts }, sh, g);
     afterCommand(eff, opsRaw, sh, g);
     runExecs(inner, node, sh, g, stdin, inner.layers.length + 1);
   });
   if (persistStdin) sh.stdinPersist = true;
   return post ? post() : EMPTY;
+}
+
+// A literal word longer than values.mjs tracks (MAX_VALUE) is still exactly its text (a long
+// `bash -c '…'` script): keep it instead of UNKNOWN.
+function longLiteral(v, w) {
+  if (!isUnknown(v)) return v;
+  const lit = literalValue(w);
+  return lit !== null && lit.length > MAX_VALUE ? lit : v;
+}
+
+// A heredoc body as the command reads it: literal, expanded through tracked values, or UNKNOWN.
+function heredocText(r, env, vctx) {
+  const lit = heredocLiteral(r);
+  if (lit !== null) return lit;
+  return resolveWord({ parts: r.parts }, env, vctx);
+}
+
+const HEREDOC_DYNAMIC = { reason: 'unknown', construct: 'heredoc-dynamic' };
+
+// What a fed command's stdin holds (unwrap.mjs ctx.feed): the pipe's text when this node is the
+// pipeline member the pipe feeds, overridden by the node's own stdin redirections in order (a
+// literal heredoc/herestring is its text, an UNKNOWN one `heredoc-dynamic`, a file null).
+function feedOf(node, sh, targets, heredocs) {
+  let feed = null;
+  if (!sh.stdinPersist && sh.stdin && sh.feed && sh.feed.node === node) feed = sh.feed.text;
+  node.redirs.forEach((r, i) => {
+    if (!(r.fd === undefined || r.fd === 0) || !STDIN_REDIRS.has(r.op)) return;
+    if (r.op === '<<' || r.op === '<<-') feed = typeof heredocs[i] === 'string' ? heredocs[i] : HEREDOC_DYNAMIC;
+    else if (r.op === '<<<') {
+      const v = r.target ? longLiteral(targets[i], r.target) : UNKNOWN;
+      feed = typeof v === 'string' ? `${v}\n` : HEREDOC_DYNAMIC;
+    } else feed = null;
+  });
+  return feed;
 }
 
 function cwdUnknown(sh) {
@@ -1694,23 +1899,20 @@ function afterCommand(eff, opsRaw, sh, g) {
 // find -exec/-execdir/-ok/-okdir clauses: each is an effective command of its own, run as a new
 // process in find's directory (-execdir/-okdir: the matched file's, UNKNOWN), under the wrappers
 // around find. A clause's own wrappers are stripped, nesting counted. A shell given -c code in a
-// clause is a nested script (opaque until T16's reparse hook exists). A clause that runs git may
-// change any branch.
+// clause is re-parsed like any nested shell (a `{}` in the code makes it UNKNOWN: opaque). A clause
+// that runs git may change any branch.
 function runExecs(parent, node, sh, g, stdin, depth) {
   for (const ex of parent.execs) {
     withCwd(sh, ex.dir === 'unknown' ? UNKNOWN : undefined, () => {
       const sub = unwrap(ex.argv, parent.env, node, sh, g, depth);
-      if (shellScript(sub.argv) !== null) {
-        if (typeof g.reparse !== 'function') throw new Opaque('unsupported', 'nested-script', node.off);
-        g.reparse(shellScript(sub.argv), 1);
-      }
       withCwd(sh, sub.cwd, () => {
         const eff = newEff(sub.argv, sub.env, sh, g);
         pushAll(eff.reads, sub.reads);
         pushAll(eff.writes, sub.writes);
         const opsRaw = opsOf(sub.argv);
         eff.ops = opsRaw.map((o) => ({ path: resolveIn(sh, g, o.path), op: o.op }));
-        finish(eff, { node, off: node.off, stdin, unwrapped: [...parent.layers, ...sub.layers] }, sh, g);
+        // a clause's stdin is find's: never a literal feed
+        finish(eff, { node, off: node.off, stdin, unwrapped: [...parent.layers, ...sub.layers], scripts: sub.scripts }, sh, g);
         afterCommand(eff, opsRaw, sh, g);
         if (commandKind(sub.argv) === 'git') setBranch(sh, g, UNKNOWN, UNKNOWN);
         runExecs({ ...sub, layers: [...parent.layers, ...sub.layers] }, node, sh, g, stdin, depth + sub.layers.length + 1);
@@ -1729,8 +1931,9 @@ function noglobPrefix(node) {
   return false;
 }
 
-// eval, source and `.` run code fence does not see yet (re-parsing is T16): the cwd, the pushd
-// stack, every branch and the set of repositories are unknown afterwards.
+// eval, source and `.` run code that may change the shell in ways not tracked (eval's text is
+// re-parsed, but on a copy of the state): the cwd, the pushd stack, every branch and the set of
+// repositories are unknown afterwards.
 function opaqueRun(sh, g) {
   sh.cwd = UNKNOWN;
   touch(sh, CWD);
@@ -1836,12 +2039,17 @@ function walkPipeline(node, sh, g) {
     forget(sh, g, t);
     return EMPTY;
   }
+  // what each member reads from the pipe: literal echo/printf/cat/decoder output, or null
+  const feeds = pipeFeeds(node.commands, node.ops);
   for (let i = 0; i < n; i++) {
     const r = inSubshell(
       sh,
       g,
       () => {
-        if (i > 0) sh.stdin = true;
+        if (i > 0) {
+          sh.stdin = true;
+          sh.feed = { node: node.commands[i], text: feeds[i] === undefined ? null : feeds[i] };
+        }
         return walk(node.commands[i], sh, g);
       },
       i === n - 1,
@@ -2033,11 +2241,16 @@ export function normalize(command, ctx) {
       resolveCache: new Map(),
       protectedCache: new Map(),
       isProtected: typeof c.isProtected === 'function' ? c.isProtected : null,
-      // nested-shell hook for wrapper scripts (env -S, flock -c, watch); T16 provides it
-      reparse: typeof c.reparse === 'function' ? c.reparse : null,
+      // nesting level of the code being walked (nested shells, eval, feeds), and text re-parsed so far
+      nest: 0,
+      reparseBytes: 0,
+      // aliases defined earlier in this call: a later command word or re-parsed text may expand one
+      aliases: { names: new Set(), all: false },
       removed: { all: false, trie: new PathTrie() },
     };
     g.expandGlob = globWithBudget(typeof c.expandGlob === 'function' ? c.expandGlob : null, fsImpl, g);
+    // bash without globstar reads `**` as `*`: inside sh/bash/dash/ksh text such a glob is UNKNOWN
+    g.expandGlobBash = (pattern, cwd) => (bashGlobUnknown(pattern) ? UNKNOWN : g.expandGlob(pattern, cwd));
     const env = new TrackedEnv();
     env.touched = new Set();
     const sh = new Shell(env, isAbs(c.cwd) ? c.cwd : UNKNOWN);
