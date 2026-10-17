@@ -94,9 +94,11 @@ import {
   DECLARE_COMMANDS,
 } from './values.mjs';
 import { opsOf } from './ops.mjs';
-import { resolvePath, foldCase } from '../resolve/paths.mjs';
+import { resolvePath, foldCase, isCaseInsensitive } from '../resolve/paths.mjs';
 import { expandGlob as defaultExpandGlob } from '../resolve/glob.mjs';
 import { repoOf, hasLocalBranch } from '../resolve/repo.mjs';
+import { classesOf, fileEffects, domainsOf, hostToDomain, urlDomainOf, isEnvironPath, writesNothing, READ_ONLY_PROGRAMS } from '../tables/classes.mjs';
+import { checkPathWrite } from '../eval/builtin.mjs';
 
 /** Most nodes walked in one call (loop unrolling included); past it the call is opaque. */
 export const MAX_STEPS = 200000;
@@ -153,6 +155,12 @@ const GIT_KNOWN_SUBS = new Set([
   'bundle', 'request-pull', 'mergetool', 'difftool', 'cherry', 'sparse-checkout',
 ]);
 
+// Search and pager programs with options that run a command (rg --pre, ugrep --filter, ack --pager,
+// fd -x, bat --pager): never certain.
+const RUNS_PROGRAMS = new Set(['rg', 'ag', 'ack', 'ugrep', 'ug', 'pt', 'fd', 'fdfind', 'bat', 'batcat', 'locate', 'plocate', 'mdfind']);
+const runsProgramFlag = (a) =>
+  typeof a === 'string' && /^--(?:pre|pager|filter|compress-program|use-compress-program|hostname-bin|to-command)(?:=|$)/.test(a);
+
 /**
  * Programs (and git subcommands) known not to remove a directory, change its permissions or
  * replace it. A cd counts as certain to succeed only when its target exists now and every earlier
@@ -161,11 +169,13 @@ const GIT_KNOWN_SUBS = new Set([
  */
 export const CERTAIN_CD_PREDECESSORS = [
   ...['echo', 'printf', 'true', 'false', ':', 'pwd', 'cd', 'pushd', 'popd', 'test', '[', 'read', 'type'].map((program) => ({ program })),
-  ...['ls', 'cat', 'head', 'tail', 'wc', 'grep', 'egrep', 'fgrep', 'stat', 'file', 'diff', 'cmp', 'sort', 'uniq', 'cut', 'tr'].map(
-    (program) => ({ program }),
-  ),
-  // rg runs a preprocessor command with --pre
-  { program: 'rg', test: (argv) => !argv.some((a) => typeof a !== 'string' || a.startsWith('--pre')) },
+  // the read-only operand table (tables/classes.mjs): an invocation that writes nothing, with no
+  // option that runs a program (--pre, --pager, --compress-program, ...)
+  ...[...READ_ONLY_PROGRAMS]
+    .filter((program) => !RUNS_PROGRAMS.has(program))
+    .map((program) => ({ program, test: (argv) => writesNothing(argv) && !argv.some(runsProgramFlag) })),
+  // rg runs a command with --pre and --hostname-bin
+  { program: 'rg', test: (argv) => !argv.some((a) => typeof a !== 'string' || a.startsWith('--pre') || runsProgramFlag(a)) && writesNothing(argv) },
   {
     program: 'git',
     subcommands: ['status', 'diff', 'log', 'show', 'rev-parse', 'branch'],
@@ -711,7 +721,8 @@ function taintedWord(sh, g, w, resolved) {
   // Coarse: a resolution that followed any symlink (an existing link may point through a path
   // this command moves or links), or that leaves its lexical spelling, is not trusted.
   const lex = lexical(sh, w.startsWith('~') ? `./${w}` : w);
-  if (lex === null || fold(lex) !== fold(resolved)) return true;
+  // exact, not folded: on a case-sensitive volume a link that differs only in case is a different path
+  if (lex === null || lex !== resolved) return true;
   // A `..` steps back from where the path before it really is, which may be through another
   // symlink (`/tmp/dq/..` with /tmp -> /private/tmp): resolve every prefix that precedes a `..`.
   let prefix = '';
@@ -1201,16 +1212,6 @@ function cdEffect(node, prog, argv, eff, sh, g, cdpath) {
 // ---------------------------------------------------------------------------------------------
 // Redirections
 
-function domainOf(host) {
-  const h = host.toLowerCase().replace(/\.$/, '');
-  if (h === '') return UNKNOWN;
-  if (/^[0-9]{1,3}(\.[0-9]{1,3}){3}$/.test(h)) return h.split('.').every((o) => Number(o) <= 255) ? h : UNKNOWN;
-  const labels = h.split('.');
-  if (labels.some((l) => !/^[a-z0-9-]+$/.test(l))) return UNKNOWN;
-  if (/^[0-9]+$/.test(labels[labels.length - 1])) return UNKNOWN;
-  return h;
-}
-
 // Exactly one of the names that are not files (checked on a normalized or resolved path only).
 function isNoFile(p) {
   return NO_FILE.has(p) || FD_PATH.test(p);
@@ -1255,7 +1256,7 @@ function redirEffects(redirs, targets, eff, sh, g) {
       const lex = lexical(sh, word);
       const net = lex === null ? null : NET_PATH.exec(lex);
       if (net) {
-        eff.domains.push(domainOf(net[1]));
+        eff.domains.push(hostToDomain(net[1]));
         addClass(eff, 'network-fetch');
         // bash opens /dev/tcp only for that exact spelling; any other spelling is also a path
         if (word === lex) continue;
@@ -1284,13 +1285,91 @@ function stdinInterpreterStep(eff, info) {
   }
 }
 
+// Proxy variables that send a connection to another host (a prefix assignment of the command).
+const PROXY_VARS = /^(?:http|https|all|ftp|socks|rsync)_proxy$/i;
+
+function pushAll(list, items) {
+  const seen = new Set(list);
+  for (const x of items) {
+    if (seen.has(x)) continue;
+    seen.add(x);
+    list.push(x);
+  }
+}
+
+// Is the path (or a path just below it) one of the built-in protected paths? `projectRoots`
+// bring the per-project `.claude/` and `.codex/` globs. Injectable through ctx.isProtected(path,
+// roots); an error while deciding counts as protected (fail closed).
+function protectedDir(path, roots, g) {
+  const key = `${path}\0${roots.join('\0')}`;
+  if (g.protectedCache.has(key)) return g.protectedCache.get(key);
+  let hit;
+  try {
+    if (g.isProtected) hit = g.isProtected(path, roots) === true;
+    else {
+      const opts = {
+        home: g.home,
+        platform: process.platform,
+        caseInsensitive: isCaseInsensitive(path, g.fs),
+        projectRoots: roots,
+      };
+      if (g.fs.realpathSync && typeof g.fs.realpathSync.native === 'function') opts.realpath = g.fs.realpathSync.native;
+      // the directory itself, and a child (a glob like `skills/**` does not name `skills`)
+      hit = checkPathWrite(path, opts) !== null || checkPathWrite(path === '/' ? '/x' : `${path}/x`, opts) !== null;
+    }
+  } catch {
+    hit = true;
+  }
+  g.protectedCache.set(key, hit);
+  return hit;
+}
+
+// Classes, network domains and file effects of the command's arguments (tables/classes.mjs).
+function commandEffectsStep(eff, info, sh, g) {
+  const argv = eff.argv;
+  if (argv.length > 0) {
+    // a wrapper PRE_STEPS removed still contributes its own class (sudo -> privilege)
+    for (const layer of info.unwrapped) for (const c of classesOf(layer)) addClass(eff, c);
+    const classes = classesOf(argv);
+    for (const c of classes) addClass(eff, c);
+    const domains = domainsOf(argv);
+    if (classes.includes('network-fetch') && eff.env && typeof eff.env === 'object') {
+      for (const k of Object.keys(eff.env)) {
+        if (!PROXY_VARS.test(k)) continue;
+        const v = eff.env[k];
+        if (v === '') continue;
+        domains.push(typeof v === 'string' ? (urlDomainOf(v) ?? UNKNOWN) : UNKNOWN);
+      }
+    }
+    pushAll(eff.domains, domains);
+    const roots = [];
+    if (eff.repo && typeof eff.repo === 'object' && typeof eff.repo.root === 'string') roots.push(eff.repo.root);
+    if (isAbs(eff.cwd)) roots.push(eff.cwd);
+    const fx = fileEffects(argv, {
+      cwd: eff.cwd,
+      home: g.home,
+      // a path named after an in-command mv or ln is UNKNOWN, attached values included
+      resolve: (w) => {
+        const p = resolveIn(sh, g, w);
+        return taintedWord(sh, g, w, p) ? UNKNOWN : p;
+      },
+      isProtected: (p) => protectedDir(p, roots, g),
+      exists: (p) => exists(p, g),
+    });
+    pushAll(eff.reads, fx.reads);
+    pushAll(eff.writes, fx.writes);
+  }
+  // /proc/*/environ read through an operand or a redirection
+  if (eff.reads.some(isEnvironPath)) addClass(eff, 'env-dump');
+}
+
 /**
  * Steps run on every finished effective command, after cd/git/ops dispatch (enrichment: classes,
  * file effects). Each is step(eff, info, sh, g); it may change eff, add commands to g.commands, or
  * throw an Opaque. info = {node, off, stdin, unwrapped}: unwrapped lists the argv of every wrapper
  * layer PRE_STEPS removed, outermost first.
  */
-export const FINISH_STEPS = [stdinInterpreterStep];
+export const FINISH_STEPS = [stdinInterpreterStep, commandEffectsStep];
 
 // `builtin X` / `command [-p] [--] X` run X itself, for the builtins the walker models (cd,
 // pushd, popd, eval, source, `.`) and for a further builtin/command layer (chains unwrap one layer
@@ -1784,7 +1863,7 @@ function globWithBudget(expand, fsImpl, g) {
 /**
  * Normalize a shell command into effective commands, or an opaque verdict. Never throws.
  * @param {string} command
- * @param {{cwd?:string, home?:string, env?:object, fs?:object, expandGlob?:Function}} ctx
+ * @param {{cwd?:string, home?:string, env?:object, fs?:object, expandGlob?:Function, isProtected?:Function}} ctx
  * @returns {{commands: object[]} | {opaque: {reason:string, construct:string, offset:number}}}
  */
 export function normalize(command, ctx) {
@@ -1813,6 +1892,8 @@ export function normalize(command, ctx) {
       existsCache: new Map(),
       realCache: new Map(),
       resolveCache: new Map(),
+      protectedCache: new Map(),
+      isProtected: typeof c.isProtected === 'function' ? c.isProtected : null,
       removed: { all: false, trie: new PathTrie() },
     };
     g.expandGlob = globWithBudget(typeof c.expandGlob === 'function' ? c.expandGlob : null, fsImpl, g);

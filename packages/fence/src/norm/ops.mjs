@@ -1,16 +1,18 @@
-// Minimal ancestor-operation table for the normalizer (T13). The evaluator feeds every op to
+// Ancestor-operation table for the normalizer. The evaluator feeds every op to
 // builtin.checkAncestorOp, which denies an operation on a protected path or on a directory that
-// holds one. T14 owns the real class and file-effect tables and replaces or extends this helper.
+// holds one. The simple operand tools (rm, mv, chmod, ln) live here; the operations of programs
+// with real option grammars (find -delete, rsync --delete, git clean, git rm) come from the
+// command class tables (tables/classes.mjs, extraOps).
 //
 //   opsOf(argv) -> {path: string|UNKNOWN, op: 'delete'|'move'|'chmod'|'link'}[]
 //
 // `path` is the argv word as written (the caller resolves it from the command's cwd).
 //
-// - rm, rmdir, unlink, shred: every operand is a delete.
+// - rm, rmdir, unlink, shred, srm, trash, trash-put, rip: every operand is a delete.
 // - mv: every operand (sources and destination, including `-t DIR`) is a move.
-// - chmod, chown, chgrp with -R/--recursive (any option cluster containing R, including a chmod
-//   mode cluster such as -Rw): every operand after the mode/owner (all of them with --reference)
-//   is a chmod.
+// - chmod, chown, chgrp, chattr, chflags, setfacl with -R/--recursive (any option cluster containing
+//   R, including a chmod mode cluster such as -Rw): every operand after the mode/owner (all of them
+//   with --reference) is a chmod.
 // - ln: every operand (targets and the link name, including `-t DIR`) is a link.
 //
 // Option parsing is the union of GNU and BSD and errs toward more operands: options are read
@@ -20,9 +22,12 @@
 // could have been expected.
 
 import { UNKNOWN } from './unknown.mjs';
+import { extraOps } from '../tables/classes.mjs';
 
-const DELETE = new Set(['rm', 'rmdir', 'unlink', 'shred']);
-const PERM = new Set(['chmod', 'chown', 'chgrp']);
+const DELETE = new Set(['rm', 'rmdir', 'unlink', 'shred', 'srm', 'trash', 'trash-put', 'rip']);
+const PERM = new Set(['chmod', 'chown', 'chgrp', 'chattr', 'chflags', 'setfacl']);
+// Tools whose first operand is a mode (`-x`, `+i`, `u+x`): a dash word that is not an option cluster is one.
+const MODE_FIRST = new Set(['chmod', 'chattr', 'chflags', 'setfacl']);
 
 // Short option letters that take a value (the value is the rest of the cluster or the next word).
 const SHORT_VALUE = { shred: 'ns', mv: 'tS', ln: 'tS' };
@@ -79,7 +84,7 @@ function parse(argv, prog) {
       }
       continue;
     }
-    if (prog === 'chmod' && [...a.slice(1)].some((c) => !PERM_LETTERS.has(c))) {
+    if (MODE_FIRST.has(prog) && [...a.slice(1)].some((c) => !PERM_LETTERS.has(c))) {
       // a mode such as -x; a cluster such as -Rw is also recursive
       if (a.includes('R')) flags.add('R');
       operands.push(a);
@@ -119,5 +124,5 @@ export function opsOf(argv) {
     const files = flags.has('--reference') ? operands : operands.slice(1);
     return files.map((p) => ({ path: p, op: 'chmod' }));
   }
-  return [];
+  return extraOps(argv);
 }
