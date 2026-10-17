@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { claude } from '../src/hosts/claude.mjs';
+import { codex } from '../src/hosts/codex.mjs';
+import { parseApplyPatch } from '../src/hosts/patch.mjs';
 import { KNOWN_TOOLS, OPAQUE_INPUT_FIELDS, lookupTool } from '../src/hosts/tools.mjs';
 import { CALL_KINDS, assertCanonicalCall } from '../src/hosts/types.mjs';
 import { UNKNOWN } from '../src/norm/unknown.mjs';
@@ -278,4 +280,267 @@ test('the adapter interface and the tool table are well formed', () => {
   assert.equal(lookupTool('ArtifactData').egress.domain, 'claude.ai');
   assert.equal(lookupTool('Nope'), null);
   assert.throws(() => assertCanonicalCall({ kind: 'weird' }));
+});
+
+// ---- Codex ----
+
+// A captured-shape Codex PreToolUse payload.
+function codexPayload(tool_name, tool_input, more = {}) {
+  return {
+    hook_event_name: 'PreToolUse',
+    session_id: 'sess-2',
+    turn_id: 'turn-3',
+    transcript_path: '/work/codex.jsonl',
+    cwd: CWD,
+    model: 'test-model',
+    permission_mode: 'default',
+    tool_name,
+    tool_input,
+    tool_use_id: 'call_01',
+    ...more,
+  };
+}
+
+function cparse(tool_name, tool_input, more) {
+  const call = codex.parse(codexPayload(tool_name, tool_input, more), CTX);
+  assertCanonicalCall(call);
+  return call;
+}
+
+const envelope = (...body) => ['*** Begin Patch', ...body, '*** End Patch', ''].join('\n');
+
+const FOUR = envelope(
+  '*** Add File: src/a.txt',
+  '+hello',
+  '*** Update File: src/b.txt',
+  '@@ def f():',
+  '-old',
+  '+new',
+  ' ctx',
+  '*** Delete File: src/c.txt',
+  '*** Update File: src/d.txt',
+  '*** Move to: src/e.txt',
+  '@@',
+  '-x',
+  '+y',
+  '*** End of File',
+);
+
+test('apply_patch Add Update Delete Move sections', () => {
+  assert.deepEqual(parseApplyPatch(FOUR), [
+    { path: 'src/a.txt', op: 'add' },
+    { path: 'src/b.txt', op: 'update' },
+    { path: 'src/c.txt', op: 'delete' },
+    { path: 'src/e.txt', op: 'move', from: 'src/d.txt' },
+  ]);
+  const call = cparse('apply_patch', { command: FOUR });
+  assert.equal(call.host, 'codex');
+  assert.equal(call.tool, 'apply_patch');
+  assert.equal(call.kind, 'file');
+  assert.equal(call.opaque, undefined);
+  assert.deepEqual(call.paths, [
+    { path: '/work/repo/src/a.txt', access: 'write' },
+    { path: '/work/repo/src/b.txt', access: 'read' },
+    { path: '/work/repo/src/b.txt', access: 'write' },
+    { path: '/work/repo/src/c.txt', access: 'write' },
+    { path: '/work/repo/src/d.txt', access: 'read' },
+    { path: '/work/repo/src/d.txt', access: 'write' },
+    { path: '/work/repo/src/e.txt', access: 'write' },
+  ]);
+  // Absolute and dotdot paths are normalised lexically; CRLF line ends and blank edges are accepted.
+  assert.deepEqual(cparse('apply_patch', { command: '\r\n*** Begin Patch\r\n*** Add File: /tmp/x/../y.txt\r\n+z\r\n*** End Patch\r\n' }).paths, [
+    { path: '/tmp/y.txt', access: 'write' },
+  ]);
+});
+
+test('a Move writes the source and the destination', () => {
+  const text = envelope('*** Update File: src/old.txt', '*** Move to: lib/new.txt');
+  assert.deepEqual(parseApplyPatch(text), [{ path: 'lib/new.txt', op: 'move', from: 'src/old.txt' }]);
+  const paths = cparse('apply_patch', { command: text }).paths;
+  assert.ok(paths.some((p) => p.path === '/work/repo/src/old.txt' && p.access === 'write'));
+  assert.ok(paths.some((p) => p.path === '/work/repo/lib/new.txt' && p.access === 'write'));
+});
+
+test('a malformed envelope is opaque', () => {
+  const bad = [
+    '*** Add File: src/a.txt\n+x\n*** End Patch',
+    '*** Begin Patch\n*** Add File: src/a.txt\n+x\n',
+    envelope(),
+    envelope('*** Add File: '),
+    envelope('*** Add File: src/a.txt', 'no plus'),
+    envelope('*** Delete File: src/a.txt', '+x'),
+    envelope('*** Update File: src/a.txt'),
+    envelope('*** Rename File: src/a.txt'),
+    envelope('+orphan line'),
+    envelope('*** Update File: src/a.txt', '@@', '+x', '*** Move to: src/b.txt'),
+    envelope('*** Add File: src/a.txt', '+x', '*** End Patch', '*** Add File: src/b.txt', '+y'),
+    'not a patch',
+    '',
+    42,
+  ];
+  for (const text of bad) {
+    assert.equal(parseApplyPatch(text), null, JSON.stringify(text));
+    const call = cparse('apply_patch', { command: text });
+    assert.deepEqual(call.opaque, { reason: 'malformed-patch' }, JSON.stringify(text));
+  }
+  assert.deepEqual(cparse('apply_patch', {}).opaque, { reason: 'malformed-patch' });
+});
+
+test('shell command as an argv array', () => {
+  const call = cparse('shell', { command: ['bash', '-lc', 'ls -la'] });
+  assert.equal(call.kind, 'shell');
+  assert.equal(call.command, "bash -lc 'ls -la'");
+  assert.equal(call.cwd, CWD);
+  assert.deepEqual(call.paths, []);
+  assert.equal(call.opaque, undefined);
+  assert.equal(cparse('shell', { command: ['git', 'status'] }).command, 'git status');
+  assert.equal(cparse('shell', { command: ['echo', "it's ok", ''] }).command, "echo 'it'\\''s ok' ''");
+  assert.equal(cparse('shell', { command: 'npm test' }).command, 'npm test');
+  assert.equal(cparse('exec_command', { cmd: 'echo ok' }).command, 'echo ok');
+  assert.equal(cparse('exec_command', { command: ['touch', './marker'] }).command, 'touch ./marker');
+  for (const command of [[], [1], ['ls', null], undefined, 7]) {
+    assert.equal(cparse('shell', { command }).opaque?.reason, 'malformed-command', JSON.stringify(command));
+  }
+});
+
+test('workdir becomes the effective cwd', () => {
+  assert.equal(cparse('shell', { command: 'ls', workdir: 'sub' }).cwd, '/work/repo/sub');
+  assert.equal(cparse('shell', { command: 'ls', workdir: '/work/other/./x/..' }).cwd, '/work/other');
+  assert.equal(cparse('exec_command', { cmd: 'ls', workdir: '../up' }).cwd, '/work/up');
+  assert.equal(cparse('shell', { command: 'ls', workdir: null }).cwd, CWD);
+  for (const workdir of [5, '', '~/x', 'a\u0000b']) {
+    assert.equal(cparse('shell', { command: 'ls', workdir }).opaque?.reason, 'malformed-workdir', JSON.stringify(workdir));
+  }
+  // apply_patch has no workdir of its own: its paths resolve against the payload cwd.
+  assert.deepEqual(cparse('apply_patch', { command: envelope('*** Delete File: a.txt'), workdir: 'sub' }).paths, [
+    { path: '/work/repo/a.txt', access: 'write' },
+  ]);
+});
+
+test('the apply_patch heredoc inside bash -lc yields patch writes', () => {
+  const heredoc = `apply_patch <<'EOF'\n${envelope('*** Add File: src/a.txt', '+hi')}EOF\n`;
+  const call = cparse('shell', { command: ['bash', '-lc', heredoc], workdir: 'pkg' });
+  assert.equal(call.kind, 'shell');
+  assert.equal(call.cwd, '/work/repo/pkg');
+  assert.ok(call.command.startsWith('bash -lc '));
+  assert.equal(call.opaque, undefined);
+  assert.deepEqual(call.paths, [{ path: '/work/repo/pkg/src/a.txt', access: 'write' }]);
+  // `cd <dir> &&` before the heredoc moves the patch base.
+  const cd = `cd ./sub && apply_patch <<"PATCH"\n${envelope('*** Update File: b.txt', '@@', '-a', '+b')}PATCH`;
+  assert.deepEqual(cparse('exec_command', { cmd: cd }).paths, [
+    { path: '/work/repo/sub/b.txt', access: 'read' },
+    { path: '/work/repo/sub/b.txt', access: 'write' },
+  ]);
+  // argv form apply_patch <envelope>.
+  assert.deepEqual(cparse('shell', { command: ['apply_patch', envelope('*** Add File: c.txt', '+c')] }).paths, [
+    { path: '/work/repo/c.txt', access: 'write' },
+  ]);
+  // A heredoc whose envelope does not parse, an unquoted delimiter with expansions, or an
+  // apply_patch the adapter cannot read is opaque.
+  const broken = `apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: x\nbad\n*** End Patch\nEOF`;
+  assert.equal(cparse('shell', { command: ['bash', '-lc', broken] }).opaque?.reason, 'malformed-patch');
+  const expanding = `apply_patch <<EOF\n${envelope('*** Add File: $DIR/a.txt', '+x')}EOF`;
+  assert.equal(cparse('shell', { command: expanding }).opaque?.reason, 'unparsed-apply-patch');
+});
+
+// Fix round 1 rulings.
+const plainShell = (call) => {
+  assert.equal(call.kind, 'shell');
+  assert.equal(call.opaque, undefined);
+  assert.deepEqual(call.paths, []);
+};
+
+test('a shell call that only mentions apply_patch is a plain shell call', () => {
+  for (const command of [
+    ['git', 'commit', '-m', 'fix apply_patch parsing'],
+    ['bash', '-lc', 'grep -rn apply_patch .'],
+    'cat docs/apply_patch.md',
+    ['bash', '-lc', 'echo apply_patch'],
+    'apply_patch "$(cat p.diff)"',
+    `echo ok; apply_patch <<'EOF'\n${envelope('*** Add File: a', '+x')}EOF`,
+    `a\\pply_patch <<'EOF'\n${envelope('*** Add File: a', '+x')}EOF`,
+    ['apply_patch', envelope('*** Add File: a', '+x'), 'extra'],
+  ]) {
+    const call = cparse('shell', { command });
+    plainShell(call);
+    assert.equal(typeof call.command, 'string');
+  }
+});
+
+test('the cd operand before the heredoc must be a plain ./, ../ or / path', () => {
+  const body = `apply_patch <<'EOF'\n${envelope('*** Add File: a.txt', '+x')}EOF`;
+  assert.deepEqual(cparse('shell', { command: `cd /work/other && ${body}` }).paths, [{ path: '/work/other/a.txt', access: 'write' }]);
+  assert.deepEqual(cparse('shell', { command: `cd ../up && ${body}` }).paths, [{ path: '/work/up/a.txt', access: 'write' }]);
+  for (const cd of ['cd -', 'cd -P', 'cd ;cd', 'cd /e*c', 'cd /e?c', 'cd /e[t]c', 'cd {/etc,}', 'cd sub', "cd './sub'", 'cd ./$D', 'cd ./a`b`', 'cd ./a\\b', 'cd ~/x', 'cd x;cd /etc', 'cd', 'cd ./a b']) {
+    assert.equal(cparse('shell', { command: `${cd} && ${body}` }).opaque?.reason, 'unparsed-apply-patch', cd);
+  }
+});
+
+test('a heredoc terminator is at column 0, or after tabs only with <<-', () => {
+  const env = envelope('*** Add File: a.txt', '+x');
+  plainShell(cparse('shell', { command: `apply_patch <<'EOF'\n${env}  EOF` }));
+  plainShell(cparse('shell', { command: `apply_patch <<'EOF'\n${env}\tEOF` }));
+  plainShell(cparse('shell', { command: `apply_patch <<-'EOF'\n${env}  EOF` }));
+  assert.deepEqual(cparse('shell', { command: `apply_patch <<-'EOF'\n${env}\t\tEOF` }).paths, [{ path: '/work/repo/a.txt', access: 'write' }]);
+  // <<- strips leading tabs from the body lines too.
+  const tabbed = `apply_patch <<-'EOF'\n${env.split('\n').map((l) => (l ? `\t${l}` : l)).join('\n')}\tEOF`;
+  assert.deepEqual(cparse('shell', { command: tabbed }).paths, [{ path: '/work/repo/a.txt', access: 'write' }]);
+});
+
+test('a shell argv with options before -c is read', () => {
+  const heredoc = `apply_patch <<'EOF'\n${envelope('*** Add File: a.txt', '+x')}EOF`;
+  const want = [{ path: '/work/repo/a.txt', access: 'write' }];
+  for (const pre of [['-o', 'pipefail'], ['+o', 'histexpand'], ['-e'], ['-u'], ['-x'], ['-l'], ['-e', '-o', 'pipefail', '-u']]) {
+    assert.deepEqual(cparse('shell', { command: ['bash', ...pre, '-c', heredoc] }).paths, want, pre.join(' '));
+    assert.deepEqual(cparse('shell', { command: ['/bin/sh', ...pre, '-lc', heredoc] }).paths, want, pre.join(' '));
+  }
+  // Another option, a missing -o name or trailing arguments: not this form, a plain shell call.
+  plainShell(cparse('shell', { command: ['bash', '-i', '-c', heredoc] }));
+  plainShell(cparse('shell', { command: ['bash', '-o', '-c', heredoc] }));
+  plainShell(cparse('shell', { command: ['bash', '-c', heredoc, 'arg0'] }));
+});
+
+test('write_stdin is opaque', () => {
+  const call = cparse('write_stdin', { session_id: 4, chars: 'y\n' });
+  assert.deepEqual(call.opaque, { reason: 'write-stdin' });
+  assert.equal(cparse('write_stdin', {}).opaque.reason, 'write-stdin');
+});
+
+test('turn_id is carried', () => {
+  const call = cparse('shell', { command: 'ls' }, { permission_mode: 'on-request' });
+  assert.equal(call.turn_id, 'turn-3');
+  assert.equal(call.session_id, 'sess-2');
+  assert.equal(call.tool_use_id, 'call_01');
+  assert.equal(call.permission_mode, 'on-request');
+  assert.equal(call.event, 'PreToolUse');
+  assert.equal(cparse('shell', { command: 'ls' }, { turn_id: undefined }).turn_id, undefined);
+  assert.equal(cparse('shell', { command: 'ls' }, { permission_mode: undefined }).permission_mode, 'unknown');
+});
+
+test('the same file edit gives the same canonical paths on both hosts', () => {
+  const update = cparse('apply_patch', { command: envelope('*** Update File: src/a.txt', '@@', '-a', '+b') }).paths;
+  assert.deepEqual(update, parse('Edit', { file_path: '/work/repo/src/a.txt' }).paths);
+  assert.deepEqual(update, parse('Edit', { file_path: 'src/a.txt' }).paths);
+  const add = cparse('apply_patch', { command: envelope('*** Add File: src/a.txt', '+b') }).paths;
+  assert.deepEqual(add, parse('Write', { file_path: '/work/repo/src/a.txt' }).paths);
+  // `~/` reads the same way on both hosts.
+  const tilde = cparse('apply_patch', { command: envelope('*** Add File: ~/.aws/credentials', '+b') }).paths;
+  assert.deepEqual(tilde, parse('Write', { file_path: '~/.aws/credentials' }).paths);
+});
+
+test('codex view_image, mcp, web_search and unknown tools', () => {
+  assert.deepEqual(cparse('view_image', { path: 'shot.png' }).paths, [{ path: '/work/repo/shot.png', access: 'read' }]);
+  assert.deepEqual(cparse('view_image', {}).paths, [{ path: UNKNOWN, access: 'read' }]);
+  const mcp = cparse('mcp__github__create_issue', { title: 't' });
+  assert.equal(mcp.kind, 'mcp');
+  assert.equal(mcp.mcp, 'mcp__github__create_issue');
+  assert.equal(cparse('web_search', { query: 'q' }).kind, 'net');
+  assert.equal(cparse('update_plan', { plan: [] }).kind, 'other');
+  assert.equal(cparse('update_plan', { input: 'x' }).opaque, undefined);
+  assert.equal(cparse('future_tool', { cmd: 'echo ok' }).opaque.reason, 'unknown-tool-input');
+  assert.equal(cparse('future_tool', { title: 'x' }).opaque, undefined);
+  assert.equal(codex.parse(codexPayload('shell', { command: 'ls' }, { cwd: 'rel' }), CTX).opaque.reason, 'missing-cwd');
+  assert.equal(codex.parse(null, CTX).opaque.reason, 'malformed-payload');
+  assert.equal(codex.name, 'codex');
+  assert.ok(codex.events.includes('PreToolUse'));
 });

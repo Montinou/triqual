@@ -78,3 +78,25 @@ export function lookupTool(name) {
   if (name.startsWith('mcp__')) return MCP;
   return Object.hasOwn(KNOWN_TOOLS, name) ? KNOWN_TOOLS[name] : null;
 }
+
+// The Codex known-tool table, same entry shape plus:
+//   patch: true     the call is an apply_patch envelope in `tool_input.command`
+//   opaque: reason  every call is opaque (input into a running process)
+// Shell tools read `command` (a string or an argv array; `cmd` is accepted for exec_command) and
+// their own `workdir`.
+export const CODEX_KNOWN_TOOLS = Object.freeze({
+  shell: { kind: 'shell', command: true },
+  exec_command: { kind: 'shell', command: true },
+  apply_patch: { kind: 'file', patch: true },
+  update_plan: { kind: 'other' },
+  view_image: { kind: 'file', paths: [file('path', 'read', { required: true })] },
+  web_search: { kind: 'net', egress: {} },
+  write_stdin: { kind: 'shell', opaque: 'write-stdin' },
+});
+
+// The Codex table entry for a tool name, or null for an unknown tool.
+export function lookupCodexTool(name) {
+  if (typeof name !== 'string') return null;
+  if (name.startsWith('mcp__')) return MCP;
+  return Object.hasOwn(CODEX_KNOWN_TOOLS, name) ? CODEX_KNOWN_TOOLS[name] : null;
+}

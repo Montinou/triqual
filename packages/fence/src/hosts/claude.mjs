@@ -18,7 +18,7 @@ const str = (v) => (typeof v === 'string' ? v : undefined);
 // A path value -> the entries it stands for: absolute and lexically normalised, UNKNOWN when it
 // is not a usable string. `~` or `~/...` is expanded against ctx.home and also kept as the
 // literal relative name, because the host may treat either reading as the real one.
-function resolveValue(value, base, ctx) {
+export function resolveValue(value, base, ctx) {
   if (typeof value !== 'string' || value === '' || value.includes('\u0000') || !isAbsolute(base)) return [UNKNOWN];
   const out = [];
   if (value === '~' || value.startsWith('~/')) {
@@ -58,7 +58,7 @@ function sourceValues(files) {
   return [UNKNOWN];
 }
 
-function pathEntries(entry, input, cwd, ctx) {
+export function pathEntries(entry, input, cwd, ctx) {
   const out = [];
   const seen = new Set();
   const add = (p, access) => {
