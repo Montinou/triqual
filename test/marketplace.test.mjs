@@ -194,7 +194,7 @@ test('the marketplace, the package and the plugin repositories carry the triqual
 });
 
 test('npm test runs every plugin test and the root test dir', () => {
-  assert.equal(readJson('package.json').scripts.test, 'node --test "plugins/*/test/*.test.mjs" "test/*.test.mjs"');
+  assert.equal(readJson('package.json').scripts.test, 'node --test "plugins/*/test/*.test.mjs" "packages/*/test/*.test.mjs" "test/*.test.mjs"');
 });
 
 test('roles\' plugin.json description lists the eight shipped role agents', () => {

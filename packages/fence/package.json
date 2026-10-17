@@ -1,0 +1,22 @@
+{
+  "name": "@triqual/fence",
+  "version": "0.1.0",
+  "description": "Policy engine that decides whether an agent tool call is allowed, for Claude Code and Codex hooks.",
+  "type": "module",
+  "bin": {
+    "fence": "bin/fence.mjs"
+  },
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "files": [
+    "src",
+    "bin",
+    "policies",
+    "NOTICE"
+  ],
+  "license": "MIT"
+}
