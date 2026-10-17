@@ -74,6 +74,14 @@ test('denies a case-flipped settings path on a case-insensitive volume', () => {
   assertDenied(checkPathWrite(`${nfc}/.codex/x`, { ...OPTS, caseInsensitive: true, projectRoots: [nfd] }));
 });
 
+test('denies a full-case-folded settings path on a case-insensitive volume', () => {
+  // U+017F (long s) and U+212A (Kelvin sign) open `s` and `k` on APFS
+  const longS = `${ROOT}/.claude/\u017Fettings.local.json`;
+  assertDenied(checkPathWrite(longS, { ...OPTS, caseInsensitive: true }));
+  assertDenied(checkPathWrite(`${HOME}/.codex/hoo\u212As.json`, { ...OPTS, caseInsensitive: true }));
+  assert.equal(checkPathWrite(longS, OPTS), null);
+});
+
 test('allows an unrelated file in the same project', () => {
   assert.equal(checkPathWrite(`${ROOT}/src/index.mjs`, OPTS), null);
   assert.equal(checkPathWrite(`${ROOT}/.claude/notes.md`, OPTS), null);
