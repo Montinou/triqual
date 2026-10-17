@@ -638,7 +638,9 @@ test('PRE_STEPS unwrap a command before cd, git, ops and taint are computed', ()
     }
     return { argv: argv.slice(i), env };
   };
-  PRE_STEPS.push(nice, envStep);
+  // ahead of the built-in wrapper step: this exercises the mechanism with steps that do not mark
+  // their layer external (a real `nice cd` runs in a new process and moves nothing)
+  PRE_STEPS.unshift(nice, envStep);
   try {
     let cs = cmds('nice rm x', here);
     assert.deepEqual(cs[0].argv, ['rm', 'x']);

@@ -34,6 +34,7 @@
 
 import { UNKNOWN } from '../norm/unknown.mjs';
 import { CLASS_NAMES } from '../policy/classes.mjs';
+import { valueFlags } from './wrappers.mjs';
 
 const isStr = (w) => typeof w === 'string';
 const words = (s) => s.split(/\s+/).filter(Boolean);
@@ -882,15 +883,17 @@ def('rsync', {
 // Rows: environment dumps
 
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
-const ENV_SHORT = 'uCSP';
-const ENV_LONG = L('unset chdir split-string argv0');
+// env's value-taking options come from the wrapper table, so the two parsers cannot disagree
+const { short: ENV_SHORT, long: ENV_LONG } = valueFlags('env');
 
-// The command `env` runs: argv from its first non-option, non-assignment word, or null.
-function envInner(argv) {
+// {inner, own}: the command `env` runs (argv from its first non-option, non-assignment word, or
+// null) and env's own words before it. env's options are read from `own` only, so the inner
+// command's flags are never taken for env's (`env rsync -S --delete a/ b/` is rsync with delete).
+function envSplit(argv) {
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
-    if (!isStr(a)) return argv.slice(i);
-    if (a === '--') return argv[i + 1] === undefined ? null : argv.slice(i + 1);
+    if (!isStr(a)) return { inner: argv.slice(i), own: argv.slice(0, i) };
+    if (a === '--') return { inner: argv[i + 1] === undefined ? null : argv.slice(i + 1), own: argv.slice(0, i) };
     if (a.startsWith('--')) {
       if (!a.includes('=') && longMatches(a, ENV_LONG).some((n) => ENV_LONG.includes(n))) i++;
       continue;
@@ -905,22 +908,26 @@ function envInner(argv) {
       continue;
     }
     if (ASSIGNMENT.test(a)) continue;
-    return argv.slice(i);
+    return { inner: argv.slice(i), own: argv.slice(0, i) };
   }
-  return null;
+  return { inner: null, own: argv };
 }
+const envInner = (argv) => envSplit(argv).inner;
+const envOwn = (argv) => parseArgs(envSplit(argv).own, { short: ENV_SHORT, long: ENV_LONG });
 
 def('env', {
   short: ENV_SHORT,
   long: ENV_LONG,
-  classes: (p, call) => {
+  classes: (p0, call) => {
+    const p = envOwn(call.argv);
     if (p.has('S', '--split-string')) return [];
     const inner = envInner(call.argv);
     if (inner === null) return ['env-dump'];
     return execClasses(inner);
   },
-  fx: (p, io, call) => {
+  fx: (p0, io, call) => {
     // `env cmd args`: the command has its own table; `env` alone names no file
+    const p = envOwn(call.argv);
     const inner = envInner(call.argv);
     if (p.has('S', '--split-string')) {
       unmodeled(inner === null ? call.argv : inner, io);

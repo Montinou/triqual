@@ -71,6 +71,10 @@
 // - The loop scan classifies commands with the same PRE_STEPS unwrapping and commandKind() as the
 //   walk. A repository lookup from a directory that does not exist yet is UNKNOWN.
 // - PRE_STEPS unwrap wrappers before the cd/git/ops/taint dispatch; FINISH_STEPS enrich after it.
+//   Wrappers come from tables/wrappers.mjs. A cd run through a wrapper that starts a new process
+//   (env, nice, sudo, …) does not move the shell. env -C / sudo -D move the inner command (its
+//   words resolve there; redirections stay in the shell's cwd). find -exec clauses are effective
+//   commands of their own, under the wrappers around find. noglob keeps glob words literal (UNKNOWN).
 // - A command word that is UNKNOWN, may split, or is a glob is opaque. A shell or interpreter whose
 //   stdin is a pipe, heredoc, herestring or file is opaque `stdin-interpreter` (T16 replaces this
 //   with re-parsing of literal feeds).
@@ -99,6 +103,7 @@ import { expandGlob as defaultExpandGlob } from '../resolve/glob.mjs';
 import { repoOf, hasLocalBranch } from '../resolve/repo.mjs';
 import { classesOf, fileEffects, domainsOf, hostToDomain, urlDomainOf, isEnvironPath, writesNothing, READ_ONLY_PROGRAMS } from '../tables/classes.mjs';
 import { checkPathWrite } from '../eval/builtin.mjs';
+import { stripOne, findExecs, shellScript, MAX_WRAP_DEPTH } from '../tables/wrappers.mjs';
 
 /** Most nodes walked in one call (loop unrolling included); past it the call is opaque. */
 export const MAX_STEPS = 200000;
@@ -130,8 +135,8 @@ const STDIN_REDIRS = new Set(['<', '<>', '<&', '<<', '<<-', '<<<']);
 const NO_FILE = new Set(['/dev/null', '/dev/stdin', '/dev/stdout', '/dev/stderr', '/dev/tty']);
 const FD_PATH = /^\/dev\/fd\/[0-9]+$/;
 const NET_PATH = /^\/dev\/(?:tcp|udp)\/([^/]*)/;
-// Most wrapper layers PRE_STEPS may strip from one command.
-const MAX_UNWRAP = 16;
+// Most wrapper layers PRE_STEPS may strip from one command (find counts as one for its clauses).
+const MAX_UNWRAP = MAX_WRAP_DEPTH;
 
 // Programs that run code read from stdin (carry rule 2; T16 re-parses literal feeds).
 const STDIN_INTERPRETERS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'eval', 'source', '.', 'node', 'nodejs', 'perl', 'ruby']);
@@ -567,7 +572,10 @@ function scanSimple(node, out, globalOnly) {
   // the same unwrapping as the walk (PRE_STEPS see UNKNOWN for words that are not literal)
   let inner;
   try {
-    inner = unwrap(node.words.map((w) => literalValue(w) ?? UNKNOWN), {}, node, null, null).argv;
+    const u = unwrap(node.words.map((w) => literalValue(w) ?? UNKNOWN), {}, node, null, null);
+    inner = u.argv;
+    // a find -exec clause may run git (a branch change) like any other command
+    if (u.execs.length > 0) scanAdd(out, BRALL, globalOnly);
   } catch (e) {
     if (e instanceof Opaque) throw e; // as opaque as in the walk
     return everything();
@@ -1371,51 +1379,109 @@ function commandEffectsStep(eff, info, sh, g) {
  */
 export const FINISH_STEPS = [stdinInterpreterStep, commandEffectsStep];
 
-// `builtin X` / `command [-p] [--] X` run X itself, for the builtins the walker models (cd,
-// pushd, popd, eval, source, `.`) and for a further builtin/command layer (chains unwrap one layer
-// per retry). `command -v`/`-V` only print, and other words are left to T14's wrapper table.
-const BUILTIN_TARGETS = new Set(['cd', 'pushd', 'popd', 'eval', 'source', '.', 'builtin', 'command']);
-// A target that is not a literal word (`builtin $(echo cd)`, `command "$U"`) may be any builtin:
-// opaque, in the walk and in the loop scan alike.
-function unwrapBuiltinCd({ argv, node }) {
-  const w = argv[0];
-  if (w !== 'builtin' && w !== 'command') return null;
-  let i = 1;
-  for (; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === '--') {
-      i++;
-      break;
+// Wrappers (tables/wrappers.mjs): sudo, doas, env, timeout, time, nice, nohup, stdbuf, command
+// (not -v/-V), builtin, exec, setsid, flock, watch, xargs, noglob, nocorrect. One layer per retry.
+// `builtin X` / `command X` (and a leading `time`, the reserved word) run X in this shell (so
+// `builtin cd` and `time cd` are cd); the others run X as a new process (`external`), where a cd
+// cannot move the shell. A script layer (env -S, flock -c, watch,
+// sudo -s) goes to ctx.reparse when present (T16 provides it) and is opaque until then. Any doubt
+// (an unknown flag, an UNKNOWN word where a flag or the program goes) is opaque, in the walk and in
+// the loop scan alike.
+function wrapperStep({ argv, node, first }, sh, g) {
+  const r = stripOne(argv, { bareHead: first === true && bareHead(node) });
+  if (r === null) return null;
+  const off = node && node.off ? node.off : 0;
+  if (r.opaque) throw new Opaque(r.opaque.reason, r.opaque.construct, off);
+  if (r.script !== undefined) {
+    if (g && typeof g.reparse === 'function') {
+      g.reparse(r.script, 1);
+      return null;
     }
-    if (w === 'command' && a === '-p') continue;
-    if (typeof a === 'string' && a.startsWith('-') && a !== '-') return null; // -v/-V print; others are T14's
-    break;
+    throw new Opaque('unsupported', 'nested-script', off);
   }
-  if (i < argv.length && typeof argv[i] !== 'string') throw new Opaque('unknown', 'command-word', node && node.off ? node.off : 0);
-  return BUILTIN_TARGETS.has(argv[i]) ? { argv: argv.slice(i) } : null;
+  return {
+    argv: r.inner,
+    env: r.env,
+    external: r.external,
+    // a `time` that is not the bare keyword: a cd through it is a program, or a command named `-p`
+    timeProgram: r.name === 'time' && r.external,
+    chdirs: r.chdirs,
+    reads: r.reads,
+    writes: r.writes,
+  };
+}
+
+// The command's first word is a bare unquoted literal (no quote, backslash, expansion) with no
+// assignment before it: what the shell needs to see to read `time` as its reserved word.
+function bareHead(node) {
+  if (!node || !Array.isArray(node.words) || node.words.length === 0) return false;
+  if (Array.isArray(node.assigns) && node.assigns.length > 0) return false;
+  const ps = node.words[0].parts;
+  return Array.isArray(ps) && ps.length === 1 && ps[0].type === 'lit' && ps[0].quoted === false;
 }
 
 /**
- * Steps that unwrap a command BEFORE cd/git/ops/taint dispatch (T14/T15 add wrappers: env, nice,
- * sudo, exec, …). Each is step({argv, env, node}, sh, g) -> null (not mine) | {argv, env?}: the
- * inner command, and assignments it adds to the command's environment. Steps are retried from the
- * first after every unwrap, up to MAX_UNWRAP layers (past it: opaque).
+ * Steps that unwrap a command BEFORE cd/git/ops/taint dispatch. Each is
+ * step({argv, env, node, first}, sh, g) -> null (not mine) | {argv, env?, external?, chdirs?, reads?, writes?}:
+ * the inner command, assignments it adds to the command's environment, whether it runs as a new
+ * process, directories it is moved to, and paths the wrapper's own flags read or write (words,
+ * relative to where the wrapper runs). Steps are retried from the first after every unwrap, up to
+ * MAX_UNWRAP layers (past it: opaque). sh and g are null in the loop scan.
  */
-export const PRE_STEPS = [unwrapBuiltinCd];
+export const PRE_STEPS = [wrapperStep];
 
-function unwrap(argv, env, node, sh, g) {
+// Run fn with the shell's cwd temporarily set to cwd (undefined: unchanged).
+function withCwd(sh, cwd, fn) {
+  if (cwd === undefined) return fn();
+  const saved = sh.cwd;
+  sh.cwd = cwd;
+  try {
+    return fn();
+  } finally {
+    sh.cwd = saved;
+  }
+}
+
+// A word resolved from the shell's current cwd, UNKNOWN when it names a path an earlier mv/ln touched.
+function pathAt(sh, g, w) {
+  const p = resolveIn(sh, g, w);
+  return taintedWord(sh, g, w, p) ? UNKNOWN : p;
+}
+
+// {argv, env, layers, external, cwd, reads, writes, execs}: cwd is undefined unless a wrapper moved
+// the command (then a realpath or UNKNOWN); reads/writes are the wrappers' own resolved paths;
+// execs are find's -exec clauses. depth counts layers already stripped around this command.
+function unwrap(argv, env, node, sh, g, depth = 0) {
   let cur = { argv, env };
   const layers = [];
+  const reads = [];
+  const writes = [];
+  let external = false;
+  let timeProgram = false;
+  let cwd;
   for (;;) {
     let next = null;
     for (const step of PRE_STEPS) {
-      next = step({ argv: cur.argv, env: cur.env, node }, sh, g);
+      // first: the command as the shell sees it (a leading `time` is the reserved word)
+      next = step({ argv: cur.argv, env: cur.env, node, first: layers.length === 0 && depth === 0 }, sh, g);
       if (next) break;
     }
-    if (!next) return { ...cur, layers };
-    if (layers.length >= MAX_UNWRAP) throw new Opaque('depth', 'unwrap', node.off);
+    if (!next) break;
+    if (layers.length + depth >= MAX_UNWRAP) throw new Opaque('depth', 'unwrap', node.off);
     if (!Array.isArray(next.argv) || typeof next.argv[0] !== 'string') throw new Opaque('unknown', 'command-word', node.off);
     layers.push(cur.argv);
+    if (next.external) external = true;
+    if (next.timeProgram) timeProgram = true;
+    if (sh && g) {
+      withCwd(sh, cwd, () => {
+        for (const w of next.reads || []) reads.push(pathAt(sh, g, w));
+        for (const w of next.writes || []) writes.push(pathAt(sh, g, w));
+      });
+      for (const d of next.chdirs || []) {
+        const p = withCwd(sh, cwd, () => pathAt(sh, g, d));
+        cwd = isAbs(p) ? p : UNKNOWN;
+      }
+    }
     let merged = cur.env;
     if (next.env && typeof next.env === 'object') {
       merged = {};
@@ -1425,6 +1491,9 @@ function unwrap(argv, env, node, sh, g) {
     }
     cur = { argv: next.argv, env: merged };
   }
+  const f = findExecs(cur.argv);
+  if (f && f.opaque) throw new Opaque(f.opaque.reason, f.opaque.construct, node.off);
+  return { ...cur, layers, external, timeProgram, cwd, reads, writes, execs: f ? f.execs : [] };
 }
 
 function predecessorOk(argv) {
@@ -1534,10 +1603,13 @@ function walkSimple(node, sh, g) {
   if (splitsOnWhitespace(w0, env, vctx)) throw new Opaque('unknown', 'command-word', node.off);
   const argv = [];
   const prefix = {};
+  const literalGlobs = noglobPrefix(node);
   const targets = reading(() => {
     for (let i = 0; i < node.words.length; i++) {
       const w = node.words[i];
-      if (i > 0 && hasGlob(w)) {
+      // under zsh's noglob the pattern is a literal word fence does not resolve: UNKNOWN
+      if (i > 0 && hasGlob(w) && literalGlobs) argv.push(UNKNOWN);
+      else if (i > 0 && hasGlob(w)) {
         const vals = forValues({ type: 'for', var: '_', items: [w], body: null }, env, vctx);
         if (Array.isArray(vals)) argv.push(...vals);
         else argv.push(UNKNOWN);
@@ -1565,17 +1637,48 @@ function walkSimple(node, sh, g) {
   const inner = unwrap(argv, prefix, node, sh, g);
   const cmdArgv = inner.argv;
   const eff = newEff(cmdArgv, inner.env, sh, g);
+  // redirections are opened by the shell, in its own cwd
   redirEffects(node.redirs, targets, eff, sh, g);
+  pushAll(eff.reads, inner.reads);
+  pushAll(eff.writes, inner.writes);
   let post = null;
   const cmd = cmdArgv[0];
-  const kind = commandKind(cmdArgv);
-  if (kind === 'cd') post = cdEffect(node, cmd, cmdArgv, eff, sh, g, cdpath);
-  else if (kind === 'git') post = gitEffect(node, cmdArgv, inner.env, eff, sh, g);
-  else if (kind === 'opaque-run') post = () => opaqueRun(sh, g);
-  const opsRaw = opsOf(cmdArgv);
-  eff.ops = opsRaw.map((o) => ({ path: resolveIn(sh, g, o.path), op: o.op }));
-  finish(eff, { node, off: node.off, stdin, unwrapped: inner.layers }, sh, g);
-  // effects on later commands
+  const kind0 = commandKind(cmdArgv);
+  // a cd run as a new process (env cd, nice cd) cannot move this shell; through a `time` that is not
+  // the bare keyword (`/usr/bin/time`, `gtime`, `\time`, `'time'`, `X=1 time`, `time -p` in zsh)
+  // which of the two happened is not decided here: the cwd and the pushd stack become UNKNOWN
+  const kind = kind0 === 'cd' && inner.external ? null : kind0;
+  if (kind0 === 'cd' && inner.external && inner.timeProgram) post = () => cwdUnknown(sh);
+  withCwd(sh, inner.cwd, () => {
+    // env -C / sudo -D: the command runs, and its words resolve, in the wrapper's directory
+    if (inner.cwd !== undefined) {
+      eff.cwd = sh.cwd;
+      eff.repo = withBranch(cwdRepo(sh, g), g);
+    }
+    if (kind === 'cd') post = cdEffect(node, cmd, cmdArgv, eff, sh, g, cdpath);
+    else if (kind === 'git') post = gitEffect(node, cmdArgv, inner.env, eff, sh, g);
+    else if (kind === 'opaque-run') post = () => opaqueRun(sh, g);
+    const opsRaw = opsOf(cmdArgv);
+    eff.ops = opsRaw.map((o) => ({ path: resolveIn(sh, g, o.path), op: o.op }));
+    finish(eff, { node, off: node.off, stdin, unwrapped: inner.layers }, sh, g);
+    afterCommand(eff, opsRaw, sh, g);
+    runExecs(inner, node, sh, g, stdin, inner.layers.length + 1);
+  });
+  if (persistStdin) sh.stdinPersist = true;
+  return post ? post() : EMPTY;
+}
+
+function cwdUnknown(sh) {
+  sh.cwd = UNKNOWN;
+  touch(sh, CWD);
+  sh.dirs = UNKNOWN;
+  touch(sh, DIRS);
+  return EMPTY;
+}
+
+// What a finished command does to later ones: moved/linked paths taint, removed paths, `.git`
+// directories created.
+function afterCommand(eff, opsRaw, sh, g) {
   opsRaw.forEach((o, i) => {
     if (o.op === 'move' || o.op === 'link') addTaint(sh, g, o.path, eff.ops[i].path);
     if (o.op === 'move' || o.op === 'delete') {
@@ -1584,10 +1687,46 @@ function walkSimple(node, sh, g) {
       else g.removed.all = true;
     }
   });
-  if (programName(cmd) === 'mkdir') for (const w of cmdArgv.slice(1)) noteDotGit(typeof w === 'string' ? resolveIn(sh, g, w) : UNKNOWN, g);
+  if (programName(eff.argv[0]) === 'mkdir') for (const w of eff.argv.slice(1)) noteDotGit(typeof w === 'string' ? resolveIn(sh, g, w) : UNKNOWN, g);
   for (const w of eff.writes) noteDotGit(w, g);
-  if (persistStdin) sh.stdinPersist = true;
-  return post ? post() : EMPTY;
+}
+
+// find -exec/-execdir/-ok/-okdir clauses: each is an effective command of its own, run as a new
+// process in find's directory (-execdir/-okdir: the matched file's, UNKNOWN), under the wrappers
+// around find. A clause's own wrappers are stripped, nesting counted. A shell given -c code in a
+// clause is a nested script (opaque until T16's reparse hook exists). A clause that runs git may
+// change any branch.
+function runExecs(parent, node, sh, g, stdin, depth) {
+  for (const ex of parent.execs) {
+    withCwd(sh, ex.dir === 'unknown' ? UNKNOWN : undefined, () => {
+      const sub = unwrap(ex.argv, parent.env, node, sh, g, depth);
+      if (shellScript(sub.argv) !== null) {
+        if (typeof g.reparse !== 'function') throw new Opaque('unsupported', 'nested-script', node.off);
+        g.reparse(shellScript(sub.argv), 1);
+      }
+      withCwd(sh, sub.cwd, () => {
+        const eff = newEff(sub.argv, sub.env, sh, g);
+        pushAll(eff.reads, sub.reads);
+        pushAll(eff.writes, sub.writes);
+        const opsRaw = opsOf(sub.argv);
+        eff.ops = opsRaw.map((o) => ({ path: resolveIn(sh, g, o.path), op: o.op }));
+        finish(eff, { node, off: node.off, stdin, unwrapped: [...parent.layers, ...sub.layers] }, sh, g);
+        afterCommand(eff, opsRaw, sh, g);
+        if (commandKind(sub.argv) === 'git') setBranch(sh, g, UNKNOWN, UNKNOWN);
+        runExecs({ ...sub, layers: [...parent.layers, ...sub.layers] }, node, sh, g, stdin, depth + sub.layers.length + 1);
+      });
+    });
+  }
+}
+
+// zsh `noglob cmd …` (possibly after nocorrect): glob characters in the words stay literal.
+function noglobPrefix(node) {
+  for (const w of node.words) {
+    const v = literalValue(w);
+    if (v === 'noglob') return true;
+    if (v !== 'nocorrect') return false;
+  }
+  return false;
 }
 
 // eval, source and `.` run code fence does not see yet (re-parsing is T16): the cwd, the pushd
@@ -1894,6 +2033,8 @@ export function normalize(command, ctx) {
       resolveCache: new Map(),
       protectedCache: new Map(),
       isProtected: typeof c.isProtected === 'function' ? c.isProtected : null,
+      // nested-shell hook for wrapper scripts (env -S, flock -c, watch); T16 provides it
+      reparse: typeof c.reparse === 'function' ? c.reparse : null,
       removed: { all: false, trie: new PathTrie() },
     };
     g.expandGlob = globWithBudget(typeof c.expandGlob === 'function' ? c.expandGlob : null, fsImpl, g);
