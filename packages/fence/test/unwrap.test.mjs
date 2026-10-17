@@ -245,7 +245,8 @@ test('a nested shell sees exported and prefix values only; sudo and env reset th
   // sudo and env replace the environment (and HOME): nothing is trusted inside
   assert.deepEqual(cmds("export X=ok; sudo bash -c 'echo $X'", d).at(-1).argv, ['echo', UNKNOWN]);
   assert.deepEqual(cmds("sudo bash -c 'cat ~/notes'", d).at(-1).argv, ['cat', UNKNOWN]);
-  assert.deepEqual(cmds("export X=ok; env -i bash -c 'echo $X'", d).at(-1).argv, ['echo', UNKNOWN]);
+  // (env -i clears the environment: since T17 the call is opaque instead, see envvars.test.mjs)
+  assert.equal(opaque("export X=ok; env -i bash -c 'echo $X'", d).construct, 'code-loading-var');
   // without a wrapper the home is the payload's
   assert.deepEqual(cmds("bash -c 'cat ~/notes'", d).at(-1).argv, ['cat', path.join(HOME, 'notes')]);
 });

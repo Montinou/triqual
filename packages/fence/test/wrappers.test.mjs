@@ -261,7 +261,7 @@ test('sudo -E env FOO=1 rm', () => {
   assert.ok(c.classes.includes('privilege') && c.classes.includes('delete'));
 });
 
-test('env -C changes the inner cwd; env -i PATH=/x rm', () => {
+test('env -C changes the inner cwd; env PATH=/x rm', () => {
   const [c] = cmds('env -C ~/.claude rm settings.json');
   const target = path.join(HOME, '.claude', 'settings.json');
   assert.equal(c.cwd, path.join(HOME, '.claude'));
@@ -275,8 +275,10 @@ test('env -C changes the inner cwd; env -i PATH=/x rm', () => {
   const d = dir();
   const [r] = cmds('env -C /tmp cat a > out', d);
   assert.ok(r.writes.includes(path.join(d, 'out')));
-  const [e] = cmds('env -i PATH=/x rm y', d);
+  const [e] = cmds('env PATH=/x rm y', d);
   assert.deepEqual([e.argv, e.env], [['rm', 'y'], { PATH: '/x' }]);
+  // env -i clears the environment: code-loading-var since T17
+  assert.equal(opaque('env -i PATH=/x rm y', d).construct, 'code-loading-var');
 });
 
 test('a cd run by an external wrapper does not move the shell; builtin and command still do', () => {

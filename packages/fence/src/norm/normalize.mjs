@@ -84,6 +84,11 @@
 //   is recorded: a child walk on the same state (a subshell's changes undone, only exported values
 //   inherited), nesting counted up to MAX_REPARSE_DEPTH, MAX_REPARSE_BYTES re-parsed per call.
 //   Inside sh/bash/dash/ksh code a `**` glob is UNKNOWN (bash without globstar reads it as `*`).
+// - Code-loading variables (T17, tables/envvars.mjs): a prefix assignment, a standalone assignment,
+//   `export|declare|typeset|readonly|local NAME[=v]`, `read NAME`, `printf -v NAME`, `unset NAME`,
+//   `env NAME=v|-u NAME|--unset=NAME|-i`, and `sudo|doas NAME=v` of a listed name are opaque
+//   `code-loading-var` (loadingVar() is the one place that throws). A name that is not literal in
+//   those positions is opaque too. Re-parsed text goes through the same walk.
 // - Linear time: the parser is linear; the walker visits each node once except for loop unrolling,
 //   which is bounded by UNROLL_BUDGET per loop and MAX_STEPS overall (past it: opaque `size`), and
 //   glob expansion shares one time budget per call. Never throws: internal errors are opaque
@@ -120,7 +125,8 @@ import { expandGlob as defaultExpandGlob } from '../resolve/glob.mjs';
 import { repoOf, hasLocalBranch } from '../resolve/repo.mjs';
 import { classesOf, fileEffects, domainsOf, hostToDomain, urlDomainOf, isEnvironPath, writesNothing, READ_ONLY_PROGRAMS } from '../tables/classes.mjs';
 import { checkPathWrite } from '../eval/builtin.mjs';
-import { stripOne, findExecs, MAX_WRAP_DEPTH } from '../tables/wrappers.mjs';
+import { stripOne, findExecs, valueFlags, MAX_WRAP_DEPTH } from '../tables/wrappers.mjs';
+import { isCodeLoadingAssignment } from '../tables/envvars.mjs';
 
 /** Most nodes walked in one call (loop unrolling included); past it the call is opaque. */
 export const MAX_STEPS = 200000;
@@ -1416,6 +1422,406 @@ function commandEffectsStep(eff, info, sh, g) {
  */
 export const FINISH_STEPS = [stdinInterpreterStep, commandEffectsStep];
 
+// ---------------------------------------------------------------------------------------------
+// Code-loading variables (tables/envvars.mjs holds the list). loadingVar is the one place that
+// throws; every site below calls it with the variable's name and the value it would get (UNKNOWN
+// when there is none, as for export, unset and env -u).
+const NAME_PREFIX = /^[A-Za-z_][A-Za-z0-9_]*/;
+const ENV_ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/;
+
+function loadingVar(name, value, off) {
+  if (isCodeLoadingAssignment(name, value)) throw new Opaque('unsupported', 'code-loading-var', off);
+}
+
+// The literal text a word starts with (up to its first expansion or glob) and whether the whole
+// word is literal: what a word's name can still be shown to be when its value is UNKNOWN.
+function leadOf(word) {
+  const ps = word && Array.isArray(word.parts) ? word.parts : [];
+  let lead = '';
+  let full = true;
+  for (const p of ps) {
+    if (p.type === 'lit') lead += p.text;
+    else {
+      full = false;
+      break;
+    }
+  }
+  return { lead, full };
+}
+
+// The variable a declaration-style word names: `NAME`, `NAME=v`, `NAME+=v`, `NAME[i]=v`, zsh
+// `NAME?prompt` (read). null when the word names no variable (a prompt, a number).
+function wordVar(text) {
+  const m = NAME_PREFIX.exec(text);
+  if (m === null) return null;
+  const rest = text.slice(m[0].length);
+  if (rest === '' || rest[0] === '?') return { name: m[0], value: UNKNOWN };
+  if (rest[0] === '=') return { name: m[0], value: rest.slice(1) };
+  if (rest.startsWith('+=')) return { name: m[0], value: rest.slice(2) };
+  if (rest[0] === '[') {
+    const close = rest.indexOf(']=');
+    return { name: m[0], value: close >= 0 ? rest.slice(close + 2) : UNKNOWN };
+  }
+  return null;
+}
+
+// One word that names a variable. text is the resolved word (a string) or UNKNOWN; lead is the
+// word's literal start, used when the word is UNKNOWN. A word whose name cannot be shown is opaque.
+function checkVarWord(text, lead, off) {
+  if (typeof text === 'string') {
+    if (text.startsWith('-') || text.startsWith('+')) return; // a flag
+    const v = wordVar(text);
+    if (v !== null) loadingVar(v.name, v.value, off);
+    return;
+  }
+  if (lead !== undefined && lead !== null) {
+    if (lead.lead.startsWith('-') || lead.lead.startsWith('+')) return;
+    const m = NAME_PREFIX.exec(lead.lead);
+    if (m !== null) {
+      const rest = lead.lead.slice(m[0].length);
+      // the name ends inside the literal start: NAME=…, NAME+=…, NAME[…, or NAME alone
+      const ends = rest === '' ? lead.full : rest[0] === '=' || rest[0] === '[' || rest[0] === '?' || rest.startsWith('+=');
+      if (ends) {
+        loadingVar(m[0], UNKNOWN, off);
+        return;
+      }
+    }
+  }
+  loadingVar(UNKNOWN, UNKNOWN, off); // cannot be shown not to be listed
+}
+
+// The leads of the unwrapped command's words: the original words' tail (a word a wrapper replaced
+// has none).
+function leadsFor(argv, inner, leads) {
+  if (!Array.isArray(leads) || leads.length !== argv.length) return null;
+  const k = argv.length - inner.length;
+  if (k < 0) return null;
+  return inner.map((x, j) => (argv[k + j] === x ? leads[k + j] : undefined));
+}
+
+// Arithmetic text (`$(( … ))`, a `let` argument) that assigns: `NAME=`, `NAME+=`, `NAME++`, `++NAME`,
+// `NAME[i]=` of a listed name, or any assignment next to a computed name (`$`, backtick). Linear:
+// the lookbehind keeps a match from starting inside an identifier.
+const ARITH_ASSIGN_OP = /(?:^|[^=!<>])=(?!=)|[-+*/%&|^]=|<<=|>>=/;
+const ARITH_TARGET = /(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)[ \t]*(?:(?:<<|>>|[-+*/%&|^])?=(?!=)|\+\+|--)/g;
+const ARITH_PRE = /(?:\+\+|--)[ \t]*([A-Za-z_][A-Za-z0-9_]*)/g;
+const ARITH_SUBSCRIPT = /(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)[ \t]*\[/g;
+function arithAssigns(text, off) {
+  if (typeof text !== 'string') return loadingVar(UNKNOWN, UNKNOWN, off);
+  for (const m of text.matchAll(ARITH_TARGET)) loadingVar(m[1], UNKNOWN, off);
+  for (const m of text.matchAll(ARITH_PRE)) loadingVar(m[1], UNKNOWN, off);
+  if (ARITH_ASSIGN_OP.test(text) || text.includes('++') || text.includes('--')) {
+    for (const m of text.matchAll(ARITH_SUBSCRIPT)) loadingVar(m[1], UNKNOWN, off);
+    if (/[$`]/.test(text) && ARITH_ASSIGN_OP.test(text)) loadingVar(UNKNOWN, UNKNOWN, off);
+    // `$n++`, `++$n`, `n--` on a computed name
+    if (/[$`]/.test(text) && (text.includes('++') || text.includes('--'))) loadingVar(UNKNOWN, UNKNOWN, off);
+  }
+}
+
+// Leading flag words of a declaration builtin or unset: their letters (all, and those given with
+// `-`), and the index of the first word that is not a flag.
+function leadingFlags(argv) {
+  let i = 1;
+  let letters = '';
+  let minus = '';
+  while (i < argv.length && typeof argv[i] === 'string' && argv[i].length > 1 && (argv[i][0] === '-' || argv[i][0] === '+')) {
+    if (argv[i] === '--') {
+      i++;
+      break;
+    }
+    letters += argv[i].slice(1);
+    if (argv[i][0] === '-') minus += argv[i].slice(1);
+    i++;
+  }
+  return { letters, minus, next: i };
+}
+
+// read: bash/sh take option values (-p PROMPT -t -u -d -n -N -i) that are not names, and -a NAME;
+// zsh's -p has no operand, so every word is a name except the values of -u and -d.
+function readTargets(argv, at, kind, off) {
+  const zsh = kind !== 'bash';
+  const valued = zsh ? 'ud' : 'ptudnNi';
+  let names = false;
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (!names && typeof a === 'string' && a.length > 1 && a[0] === '-') {
+      if (a === '--') {
+        names = true;
+        continue;
+      }
+      for (let k = 1; k < a.length; k++) {
+        const c = a[k];
+        if (valued.includes(c)) {
+          if (k === a.length - 1) i++; // the value is the next word
+          break;
+        }
+        if (!zsh && c === 'a') {
+          if (k < a.length - 1) checkVarWord(a.slice(k + 1), undefined, off);
+          else if (++i < argv.length) checkVarWord(argv[i], at(i), off);
+          break;
+        }
+      }
+      continue;
+    }
+    names = true;
+    checkVarWord(a, at(i), off);
+  }
+}
+
+// mapfile/readarray: options with a value (-d -n -O -s -u -C -c), then the target array.
+function mapfileTarget(argv, at, off) {
+  let i = 1;
+  for (; i < argv.length; i++) {
+    const a = argv[i];
+    if (typeof a !== 'string' || a.length < 2 || a[0] !== '-') break;
+    if (a === '--') {
+      i++;
+      break;
+    }
+    for (let k = 1; k < a.length; k++) {
+      if ('dnOsuCc'.includes(a[k])) {
+        if (k === a.length - 1) i++;
+        break;
+      }
+    }
+  }
+  if (i < argv.length) checkVarWord(argv[i], at(i), off); // no target: MAPFILE, which is not listed
+}
+
+// vared [-Aache] [-p P] [-r R] [-M M] [-m m] [-i W] [-f W] [-t TTY] NAME: flag values are not names.
+function varedTarget(argv, at, off) {
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (typeof a === 'string' && a.length > 1 && a[0] === '-') {
+      for (let k = 1; k < a.length; k++) {
+        if ('prMmifLt'.includes(a[k])) {
+          if (k === a.length - 1) i++;
+          break;
+        }
+      }
+      continue;
+    }
+    checkVarWord(a, at(i), off);
+  }
+}
+
+// zparseopts [-D -E -F -K -M] [-a ARRAY] [-A ASSOC] [-] SPEC…: ARRAY and ASSOC are targets, and so is
+// the NAME of every spec `x=NAME`, `x:=NAME`, `x+=NAME`, `-long=NAME`. A word that is not literal
+// cannot be shown not to name a listed target.
+function zparseTargets(argv, at, off) {
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (typeof a !== 'string') {
+      loadingVar(UNKNOWN, UNKNOWN, off);
+      continue;
+    }
+    const eq = a.indexOf('=');
+    if (eq >= 0) {
+      checkVarWord(a.slice(eq + 1), undefined, off);
+      continue;
+    }
+    if (a.length > 1 && a[0] === '-') {
+      for (let k = 1; k < a.length; k++) {
+        if (a[k] === 'a' || a[k] === 'A') {
+          if (k < a.length - 1) checkVarWord(a.slice(k + 1), undefined, off);
+          else if (++i < argv.length) checkVarWord(argv[i], at(i), off);
+          break;
+        }
+      }
+    }
+  }
+}
+
+// zsh `print -v NAME`.
+function printTarget(argv, at, off) {
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (typeof a !== 'string' || a.length < 2 || a[0] !== '-' || a === '--') return;
+    for (let k = 1; k < a.length; k++) {
+      const c = a[k];
+      if (c === 'v') {
+        if (k < a.length - 1) checkVarWord(a.slice(k + 1), undefined, off);
+        else if (++i < argv.length) checkVarWord(argv[i], at(i), off);
+        else return;
+        break;
+      }
+      if (c === 'u' || c === 'C') {
+        if (k === a.length - 1) i++;
+        break;
+      }
+    }
+  }
+}
+
+const KEYWORD_SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
+// `set -k`, `set -o keyword`, and a shell started with -k or -o keyword: every NAME=v word, wherever it
+// stands, then assigns (bash "keyword" mode).
+function keywordAssign(argv0, off) {
+  const argv = appletArgv(argv0);
+  if (!Array.isArray(argv) || typeof argv[0] !== 'string') return;
+  const isSet = argv[0] === 'set';
+  if (!isSet && !KEYWORD_SHELLS.has(programName(argv[0]))) return;
+  const fail = () => {
+    throw new Opaque('unsupported', 'keyword-assign', off);
+  };
+  for (let i = 1; i < argv.length; i++) {
+    const w = argv[i];
+    if (typeof w !== 'string') return isSet ? fail() : undefined; // a shell's unknown flag is opaque in unwrap.mjs
+    if (w === '--' || w.length < 2 || (w[0] !== '-' && w[0] !== '+')) return;
+    for (let k = 1; k < w.length; k++) {
+      const c = w[k];
+      if (c === 'k' && w[0] === '-') fail();
+      if (c === 'o' || (c === 'O' && !isSet)) {
+        const name = argv[++i];
+        if (c === 'o' && w[0] === '-' && (typeof name !== 'string' || name === 'keyword')) fail();
+      }
+    }
+  }
+}
+
+// zsh builtins that store a result in a named variable: getln NAME, zstyle -s|-g|-a|-b CTX STYLE NAME,
+// zformat -f|-a|-F NAME …, zselect, zsystem, zstat, pcre_match and private (module builtins), strftime -s NAME FORMAT TIME, sysread [-c COUNTVAR] [-o|-i FD] [NAME]. (zcompile
+// writes a file, not a variable.)
+function zshWriter(argv) {
+  const f = typeof argv[1] === 'string' ? argv[1] : '';
+  switch (argv[0]) {
+    case 'getln':
+    case 'sysread':
+    case 'zselect':
+    case 'zsystem':
+    case 'zstat':
+    case 'pcre_match':
+    case 'private':
+      return true;
+    case 'zstyle':
+      return /^-[sgab]$/.test(f);
+    case 'zformat':
+      return /^-[faF]$/.test(f);
+    case 'strftime':
+      return argv.some((a, i) => i > 0 && typeof a === 'string' && /^-[A-Za-z]*s/.test(a));
+    default:
+      return false;
+  }
+}
+
+// Commands that name variables: export, declare, typeset, readonly, local, unset, read, printf -v,
+// print -v, getopts, mapfile, readarray, let, vared, zparseopts. kind is the shell's ('bash' or 'zsh').
+function declaredVars(argv, leads, off, kind) {
+  const cmd = argv[0];
+  const at = (i) => (Array.isArray(leads) ? leads[i] : undefined);
+  // a command word shaped like an assignment (`doas HOME=x ls`, which doas takes for a program, or
+  // a quoted `'HOME=x'`): judged as the assignment it looks like
+  const asg = typeof cmd === 'string' ? ENV_ASSIGNMENT.exec(cmd) : null;
+  if (asg !== null) loadingVar(asg[1], asg[2], off);
+  keywordAssign(argv, off);
+  // zsh's integer and float declare (and assign) like typeset
+  const zshDeclare = kind !== 'bash' && (cmd === 'integer' || cmd === 'float');
+  if (DECLARE_COMMANDS.has(cmd) || cmd === 'unset' || zshDeclare) {
+    const { letters, minus, next } = leadingFlags(argv);
+    // unset -f works on functions: no variable is assigned
+    if (cmd === 'unset' && letters.includes('f')) return;
+    // a nameref (`declare -n r=X`, or `declare -n r` then `r=X`) makes later plain assignments land on
+    // another variable, which is not tracked: any nameref declaration is opaque (export -n unexports)
+    if ((cmd === 'declare' || cmd === 'typeset' || cmd === 'local') && minus.includes('n')) loadingVar(UNKNOWN, UNKNOWN, off);
+    // -p prints and -f works on functions (bash -F lists them, zsh -F is a float format): the bare
+    // NAME words assign nothing, but a NAME=value word still does
+    const bare = cmd !== 'unset' && (kind === 'bash' ? /[pfF]/ : /[pf]/).test(letters);
+    for (let i = next; i < argv.length; i++) {
+      if (bare) {
+        const w = argv[i];
+        const l = at(i);
+        if (typeof w === 'string' ? !w.includes('=') : !(l && l.lead.includes('='))) continue;
+      }
+      checkVarWord(argv[i], at(i), off);
+    }
+  } else if (cmd === 'read') {
+    readTargets(argv, at, kind, off);
+  } else if (cmd === 'printf' && typeof argv[1] === 'string' && argv[1].startsWith('-v')) {
+    // `printf -v NAME …` / `printf -vNAME …`
+    if (argv[1] === '-v') checkVarWord(argv[2], at(2), off);
+    else checkVarWord(argv[1].slice(2), undefined, off);
+  } else if (cmd === 'print') {
+    printTarget(argv, at, off);
+  } else if (cmd === 'getopts') {
+    if (argv.length > 2) checkVarWord(argv[2], at(2), off);
+  } else if (cmd === 'mapfile' || cmd === 'readarray') {
+    mapfileTarget(argv, at, off);
+  } else if (cmd === 'let') {
+    for (let i = 1; i < argv.length; i++) {
+      if (typeof argv[i] === 'string') arithAssigns(argv[i], off);
+      else {
+        // an UNKNOWN expression is judged by its literal start; its name must end there
+        const l = at(i);
+        const lead = l ? l.lead : '';
+        arithAssigns(lead, off);
+        if (!/^[ \t]*[A-Za-z_][A-Za-z0-9_]*[ \t]*(?:(?:<<|>>|[-+*/%&|^])?=|\+\+|--)/.test(lead)) loadingVar(UNKNOWN, UNKNOWN, off);
+      }
+    }
+  } else if (cmd === 'vared') {
+    varedTarget(argv, at, off);
+  } else if (cmd === 'zparseopts') {
+    zparseTargets(argv, at, off);
+  } else if (zshWriter(argv)) {
+    // zsh builtins that write a named variable: every bare word may be the target
+    for (let i = 1; i < argv.length; i++) checkVarWord(argv[i], at(i), off);
+  }
+}
+
+// env's own words (before the program): NAME=v, -u NAME, --unset=NAME, -i, - and
+// --ignore-environment. Done on the layer's words, not on stripOne's result, which drops them for
+// a script layer (`env -S`) and for a call that runs no command.
+function envLayer(argv, off) {
+  const { short, long } = valueFlags('env');
+  const wipe = () => {
+    throw new Opaque('unsupported', 'code-loading-var', off);
+  };
+  let done = false; // after `--`, only assignments remain
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (typeof a !== 'string') return; // stripOne is opaque on it
+    const asg = ENV_ASSIGNMENT.exec(a);
+    if (asg !== null) {
+      loadingVar(asg[1], asg[2], off);
+      continue;
+    }
+    if (a === '-') wipe(); // POSIX spelling of -i
+    if (done || a.length < 2 || a[0] !== '-') return; // the program
+    if (a === '--') {
+      done = true;
+      continue;
+    }
+    if (a.startsWith('--')) {
+      const eq = a.indexOf('=');
+      const raw = (eq < 0 ? a : a.slice(0, eq)).slice(2);
+      // GNU abbreviations: any prefix of --ignore-environment or --unset
+      if ('ignore-environment'.startsWith(raw)) wipe();
+      if ('unset'.startsWith(raw)) {
+        const v = eq >= 0 ? a.slice(eq + 1) : argv[++i];
+        loadingVar(v, UNKNOWN, off);
+      } else if (eq < 0 && long.some((l) => l.slice(2).startsWith(raw))) i++;
+      continue;
+    }
+    for (let k = 1; k < a.length; k++) {
+      const c = a[k];
+      if (c === 'i') wipe();
+      if (short.includes(c)) {
+        const rest = a.slice(k + 1);
+        const v = rest !== '' ? rest : argv[++i];
+        if (c === 'u') loadingVar(v, UNKNOWN, off);
+        break;
+      }
+    }
+  }
+}
+
+// The wrapper a program word names, for the checks above (stripOne's own name rules: basename,
+// lower case, a GNU `g` prefix).
+function wrapperBase(word) {
+  if (typeof word !== 'string') return null;
+  const lower = word.slice(word.lastIndexOf('/') + 1).toLowerCase();
+  return lower === 'genv' ? 'env' : lower;
+}
+
 // Wrappers (tables/wrappers.mjs): sudo, doas, env, timeout, time, nice, nohup, stdbuf, command
 // (not -v/-V), builtin, exec, setsid, flock, watch, xargs, noglob, nocorrect. One layer per retry.
 // `builtin X` / `command X` (and a leading `time`, the reserved word) run X in this shell (so
@@ -1425,10 +1831,33 @@ export const FINISH_STEPS = [stdinInterpreterStep, commandEffectsStep];
 // re-parses it after the command is finished (or is opaque). Any doubt (an unknown flag, an
 // UNKNOWN word where a flag or the program goes) is opaque, in the walk and in the loop scan alike.
 function wrapperStep({ argv, node, first, scripts }, sh, g) {
-  const r = stripOne(argv, { bareHead: first === true && bareHead(node) });
-  if (r === null) return null;
   const off = node && node.off ? node.off : 0;
+  const base = wrapperBase(argv[0]);
+  if (base === 'env') envLayer(argv, off);
+  const r = stripOne(argv, { bareHead: first === true && bareHead(node) });
+  if (r === null) {
+    // sudo -s HOME=x, sudo -i HOME=x, sudo -E HOME=x: no program is left, but the shell it starts
+    // (or the environment it keeps) still gets the assignments
+    if (base === 'sudo' || base === 'doas' || base === 'su') {
+      for (const a of argv.slice(1)) {
+        const asg = typeof a === 'string' ? ENV_ASSIGNMENT.exec(a) : null;
+        if (asg !== null) loadingVar(asg[1], asg[2], off);
+      }
+    }
+    return null;
+  }
   if (r.opaque) throw new Opaque(r.opaque.reason, r.opaque.construct, off);
+  // sudo, doas: NAME=v words (env's were checked above); a script layer drops them from the result
+  if (base !== 'env') {
+    if (r.script !== undefined) {
+      for (const a of argv.slice(1)) {
+        const asg = typeof a === 'string' ? ENV_ASSIGNMENT.exec(a) : null;
+        if (asg !== null) loadingVar(asg[1], asg[2], off);
+      }
+    } else {
+      for (const k of Object.keys(r.env)) loadingVar(k, r.env[k], off);
+    }
+  }
   if (r.script !== undefined) {
     if (Array.isArray(scripts)) scripts.push({ name: r.name, text: r.script, exact: exactScript(r.name, argv, r.script) });
     return null;
@@ -1683,8 +2112,12 @@ function walkParts(parts, sh, g) {
       // the substitution may fail: what it did to the repository is uncertain afterwards
       const r = inSubshell(sh, g, (c) => walk(p.program, c, g));
       forgetGlobals(sh, g, r.touched);
-    } else if (p.type === 'var' && p.arg && Array.isArray(p.arg.parts)) {
-      walkParts(p.arg.parts, sh, g);
+    } else if (p.type === 'var') {
+      // `${NAME:=v}` and `${NAME=v}` assign
+      if (p.op === '=' || p.op === ':=') loadingVar(p.name, (p.arg && literalText(p.arg)) ?? UNKNOWN, g.off || 0);
+      if (p.arg && Array.isArray(p.arg.parts)) walkParts(p.arg.parts, sh, g);
+    } else if (p.type === 'arith') {
+      arithAssigns(p.text, g.off || 0);
     }
   }
 }
@@ -1751,6 +2184,8 @@ function walkSimple(node, sh, g) {
   const stdin = sh.stdin || sh.stdinPersist || feedsStdin(node.redirs);
 
   if (node.words.length === 0) {
+    // a listed variable may be exported later (`set -a`), so a plain assignment counts
+    for (const a of node.assigns) loadingVar(a.name, reading(() => resolveWord(a.value, env, vctx)), node.off);
     // assignments and/or redirections only (zsh runs a redirect-only command; its effects count)
     const targets = reading(() => node.redirs.map((r) => (r.target ? resolveWord(r.target, env, vctx) : null)));
     applySimple(node, sh.env, vctx);
@@ -1790,6 +2225,7 @@ function walkSimple(node, sh, g) {
     for (const r of node.redirs) heredocs.push(r.op === '<<' || r.op === '<<-' ? heredocText(r, env, vctx) : null);
     for (const a of node.assigns) {
       const value = resolveWord(a.value, env, vctx);
+      loadingVar(a.name, value, node.off);
       Object.defineProperty(prefix, a.name, { value, enumerable: true, writable: true, configurable: true });
     }
     return ts;
@@ -1804,6 +2240,7 @@ function walkSimple(node, sh, g) {
 
   // wrappers are stripped before the dispatch, so cd/git/ops/taint see the real command
   const inner = unwrap(argv, prefix, node, sh, g);
+  declaredVars(inner.argv, leadsFor(argv, inner.argv, node.words.length === argv.length ? node.words.map(leadOf) : null), node.off, sh.kind);
   aliasStep(argv, inner, g, node.off);
   const cmdArgv = inner.argv;
   const eff = newEff(cmdArgv, inner.env, sh, g);
@@ -1905,6 +2342,7 @@ function runExecs(parent, node, sh, g, stdin, depth) {
   for (const ex of parent.execs) {
     withCwd(sh, ex.dir === 'unknown' ? UNKNOWN : undefined, () => {
       const sub = unwrap(ex.argv, parent.env, node, sh, g, depth);
+      declaredVars(sub.argv, null, node.off, sh.kind);
       withCwd(sh, sub.cwd, () => {
         const eff = newEff(sub.argv, sub.env, sh, g);
         pushAll(eff.reads, sub.reads);
@@ -2116,6 +2554,7 @@ function walkCase(node, sh, g) {
 }
 
 function walkFor(node, sh, g) {
+  loadingVar(node.var, UNKNOWN, g.off || 0); // the loop variable is assigned each round
   for (const w of node.items || []) walkWord(w, sh, g);
   const values = node.items === null ? UNKNOWN : forValues(node, sh.env, vctxOf(sh, g));
   if (Array.isArray(values) && values.length === 0) return EMPTY;
@@ -2160,6 +2599,7 @@ function walkWhile(node, sh, g) {
 }
 
 function walk(node, sh, g) {
+  if (node && typeof node.off === 'number') g.off = node.off;
   if (++g.steps > MAX_STEPS) throw new Opaque('size', 'walk', node && node.off ? node.off : 0);
   switch (node.type) {
     case 'simple':
