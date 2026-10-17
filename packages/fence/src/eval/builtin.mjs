@@ -3,7 +3,7 @@
 // Pure functions over the data tables below:
 //   protectedGlobs({home, platform, realpath})        the protected path globs
 //   checkPathWrite(absPath, opts)                       a write, delete, move, chmod or link of a path
-//   checkAncestorOp(absPath, op, opts)                  delete|move|chmod|link of a path that may hold protected ones
+//   checkAncestorOp(absPath, op, opts)                  delete|move|chmod|link|bulk (a bulk writer: T18) of a path that may hold protected ones
 //   checkCommandArgv(argv)                              denied fence, claude and codex command lines
 // Each returns null (not denied) or {rule, reason}. A value the normalizer could not
 // determine (UNKNOWN) always denies: these checks fail closed.
@@ -68,7 +68,7 @@ export const SYSTEM_GLOBS = {
 // Protected under every project root the caller names.
 export const PROJECT_SUBGLOBS = ['.claude/settings*.json', '.claude/skills/**', '.codex/**'];
 
-export const ANCESTOR_OPS = ['delete', 'move', 'chmod', 'link'];
+export const ANCESTOR_OPS = ['delete', 'move', 'chmod', 'link', 'bulk'];
 
 // The only fence subcommands an agent may run.
 export const FENCE_ALLOWED_SUBCOMMANDS = ['check', 'test', 'log', 'doctor', 'replay', 'version', 'help'];

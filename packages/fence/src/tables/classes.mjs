@@ -2509,3 +2509,18 @@ export function writesNothing(argv) {
   if (classesOf(argv).some((c) => c === 'delete' || c === 'overwrite' || c === 'perm-change' || c === 'privilege')) return false;
   return fileEffects(argv, { resolve: (w) => (isStr(w) ? w : UNKNOWN), isProtected: () => false }).writes.length === 0;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Shared with tables/bulk.mjs (T18): the same program-name resolution and option grammars, so the
+// bulk-writer table cannot read a command line differently from the file-effect rows above.
+
+/** {name, argv, p}: the program (applets resolved) and argv parsed with its row's grammar, or with `spec`. null for an UNKNOWN program. */
+export function parsedCall(argv, spec) {
+  if (!Array.isArray(argv) || argv.length === 0) return null;
+  const call = callOf(argv);
+  if (call === null) return null;
+  const d = spec || D.get(call.name) || {};
+  return { name: call.name, argv: call.argv, p: parseArgs(call.argv, d) };
+}
+
+export { parseArgs as parseOptions, gitSplit, gitBase, repoDirName };

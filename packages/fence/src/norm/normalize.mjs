@@ -89,6 +89,14 @@
 //   `env NAME=v|-u NAME|--unset=NAME|-i`, and `sudo|doas NAME=v` of a listed name are opaque
 //   `code-loading-var` (loadingVar() is the one place that throws). A name that is not literal in
 //   those positions is opaque too. Re-parsed text goes through the same walk.
+// - Bulk writers, patch targets and git tree updates (T18, tables/bulk.mjs, bulkStep): a bulk
+//   writer adds its source's would-be files under the protected subpaths to `writes` (the source
+//   is not walked beyond them), archives and unknown sources give the destination a `bulk` op,
+//   patch targets are writes (an unreadable patch is opaque `patch-unreadable`), and a git tree
+//   update runs ctx.gitTreeDiff once (opaque `git-config-written` first when ctx.writtenIndex
+//   holds the repo's config or an include; `git-tree-update` per the spec). ctx.writtenIndex,
+//   ctx.readFile, ctx.gitTreeDiff and ctx.patchTargets are the injected capabilities; the
+//   normalizer itself still never spawns.
 // - Linear time: the parser is linear; the walker visits each node once except for loop unrolling,
 //   which is bounded by UNROLL_BUDGET per loop and MAX_STEPS overall (past it: opaque `size`), and
 //   glob expansion shares one time budget per call. Never throws: internal errors are opaque
@@ -127,6 +135,9 @@ import { classesOf, fileEffects, domainsOf, hostToDomain, urlDomainOf, isEnviron
 import { checkPathWrite } from '../eval/builtin.mjs';
 import { stripOne, findExecs, valueFlags, MAX_WRAP_DEPTH } from '../tables/wrappers.mjs';
 import { isCodeLoadingAssignment } from '../tables/envvars.mjs';
+import { bulkOf, PROTECTED_SUBGLOBS, MAX_WALK_ENTRIES, MAX_WALK_DEPTH, TREE_PATHSPECS, UNNAMEABLE } from '../tables/bulk.mjs';
+import { gitTreeDiff as defaultGitTreeDiff, gitConfigFiles, inProtectedSubpath, indexMentionsProtected, MAX_CONFIG_BYTES, NOT_A_REVISION } from '../resolve/git.mjs';
+import { patchTargets as defaultPatchTargets, patchTargetsFromText } from '../resolve/patch.mjs';
 
 /** Most nodes walked in one call (loop unrolling included); past it the call is opaque. */
 export const MAX_STEPS = 200000;
@@ -1040,6 +1051,9 @@ function gitEffect(node, argv, prefix, eff, sh, g) {
     if (isAbs(dir) && !isUnknown(gitDir) && !isUnknown(workTree) && !tainted) {
       repo = afterCreated(repoOf(dir, { gitDir, workTree, fs: g.fs }), dir, g);
     }
+    // a repository named through GIT_DIR/GIT_WORK_TREE/--git-dir/--work-tree: the tree check
+    // (which diffs with -C root) cannot describe it
+    g.gitRepos.set(eff, { repo, custom: gitDir !== undefined || workTree !== undefined });
     if (o.sub === 'init' || o.sub === 'clone' || o.sub === 'worktree') {
       // the new repository exists only after this command
       const created = () => noteGitCreation(o.sub, argv.slice(o.subIndex + 1), dir, sh, g);
@@ -1051,6 +1065,7 @@ function gitEffect(node, argv, prefix, eff, sh, g) {
     }
   }
   eff.repo = withBranch(repo, g);
+  if (!g.gitRepos.has(eff)) g.gitRepos.set(eff, { repo, custom: o === null });
   if (repo === null || (o !== null && o.sub === null)) return null; // not a repository: git fails
   const key = isUnknown(repo) ? UNKNOWN : repo.gitDir;
   const sub = o === null ? UNKNOWN : o.sub;
@@ -1414,13 +1429,399 @@ function commandEffectsStep(eff, info, sh, g) {
   if (eff.reads.some(isEnvironPath)) addClass(eff, 'env-dump');
 }
 
+// ---------------------------------------------------------------------------------------------
+// Bulk writers, patch targets and git tree updates (T18; tables/bulk.mjs reads the command line).
+//
+// - copy/move: for each (source, destination) pair the source's tree lands at the destination or
+//   at destination/<source basename> (both are judged). Only the source's files under the
+//   protected relative subpaths (PROJECT_SUBGLOBS) are looked for, and added to `writes` as
+//   <landing>/<relpath>; when the landing itself is named like the first segment of a subglob
+//   (`mv evil .claude`), the source's top-level children matching the rest are added too. Nothing
+//   else in the source is read: literal segments are lstat'ed, a wildcard segment reads one
+//   directory, `**` walks at most MAX_WALK_ENTRIES entries MAX_WALK_DEPTH deep (past that, or on
+//   a read error: an UNKNOWN write). A symlink on a literal segment lands as a link: a `link` op.
+//   A source whose contents cannot be known (UNKNOWN, remote) gives the destination a `bulk` op;
+//   an UNKNOWN destination is an UNKNOWN `bulk` op. move adds `move` ops on source and destination.
+// - archive: each destination gets a `bulk` op (the evaluator's ancestor check judges it).
+// - patch: the targets read from the patch (resolve/patch.mjs through ctx.patchTargets, or a literal
+//   stdin feed) are writes, joined to the patch base (patch -d, else the cwd; git apply/am: the
+//   repository root and the cwd, plus --directory). An unreadable or non-literal patch is opaque
+//   `patch-unreadable`. `patch ORIGINAL …` writes ORIGINAL only (already an operand write).
+// - git tree update: opaque `git-tree-update` when the repository cannot be resolved; opaque
+//   `git-config-written` when the repo's config or any file it includes is in ctx.writtenIndex or
+//   was written earlier in this call (before ctx.gitTreeDiff is called); a HEAD target is
+//   unaffected; otherwise one ctx.gitTreeDiff call over TREE_PATHSPECS. Listed protected files
+//   are added to `writes`; an UNKNOWN answer, an unnameable target, or a listed protected file
+//   in a repository that has `.claude/` or `.codex/` at its root is opaque `git-tree-update`
+//   (spec: "makes the call opaque when the repo tracks anything under its protected subpaths").
+
+const WILD = /[*?[]/;
+const segmentRes = new Map();
+function segmentRe(seg) {
+  if (!segmentRes.has(seg)) {
+    const src = seg.replace(/[.+^${}()|\\\]]/g, '\\$&').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]');
+    segmentRes.set(seg, new RegExp(`^${src}$`, 'i'));
+  }
+  return segmentRes.get(seg);
+}
+
+class WalkLimit extends Error {}
+const MISSING_CODES = new Set(['ENOENT', 'ENOTDIR']);
+
+function lstatOrNull(p, g) {
+  try {
+    return g.fs.lstatSync(p);
+  } catch (e) {
+    if (MISSING_CODES.has(e && e.code)) return null;
+    throw new WalkLimit('read');
+  }
+}
+
+function direntsOf(dir, g, budget) {
+  let ents;
+  try {
+    ents = g.fs.readdirSync(dir, { withFileTypes: true });
+  } catch (e) {
+    if (MISSING_CODES.has(e && e.code)) return [];
+    throw new WalkLimit('read');
+  }
+  if (!Array.isArray(ents)) throw new WalkLimit('read');
+  budget.n += ents.length;
+  if (budget.n > MAX_WALK_ENTRIES) throw new WalkLimit('entries');
+  return ents;
+}
+
+const joinRel = (a, b) => (a === '' ? b : `${a}/${b}`);
+const joinAbs = (a, b) => (a === '/' ? `/${b}` : `${a}/${b}`);
+
+// Every path under dir (dir itself included, as prefix), bounded.
+function walkAll(dir, prefix, out, budget, depth, g) {
+  out.files.push(prefix);
+  if (depth >= MAX_WALK_DEPTH) throw new WalkLimit('depth');
+  for (const e of direntsOf(dir, g, budget)) {
+    const rel = joinRel(prefix, String(e.name));
+    if (e.isDirectory()) walkAll(joinAbs(dir, String(e.name)), rel, out, budget, depth + 1, g);
+    else out.files.push(rel);
+  }
+}
+
+// The paths under dir matching the glob segments, relative to dir (prefixed).
+function globWalk(dir, segs, prefix, out, budget, g) {
+  if (segs.length === 0) {
+    out.files.push(prefix);
+    return;
+  }
+  const [seg, ...rest] = segs;
+  if (seg === '**') {
+    walkAll(dir, prefix, out, budget, 0, g);
+    return;
+  }
+  const visit = (name) => {
+    const p = joinAbs(dir, name);
+    const rel = joinRel(prefix, name);
+    const st = lstatOrNull(p, g);
+    if (st === null) return;
+    if (st.isSymbolicLink() && rest.length > 0) {
+      out.links.push(rel);
+      return;
+    }
+    if (rest.length === 0 || !st.isDirectory()) out.files.push(rel);
+    else globWalk(p, rest, rel, out, budget, g);
+  };
+  if (!WILD.test(seg)) visit(seg);
+  else for (const e of direntsOf(dir, g, budget)) if (segmentRe(seg).test(String(e.name))) visit(String(e.name));
+}
+
+// What landing at `landing` from source directory `src` writes under the protected subpaths:
+// {files: rel[], links: rel[], unknown: boolean}.
+// Memoized per source (and per first segment the landing is named after).
+function protectedRels(src, landing, g) {
+  const name = landing.slice(landing.lastIndexOf('/') + 1).toLowerCase();
+  const merged = { files: [], links: [], unknown: false };
+  const parts = [scanSource(src, null, g)];
+  for (const glob of PROTECTED_SUBGLOBS) {
+    const first = glob.split('/')[0];
+    if (!WILD.test(first) && first.toLowerCase() === name) parts.push(scanSource(src, first, g));
+  }
+  for (const r of parts) {
+    merged.files.push(...r.files);
+    merged.links.push(...r.links);
+    merged.unknown = merged.unknown || r.unknown;
+  }
+  return merged;
+}
+
+// first = null: the source's own protected subpaths; first = '.claude': the rest of every
+// subglob that starts with it (the landing becomes that directory).
+function scanSource(src, first, g) {
+  const key = `${src}\0${first ?? ''}`;
+  if (g.bulkScans.has(key)) return g.bulkScans.get(key);
+  const out = { files: [], links: [], unknown: false };
+  const budget = { n: 0 };
+  try {
+    for (const glob of PROTECTED_SUBGLOBS) {
+      const segs = glob.split('/');
+      if (first === null) globWalk(src, segs, '', out, budget, g);
+      else if (segs.length > 1 && segs[0] === first) {
+        // the source's top-level children are the landing's children
+        if (segs[1] === '**') out.files.push('');
+        else globWalk(src, segs.slice(1), '', out, budget, g);
+      }
+    }
+  } catch (e) {
+    if (!(e instanceof WalkLimit)) throw e;
+    out.unknown = true;
+  }
+  g.bulkScans.set(key, out);
+  return out;
+}
+
+function pushOp(eff, path, op) {
+  if (!eff.ops.some((o) => o.op === op && o.path === path)) eff.ops.push({ path, op });
+}
+
+// A word resolved like an argument (taint-aware), relative to a git -C base when given.
+function bulkResolver(sh, g, base) {
+  return (w) => {
+    if (typeof w !== 'string') return UNKNOWN;
+    let word = w;
+    if (base !== undefined && !w.startsWith('/')) {
+      if (typeof base !== 'string') return UNKNOWN;
+      word = w === '.' ? base : `${base}/${w}`;
+    }
+    const p = resolveIn(sh, g, word);
+    return isAbs(p) && !taintedWord(sh, g, word, p) ? p : UNKNOWN;
+  };
+}
+
+function wordBase(w) {
+  if (typeof w !== 'string') return null;
+  const t = w.replace(/\/+$/, '');
+  const b = t.slice(t.lastIndexOf('/') + 1);
+  return b === '' || b === '.' || b === '..' ? null : b;
+}
+
+function judgePairs(eff, b, sh, g, res) {
+  for (const { src, dest } of b.pairs) {
+    const d = res(dest);
+    if (!isAbs(d)) {
+      pushOp(eff, UNKNOWN, 'bulk');
+      continue;
+    }
+    const s = res(src);
+    if (b.kind === 'move') {
+      pushOp(eff, d, 'move');
+      if (isAbs(s)) pushOp(eff, s, 'move');
+    }
+    if (!isAbs(s)) {
+      pushOp(eff, d, 'bulk');
+      continue;
+    }
+    const landings = new Set([d]);
+    for (const n of [wordBase(src), wordBase(s)]) if (n !== null) landings.add(joinAbs(d, n));
+    for (const l of landings) {
+      pushAll(eff.writes, [l]);
+      const r = protectedRels(s, l, g);
+      if (r.unknown) pushAll(eff.writes, [UNKNOWN]);
+      for (const rel of r.files) pushAll(eff.writes, [rel === '' ? l : res(joinAbs(l, rel))]);
+      for (const rel of r.links) pushOp(eff, res(joinAbs(l, rel)), 'link');
+    }
+  }
+}
+
+// The text or targets of the patch a command reads from stdin, or null when nothing is fed.
+function stdinPatch(info, sh, g, strip) {
+  if (!info.stdin) return null;
+  if (typeof info.feed === 'string') return patchTargetsFromText(info.feed, { strip });
+  const redirs = info.node && Array.isArray(info.node.redirs) ? info.node.redirs : [];
+  let file = null;
+  for (const r of redirs) {
+    if (!(r.fd === undefined || r.fd === 0)) continue;
+    if (r.op === '<') file = r.target ? literalValue(r.target) : null;
+    else if (STDIN_REDIRS.has(r.op)) file = null;
+  }
+  if (typeof file !== 'string') return UNKNOWN;
+  const abs = resolveIn(sh, g, file);
+  return isAbs(abs) ? g.patchTargets(abs, g.fs, { strip }) : UNKNOWN;
+}
+
+function judgePatch(eff, b, info, sh, g, res) {
+  if (b.readOnly) return;
+  const off = info.off || 0;
+  const unreadable = () => new Opaque('unknown', 'patch-unreadable', off);
+  if (b.program === 'patch' && b.original !== undefined) return;
+  if (isUnknown(b.strip)) throw unreadable();
+  const lists = [];
+  if (b.files.length === 0) {
+    const t = stdinPatch(info, sh, g, b.strip);
+    if (t === null) return;
+    lists.push(t);
+  } else {
+    for (const f of b.files) {
+      if (f === '-') {
+        // git apply - / git am -: the patch is stdin
+        const t = stdinPatch(info, sh, g, b.strip);
+        lists.push(t === null ? UNKNOWN : t);
+        continue;
+      }
+      const abs = res(f);
+      if (!isAbs(abs)) throw unreadable();
+      let t;
+      try {
+        t = g.patchTargets(abs, g.fs, { strip: b.strip });
+      } catch {
+        t = UNKNOWN;
+      }
+      lists.push(t);
+    }
+  }
+  if (lists.some((t) => !Array.isArray(t))) throw unreadable();
+  const bases = [];
+  if (b.program === 'patch') bases.push(res(b.dir ?? '.'));
+  else {
+    const repo = eff.repo;
+    if (!b.noIndex && repo !== null) bases.push(repo && isAbs(repo.root) ? repo.root : UNKNOWN);
+    bases.push(res('.'));
+  }
+  const dir = b.program !== 'patch' && typeof b.dir === 'string' ? b.dir.replace(/\/+$/, '') : '';
+  for (const base of new Set(bases)) {
+    if (!isAbs(base)) {
+      pushAll(eff.writes, [UNKNOWN]);
+      continue;
+    }
+    for (const t of lists.flat()) {
+      if (typeof t !== 'string') {
+        pushAll(eff.writes, [UNKNOWN]);
+        continue;
+      }
+      const rel = dir !== '' && !t.startsWith('/') ? `${dir}/${t}` : t;
+      const p = resolveIn(sh, g, rel.startsWith('/') ? rel : joinAbs(base, rel));
+      pushAll(eff.writes, [isAbs(p) ? p : UNKNOWN]);
+    }
+  }
+}
+
+function writtenSet(index) {
+  const out = new Set();
+  if (index === null || typeof index !== 'object' || typeof index[Symbol.iterator] !== 'function') return out;
+  for (const p of index) if (isAbs(p)) out.add(p);
+  return out;
+}
+
+// Was the repository's config (or a file it includes) written by the agent, earlier in the
+// session (ctx.writtenIndex) or earlier in this call? Undeterminable counts as written.
+function configWritten(gitDir, eff, g) {
+  const earlier = new Set();
+  for (const c of [...g.commands, eff]) for (const w of c.writes) if (isAbs(w)) earlier.add(w);
+  if (g.written.size === 0 && earlier.size === 0) return false;
+  if (!isAbs(gitDir)) return true;
+  const read = (p) => {
+    try {
+      // the size first: a file over the cap is never read (gitConfigFiles answers UNKNOWN)
+      const st = g.fs.statSync(p);
+      if (!st.isFile() || st.size > MAX_CONFIG_BYTES) throw new Error('config-size');
+      const t = g.readFile ? g.readFile(p) : g.fs.readFileSync(p, 'utf8');
+      return typeof t === 'string' ? t : t === null || t === undefined ? null : String(t);
+    } catch (e) {
+      if (MISSING_CODES.has(e && e.code)) return null;
+      throw e;
+    }
+  };
+  const files = gitConfigFiles(gitDir, { read, home: g.home });
+  if (!Array.isArray(files)) return true;
+  const hit = (p) => g.written.has(p) || earlier.has(p);
+  return files.some((f) => hit(f) || hit(resolvePath(f, '/', g.home, g.fs)));
+}
+
+// target: the revision the tree moves to; land: where the listed files land (the repository
+// root, or a new worktree's path).
+function judgeGitTree(eff, b, info, sh, g, target = b.target, land = undefined) {
+  const off = info.off || 0;
+  const repo = eff.repo;
+  if (repo === null) return; // not a repository: git fails
+  const entry = g.gitRepos.has(eff) ? g.gitRepos.get(eff) : { repo: cwdRepo(sh, g), custom: false };
+  const raw = entry.repo;
+  if (isUnknown(repo) || !isAbs(repo.root) || !raw || isUnknown(raw) || !isAbs(raw.gitDir)) throw new Opaque('unknown', 'git-tree-update', off);
+  if (configWritten(raw.gitDir, eff, g)) throw new Opaque('unsupported', 'git-config-written', off);
+  if (target === 'HEAD') return;
+  let listed = UNKNOWN;
+  if (target !== UNNAMEABLE && !entry.custom) {
+    try {
+      listed = g.gitTreeDiff({ root: repo.root, branch: repo.branch }, target, TREE_PATHSPECS);
+    } catch {
+      listed = UNKNOWN;
+    }
+    // git itself said WORD is not a revision: `git checkout WORD` (WORD also a path) restores the
+    // path, `git worktree add PATH` makes a new branch from HEAD. Anything else is unnameable.
+    if (listed === NOT_A_REVISION && (b.ambiguousPath || b.newBranchGuess)) return;
+  }
+  const tracked = exists(joinAbs(repo.root, '.claude'), g) || exists(joinAbs(repo.root, '.codex'), g) || indexMentionsProtected(joinAbs(raw.gitDir, 'index'), g.fs);
+  if (!Array.isArray(listed)) {
+    if (tracked) throw new Opaque('unknown', 'git-tree-update', off);
+    return;
+  }
+  const hits = listed.filter((p) => typeof p !== 'string' || inProtectedSubpath(p));
+  if (hits.length === 0) return;
+  if (tracked) throw new Opaque('unknown', 'git-tree-update', off);
+  const at = isAbs(land) ? land : land === undefined ? repo.root : UNKNOWN;
+  for (const h of hits) {
+    const p = typeof h === 'string' && !h.startsWith('/') && isAbs(at) ? resolveIn(sh, g, joinAbs(at, h)) : UNKNOWN;
+    pushAll(eff.writes, [isAbs(p) ? p : UNKNOWN]);
+  }
+}
+
+function bulkStep(eff, info, sh, g) {
+  const argv = eff.argv;
+  if (argv.length === 0 || typeof argv[0] !== 'string') return;
+  const b = bulkOf(argv, {
+    exists: (w, base) => {
+      const p = bulkResolver(sh, g, base)(w);
+      return isAbs(p) && exists(p, g);
+    },
+  });
+  if (b === null) return;
+  const res = bulkResolver(sh, g, b.base);
+  switch (b.kind) {
+    case 'copy':
+    case 'move':
+      judgePairs(eff, b, sh, g, res);
+      break;
+    case 'archive':
+      for (const d of b.dests) {
+        const p = res(d);
+        pushOp(eff, isAbs(p) ? p : UNKNOWN, 'bulk');
+      }
+      // a new worktree checks out with this repository's hooks and config, from its commit-ish
+      if (b.sub === 'worktree') {
+        const land = res(b.dests[0]);
+        judgeGitTree(eff, b, info, sh, g, b.treeTarget, isAbs(land) ? land : UNKNOWN);
+      }
+      break;
+    case 'index':
+      if (b.opaque) throw new Opaque('unsupported', 'index-write', info.off || 0);
+      for (const p of b.paths) {
+        const r = res(p);
+        pushAll(eff.writes, [isAbs(r) ? r : UNKNOWN]);
+      }
+      break;
+    case 'patch':
+      judgePatch(eff, b, info, sh, g, res);
+      break;
+    case 'git-tree':
+      judgeGitTree(eff, b, info, sh, g);
+      break;
+    default:
+      break;
+  }
+}
+
 /**
  * Steps run on every finished effective command, after cd/git/ops dispatch (enrichment: classes,
  * file effects). Each is step(eff, info, sh, g); it may change eff, add commands to g.commands, or
  * throw an Opaque. info = {node, off, stdin, unwrapped}: unwrapped lists the argv of every wrapper
  * layer PRE_STEPS removed, outermost first.
  */
-export const FINISH_STEPS = [stdinInterpreterStep, commandEffectsStep];
+export const FINISH_STEPS = [stdinInterpreterStep, commandEffectsStep, bulkStep];
 
 // ---------------------------------------------------------------------------------------------
 // Code-loading variables (tables/envvars.mjs holds the list). loadingVar is the one place that
@@ -2687,6 +3088,17 @@ export function normalize(command, ctx) {
       // aliases defined earlier in this call: a later command word or re-parsed text may expand one
       aliases: { names: new Set(), all: false },
       removed: { all: false, trie: new PathTrie() },
+      // T18 capabilities: paths the agent wrote earlier in the session, a file reader, the bounded
+      // git tree check and the patch reader (defaults: the real ones; the git check needs a pinned
+      // git path and version, so unbound it answers UNKNOWN)
+      written: writtenSet(c.writtenIndex),
+      readFile: typeof c.readFile === 'function' ? c.readFile : null,
+      gitTreeDiff: typeof c.gitTreeDiff === 'function' ? c.gitTreeDiff : (repo, target, subpaths) => defaultGitTreeDiff(repo, target, subpaths, {}),
+      patchTargets: typeof c.patchTargets === 'function' ? c.patchTargets : defaultPatchTargets,
+      // the repoOf() result each git command works on (eff.repo drops the gitdir)
+      gitRepos: new WeakMap(),
+      // bulk-writer source scans, per source directory
+      bulkScans: new Map(),
     };
     g.expandGlob = globWithBudget(typeof c.expandGlob === 'function' ? c.expandGlob : null, fsImpl, g);
     // bash without globstar reads `**` as `*`: inside sh/bash/dash/ksh text such a glob is UNKNOWN
