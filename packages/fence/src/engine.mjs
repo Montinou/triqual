@@ -27,8 +27,12 @@
 //      a parallel hook, an unwritable state dir, any error) turns the call into the
 //      self-protection deny with the failure named. Grants that lifted nothing are left unused.
 // `--record-only` (the watchdog's hatch mode) computes the same decision; its caller ignores it.
-// `post`, `precompact` and `session-start` are stubs returning {} (Tasks 28, 41, 42); the decision
-// log and written-files index are appended there too (U8), so `logFailed` is never set yet.
+//   7. the decision is logged before it is returned (log/log.mjs: redacted, one O_APPEND line of at most
+//      4 KiB; under --record-only the line's decision is `hatch`). A failed write sets `logFailed: true`
+//      on the returned decision and records the failure in health.json (log/health.mjs); the decision
+//      itself is never changed by logging.
+// `post`, `precompact` and `session-start` are stubs returning {} (Tasks 28, 41, 42); their log lines
+// and the written-files index come with those tasks.
 //
 // The git tree check is bound to the git pinned at install (`<home>/.local/share/fence/git.json`);
 // without a usable pin it stays unbound and answers UNKNOWN, which makes a tree update opaque in a
@@ -37,12 +41,17 @@
 import nodeFs from 'node:fs';
 import os from 'node:os';
 import nodePath from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
+
+import { packageVersion } from './cli/version.mjs';
 
 import { evaluate } from './eval/evaluate.mjs';
 import { consume, loadGrants, realRootCheck } from './eval/grants.mjs';
 import { claude } from './hosts/claude.mjs';
 import { codex } from './hosts/codex.mjs';
+import { recordHealth } from './log/health.mjs';
+import { appendDecision, decisionEntry } from './log/log.mjs';
 import { normalize } from './norm/normalize.mjs';
 import { UNKNOWN, isUnknown } from './norm/unknown.mjs';
 import { loadPolicy } from './policy/load.mjs';
@@ -139,19 +148,21 @@ function resolvePaths(paths, home, fsImpl) {
   });
 }
 
-function decidePre(args, { stdin, now, isRootOwned, fsImpl, env }) {
+// `trace` is filled as the check proceeds and read by the log writer afterwards.
+function decidePre(args, { stdin, now, isRootOwned, fsImpl, env, trace }) {
   const home = os.homedir();
+  trace.stateDir = nodePath.resolve(args.stateDir ?? nodePath.join(home, '.local', 'state', 'fence'));
   const adapter = Object.hasOwn(ADAPTERS, args.host ?? '') ? ADAPTERS[args.host] : null;
   if (adapter === null) {
     return deny('builtin:engine', `fence was started for the unknown host ${JSON.stringify(String(args.host ?? ''))} (expected claude or codex); the call is denied.`);
   }
   const policyFile = nodePath.resolve(args.policy ?? nodePath.join(home, '.config', 'fence', 'policy.json'));
-  const stateDir = nodePath.resolve(args.stateDir ?? nodePath.join(home, '.local', 'state', 'fence'));
+  const stateDir = trace.stateDir;
   const adminDir = nodePath.resolve(args.adminDir ?? defaultAdminDir());
 
   let policy;
   try {
-    ({ policy } = loadPolicy(policyFile, { fs: fsImpl, home }));
+    ({ policy, sha: trace.policySha } = loadPolicy(policyFile, { fs: fsImpl, home }));
   } catch (err) {
     const code = typeof err?.code === 'string' ? err.code : 'error';
     const message = err instanceof Error ? err.message : String(err);
@@ -165,6 +176,8 @@ function decidePre(args, { stdin, now, isRootOwned, fsImpl, env }) {
     payload = null; // the adapter reads a non-object payload as malformed (opaque)
   }
   const parsed = adapter.parse(payload, { home });
+  trace.payload = payload;
+  trace.parsed = parsed;
 
   if (parsed.event !== PRE_HOOK_EVENT) {
     return deny('builtin:engine', `fence received the hook event ${JSON.stringify(parsed.event)} for a pre-tool check (expected ${PRE_HOOK_EVENT}); the call is denied.`);
@@ -179,6 +192,7 @@ function decidePre(args, { stdin, now, isRootOwned, fsImpl, env }) {
     normalized = normalize(parsed.command, { cwd: parsed.cwd, home, env, gitTreeDiff, fs: fsImpl });
   }
 
+  trace.normalized = normalized;
   const call = { ...parsed, paths: resolvePaths(parsed.paths, home, fsImpl) };
   if (typeof call.cwd === 'string' && call.cwd.startsWith('/')) call.repo = repoView(repoOf(call.cwd, { fs: fsImpl }));
   // A call the adapter marked opaque has no shell reading of its own: evaluate gets the opaque record.
@@ -187,6 +201,8 @@ function decidePre(args, { stdin, now, isRootOwned, fsImpl, env }) {
   const caseInsensitive = isCaseInsensitive(home, fsImpl) || (call.cwd.startsWith('/') && isCaseInsensitive(call.cwd, fsImpl));
   const grants = loadGrants(adminDir, stateDir, now, { isRootOwned, fs: fsImpl });
   const profile = env.FENCE_PROFILE === undefined ? 'default' : env.FENCE_PROFILE;
+  trace.call = call;
+  trace.profile = profile;
   const ctx = { home, platform: process.platform, caseInsensitive };
   const decision = evaluate(policy, call, normalized, { profile, grants, ctx });
 
@@ -205,19 +221,48 @@ function decidePre(args, { stdin, now, isRootOwned, fsImpl, env }) {
   return canonical;
 }
 
-// `env` (default process.env) is the hook process environment: FENCE_PROFILE and the host
-// environment the normalizer sees. Tests pin it.
-export function runEngine(argv, { stdin = '', now = Date.now(), isRootOwned = realRootCheck, fs: fsImpl = nodeFs, env = process.env } = {}) {
+const round1 = (ms) => Math.round(ms * 10) / 10;
+
+// Logs the decision (one redacted line) and returns what the caller prints: the same decision, plus
+// `logFailed: true` when the line could not be written. Never throws and never changes the decision.
+function withLog(args, decision, trace, { now, started, t0, fsImpl }) {
+  if (args === undefined || trace.stateDir === undefined) return decision;
   try {
-    const args = parseArgs(argv);
+    const finished = performance.now();
+    const entry = decisionEntry({
+      ...trace,
+      decision,
+      recordOnly: args.recordOnly,
+      engineVersion: packageVersion(),
+      latency: { total_ms: round1(finished - t0), engine_ms: round1(finished - started) },
+    });
+    if (appendDecision(trace.stateDir, entry, { now: () => now, fs: fsImpl }).ok) return decision;
+  } catch {
+    // fall through: a log that cannot be built is a failed log
+  }
+  recordHealth(trace.stateDir, { logFailure: { at: new Date(now).toISOString() } }, { fs: fsImpl });
+  return { ...decision, logFailed: true };
+}
+
+// `env` (default process.env) is the hook process environment: FENCE_PROFILE and the host
+// environment the normalizer sees. Tests pin it. `t0` is the performance.now() reading that counts as
+// the start of the whole hook (the process start for the CLI entry, so total_ms includes startup).
+export function runEngine(argv, { stdin = '', now = Date.now(), isRootOwned = realRootCheck, fs: fsImpl = nodeFs, env = process.env, t0 = performance.now() } = {}) {
+  const started = performance.now();
+  const trace = {};
+  let args;
+  let decision;
+  try {
+    args = parseArgs(argv);
     if (args.error) return out(deny('builtin:engine', `fence could not start: ${args.error}; the call is denied.`));
     if (STUB_EVENTS.has(args.event)) return out({});
     // --record-only computes and returns the same decision; the watchdog ignores it.
-    return out(decidePre(args, { stdin, now, isRootOwned, fsImpl, env: env !== null && typeof env === 'object' ? env : {} }));
+    decision = decidePre(args, { stdin, now, isRootOwned, fsImpl, env: env !== null && typeof env === 'object' ? env : {}, trace });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return out(deny('builtin:internal-error', `fence failed while deciding this call (${message}); it is denied.`));
+    decision = deny('builtin:internal-error', `fence failed while deciding this call (${message}); it is denied.`);
   }
+  return out(withLog(args, decision, trace, { now, started, t0, fsImpl }));
 }
 
 function isMain() {
@@ -235,6 +280,6 @@ if (isMain()) {
   } catch {
     stdin = '';
   }
-  const r = runEngine(process.argv.slice(2), { stdin, now: Date.now() });
+  const r = runEngine(process.argv.slice(2), { stdin, now: Date.now(), t0: 0 });
   process.stdout.write(r.stdout, () => process.exit(r.exit));
 }

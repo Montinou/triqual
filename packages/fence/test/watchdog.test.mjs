@@ -9,7 +9,7 @@ import { Readable } from 'node:stream';
 
 import { main, hatchIsValid, DEADLINE_MS, STDIN_CAP } from '../src/watchdog.mjs';
 import { compareManifest, parseIso, parseManifest, MAX_FILE_BYTES } from '../src/watchdog/integrity.mjs';
-import { formatLine, TRUNCATED } from '../src/watchdog/line.mjs';
+import { formatLine, appendLine, logFileFor, TRUNCATED, PROTECTED_KEYS } from '../src/watchdog/line.mjs';
 import { buildWatchdog } from '../src/build/bundle-watchdog.mjs';
 import { renderSessionStart } from '../src/hosts/render.mjs';
 
@@ -134,11 +134,28 @@ describe('HATCH', () => {
       assert.deepEqual(r, SILENT, `${host}: the engine's deny is ignored under a hatch`);
       assert.ok(readRecord(inst).argv.includes('--record-only'), 'the engine ran in record-only mode');
     }
-    const logs = fs.readdirSync(path.join(inst.state, 'log'));
-    assert.equal(logs.length, 1);
-    const lines = fs.readFileSync(path.join(inst.state, 'log', logs[0]), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-    assert.ok(lines.length >= 2 && lines.every((l) => l.decision === 'hatch'));
-    assert.ok(lines.every((l) => !('raw' in l) && !('command' in l)), 'hatch lines carry no raw or command text');
+    // The engine logs a hatch call itself (decision "hatch"), so the watchdog adds no line of its own.
+    assert.equal(fs.existsSync(path.join(inst.state, 'log')), false, 'one line per hatch call: the watchdog adds none when the engine answered');
+  });
+
+  test('a hatch call the engine could not log gets the watchdog line, one per call', async () => {
+    const file = (inst) => path.join(inst.admin, 'hatch.json');
+    const stubs = {
+      crash: () => ENGINES.crash(),
+      garbage: () => ENGINES.garbage(),
+      logFailed: (record) => ENGINES.normal({ ...UNDECIDED, logFailed: true }, record),
+      none: null,
+    };
+    for (const [name, engine] of Object.entries(stubs)) {
+      const inst = install({ engine });
+      write(file(inst), hatch({ created: iso(Date.now() - 60000), expires: iso(Date.now() + H) }));
+      for (const host of ['claude', 'codex']) assert.deepEqual(await run(inst, ['pre', '--host', host], { lstat: rootify(file(inst)) }), SILENT, name);
+      const logs = fs.readdirSync(path.join(inst.state, 'log'));
+      assert.equal(logs.length, 1, name);
+      const lines = fs.readFileSync(path.join(inst.state, 'log', logs[0]), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+      assert.equal(lines.length, 2, `${name}: one line per call`);
+      assert.ok(lines.every((l) => l.decision === 'hatch' && !('raw' in l) && !('command' in l)), 'hatch lines carry no raw or command text');
+    }
   });
 
   test('malformed JSON is no hatch', () => {
@@ -332,7 +349,9 @@ describe('INTEGRITY', () => {
     write(s.tracked[0], '{"hooks":0}\n');
     fs.rmSync(s.file);
     let reads = 0;
-    const counting = { ...fs, openSync: (...a) => (reads++, fs.openSync(...a)), readFileSync: (...a) => (reads++, fs.readFileSync(...a)) };
+    // The deny's own log line opens the day file for appending; that is not an integrity read.
+    const count = (a) => { if (!String(a[0]).endsWith('.jsonl')) reads++; };
+    const counting = { ...fs, openSync: (...a) => (count(a), fs.openSync(...a)), readFileSync: (...a) => (count(a), fs.readFileSync(...a)) };
     for (const host of ['claude', 'codex']) {
       const r = await run(s.inst, ['pre', '--host', host], { lstat: s.lstat, fs: counting });
       if (host === 'claude') assert.match(assertHumanDeny(r), /fence repair has not cleared it/);
@@ -565,6 +584,13 @@ describe('EVENTS', () => {
 });
 
 describe('LINE', () => {
+  const META = { ts: '2026-10-17T12:00:00.000Z', host: 'claude', session_id: 's-1', tool: 'Bash', tool_use_id: 'toolu_01', permission_mode: 'default', profile: 'default', decision: 'deny', rule: 'delete-outside-repo', engine_version: '0.1.0', policy_sha: 'a'.repeat(64) };
+  const parse = (text) => {
+    assert.ok(text.endsWith('\n') && !text.slice(0, -1).includes('\n'), 'one line');
+    return JSON.parse(text);
+  };
+  const MORE = /^…\[truncated \d+ more\]$/;
+
   test('formatLine caps a line at 4096 bytes with the truncation marker', () => {
     const small = formatLine({ ts: 't', decision: 'deny' });
     assert.equal(small, '{"ts":"t","decision":"deny"}\n');
@@ -575,5 +601,112 @@ describe('LINE', () => {
     assert.equal(v.ts, 't');
     assert.ok(v.reason.endsWith(TRUNCATED));
     assert.ok(Buffer.byteLength(formatLine({ a: 'x'.repeat(300) }, 128)) <= 128);
+  });
+
+  test('a deny with hundreds of argv items keeps its metadata and shortens the arrays', () => {
+    const paths = Array.from({ length: 200 }, (_, i) => `/tmp/victim/file-number-${i}.txt`);
+    const entry = {
+      ...META,
+      call: { commands: [{ argv: ['rm', '-f', ...paths], cwd: '/tmp/r', classes: ['delete'], reads: [], writes: [], domains: [] }] },
+      scope: { reads: [], writes: [], deletes: paths, domains: [] },
+      latency: { total_ms: 1.5, engine_ms: 1 },
+      raw: `rm -f ${paths.join(' ')}`,
+    };
+    const text = formatLine(entry);
+    assert.ok(Buffer.byteLength(text) <= 4096, `${Buffer.byteLength(text)} bytes`);
+    const v = parse(text);
+    for (const k of Object.keys(META)) assert.equal(v[k], META[k], `${k} is never cut`);
+    assert.equal(Object.hasOwn(v, 'truncated'), false, 'not the minimal fallback');
+    const argv = v.call.commands[0].argv;
+    assert.ok(argv.length > 5 && argv.length < 202, `argv has ${argv.length} elements`);
+    assert.deepEqual(argv.slice(0, 3), ['rm', '-f', paths[0]], 'the leading elements are kept');
+    assert.match(argv.at(-1), MORE);
+    assert.match(v.scope.deletes.at(-1), MORE);
+    assert.ok(v.raw.startsWith('rm -f /tmp/victim/file-number-0.txt'));
+    assert.deepEqual(v.latency, entry.latency);
+  });
+
+  test('many short strings are shortened by dropping trailing elements', () => {
+    const items = Array.from({ length: 5000 }, (_, i) => `a${i % 10}`);
+    const v = parse(formatLine({ ...META, items }));
+    assert.equal(v.decision, 'deny');
+    assert.ok(v.items.length < 5000 && v.items.length > 1);
+    assert.match(v.items.at(-1), MORE);
+    assert.deepEqual(v.items.slice(0, 3), items.slice(0, 3));
+    // Never replaced by something longer: a nearly fitting array is left alone.
+    const tiny = { ts: 't', xs: ['a', 'b', 'c'] };
+    assert.equal(formatLine(tiny, JSON.stringify(tiny).length + 1), `${JSON.stringify(tiny)}\n`);
+    assert.ok(Buffer.byteLength(formatLine(tiny, JSON.stringify(tiny).length)) <= JSON.stringify(tiny).length, 'one byte short: still within the cap');
+  });
+
+  test('multibyte text is cut on code points and the line stays valid JSON under the cap', () => {
+    const emoji = '😀é ';
+    const text = formatLine({ ...META, raw: emoji.repeat(3000), call: { argv: Array.from({ length: 800 }, (_, i) => `${emoji}${i}`) }, lone: '\ud800'.repeat(50) });
+    assert.ok(Buffer.byteLength(text) <= 4096);
+    const v = parse(text);
+    assert.ok(v.raw.endsWith(TRUNCATED));
+    assert.ok(!v.raw.includes('�'), 'no half-cut character');
+    assert.match(v.call.argv.at(-1), MORE);
+  });
+
+  test('protected metadata is never cut, even when it is long', () => {
+    const rule = `rule-${'r'.repeat(600)}`;
+    const v = parse(formatLine({ ...META, rule, raw: 'x'.repeat(9000) }));
+    assert.equal(v.rule, rule);
+    assert.ok(v.raw.endsWith(TRUNCATED));
+    for (const k of PROTECTED_KEYS) if (k in META && k !== 'rule') assert.equal(v[k], META[k]);
+  });
+
+  test('a 200 KB entry is shortened in well under 100 ms', () => {
+    const entry = { ...META, raw: 'x'.repeat(100000), call: { argv: Array.from({ length: 6000 }, (_, i) => `argument-${i}`) }, scope: { reads: Array.from({ length: 4000 }, (_, i) => `/p/${i}`) } };
+    assert.ok(JSON.stringify(entry).length > 190000);
+    formatLine(entry); // warm up
+    const t0 = performance.now();
+    const text = formatLine(entry);
+    const ms = performance.now() - t0;
+    assert.ok(ms < 100, `${ms} ms`);
+    assert.ok(Buffer.byteLength(text) <= 4096);
+    assert.equal(parse(text).decision, 'deny');
+  });
+
+  test('the minimal fallback is the last resort', () => {
+    const v = parse(formatLine({ ...META, call: { a: 'x'.repeat(5000) } }, 4096));
+    assert.equal(Object.hasOwn(v, 'truncated'), false);
+    const tight = formatLine({ ...META, raw: 'x'.repeat(500) }, 140);
+    assert.ok(Buffer.byteLength(tight) <= 140);
+    const t = parse(tight);
+    assert.equal(t.truncated, TRUNCATED, 'protected metadata alone does not fit: the marker line');
+    assert.ok(Buffer.byteLength(formatLine({ ...META }, 20)) <= 20);
+    assert.ok(Buffer.byteLength(formatLine({ ts: 't', toolong: Object.fromEntries(Array.from({ length: 2000 }, (_, i) => [`key${i}`, 1])) }, 4096)) <= 4096);
+  });
+
+  test('appendLine refuses a symlinked log directory or day file and fixes the mode', () => {
+    const now = () => Date.UTC(2026, 9, 17, 12, 0, 0);
+    const outside = dir();
+    // log/ is a symlink
+    const a = dir();
+    fs.symlinkSync(outside, path.join(a, 'log'));
+    assert.equal(appendLine(a, { decision: 'deny' }, { now }), false);
+    assert.deepEqual(fs.readdirSync(outside), []);
+    // the day file is a symlink to another file
+    const b = dir();
+    fs.mkdirSync(path.join(b, 'log'));
+    const target = path.join(outside, 'target.txt');
+    fs.writeFileSync(target, 'keep\n');
+    fs.symlinkSync(target, logFileFor(b, now()));
+    assert.equal(appendLine(b, { decision: 'deny' }, { now }), false);
+    assert.equal(fs.readFileSync(target, 'utf8'), 'keep\n');
+    // the day file is a directory
+    const c = dir();
+    fs.mkdirSync(logFileFor(c, now()), { recursive: true });
+    assert.equal(appendLine(c, { decision: 'deny' }, { now }), false);
+    // an existing 0644 day file is brought to 0600
+    const d = dir();
+    const file = logFileFor(d, now());
+    fs.mkdirSync(path.dirname(file));
+    fs.writeFileSync(file, '', { mode: 0o644 });
+    fs.chmodSync(file, 0o644);
+    assert.equal(appendLine(d, { decision: 'deny' }, { now }), true);
+    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   });
 });
