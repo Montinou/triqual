@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "profiles": {
+    "default": { "undecided": "host" },
+    "unattended": { "undecided": "deny" }
+  },
+  "branches": { "protected": ["main", "master", "develop"], "denyFileWrites": false },
+  "rules": [
+    {
+      "id": "delete-outside-repo",
+      "decision": "deny",
+      "match": { "class": ["delete"] },
+      "except": { "paths": ["${repo}/**"] },
+      "why": "Deleting files outside the current repository is denied."
+    },
+    {
+      "id": "credentials",
+      "decision": "deny",
+      "match": { "paths": ["**/.env", "**/.env.*", "~/.aws/**", "~/.ssh/**"], "access": "any" },
+      "except": { "paths": ["**/.env.example", "**/.env.sample"] },
+      "why": "Credential files are never read or written by the agent."
+    },
+    {
+      "id": "network-fetch",
+      "decision": "deny",
+      "match": { "class": ["network-fetch"] },
+      "why": "Fetching from the network is denied."
+    },
+    {
+      "id": "privilege",
+      "decision": "deny",
+      "match": { "class": ["privilege"] },
+      "why": "Raising privileges is denied."
+    }
+  ]
+}
