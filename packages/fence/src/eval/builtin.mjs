@@ -20,6 +20,7 @@ import path from 'node:path';
 
 import { compileGlob, resolveGlobPrefix } from '../match/glob.mjs';
 import { UNKNOWN, isUnknown } from '../norm/unknown.mjs';
+import { foldCase } from '../resolve/paths.mjs';
 
 // ---- Data tables -------------------------------------------------------------------------------
 
@@ -194,7 +195,8 @@ function allGlobs({ home, platform, projectRoots = [], realpath = fs.realpathSyn
   return [...protectedGlobs({ home, platform, realpath }), ...expandBoth(project, { home }, realpath)];
 }
 
-const fold = (s, caseInsensitive) => (caseInsensitive ? s.normalize('NFC').toLowerCase() : s);
+// The resolver's fold (NFC + full Unicode case fold), so builtin and the resolver always agree.
+const fold = foldCase;
 
 // The leading segments of an expanded glob that hold no wildcard, unescaping one-character
 // classes. `literal` is true when the whole glob is literal.
