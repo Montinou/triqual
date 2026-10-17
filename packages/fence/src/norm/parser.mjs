@@ -25,7 +25,8 @@ import { Lexer, Opaque, MAX_DEPTH, MAX_BYTES, isName } from './tokenize.mjs';
  *   op is one of `>` `>>` `>|` `&>` `&>>` `<` `<>` `>&` `<&` `<<<` (herestring,
  *   the target is the word), or `<<` `<<-` for a heredoc (HeredocRedir, no
  *   target).
- * @typedef {{type:'simple', assigns:{name:string, value:Word}[], words:Word[], redirs:Redir[]}} SimpleNode
+ * @typedef {{type:'simple', assigns:{name:string, value:Word}[], words:Word[], redirs:Redir[], off:number}} SimpleNode
+ *   `off` is the offset of the command's first token in the original command.
  * @typedef {{type:'list', items:{node:Node, async:boolean}[]}} ListNode
  *   `async` is true for a command ended by `&`.
  * @typedef {{type:'and'|'or', left:Node, right:Node}} AndOrNode
@@ -470,6 +471,7 @@ class Parser {
 
   /** @returns {SimpleNode} */
   parseSimple() {
+    const off = this.lex.peek().off;
     const assigns = [];
     const words = [];
     const redirs = [];
@@ -514,7 +516,7 @@ class Parser {
         break;
       }
     }
-    return { type: 'simple', assigns, words, redirs };
+    return { type: 'simple', assigns, words, redirs, off };
   }
 }
 

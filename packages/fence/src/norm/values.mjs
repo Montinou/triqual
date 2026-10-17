@@ -25,11 +25,16 @@
 // - Subshells, `$( … )`, and pipeline members run on `env.clone()`; zsh runs
 //   the last pipeline member in the current shell and bash does not, so names
 //   it assigns become UNKNOWN in the parent.
-// - A `for` loop: walk the body once per forValues value on a clone with the
-//   loop variable set (or once with it UNKNOWN when forValues is UNKNOWN);
-//   after the loop the variable keeps its last value (UNKNOWN when the list
-//   was UNKNOWN or empty-handling differs), and every name assigned in the
-//   body, or in any branch of if/case/while, becomes UNKNOWN in the parent.
+// - Loops: walking each iteration on a clone of the pre-loop env is NOT sound
+//   (iteration 2 sees what iteration 1 assigned: `X=echo; for i in 1 2; do
+//   $X -rf ~/.codex; X=rm; done` runs rm). The walker (normalize.mjs) uses
+//   scan-and-forget instead: every name the body (or a while condition) may
+//   assign, found by a syntactic scan, is made UNKNOWN at the start of every
+//   iteration and after the loop; forValues values are unrolled with the loop
+//   variable set per iteration, and afterwards the variable keeps its last
+//   value only when the body can neither assign it nor break. Names assigned
+//   in any branch of if/case, or on the right of && / ||, become UNKNOWN in the
+//   parent.
 // - Prefix assignments (`X=v cmd`) do not change env; their values, for the
 //   command's own environment, come from resolveWord on the assignment Word.
 
@@ -57,13 +62,13 @@ const SPECIAL_BUILTINS = new Set([
 
 // Commands that can change any variable, or how every later expansion
 // behaves: after one of them nothing is known.
-const POISON_COMMANDS = new Set([
+export const POISON_COMMANDS = new Set([
   'eval', 'source', '.', 'let', 'setopt', 'unsetopt', 'emulate', 'shopt', 'enable', 'disable',
   'command', 'builtin', 'noglob', 'trap', 'alias', 'unalias', 'zmodload', 'autoload', 'vared',
   'zparseopts', 'fc', 'r', 'getln', 'sched', 'integer', 'float', 'functions',
 ]);
 
-const DECLARE_COMMANDS = new Set(['export', 'readonly', 'declare', 'typeset', 'local']);
+export const DECLARE_COMMANDS = new Set(['export', 'readonly', 'declare', 'typeset', 'local']);
 // Declaration flags that keep plain string semantics; any other (-i, -n, -l,
 // -u, -a, -A, -T, …) changes what an assignment stores.
 const DECLARE_FLAGS = new Set(['x', 'r', 'g', 'p']);
