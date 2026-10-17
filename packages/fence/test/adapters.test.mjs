@@ -7,6 +7,10 @@ import { parseApplyPatch } from '../src/hosts/patch.mjs';
 import { KNOWN_TOOLS, OPAQUE_INPUT_FIELDS, lookupTool } from '../src/hosts/tools.mjs';
 import { CALL_KINDS, assertCanonicalCall } from '../src/hosts/types.mjs';
 import { UNKNOWN } from '../src/norm/unknown.mjs';
+import { evaluate } from '../src/eval/evaluate.mjs';
+import { validatePolicy } from '../src/policy/schema.mjs';
+import { fake, FAKE_EVENT } from './fixtures/fake-adapter.mjs';
+import { runAdapterContract } from './adapter-contract.mjs';
 
 const CWD = '/work/repo';
 const CTX = { home: '/home/tester' };
@@ -543,4 +547,90 @@ test('codex view_image, mcp, web_search and unknown tools', () => {
   assert.equal(codex.parse(null, CTX).opaque.reason, 'malformed-payload');
   assert.equal(codex.name, 'codex');
   assert.ok(codex.events.includes('PreToolUse'));
+});
+
+// ---- the adapter contract suite ----
+
+const claudeFixtures = {
+  ctx: CTX,
+  payloads: [
+    { name: 'bash', payload: payload('Bash', { command: 'ls' }), expect: { kind: 'shell', command: 'ls', cwd: CWD } },
+    { name: 'write', payload: payload('Write', { file_path: '/work/repo/a.txt' }), expect: { kind: 'file', paths: [{ path: '/work/repo/a.txt', access: 'write' }] } },
+    { name: 'webfetch', payload: payload('WebFetch', { url: 'https://example.com/' }), expect: { kind: 'net', url: 'https://example.com/' } },
+    { name: 'mcp', payload: payload('mcp__github__create_issue', { title: 't' }), expect: { kind: 'mcp', mcp: 'mcp__github__create_issue' } },
+    { name: 'unknown tool with a command', payload: payload('FutureShell', { command: 'echo ok' }), expect: { kind: 'other', opaque: { reason: 'unknown-tool-input' } } },
+    { name: 'unknown tool without one', payload: payload('FutureTool', { title: 'x' }), expect: { kind: 'other', paths: [] } },
+    { name: 'no cwd', payload: payload('Read', { file_path: '/work/repo/a' }, { cwd: undefined }), expect: { opaque: { reason: 'missing-cwd' } } },
+  ],
+};
+
+const codexFixtures = {
+  ctx: CTX,
+  payloads: [
+    { name: 'shell argv', payload: codexPayload('shell', { command: ['bash', '-lc', 'ls -la'] }), expect: { kind: 'shell', command: "bash -lc 'ls -la'" } },
+    { name: 'exec_command', payload: codexPayload('exec_command', { cmd: 'echo ok' }), expect: { kind: 'shell', command: 'echo ok' } },
+    { name: 'apply_patch', payload: codexPayload('apply_patch', { command: envelope('*** Add File: src/a.txt', '+hello') }), expect: { kind: 'file', paths: [{ path: '/work/repo/src/a.txt', access: 'write' }] } },
+    { name: 'broken patch', payload: codexPayload('apply_patch', { command: 'nope' }), expect: { opaque: { reason: 'malformed-patch' } } },
+    { name: 'mcp', payload: codexPayload('mcp__github__create_issue', { title: 't' }), expect: { kind: 'mcp' } },
+    { name: 'write_stdin is opaque', payload: codexPayload('write_stdin', { chars: 'ls\n' }), expect: { opaque: { reason: 'write-stdin' } } },
+  ],
+};
+
+test('the contract suite passes for claude, codex and the fake adapter', () => {
+  assert.ok(runAdapterContract(claude, claudeFixtures) > 20);
+  assert.ok(runAdapterContract(codex, codexFixtures) > 20);
+  assert.ok(runAdapterContract(fake, fake.fixtures) > 10);
+});
+
+test('the contract suite rejects adapters that break it', () => {
+  const bad = (patch, why, fixtures = fake.fixtures) => assert.throws(() => runAdapterContract({ ...fake, ...patch }, fixtures), why);
+  bad({ name: '' }, /: name:/);
+  bad({ events: [] }, /: events:/);
+  bad({ parse: 'not a function' }, /: parse:/);
+  // Throws on hostile input.
+  bad({ parse: (p, c) => (p === null ? (() => { throw new Error('boom'); })() : fake.parse(p, c)) }, /must not throw.*boom/);
+  // Wrong host name on the call.
+  bad({ parse: (p, c) => ({ ...fake.parse(p, c), host: 'other' }) }, /host is the adapter name/);
+  // Not canonical: a bad kind.
+  bad({ parse: (p, c) => ({ ...fake.parse(p, c), kind: 'weird' }) }, /not a canonical call: kind "weird"/);
+  // Mutates its input (the contract hands it a frozen copy).
+  bad({ parse: (p, c) => { if (p !== null && typeof p === 'object') p.touched = true; return fake.parse(p, c); } }, /must not throw, and must not write to its payload.*(read only|not extensible)/);
+  // Not deterministic.
+  let n = 0;
+  bad({ parse: (p, c) => ({ ...fake.parse(p, c), tool_use_id: `id-${n++}` }) }, /parses the same way twice/);
+  // Hostile input must be opaque, not an empty call.
+  bad({ parse: (p, c) => (p === null ? fake.parse({ tool: 'x', cwd: '/w' }, c) : fake.parse(p, c)) }, /is opaque/);
+  // An expectation the adapter does not meet.
+  bad({}, /expects kind/, { ...fake.fixtures, payloads: [{ ...fake.fixtures.payloads[0], expect: { kind: 'net' } }] });
+  // A contract with no fixtures checks nothing and says so.
+  assert.throws(() => runAdapterContract(fake, { payloads: [] }), /needs fixture payloads/);
+});
+
+test('a fake adapter with a new tool kind needs no change in evaluate', () => {
+  // Teleport is a tool no real adapter knows. The fake adapter turns it into the same canonical
+  // call every adapter produces, and evaluate judges it by path with the rules as they are.
+  const pol = validatePolicy({
+    version: 1,
+    profiles: { default: { undecided: 'host' }, unattended: { undecided: 'deny' } },
+    rules: [{ id: 'no-secret-dest', decision: 'deny', match: { paths: ['/work/repo/secret/**'], access: 'write' }, why: 'secret is off limits' }],
+  });
+  const opts = { profile: 'default', grants: [], ctx: { home: '/home/tester', platform: 'linux', caseInsensitive: false, realpath: () => { throw new Error('ENOENT'); } } };
+  const call = (dest) => fake.parse({ event: FAKE_EVENT, tool: 'Teleport', cwd: CWD, input: { dest }, id: 't1', session: 's1' }, CTX);
+
+  const blocked = call('/work/repo/secret/key.txt');
+  assertCanonicalCall(blocked);
+  assert.equal(blocked.host, 'fake');
+  assert.equal(blocked.kind, 'file');
+  const verdict = evaluate(pol, blocked, null, opts);
+  assert.equal(verdict.decision, 'deny');
+  assert.equal(verdict.rule, 'no-secret-dest');
+
+  const fine = evaluate(pol, call('/work/repo/ok.txt'), null, opts);
+  assert.equal(fine.decision, 'undecided');
+  assert.equal(evaluate(pol, call('/work/repo/ok.txt'), null, { ...opts, profile: 'unattended' }).decision, 'deny');
+
+  // A fake tool of another kind (a fetch) is judged on its url by the same evaluator.
+  const net = fake.parse({ event: FAKE_EVENT, tool: 'Beam', cwd: CWD, input: { url: 'https://example.com/x' }, id: 't2', session: 's1' }, CTX);
+  assert.equal(net.kind, 'net');
+  assert.equal(typeof evaluate(pol, net, null, opts).decision, 'string');
 });
