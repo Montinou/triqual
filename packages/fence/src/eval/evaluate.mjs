@@ -1,6 +1,8 @@
 // Evaluator: applies the spec's fixed precedence to one canonical call (trusted path).
 //
-// evaluate(policy, call, normalized, {profile, grants, ctx}) -> {decision, rule, reason, scope}
+// evaluate(policy, call, normalized, {profile, grants, ctx}) -> {decision, rule, reason, scope, lifted?}
+//   lifted      only on a non-deny decision that a grant made possible: [{path, grant}], each
+//               distinct path whose built-in self-protection deny a grant lifted, with the grant
 //   policy      a validated policy (loadPolicy or validatePolicy output)
 //   call        the canonical call; file tools give `paths: [{path, access, repo?}]` (absolute
 //               realpaths; `repo` per path, else `call.repo`), MCP calls `mcp` (the tool name),
@@ -31,6 +33,7 @@ import nodePath from 'node:path';
 import { compileGlob, resolveGlobPrefix } from '../match/glob.mjs';
 import { UNKNOWN, isUnknown } from '../norm/unknown.mjs';
 import { ARGV_COVERED_CLASSES, exceptKindAllowed } from '../policy/classes.mjs';
+import { foldCase } from '../resolve/paths.mjs';
 import { checkAncestorOp, checkCommandArgv, checkPathWrite } from './builtin.mjs';
 
 const SELF = 'builtin:self-protection';
@@ -44,7 +47,9 @@ const noRealpath = () => {
 
 // ---- input normalisation -----------------------------------------------------------------------
 
-const fold = (s, ci) => (ci ? s.normalize('NFC').toLowerCase() : s);
+// The resolver's full case fold (NFC + upper + lower on a case-insensitive volume), the same one
+// builtin.mjs and the engine use, so a grant matches here exactly when it matches there.
+const fold = foldCase;
 
 // An absolute path with no `.`/`..` segment and no NUL, else UNKNOWN.
 function asPath(p) {
@@ -426,13 +431,23 @@ function grantOnlyCommand(part, lifted) {
   );
 }
 
-// Returns {deny} or {granted: Set<part>}: parts whose effects are only writes a grant lifted.
+// Returns {deny} or {granted: Set<part>, lifted: [{path, grant}]}: `granted` holds the parts whose
+// effects are only writes a grant lifted; `lifted` each distinct path a grant lifted the
+// self-protection deny on, with that grant (the engine reserves exactly these).
 function builtinCheck(parts, o) {
   const bopts = { home: o.home, platform: o.platform, caseInsensitive: o.ci, projectRoots: projectRootsOf(parts), realpath: o.realpath };
   const granted = new Set();
+  const lifts = new Map();
   const writeCheck = (target) => {
     const r = checkPathWrite(target, bopts);
-    if (r && r.rule === SELF && grantFor(target, o)) return { lifted: true };
+    if (r && r.rule === SELF) {
+      const grant = grantFor(target, o);
+      if (grant) {
+        const key = fold(target, o.ci);
+        if (!lifts.has(key)) lifts.set(key, { path: target, grant });
+        return { lifted: true };
+      }
+    }
     return r ? { deny: r } : {};
   };
   for (const part of parts) {
@@ -456,7 +471,7 @@ function builtinCheck(parts, o) {
       if (c.lifted && part.access === 'write') granted.add(part);
     }
   }
-  return { granted };
+  return { granted, lifted: [...lifts.values()] };
 }
 
 // The protected state of a part's repo: null (no repo or not protected) or the branch shown.
@@ -569,6 +584,8 @@ function decide(policy, parts, opaque, o) {
 
   const builtin = builtinCheck(parts, o);
   if (builtin.deny) return deny(builtin.deny.rule, builtin.deny.reason);
+  // `o` is this call's own options object: evaluate() reads the lifts back from it.
+  o.lifted = builtin.lifted;
 
   if (opaque) {
     const reason = typeof opaque.reason === 'string' ? opaque.reason : 'unknown reason';
@@ -623,7 +640,11 @@ export function evaluate(policy, call, normalized, opts) {
     const o = readOptions(opts);
     const { parts, opaque } = buildParts(call, normalized);
     scope = computeScope(parts);
-    return { ...decide(policy, parts, opaque, o), scope };
+    const result = { ...decide(policy, parts, opaque, o), scope };
+    // A non-deny decision that relied on allow-once grants lists them: [{path, grant}], one per
+    // lifted path. The caller must reserve (consume) exactly these before acting on the decision.
+    if (result.decision !== 'deny' && Array.isArray(o.lifted) && o.lifted.length > 0) result.lifted = o.lifted;
+    return result;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return {

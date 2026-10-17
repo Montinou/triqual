@@ -404,6 +404,38 @@ test('a valid grant turns a builtin deny on that one path into allow and never a
   assert.equal(run(policy([]), file('Write', settings, 'write'), null, { ...OPTS, grants: 'nope' }).decision, 'deny');
 });
 
+test('lifted lists each path a grant lifted, with its grant, on a non-deny decision only', () => {
+  const settings = `${HOME}/.claude/settings.json`;
+  const grant = { path: settings, sha: 'a'.repeat(64) };
+  const withGrant = { ...OPTS, grants: [grant] };
+  const r = run(policy([]), file('Write', settings, 'write'), null, withGrant);
+  assert.equal(r.rule, 'grant');
+  assert.deepEqual(r.lifted, [{ path: settings, grant }]);
+  assert.equal(r.lifted[0].grant, grant);
+  // the same path written by two parts is listed once
+  const sh = { commands: [cmd(['tee', settings], { classes: ['overwrite'], writes: [settings] }), cmd(['tee', settings], { classes: ['overwrite'], writes: [settings] })] };
+  assert.equal(run(policy([]), shell('tee'), sh, withGrant).lifted.length, 1);
+  // an undecided call that a grant made possible lists it too
+  const cp = { commands: [cmd(['cp', '/tmp/src', settings], { reads: ['/tmp/src'], writes: [settings] })] };
+  const u = run(policy([]), shell('cp'), cp, withGrant);
+  assert.equal(u.decision, 'undecided');
+  assert.deepEqual(u.lifted, [{ path: settings, grant }]);
+  // a deny never carries lifted, nor does a call no grant took part in
+  const deny = policy([rule('no-claude', 'deny', { paths: ['~/.claude/**'], access: 'any' })]);
+  assert.equal(run(deny, file('Write', settings, 'write'), null, withGrant).lifted, undefined);
+  assert.equal(run(policy([]), file('Write', '/tmp/x', 'write'), null, withGrant).lifted, undefined);
+  // on a case-insensitive volume grants match with the resolver's full fold (foldCase)
+  const ci = { ...withGrant, ctx: { ...CTX, caseInsensitive: true } };
+  const upper = `${HOME}/.claude/SETTINGS.json`;
+  assert.deepEqual(run(policy([]), file('Write', upper, 'write'), null, ci).lifted, [{ path: upper, grant }]);
+  const sharp = { path: `${HOME}/.claude/settingsß.json` };
+  const ciSharp = { ...OPTS, grants: [sharp], ctx: { ...CTX, caseInsensitive: true } };
+  // foldCase: ß -> ss, so a grant for settingsß.json lifts settingsSS.json ...
+  assert.equal(run(policy([]), file('Write', `${HOME}/.claude/settingsSS.json`, 'write'), null, ciSharp).rule, 'grant');
+  // ... while ẞ folds to ß (not ss): no lift, the deny stays
+  assert.equal(run(policy([]), file('Write', `${HOME}/.claude/settingsẞ.json`, 'write'), null, ciSharp).rule, 'builtin:self-protection');
+});
+
 test('builtin checks cover shell writes, ancestor operations and protected commands', () => {
   const pol = policy([rule('all', 'allow', { argv: [['rm'], ['claude'], ['tee']] })]);
   const rmClaude = cmd(['rm', '-rf', `${HOME}/.claude`], { classes: ['delete'], writes: [`${HOME}/.claude`], ops: [{ path: `${HOME}/.claude`, op: 'delete' }] });
