@@ -196,7 +196,7 @@ test('fence help, unknown commands and not-yet-built commands', () => {
   const u = fence(['bogus'], home);
   assert.equal(u.code, 1);
   assert.match(u.stderr, /bogus/);
-  const l = fence(['log'], home);
+  const l = fence(['doctor'], home);
   assert.equal(l.code, 1);
   assert.match(l.stderr, /not yet implemented/);
 });

@@ -8,8 +8,9 @@
 //   1. read stdin up to STDIN_CAP (8 MiB) under the deadline; over the cap fails
 //   2. strict hatch: <admin>/hatch.json root-owned, not group/world-writable, a regular file, parses,
 //      ISO `created` and `expires` with created <= now + 60 s, expires > now, expires - created <= 8 h.
-//      A valid hatch: the engine runs with --record-only, its answer (or failure) is ignored, a
-//      `hatch` line is appended, and the host's no-output shape is returned.
+//      A valid hatch: the engine runs with --record-only (it logs the call as `hatch` itself), its answer
+//      is ignored, the watchdog appends its own minimal `hatch` line only when the engine failed, said
+//      nothing usable or could not log, and the host's no-output shape is returned.
 //   3. (pre only) while <state>/needs-repair exists, every call without a valid hatch is denied
 //      (`fence repair`, T40, clears it after the human confirms; a valid hatch wins, step 2). Then
 //      post-hatch integrity: when <admin>/integrity.json exists and its hatch has expired,
@@ -396,8 +397,13 @@ export async function main(argv, io = {}) {
     const hatch = readAdminFile(nodePath.join(adminDir, 'hatch.json'), MAX_HATCH_BYTES, lstat, fsImpl);
     if (!hatch.missing && !hatch.error && hatchIsValid(hatch.stat, hatch.text, clock())) {
       const located = locateEngine(shareDir, fsImpl);
-      if (located.engine) await runEngine(execPath, [located.engine, ...engineArgs(true)], input.bytes, { env, deadlineAt, clock });
-      appendLine(stateDir, { host: args.host, event: args.event, decision: 'hatch', rule: 'hatch' }, { now: clock, fs: fsImpl });
+      const run = located.engine ? await runEngine(execPath, [located.engine, ...engineArgs(true)], input.bytes, { env, deadlineAt, clock }) : null;
+      // The engine logs the call itself (decision "hatch"); this minimal line is for a hatch call it
+      // could not log: no engine, a failure, no decision, or a log write that failed.
+      const answer = run !== null && engineFailure(run) === null ? oneObjectLine(run.stdout) : null;
+      if (answer === null || !wellFormedDecision(answer) || answer.logFailed === true) {
+        appendLine(stateDir, { host: args.host, event: args.event, decision: 'hatch', rule: 'hatch' }, { now: clock, fs: fsImpl });
+      }
       return { ...SILENT };
     }
 

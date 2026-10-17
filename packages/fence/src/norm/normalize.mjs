@@ -2,7 +2,7 @@
 // opaque verdict (spec, "Normalizer").
 //
 //   normalize(command, ctx) -> {commands: EffectiveCommand[]} | {opaque: {reason, construct, offset}}
-//   ctx = {cwd, home, env, writtenIndex, readFile, gitTreeDiff, patchTargets, fs, expandGlob}
+//   ctx = {cwd, home, env, writtenIndex, writtenIndexIncomplete, readFile, gitTreeDiff, patchTargets, fs, expandGlob}
 //
 // EffectiveCommand = {argv, cwd, env, classes, reads, writes, ops, domains, repo} (carry-norm):
 //   argv     words after value substitution and glob expansion (UNKNOWN where undetermined)
@@ -1713,6 +1713,8 @@ function writtenSet(index) {
 function configWritten(gitDir, eff, g) {
   const earlier = new Set();
   for (const c of [...g.commands, eff]) for (const w of c.writes) if (isAbs(w)) earlier.add(w);
+  // An index that may be missing writes (ctx.writtenIndexIncomplete) leaves nothing to rule out.
+  if (g.writtenIncomplete) return true;
   if (g.written.size === 0 && earlier.size === 0) return false;
   if (!isAbs(gitDir)) return true;
   const read = (p) => {
@@ -3092,6 +3094,7 @@ export function normalize(command, ctx) {
       // git tree check and the patch reader (defaults: the real ones; the git check needs a pinned
       // git path and version, so unbound it answers UNKNOWN)
       written: writtenSet(c.writtenIndex),
+      writtenIncomplete: c.writtenIndexIncomplete === true,
       readFile: typeof c.readFile === 'function' ? c.readFile : null,
       gitTreeDiff: typeof c.gitTreeDiff === 'function' ? c.gitTreeDiff : (repo, target, subpaths) => defaultGitTreeDiff(repo, target, subpaths, {}),
       patchTargets: typeof c.patchTargets === 'function' ? c.patchTargets : defaultPatchTargets,

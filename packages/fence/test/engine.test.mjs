@@ -312,7 +312,7 @@ test('an unknown event on pre denies with the event named', () => {
   assert.match(post.reason, /PostToolUse/);
 });
 
-test('post, precompact and session-start are stubs returning {}', () => {
+test('precompact and session-start are stubs returning {}; post returns {} too', () => {
   const repo = makeRepo({ branch: 'feature' });
   for (const event of ['post', 'precompact', 'session-start']) {
     assert.deepEqual(spawnEngine(claudePayload('Bash', { command: 'ls' }, repo), { event }), {});
