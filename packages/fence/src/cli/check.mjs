@@ -9,13 +9,17 @@
 //        relative paths resolve inside it, `~` to the home; paths are realpath-resolved). A
 //        `deny` example passes when the call is denied; an `allow` example passes when it is
 //        allowed (allow rule) or not denied (deny rule).
-//        Shell examples (a `command`, or a shell tool) are reported as skipped: they need the
-//        normalizer and run through the engine in a later version.
+//        Shell examples (a `command`, or a shell tool) run through the engine (runEngine, in
+//        process, with the policy file and temporary state and admin directories, so no grant,
+//        log or written-files index of the real install is read or written): a Claude
+//        Bash/Monitor payload, or a Codex payload for a Codex shell tool, with the example
+//        command text (or argv) and the temporary repo as cwd.
 
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { runEngine } from '../engine.mjs';
 import { evaluate } from '../eval/evaluate.mjs';
 import { ARGV_COVERED_CLASSES } from '../policy/classes.mjs';
 import { loadPolicy } from '../policy/load.mjs';
@@ -23,6 +27,8 @@ import { loadPolicy } from '../policy/load.mjs';
 export const DEFAULT_POLICY = (home) => path.join(home, '.config', 'fence', 'policy.json');
 
 const SHELL_TOOLS = new Set(['Bash', 'Monitor', 'shell', 'exec_command', 'local_shell', 'container.exec', 'write_stdin']);
+const EXAMPLE_BRANCH = 'fence-test';
+const CLAUDE_SHELL_TOOLS = new Set(['Bash', 'Monitor']);
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'apply_patch']);
 
 class UsageError extends Error {}
@@ -140,35 +146,67 @@ function exampleCall(ex, home, repo) {
   return call;
 }
 
+// Marks `repo` as a git repository on a branch no policy protects (written by hand: no git
+// binary runs), so the engine resolves `${repo}` in shell examples to it, as it does for the
+// other examples.
+function makeExampleRepo(repo) {
+  const git = path.join(repo, '.git');
+  fs.mkdirSync(path.join(git, 'objects'), { recursive: true });
+  fs.mkdirSync(path.join(git, 'refs', 'heads'), { recursive: true });
+  fs.writeFileSync(path.join(git, 'HEAD'), `ref: refs/heads/${EXAMPLE_BRANCH}\n`);
+  fs.writeFileSync(path.join(git, 'config'), '[core]\n\tbare = false\n');
+  fs.writeFileSync(path.join(git, 'refs', 'heads', EXAMPLE_BRANCH), `${'0'.repeat(40)}\n`);
+}
+
+// The decision the engine gives a shell example: its host payload goes through runEngine.
+function shellDecision(ex, file, repo, aux, home) {
+  const tool = typeof ex.tool === 'string' ? ex.tool : 'Bash';
+  const cwd = typeof ex.cwd === 'string' && ex.cwd.startsWith('/') ? ex.cwd : repo;
+  const claudeHost = CLAUDE_SHELL_TOOLS.has(tool);
+  const command = claudeHost && Array.isArray(ex.command) ? ex.command.join(' ') : ex.command;
+  const payload = {
+    hook_event_name: 'PreToolUse',
+    tool_name: tool,
+    tool_input: ex.command === undefined ? {} : { command },
+    cwd,
+    session_id: 'fence-test',
+    permission_mode: 'default',
+  };
+  const env = { ...process.env, HOME: home };
+  delete env.FENCE_PROFILE; // examples run under the default profile
+  const argv = ['pre', '--host', claudeHost ? 'claude' : 'codex', '--policy', file, '--state-dir', path.join(aux, 'state'), '--admin-dir', path.join(aux, 'admin')];
+  const r = runEngine(argv, { stdin: JSON.stringify(payload), env });
+  return JSON.parse(r.stdout);
+}
+
 export function runTest(args, io) {
   const r = load(args, io);
   if (!r.loaded) return r.code;
   const { policy } = r.loaded;
   const opts = { profile: 'default', grants: [], ctx: { home: r.home, platform: process.platform, caseInsensitive: false } };
-  // A fresh, real repo directory for the examples, removed afterwards.
+  // A fresh, real repo directory for the examples and a directory for the engine's state and
+  // admin paths, both removed afterwards.
   const repo = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'fence-test-repo-')));
+  const aux = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'fence-test-aux-')));
   try {
-    return runExamples(policy, opts, r.home, repo, io);
+    makeExampleRepo(repo);
+    return runExamples(policy, opts, r.home, repo, io, { file: r.file, aux });
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(aux, { recursive: true, force: true });
   }
 }
 
-function runExamples(policy, opts, home, repo, io) {
+function runExamples(policy, opts, home, repo, io, shell) {
   let passed = 0;
   let failed = 0;
-  let skipped = 0;
+  const skipped = 0; // every example runs now; the count stays in the summary line
   for (const rule of policy.rules) {
     for (const expected of ['deny', 'allow']) {
       const examples = rule.examples?.[expected] ?? [];
       examples.forEach((ex, i) => {
         const label = `${rule.id} ${expected}[${i}] ${exampleSummary(ex)}`;
-        if (isShellExample(ex)) {
-          skipped++;
-          io.out(`SKIP ${label} (shell examples run through the engine, not yet available)`);
-          return;
-        }
-        const result = evaluate(policy, exampleCall(ex, home, repo), null, opts);
+        const result = isShellExample(ex) ? shellDecision(ex, shell.file, repo, shell.aux, home) : evaluate(policy, exampleCall(ex, home, repo), null, opts);
         const want = expected === 'deny' ? 'deny' : rule.decision === 'allow' ? 'allow' : 'not deny';
         const ok = want === 'not deny' ? result.decision !== 'deny' : result.decision === want;
         if (ok) {

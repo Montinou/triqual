@@ -110,14 +110,13 @@ test('fence check warns on an allow rule matching runs-repo-code', () => {
   assert.ok(!out2.includes('"search-only"'), out2);
 });
 
-test('fence test runs examples with non-shell tools and reports shell examples as skipped', () => {
+test('fence test runs examples with non-shell tools and shell examples through the engine', () => {
   const ok = setup(SPEC_EXAMPLE);
   const r = fence(['test', '--policy', ok.policy], ok.home);
   assert.equal(r.code, 0, r.stdout + r.stderr);
-  assert.match(r.stdout, /skip/i);
-  assert.match(r.stdout, /cat \.env/);
-  assert.match(r.stdout, /pass/i);
-  assert.match(r.stdout, /1 passed, 0 failed, 1 skipped/);
+  assert.ok(!/skip/i.test(r.stdout.replace(/\d+ skipped/, '')), r.stdout);
+  assert.match(r.stdout, /PASS credentials deny\[0\] Bash cat \.env/);
+  assert.match(r.stdout, /2 passed, 0 failed, 0 skipped/);
 
   // a richer policy: deny and allow examples on file, fetch and mcp tools, one of them wrong
   const text = JSON.stringify({
@@ -135,7 +134,7 @@ test('fence test runs examples with non-shell tools and reports shell examples a
             { tool: 'Write', file_path: '~/.ssh/config' },
             { tool: 'Read', path: 'README.md' },
           ],
-          allow: [{ tool: 'Read', path: '.env.example' }, { tool: 'shell', command: ['cat', '.env'] }],
+          allow: [{ tool: 'Read', path: '.env.example' }, { tool: 'shell', command: ['cat', 'README.md'] }],
         },
       },
       {
@@ -158,7 +157,7 @@ test('fence test runs examples with non-shell tools and reports shell examples a
   const t = fence(['test', '--policy', rich.policy], rich.home);
   assert.equal(t.code, 1, t.stdout + t.stderr);
   assert.match(t.stdout, /FAIL.*creds.*README\.md/);
-  assert.match(t.stdout, /7 passed, 1 failed, 1 skipped/);
+  assert.match(t.stdout, /8 passed, 1 failed, 0 skipped/);
 
   // an allow example on an allow rule must be allowed, not merely not denied; ${repo}
   // in an example path expands to the temporary example repo
