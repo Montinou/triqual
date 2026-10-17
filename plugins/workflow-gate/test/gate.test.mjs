@@ -17,7 +17,7 @@ function runGate(stdin, { env = {}, setup } = {}) {
     const payload = typeof stdin === 'function' ? stdin({ home, cwd }) : stdin;
     if (setup) setup({ home, cwd });
     const baseEnv = { ...process.env };
-    delete baseEnv.WORKFLOW_MAX_AGENTS;
+    for (const k of ['WORKFLOW_MAX_FABLE', 'WORKFLOW_MAX_OPUS', 'WORKFLOW_MAX_SONNET']) delete baseEnv[k];
     const r = spawnSync('node', [GATE], {
       cwd,
       input: typeof payload === 'string' ? payload : JSON.stringify(payload),
@@ -59,57 +59,113 @@ test('allows on malformed stdin', () => {
   assert.equal(runGate('{not json'), null);
 });
 
-test('denies a script without MAX_AGENTS', () => {
-  assertDeny(runGate(script(NO_BUDGET)), /MAX_AGENTS: N/);
+test('denies a script without MAX_AGENTS and shows the exact line to add', () => {
+  assertDeny(runGate(script(NO_BUDGET)), '// MAX_AGENTS: fable=0 opus=1 sonnet=0');
 });
 
-test('denies MAX_AGENTS above 15', () => {
-  assertDeny(runGate(script('// MAX_AGENTS: 16\n' + NO_BUDGET)), /exceeds the cap of 15/);
+test('denies the old single-number MAX_AGENTS form with the per-model replacement', () => {
+  assertDeny(runGate(script('// MAX_AGENTS: 1\n' + NO_BUDGET)), /old single-number form.*opus=1/);
 });
 
-test('honors WORKFLOW_MAX_AGENTS', () => {
-  assertAllow(runGate(script('// MAX_AGENTS: 16\n' + NO_BUDGET), { env: { WORKFLOW_MAX_AGENTS: '20' } }));
+test('caps fable at 3', () => {
+  const s = (n) => `// MAX_AGENTS: fable=${n}\nawait agent("x", { model: "claude-fable-5-1" });\n`;
+  assertAllow(runGate(script(s(3))));
+  assertDeny(runGate(script(s(4))), 'fable=4, over the fable cap of 3');
+});
+
+test('caps opus at 8', () => {
+  const s = (n) => `// MAX_AGENTS: opus=${n}\nawait agent("x", { agentType: "roles:spec-reviewer" });\n`;
+  assertAllow(runGate(script(s(8))));
+  assertDeny(runGate(script(s(9))), 'opus=9, over the opus cap of 8');
+});
+
+test('caps sonnet at 12', () => {
+  const s = (n) => `// MAX_AGENTS: sonnet=${n}\nawait agent("x", { model: "sonnet" });\n`;
+  assertAllow(runGate(script(s(12))));
+  assertDeny(runGate(script(s(13))), 'sonnet=13, over the sonnet cap of 12');
+});
+
+test('haiku is unlimited and needs no budget line', () => {
+  assertAllow(runGate(script('await agent("x", { agentType: "roles:hunter" });\nawait agent("y", { model: "haiku" });\n')));
+  assertAllow(runGate(script('// MAX_AGENTS: haiku=500\nawait agent("y", { model: "claude-haiku-5-5" });\n')));
+});
+
+test('honors per-model env overrides', () => {
+  const s = '// MAX_AGENTS: fable=5\nawait agent("x", { model: "fable" });\n';
+  assertAllow(runGate(script(s), { env: { WORKFLOW_MAX_FABLE: '5' } }));
+});
+
+test('denies a declaration below the call-site count', () => {
+  const s = '// MAX_AGENTS: sonnet=1\nawait agent("a", { model: "sonnet" });\nawait agent("b", { agentType: "roles:tdd-implementer" });\n';
+  assertDeny(runGate(script(s)), 'sonnet=1 but the script has 2 sonnet');
+});
+
+test('denies a used model missing from the declaration', () => {
+  const s = '// MAX_AGENTS: sonnet=1\nawait agent("a", { model: "sonnet" });\nawait agent("b", { model: "opus" });\n';
+  assertDeny(runGate(script(s)), 'does not declare opus=N');
+});
+
+test('lists every problem at once, numbered', () => {
+  const s = '// MAX_AGENTS: fable=9\nawait agent("a", { model: "fable" });\nawait agent("b");\n';
+  const out = runGate(script(s));
+  assertDeny(out, /2 problem\(s\)/);
+  assertDeny(out, /1\. agent\(\) call on line 3/);
+  assertDeny(out, /2\. MAX_AGENTS declares fable=9/);
 });
 
 test('denies agent() without agentType or model', () => {
-  assertDeny(runGate(script('// MAX_AGENTS: 1\nconst r = await agent("do the thing");\n')), /1 of 1 agent\(\) call/);
+  assertDeny(runGate(script('// MAX_AGENTS: sonnet=1\nconst r = await agent("do the thing");\n')), /line 2 sets neither model: nor agentType:/);
 });
 
-test('does not validate agentType values', () => {
-  assertAllow(runGate(script('// MAX_AGENTS: 1\nawait agent("x", { agentType: "no-such-agent" });\n')));
+test('denies an agentType with no known model', () => {
+  assertDeny(runGate(script('await agent("x", { agentType: "no-such-agent" });\n')), 'agentType: "no-such-agent" has no known model');
+});
+
+test('model: overrides the role model', () => {
+  assertAllow(runGate(script('await agent("x", { agentType: "roles:spec-reviewer", model: "haiku" });\n')));
 });
 
 test('accepts a namespaced agentType', () => {
-  assertAllow(runGate(script('// MAX_AGENTS: 1\nawait agent("x", { agentType: "roles:tdd-implementer" });\n')));
+  assertAllow(runGate(script('// MAX_AGENTS: sonnet=1\nawait agent("x", { agentType: "roles:tdd-implementer" });\n')));
+});
+
+test('allows an uncapped fan-out of haiku agents', () => {
+  assertAllow(runGate(script('await parallel(findings.map(f => () => agent(f, { agentType: "roles:hunter" })));\n')));
+  assertAllow(runGate(script('await pipeline(files, f => agent(f, { model: "haiku" }));\n')));
+});
+
+test('a haiku fan-out stays free in a script that also uses opus', () => {
+  const s = '// MAX_AGENTS: opus=1\nawait parallel(findings.map(f => () => agent(f, { model: "haiku" })));\nawait agent("judge", { model: "opus" });\n';
+  assertAllow(runGate(script(s)));
 });
 
 test('denies unbounded map', () => {
-  const s = '// MAX_AGENTS: 5\nconst out = findings.map(f => agent(f, { agentType: "roles:spec-reviewer" }));\n';
+  const s = '// MAX_AGENTS: opus=5 sonnet=5\nconst out = findings.map(f => agent(f, { agentType: "roles:spec-reviewer" }));\n';
   assertDeny(runGate(script(s)), 'unbounded fan-out: findings.map(');
 });
 
 test('allows sliced map', () => {
-  const s = '// MAX_AGENTS: 5\nconst out = findings.slice(0, 5).map(f => agent(f, { agentType: "roles:spec-reviewer" }));\n';
+  const s = '// MAX_AGENTS: opus=5 sonnet=5\nconst out = findings.slice(0, 5).map(f => agent(f, { agentType: "roles:spec-reviewer" }));\n';
   assertAllow(runGate(script(s)));
 });
 
 test('regression: a .slice cap counts anywhere earlier in the same .map chain', () => {
-  const s = '// MAX_AGENTS: 3\nconst out = items.filter(x).slice(0, 3).map(i => agent(i, { model: "sonnet" }));\n';
+  const s = '// MAX_AGENTS: sonnet=3\nconst out = items.filter(x).slice(0, 3).map(i => agent(i, { model: "sonnet" }));\n';
   assertAllow(runGate(script(s)));
 });
 
 test('regression: an uncapped findings.map( is still denied', () => {
-  const s = '// MAX_AGENTS: 5\nawait parallel(findings.map(f => () => agent(f, { agentType: "roles:spec-reviewer" })));\n';
+  const s = '// MAX_AGENTS: opus=5 sonnet=5\nawait parallel(findings.map(f => () => agent(f, { agentType: "roles:spec-reviewer" })));\n';
   assertDeny(runGate(script(s)), 'unbounded fan-out: findings.map(');
 });
 
 test('regression: a sliced sibling argument does not cap an uncapped .map', () => {
-  const s = '// MAX_AGENTS: 5\nawait run(extra.slice(0, 2), findings.map(f => agent(f, { model: "sonnet" })));\n';
+  const s = '// MAX_AGENTS: opus=5 sonnet=5\nawait run(extra.slice(0, 2), findings.map(f => agent(f, { model: "sonnet" })));\n';
   assertDeny(runGate(script(s)), 'unbounded fan-out: findings.map(');
 });
 
 test('regression: .filter links after the .slice cap keep the chain capped', () => {
-  const s = '// MAX_AGENTS: 5\nconst out = findings.slice(0, 5).filter(Boolean).map(f => agent(f, { model: "sonnet" }));\n';
+  const s = '// MAX_AGENTS: opus=5 sonnet=5\nconst out = findings.slice(0, 5).filter(Boolean).map(f => agent(f, { model: "sonnet" }));\n';
   assertAllow(runGate(script(s)));
 });
 
@@ -128,23 +184,23 @@ const UNCAPPED = [
 ];
 for (const [label, body, offender] of UNCAPPED) {
   test(`regression: denies an uncapped .map despite ${label}`, () => {
-    assertDeny(runGate(script(`// MAX_AGENTS: 5\n${body}\n`)), `unbounded fan-out: ${offender}`);
+    assertDeny(runGate(script(`// MAX_AGENTS: opus=5 sonnet=5\n${body}\n`)), `unbounded fan-out: ${offender}`);
   });
 }
 
 test('allows literal-const map', () => {
-  const s = '// MAX_AGENTS: 2\nconst LENSES = ["a","b"];\nconst out = LENSES.map(l => agent(l, { model: "sonnet" }));\n';
+  const s = '// MAX_AGENTS: sonnet=2\nconst LENSES = ["a","b"];\nconst out = LENSES.map(l => agent(l, { model: "sonnet" }));\n';
   assertAllow(runGate(script(s)));
 });
 
 test('denies parallel over a dynamic list', () => {
-  const s = '// MAX_AGENTS: 5\nconst items = await load();\nawait parallel(items);\n';
+  const s = '// MAX_AGENTS: opus=5 sonnet=5\nconst items = await load();\nawait parallel(items);\n';
   assertDeny(runGate(script(s)), 'parallel(items');
 });
 
 test('allows literal fan-outs', () => {
   const s = [
-    '// MAX_AGENTS: 5',
+    '// MAX_AGENTS: opus=1 sonnet=5',
     'await parallel([() => agent("a", { agentType: "roles:spec-reviewer" }), () => agent("b", { model: "sonnet" })]);',
     'await pipeline(Array.from({ length: 3 }), (i) => agent("c" + i, { agentType: "roles:tdd-implementer" }));',
     '',
@@ -159,7 +215,7 @@ test('reads scriptPath', () => {
     writeFileSync(p, NO_BUDGET);
     return { tool_input: { scriptPath: p } };
   });
-  assertDeny(fromPath, /MAX_AGENTS: N/);
+  assertDeny(fromPath, /no budget comment/);
   assert.deepEqual(fromPath, inline);
 });
 
@@ -170,11 +226,11 @@ test('resolves a named workflow from cwd', () => {
       writeFileSync(join(cwd, '.claude', 'workflows', 'x.js'), NO_BUDGET);
     },
   });
-  assertDeny(out, /MAX_AGENTS: N/);
+  assertDeny(out, /no budget comment/);
 });
 
 test('the undispatched message names the roles plugin', () => {
-  const out = runGate(script('// MAX_AGENTS: 1\nconst r = await agent("do the thing");\n'));
+  const out = runGate(script('// MAX_AGENTS: sonnet=1\nconst r = await agent("do the thing");\n'));
   assertDeny(out, /roles:tdd-implementer/);
   assert.doesNotMatch(out.permissionDecisionReason, /~\/\.claude\/agents/);
 });
@@ -183,7 +239,7 @@ test('the undispatched message lists every role agent the roles plugin ships', (
   const agents = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'roles', 'agents');
   const names = readdirSync(agents).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3));
   assert.ok(names.includes('complex-implementer') && names.includes('hunter'), names.join(', '));
-  const out = runGate(script('// MAX_AGENTS: 1\nconst r = await agent("do the thing");\n'));
+  const out = runGate(script('// MAX_AGENTS: sonnet=1\nconst r = await agent("do the thing");\n'));
   for (const name of names) assertDeny(out, new RegExp(`roles:${name}\\b`));
   assert.doesNotMatch(out.permissionDecisionReason, /safety-shadow/);
 });
@@ -200,4 +256,14 @@ test('hooks.json wires PreToolUse(Workflow) to scripts/gate.mjs', () => {
   assert.equal(entry.hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs"');
   assert.equal(entry.hooks[0].timeout, 10);
   assert.equal(entry.hooks[0].statusMessage, 'workflow-gate: checking agent budget and role dispatch');
+});
+
+test('ROLE_MODELS matches the roles plugin frontmatter', () => {
+  const agents = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'roles', 'agents');
+  const src = readFileSync(GATE, 'utf8');
+  for (const f of readdirSync(agents).filter((x) => x.endsWith('.md'))) {
+    const model = readFileSync(join(agents, f), 'utf8').match(/^model:\s*(\S+)/m)[1];
+    const family = ['fable', 'opus', 'sonnet', 'haiku'].find((x) => model.includes(x));
+    assert.match(src, new RegExp(`"${f.slice(0, -3)}": "${family}"`), f);
+  }
 });

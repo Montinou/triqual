@@ -91,21 +91,24 @@ Do not use `general-purpose` for these roles; pick the matching agent type above
 
 ### Workflow Fan-out Caps
 
-A `PreToolUse(Workflow)` hook, shipped in the `workflow-gate` plugin, rejects
-any workflow script that breaks one of these. They exist because one uncapped
-`findings × 3 refuters` stage spawned 92 Fable agents and burned the session
-limit. The "Dynamic workflow size" setting is advisory only; this is the
-enforcement.
+A `PreToolUse(Workflow)` hook, shipped in the `workflow-gate` plugin, caps the
+agents a workflow script launches **per model**: Fable 3, Opus 8, Sonnet 12,
+Haiku unlimited (env `WORKFLOW_MAX_FABLE` / `_OPUS` / `_SONNET` override). It
+exists because one uncapped `findings × 3 refuters` stage spawned 92 Fable
+agents and burned the session limit. The "Dynamic workflow size" setting is
+advisory only; this is the enforcement. A denial lists every problem with its
+fix; apply them and call Workflow again.
 
-- **Declare the budget.** Every script carries `// MAX_AGENTS: N` with
-  `N <= 15` (override with env `WORKFLOW_MAX_AGENTS`). Compute N by counting
-  every `agent()` call including those inside `parallel`/`pipeline`/loops.
-- **Dispatch by role.** Every `agent()` call sets `agentType:` (from the role
-  table above) or an explicit `model:`. Nothing inherits the session model
-  by omission; the session model is only for coordination.
-- **Bound every fan-out.** `pipeline(x, …)`, `parallel(x)` and `.map(` over a
-  dynamic list must be capped with `.slice(0, N)` in the same chain. Literal
-  arrays and `Array.from({length: k})` pass.
+- **Name the model.** Every `agent()` call sets `agentType:` (a `roles:*`
+  agent from the table above) or an explicit string `model:`. Nothing
+  inherits the session model by omission; the session model is only for coordination.
+- **Declare the budget per model.** `// MAX_AGENTS: fable=0 opus=2 sonnet=4`,
+  counting every agent each model launches, including inside
+  `parallel`/`pipeline`/loops. Haiku needs no entry.
+- **Bound non-Haiku fan-outs.** `pipeline(x, …)`, `parallel(x)` and `.map(`
+  over a dynamic list that launch Fable/Opus/Sonnet agents must be capped
+  with `.slice(0, N)` in the same chain. Literal arrays, `Array.from({length: k})`
+  and Haiku-only fan-outs pass.
 
 Not checked by the hook, but same reason: run one Workflow at a time and read its
 result before launching the next.
