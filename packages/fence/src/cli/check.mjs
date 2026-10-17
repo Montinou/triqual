@@ -1,0 +1,186 @@
+// `fence check [--policy f]` and `fence test [--policy f]` (read-only, open to the agent).
+//
+// check: load and validate the policy; exit 1 naming the file, error code and JSON pointer on
+//        a load error; warn (exit 0) on any allow rule that can cover a `runs-repo-code` part:
+//        one whose `class` lists it, or one with an `argv` match (an argv match alone covers
+//        runs-repo-code). A rule without either can not cover such a part (see evaluate.mjs).
+// test:  run each rule's examples through the evaluator with the default profile, in a fresh
+//        temporary repo directory (the example cwd and repo root; `${repo}`, `${cwd}` and
+//        relative paths resolve inside it, `~` to the home; paths are realpath-resolved). A
+//        `deny` example passes when the call is denied; an `allow` example passes when it is
+//        allowed (allow rule) or not denied (deny rule).
+//        Shell examples (a `command`, or a shell tool) are reported as skipped: they need the
+//        normalizer and run through the engine in a later version.
+
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+import { evaluate } from '../eval/evaluate.mjs';
+import { ARGV_COVERED_CLASSES } from '../policy/classes.mjs';
+import { loadPolicy } from '../policy/load.mjs';
+
+export const DEFAULT_POLICY = (home) => path.join(home, '.config', 'fence', 'policy.json');
+
+const SHELL_TOOLS = new Set(['Bash', 'Monitor', 'shell', 'exec_command', 'local_shell', 'container.exec', 'write_stdin']);
+const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'apply_patch']);
+
+class UsageError extends Error {}
+
+function parseArgs(args, home) {
+  let policy = DEFAULT_POLICY(home);
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--policy') {
+      if (i + 1 >= args.length || args[i + 1] === '') throw new UsageError('--policy needs a file');
+      policy = args[++i];
+    } else if (a.startsWith('--policy=') && a.length > '--policy='.length) {
+      policy = a.slice('--policy='.length);
+    } else {
+      throw new UsageError(`unknown argument ${JSON.stringify(a)}`);
+    }
+  }
+  return { policy: path.resolve(policy) };
+}
+
+function describeError(err, file) {
+  const where = err.pointer ? ` at ${err.pointer}` : '';
+  return `fence: ${err.path ?? file}: ${err.code ?? 'error'}${where}: ${err.message}`;
+}
+
+// Loads the policy for a command; returns {loaded} or {code} after printing the error.
+function load(args, io) {
+  const home = os.homedir();
+  let file;
+  try {
+    file = parseArgs(args, home).policy;
+  } catch (err) {
+    if (!(err instanceof UsageError)) throw err;
+    io.err(`fence: ${err.message}`);
+    return { code: 1 };
+  }
+  try {
+    return { loaded: loadPolicy(file, { mode: 'user', home }), file, home };
+  } catch (err) {
+    io.err(describeError(err, file));
+    return { code: 1 };
+  }
+}
+
+// True when an allow rule can cover a part carrying class `cls`.
+function allowCanCover(rule, cls) {
+  if (rule.decision !== 'allow') return false;
+  if (rule.match.class?.includes(cls)) return true;
+  return Boolean(rule.match.argv) && ARGV_COVERED_CLASSES.includes(cls);
+}
+
+export function runCheck(args, io) {
+  const r = load(args, io);
+  if (!r.loaded) return r.code;
+  const { policy, sha } = r.loaded;
+  for (const rule of policy.rules) {
+    if (allowCanCover(rule, 'runs-repo-code')) {
+      const how = rule.match.class?.includes('runs-repo-code') ? 'lists runs-repo-code' : 'has an argv match, which covers runs-repo-code';
+      io.err(
+        `fence: warning: allow rule "${rule.id}" ${how}: it lets the agent run repository code (tests, scripts, hooks) whose contents fence does not read.`,
+      );
+    }
+  }
+  const n = policy.rules.length;
+  io.out(`fence: ${r.file} is valid (${n} rule${n === 1 ? '' : 's'}, sha256 ${sha})`);
+  return 0;
+}
+
+// The realpath of an absolute path: the deepest existing ancestor resolved, the rest appended.
+function realpathLoose(p) {
+  const rest = [];
+  let cur = p;
+  for (;;) {
+    try {
+      return path.join(fs.realpathSync.native(cur), ...rest.reverse());
+    } catch {
+      const parent = path.dirname(cur);
+      if (parent === cur) return p;
+      rest.push(path.basename(cur));
+      cur = parent;
+    }
+  }
+}
+
+function expandExamplePath(p, cwd, repo, home) {
+  let out = p.replaceAll('${repo}', repo).replaceAll('${cwd}', cwd);
+  if (out === '~') out = home;
+  else if (out.startsWith('~/')) out = path.posix.join(home, out.slice(2));
+  return realpathLoose(path.posix.resolve(cwd, out));
+}
+
+function exampleSummary(ex) {
+  const tool = typeof ex.tool === 'string' ? ex.tool : '?';
+  const detail = ex.command ?? ex.path ?? ex.file_path ?? ex.notebook_path ?? ex.url;
+  if (detail === undefined) return tool;
+  return `${tool} ${Array.isArray(detail) ? detail.join(' ') : String(detail)}`;
+}
+
+function isShellExample(ex) {
+  return ex.command !== undefined || SHELL_TOOLS.has(ex.tool);
+}
+
+// A canonical call built from an example fragment (non-shell tools only).
+function exampleCall(ex, home, repo) {
+  const tool = typeof ex.tool === 'string' ? ex.tool : '';
+  const cwd = typeof ex.cwd === 'string' && ex.cwd.startsWith('/') ? ex.cwd : repo;
+  const call = { host: 'test', event: 'pre', tool, cwd, paths: [], repo: { root: repo, branch: null } };
+  const p = ex.path ?? ex.file_path ?? ex.notebook_path;
+  if (p !== undefined) {
+    const access = ex.access === 'read' || ex.access === 'write' ? ex.access : WRITE_TOOLS.has(tool) ? 'write' : 'read';
+    call.paths.push({ path: typeof p === 'string' ? expandExamplePath(p, cwd, repo, home) : p, access });
+  }
+  if (ex.url !== undefined) call.url = ex.url;
+  if (tool.startsWith('mcp__')) call.mcp = tool;
+  return call;
+}
+
+export function runTest(args, io) {
+  const r = load(args, io);
+  if (!r.loaded) return r.code;
+  const { policy } = r.loaded;
+  const opts = { profile: 'default', grants: [], ctx: { home: r.home, platform: process.platform, caseInsensitive: false } };
+  // A fresh, real repo directory for the examples, removed afterwards.
+  const repo = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'fence-test-repo-')));
+  try {
+    return runExamples(policy, opts, r.home, repo, io);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+}
+
+function runExamples(policy, opts, home, repo, io) {
+  let passed = 0;
+  let failed = 0;
+  let skipped = 0;
+  for (const rule of policy.rules) {
+    for (const expected of ['deny', 'allow']) {
+      const examples = rule.examples?.[expected] ?? [];
+      examples.forEach((ex, i) => {
+        const label = `${rule.id} ${expected}[${i}] ${exampleSummary(ex)}`;
+        if (isShellExample(ex)) {
+          skipped++;
+          io.out(`SKIP ${label} (shell examples run through the engine, not yet available)`);
+          return;
+        }
+        const result = evaluate(policy, exampleCall(ex, home, repo), null, opts);
+        const want = expected === 'deny' ? 'deny' : rule.decision === 'allow' ? 'allow' : 'not deny';
+        const ok = want === 'not deny' ? result.decision !== 'deny' : result.decision === want;
+        if (ok) {
+          passed++;
+          io.out(`PASS ${label}`);
+        } else {
+          failed++;
+          io.out(`FAIL ${label}: expected ${want}, got ${result.decision} (rule ${result.rule ?? 'none'}): ${result.reason}`);
+        }
+      });
+    }
+  }
+  io.out(`${passed} passed, ${failed} failed, ${skipped} skipped`);
+  return failed > 0 ? 1 : 0;
+}
