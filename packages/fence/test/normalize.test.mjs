@@ -495,6 +495,9 @@ test('lists, and-or, async and newlines all produce commands in order', () => {
 test('redirect exclusions apply to the resolved path only: /dev/fd/.., /dev/./null', () => {
   const d = dir();
   const out = path.join(d, 'out');
+  // /dev/fd is resolved physically: a real directory on macOS, a symlink to /proc/self/fd on Linux, where
+  // `/dev/fd/../..` therefore lands under /proc. The expected path follows the same resolution (equal to `out` on macOS).
+  const expectedOut = path.join(path.resolve(fs.realpathSync('/dev/fd'), '..', '..'), out);
   const cs = cmds(
     [
       `echo x > /dev/fd/../..${out}`,
@@ -510,8 +513,8 @@ test('redirect exclusions apply to the resolved path only: /dev/fd/.., /dev/./nu
     ].join('; '),
     d,
   );
-  assert.deepEqual(cs[0].writes, [out]);
-  assert.deepEqual(cs[1].reads, [out]);
+  assert.deepEqual(cs[0].writes, [expectedOut]);
+  assert.deepEqual(cs[1].reads, [expectedOut]);
   assert.deepEqual([cs[2].writes, cs[3].reads], [[], []]);
   assert.equal(cs[4].writes.length, 1);
   assert.notEqual(cs[4].writes[0], '/dev/fd');
