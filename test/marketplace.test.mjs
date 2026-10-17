@@ -156,7 +156,7 @@ test('plugin versions are the ones this release ships', () => {
     'progress-tracking': '0.4.1',
     'workflow-gate': '0.1.1',
     roles: '0.3.2',
-    methodology: '0.7.0',
+    methodology: '0.7.1',
     'memory-report': '0.4.1',
   });
   assert.equal(readJson('plugins/methodology-codex/.codex-plugin/plugin.json').version, '0.2.0');

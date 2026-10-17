@@ -110,10 +110,12 @@ Subagent (roles:final-adversarial-reviewer):
     ## Read-Only Review
 
     Your review is read-only on this checkout. Do not mutate the working
-    tree, the index, HEAD, or branch state in any way. If you need a working
-    copy of a different revision, check it out into a separate temporary
-    directory (`git worktree add <temp dir> <sha>`); never move HEAD on this
-    checkout.
+    tree, the index, HEAD, or branch state in any way. If you need a file
+    from a different revision, read it with `git show <sha>:<path>`. If you
+    need a whole copy of that revision, export it without registering a
+    worktree: `d=$(mktemp -d) && git archive <sha> | tar -x -C "$d"`, and
+    `rm -rf "$d"` before you report. Never run `git worktree add`, and never
+    move HEAD on this checkout.
 
     ## You Do Not Dispatch Subagents
 

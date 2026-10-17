@@ -1,17 +1,19 @@
 ---
 name: using-git-worktrees
-description: Use when starting feature work that needs isolation from current workspace or before executing implementation plans - ensures an isolated workspace exists via native tools or git worktree fallback
+description: Use when your human partner explicitly asks for a git worktree or a separate checkout, or when you are already inside a linked worktree and need to know how to treat it
 ---
 
 # Using Git Worktrees
 
 ## Overview
 
-Ensure work happens in an isolated workspace. Prefer your platform's native worktree tools. Fall back to manual git worktrees only when no native tool is available.
+A worktree is opt-in. Create one only when your human partner explicitly asks for it, in this conversation or in their instruction files. Prefer your platform's native worktree tools; fall back to manual git worktrees only when no native tool is available.
 
-**Core principle:** Detect existing isolation first. Then use native tools. Then fall back to git. Never fight the harness.
+**The default is the current checkout.** Plan execution (methodology:subagent-driven-development, methodology:executing-plans) runs on stacked phase branches: `stack.mjs phase` moves HEAD off the trunk before any code changes, so the trunk is already protected and a worktree adds nothing. Executing a plan is not a request for a worktree, and neither is "work autonomously".
 
-**Announce at start:** "I'm using the using-git-worktrees skill to set up an isolated workspace."
+**Core principle:** No request, no worktree. Detect existing isolation first. Then use native tools. Then fall back to git. Whoever creates a worktree removes it (methodology:finishing-branch, Step 7). Never fight the harness.
+
+**Announce at start:** "I'm using the using-git-worktrees skill: you asked for a worktree."
 
 ## Step 0: Detect Existing Isolation
 
@@ -38,11 +40,10 @@ Report with branch state:
 
 **If `GIT_DIR == GIT_COMMON` (or in a submodule):** You are in a normal repo checkout.
 
-Has the user already indicated their worktree preference in your instructions? If not, ask for consent before creating a worktree:
+Has your human partner explicitly asked for a worktree (in this conversation or in their instruction files)?
 
-> "Would you like me to set up an isolated worktree? It protects your current branch from changes."
-
-Honor any existing declared preference without asking. If the user declines consent, work in place and skip to Step 2.
+- **Yes:** go to Step 1.
+- **No:** work in place in the current checkout. Do not create a worktree and do not stop to ask for one. You may add one line to your next message, without waiting for an answer: "Working in the current checkout; say so if you want a separate worktree instead." Skip to Step 2.
 
 ## Step 1: Create Isolated Workspace
 
@@ -50,7 +51,7 @@ Honor any existing declared preference without asking. If the user declines cons
 
 ### 1a. Native Worktree Tools (preferred)
 
-The user has asked for an isolated workspace (Step 0 consent). Do you already have a way to create a worktree? It might be a tool with a name like `EnterWorktree`, `WorktreeCreate`, a `/worktree` command, or a `--worktree` flag. If you do, use it and skip to Step 2.
+Your human partner has asked for a worktree (Step 0). Do you already have a way to create a worktree? It might be a tool with a name like `EnterWorktree`, `WorktreeCreate`, a `/worktree` command, or a `--worktree` flag. If you do, use it and skip to Step 2.
 
 Native tools handle directory placement, branch creation, and cleanup automatically. Using `git worktree add` when you have a native tool creates phantom state your harness can't see or manage.
 
@@ -143,6 +144,8 @@ Ready to implement <feature-name>
 
 | Situation | Action |
 |-----------|--------|
+| Partner has not explicitly asked for a worktree | Work in place; no worktree, no blocking question (Step 0) |
+| Executing a plan on stacked phase branches | Work in place; the phase branches protect the trunk |
 | Already in linked worktree | Skip creation (Step 0) |
 | In a submodule | Treat as normal repo (Step 0 guard) |
 | Native worktree tool available | Use it (Step 1a) |
@@ -160,6 +163,10 @@ Ready to implement <feature-name>
 
 | Excuse | Reality |
 |--------|---------|
+| "I'm about to execute a plan, so I need an isolated workspace" | The stacked phase branches are the isolation. Work in place unless your human partner asked for a worktree. |
+| "I'll just ask whether they want a worktree" | A blocking question before Task 1 pushes toward a worktree nobody needed. Work in place; at most mention once that one is available. |
+| "They said work autonomously, so I'll set one up myself" | Autonomy is not a request for a worktree. No request, no worktree. |
+| "Cleanup can wait, the worktree is out of the way" | Worktrees left behind pile up on the machine. Whoever creates one removes it when the work lands or is dropped (methodology:finishing-branch, Step 7). |
 | "I'm obviously not in a worktree — no need to check" | Run Step 0. Harness-created isolation and submodules both fool eyeballing; the detection commands settle it. |
 | "`git worktree add` is quicker than hunting for a native tool" | A native tool (e.g. `EnterWorktree`) owns placement, branching, and cleanup. Bypassing it is the #1 mistake — it creates phantom state your harness can't see or manage. |
 | "The worktree directory is surely ignored already" | Run `git check-ignore`. An unignored worktree directory commits the whole tree into the repo. |
