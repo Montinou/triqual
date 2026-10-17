@@ -277,8 +277,16 @@ Which?
 
 Carry out the choice, then remove the worktree.
 
+**If this session created the worktree with a native tool** (for example
+`EnterWorktree`, which places it under `.claude/worktrees/`): we own cleanup.
+Leave it with the platform's exit tool and choose removal (`ExitWorktree`
+with `action: "remove"`). If the tool refuses because of uncommitted files
+or unmerged commits, never pass `discard_changes` on your own initiative:
+show your human partner the list and ask, as above.
+
 **Otherwise:** The host environment owns this workspace — leave it in
-place. If your platform provides a workspace-exit tool, use it.
+place. If your platform provides a workspace-exit tool, use it and keep
+the worktree.
 
 ## Quick Reference
 
@@ -306,7 +314,7 @@ place. If your platform provides a workspace-exit tool, use it.
 | "They seem done with this feature — I'll offer to discard it" | The menu is complete as written. Discard happens only when your human partner asks for it in so many words. |
 | "'Yeah, get rid of it' counts as confirmation" | Only the typed word `discard` authorizes deletion. |
 | "The PR is up, so the worktree is clutter now" | PR feedback gets fixed in that worktree. It stays until the work lands. |
-| "This other worktree looks stale — I'll clean it too" | Clean up only worktrees under `.worktrees/` or `worktrees/`. Everything else belongs to the host. |
+| "This other worktree looks stale — I'll clean it too" | Clean up only worktrees under `.worktrees/` or `worktrees/`, and one this session created with a native tool. Everything else belongs to the host. |
 | "Removal refused — `--force` is just finishing the cleanup" | The refusal means files exist only in that worktree. `--force` destroys them permanently. Show your human partner and ask. |
 | "The merged-result failure is probably flaky" | A failing merged result stops everything. Branch and worktree stay put while you investigate. |
 | "The base branch is obviously main" | Confirm the fork point or ask. Merging into the wrong base is expensive to undo. |

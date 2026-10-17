@@ -86,7 +86,7 @@ digraph process {
         "Append completion to ledger, mark todo complete" [shape=box];
     }
 
-    "Setup: stack init, worktree (optional), push authorization, tracking paths, ledger check, read plan, pre-flight review" [shape=box];
+    "Setup: stack init, no worktree unless asked, push authorization, tracking paths, ledger check, read plan, pre-flight review" [shape=box];
     "Start phase N: stack phase N (branch on top of phase N-1)" [shape=box];
     "More tasks in this phase?" [shape=diamond];
     "Phase check at the tip (one re-run if it looks flaky)" [shape=box];
@@ -100,7 +100,7 @@ digraph process {
     "Final review clean: delete this plan's workspace" [shape=box];
     "Use methodology:finishing-branch" [shape=box style=filled fillcolor=lightgreen];
 
-    "Setup: stack init, worktree (optional), push authorization, tracking paths, ledger check, read plan, pre-flight review" -> "Start phase N: stack phase N (branch on top of phase N-1)";
+    "Setup: stack init, no worktree unless asked, push authorization, tracking paths, ledger check, read plan, pre-flight review" -> "Start phase N: stack phase N (branch on top of phase N-1)";
     "Start phase N: stack phase N (branch on top of phase N-1)" -> "Dispatch implementer in the task's role (./implementer-prompt.md); coordinator: run it yourself";
     "Dispatch implementer in the task's role (./implementer-prompt.md); coordinator: run it yourself" -> "Implementer asks questions?";
     "Implementer asks questions?" -> "Answer questions, provide context" [label="yes"];
@@ -143,8 +143,13 @@ digraph process {
 
 ## Setup
 
-A worktree is optional: methodology:using-git-worktrees is offered, not
-required. When you use one, its branch must not be named exactly the plan's
+No worktree by default: run the plan in the current checkout. The stack's
+phase branches are the isolation (below), so a worktree adds nothing.
+Create one with methodology:using-git-worktrees only when your human partner
+explicitly asks for it; executing the plan, or being told to work
+autonomously, is not that request. Do not stop before Task 1 to ask about
+one; at most mention once that one is available. When you use one, its
+branch must not be named exactly the plan's
 `**Branch prefix:**` (use another name, for example `wt/<prefix>`, or a
 detached HEAD): `scripts/stack.mjs init` exits 3 on a branch with the prefix's
 own name. Implementation never starts on the trunk: `scripts/stack.mjs phase`
@@ -741,7 +746,7 @@ Use methodology:finishing-branch.
 ```
 You: I'm using Subagent-Driven Development to execute this plan.
 
-[Setup: worktree optional, none used]
+[Setup: no worktree asked for, working in the current checkout]
 [Tracking: triqual tasks paths --json → opted in, "mode": "store"]
 [Read plan file once: <plansDir>/feature-plan.md]
 [Resolve workspace: bash scripts/sdd-workspace <plansDir>/feature-plan.md — no sdd-ledger.md inside, fresh start]

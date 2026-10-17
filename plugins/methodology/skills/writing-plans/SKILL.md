@@ -11,7 +11,7 @@ Write implementation plans for an engineer who has not seen this codebase or thi
 
 **Announce at start:** "I'm using the writing-plans skill to create the implementation plan."
 
-**Context:** If working in an isolated worktree, it should have been created via the `methodology:using-git-worktrees` skill at execution time.
+**Context:** Plans run in the current checkout on stacked phase branches. A worktree exists only when your human partner asked for one (`methodology:using-git-worktrees`); never write a plan step that creates one.
 
 **Save plans to:** `YYYY-MM-DD-<feature-name>.md` in the plans directory. Run `triqual tasks paths --json` once, before writing the plan:
 - **Opted in** (`"optedIn": true`; an older `triqual` prints the same fields without `optedIn`): plans go to `plansDir`, and the plan is registered when done (see Register the Plan).

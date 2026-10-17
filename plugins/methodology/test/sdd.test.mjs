@@ -1201,7 +1201,7 @@ test('SDD setup runs stack init and stops on committed mode', () => {
   mustSay(stop, ['exits 3', 'before Task 1', '(or `--local`)'], 'the committed-mode stop');
   const worktree = blocks(SKILL).find((l) => l.includes('methodology:using-git-worktrees'));
   assert.ok(worktree, 'Setup does not mention a worktree');
-  mustSay(worktree, ['A worktree is optional', 'offered, not required', 'wt/<prefix>', 'detached HEAD', 'the phase branch'], 'the worktree rule');
+  mustSay(worktree, ['No worktree by default', 'current checkout', 'phase branches are the isolation', 'only when your human partner', 'explicitly asks', 'Do not stop before Task 1', 'wt/<prefix>', 'detached HEAD', 'the phase branch'], 'the worktree rule');
 });
 
 test('SDD ledgers the push authorization and asks once without it', () => {

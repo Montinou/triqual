@@ -247,6 +247,17 @@ replaced skills):
   the top phase's PR merged in the session (then `gh stack sync --prune` or deleting the phase branches, the state
   file's deletion, and a second progress entry recording the run). With no state file the current menu stays. Reason: the
   stacked-execution spec (U6, R5, R6).
+- `using-git-worktrees` makes a worktree opt-in: its description triggers only on an explicit request (upstream: also
+  "before executing implementation plans"), Step 0 works in place without a blocking consent question when nothing
+  was asked, and the rationalization table adds the plan-execution, autonomy and cleanup excuses. `subagent-driven-development`
+  and `executing-plans` Setup run the plan in the current checkout (the stacked phase branches are the isolation) and
+  create a worktree only on that request; `writing-plans`' context line says the same. The reviewer prompts
+  (`requesting-code-review/code-reviewer.md`, `subagent-driven-development/final-review-prompt.md`) read other
+  revisions with `git show` or a `git archive` export they delete, never `git worktree add` (upstream left
+  `/tmp/review-<sha>` worktrees registered). Reason: stacked execution makes a worktree redundant, and unrequested
+  worktrees were piling up on the owner's machine. `finishing-branch` Step 7 also removes a worktree this session
+  created with a native tool (`ExitWorktree` with `action: "remove"`; upstream left every non-`.worktrees/` worktree
+  to the host). Same reason.
 - `using-methodology/references/claude-code-tools.md` drops the advice to hand a whole plan to one orchestrator
   subagent on a mid-tier model and describes role dispatch instead (coordination stays in the session);
   `codex-tools.md`'s "Model routing on spawns" points at role files instead of the removed "Model Selection". Reason:

@@ -89,7 +89,7 @@ digraph process {
         "task-done: run tests, squash the task (stack), ledger the result (+ triqual tasks done when opted in); mark todo complete" [shape=box];
     }
 
-    "Setup: stack init, worktree (optional), push authorization, tracking paths, workspace + ledger, read plan + spec, pre-flight scan" [shape=box];
+    "Setup: stack init, no worktree unless asked, push authorization, tracking paths, workspace + ledger, read plan + spec, pre-flight scan" [shape=box];
     "Start phase N: stack phase N (branch on top of phase N-1)" [shape=box];
     "More tasks remain?" [shape=diamond];
     "Phase check at the tip (one re-run if flaky; a real failure reopens the last task), then stack done N, stack submit N" [shape=box];
@@ -100,7 +100,7 @@ digraph process {
     "Final review clean: delete this plan's workspace" [shape=box];
     "Use methodology:finishing-branch" [shape=box style=filled fillcolor=lightgreen];
 
-    "Setup: stack init, worktree (optional), push authorization, tracking paths, workspace + ledger, read plan + spec, pre-flight scan" -> "Start phase N: stack phase N (branch on top of phase N-1)";
+    "Setup: stack init, no worktree unless asked, push authorization, tracking paths, workspace + ledger, read plan + spec, pre-flight scan" -> "Start phase N: stack phase N (branch on top of phase N-1)";
     "Start phase N: stack phase N (branch on top of phase N-1)" -> "task-start: brief + BASE (+ triqual tasks start when opted in); read the brief";
     "task-start: brief + BASE (+ triqual tasks start when opted in); read the brief" -> "Work the steps in order: TDD, run every verification, read every output";
     "Work the steps in order: TDD, run every verification, read every output" -> "Step output matches plan's Expected?";
@@ -130,8 +130,13 @@ digraph process {
 
 ## Setup
 
-Ensure the work happens in an isolated workspace: methodology:using-git-worktrees
-is offered, not required. When you use a worktree, its branch must not be
+No worktree by default: run the plan in the current checkout. The stack's
+phase branches are the isolation (below), so a worktree adds nothing.
+Create one with methodology:using-git-worktrees only when your human partner
+explicitly asks for it; executing the plan, or being told to work
+autonomously, is not that request. Do not stop before Task 1 to ask about
+one; at most mention once that one is available. When you use a worktree,
+its branch must not be
 named exactly the plan's `**Branch prefix:**` (use another name, for example
 `wt/<prefix>`, or a detached HEAD): `stack.mjs init` exits 3 on a branch with
 the prefix's own name. Implementation never starts on the trunk: `stack.mjs
@@ -512,7 +517,7 @@ Use methodology:finishing-branch.
 ```
 You: I'm using the executing-plans skill to implement this plan inline.
 
-[Setup: worktree verified]
+[Setup: no worktree asked for, working in the current checkout]
 [Tracking: triqual tasks paths --json → opted in, "mode": "committed"]
 [Read plan once: <plansDir>/feature-plan.md; spec read]
 [Resolve workspace: sdd-workspace <plansDir>/feature-plan.md — no sdd-ledger.md inside, fresh start]
