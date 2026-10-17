@@ -2,10 +2,10 @@
 // (args[0] is the subcommand) and uses the returned number as the exit code.
 
 import { runCheck, runTest } from './check.mjs';
+import { runLog } from './log.mjs';
 import { packageVersion } from './version.mjs';
 
 const NOT_YET = new Set([
-  'log',
   'doctor',
   'replay',
   'install',
@@ -29,7 +29,8 @@ export function helpText() {
     'Read-only commands:',
     '  check [--policy f]   validate the policy; warn on allow rules matching runs-repo-code',
     '  test [--policy f]    run the policy examples',
-    '  log                  (not yet implemented)',
+    '  log [--session id] [--denies | --undecided | --unknown-tools | --agent id --reads | --latency] [--state-dir d]',
+    '                       decision log views (plain text)',
     '  doctor               (not yet implemented)',
     '  replay               (not yet implemented)',
     '  version              print the version',
@@ -66,6 +67,8 @@ export function main(args = [], io = defaultIo) {
         return runCheck(rest, io);
       case 'test':
         return runTest(rest, io);
+      case 'log':
+        return runLog(rest, io);
       default:
         if (NOT_YET.has(command)) {
           io.err(`fence: "${command}" is not yet implemented`);

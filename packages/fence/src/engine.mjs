@@ -35,7 +35,11 @@
 //      normalizer runs (ctx.writtenIndex: the git `.git/config` precondition) and, after a decision that is
 //      not a deny, extended with the realpaths of the call's writes (the decision's scope.writes), also under
 //      --record-only. A failed index write is recorded in health.json and never changes the decision.
-// `post` and `precompact` are stubs returning {} (Tasks 28, 41); `session-start` prunes logs and index
+// `post` appends one completion line (`phase: "post"`, keyed by `tool_use_id`; the tool, session, turn and
+//   agent ids, the response size and its error flag, never the tool input or output) to the same log and
+//   returns {}. It fails open: any failure is swallowed (a failed append is recorded in health.json) and
+//   the output is {} with exit 0 whatever the payload, the host or the state directory.
+// `precompact` is a stub returning {} (Task 41); `session-start` prunes logs and index
 // files older than 30 days (log/prune.mjs, best effort) and returns {} (its context line comes with Task 42).
 //
 // The git tree check is bound to the git pinned at install (`<home>/.local/share/fence/git.json`);
@@ -67,7 +71,8 @@ import { isCaseInsensitive, resolvePath } from './resolve/paths.mjs';
 import { repoOf } from './resolve/repo.mjs';
 
 export const EVENTS = Object.freeze(['pre', 'post', 'precompact', 'session-start']);
-const STUB_EVENTS = new Set(['post', 'precompact', 'session-start']);
+const STUB_EVENTS = new Set(['precompact', 'session-start']);
+const POST = 'post';
 const SESSION_START = 'session-start';
 const ADAPTERS = Object.freeze({ claude, codex });
 const PRE_HOOK_EVENT = 'PreToolUse';
@@ -270,6 +275,51 @@ function recordWrites(decision, trace, { now, fsImpl, recordOnly }) {
   if (!ok) recordHealth(trace.stateDir, { writtenFailure: { at: new Date(now).toISOString() } }, { fs: fsImpl });
 }
 
+// PostToolUse: appends the completion line for a tool call (keyed by tool_use_id). Never throws; the
+// caller prints {} whatever happens here.
+function recordCompletion(args, { stdin, now, fsImpl }) {
+  let stateDir;
+  try {
+    stateDir = nodePath.resolve(args.stateDir ?? nodePath.join(os.homedir(), '.local', 'state', 'fence'));
+    const adapter = Object.hasOwn(ADAPTERS, args.host ?? '') ? ADAPTERS[args.host] : null;
+    if (adapter === null) return;
+    let payload;
+    try {
+      payload = JSON.parse(stdinText(stdin));
+    } catch {
+      return;
+    }
+    const parsed = adapter.parse(payload, { home: os.homedir() });
+    if (typeof parsed?.tool !== 'string' || parsed.tool === '') return;
+    const response = payload.tool_response;
+    let responseBytes;
+    if (response !== undefined) {
+      const serialized = typeof response === 'string' ? response : JSON.stringify(response);
+      if (typeof serialized === 'string') responseBytes = Buffer.byteLength(serialized, 'utf8');
+    }
+    const entry = {
+      phase: 'post',
+      event: parsed.event,
+      host: parsed.host,
+      session_id: parsed.session_id || null,
+      turn_id: parsed.turn_id ?? null,
+      agent_id: parsed.agent_id ?? null,
+      agent_type: parsed.agent_type ?? null,
+      tool: parsed.tool,
+      tool_use_id: parsed.tool_use_id || null,
+      permission_mode: parsed.permission_mode ?? null,
+      cwd: parsed.cwd || null,
+      response_bytes: responseBytes ?? null,
+      is_error: typeof response?.is_error === 'boolean' ? response.is_error : null,
+      engine_version: packageVersion(),
+    };
+    if (appendDecision(stateDir, entry, { now: () => now, fs: fsImpl }).ok) return;
+  } catch {
+    // fall through to the health record
+  }
+  if (typeof stateDir === 'string') recordHealth(stateDir, { logFailure: { at: new Date(now).toISOString() } }, { fs: fsImpl });
+}
+
 const round1 = (ms) => Math.round(ms * 10) / 10;
 
 // Logs the decision (one redacted line) and returns what the caller prints: the same decision, plus
@@ -303,6 +353,15 @@ export function runEngine(argv, { stdin = '', now = Date.now(), isRootOwned = re
   let decision;
   try {
     args = parseArgs(argv);
+    if (args.event === POST || (args.error && argv?.[0] === POST)) {
+      // PostToolUse fails open: nothing here can deny, and nothing here may throw.
+      try {
+        if (!args.error) recordCompletion(args, { stdin, now, fsImpl });
+      } catch {
+        // a completion line is best effort
+      }
+      return out({});
+    }
     if (args.error) return out(deny('builtin:engine', `fence could not start: ${args.error}; the call is denied.`));
     if (STUB_EVENTS.has(args.event)) {
       if (args.event === SESSION_START) {
