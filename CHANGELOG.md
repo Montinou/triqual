@@ -3,7 +3,7 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
-## methodology 1.0.0 (unreleased)
+## methodology 1.0.0
 
 methodology is now triqual's own orchestrator. It started as a fork of superpowers, and it no longer follows it.
 
@@ -59,7 +59,7 @@ methodology is now triqual's own orchestrator. It started as a fork of superpowe
 triqual's methodology began as a fork of [superpowers](https://github.com/obra/superpowers) by Jesse Vincent (MIT).
 Thanks to Jesse for the foundation. `LICENSE-superpowers` and `NOTICE` stay in the plugin.
 
-## progress-tracking 0.5.0 (unreleased)
+## progress-tracking 0.5.0
 
 ### Changed
 
@@ -77,7 +77,7 @@ Thanks to Jesse for the foundation. `LICENSE-superpowers` and `NOTICE` stay in t
 - **Store schema V2** adds the two tier columns by an appended migration. An older version refuses the migrated store.
 - `triqual tasks done T<N> --commit <sha> --repo <path>` records a commit of another repository.
 
-## workflow-gate 0.3.0 (unreleased)
+## workflow-gate 0.3.0
 
 ### Added
 
@@ -88,7 +88,7 @@ Thanks to Jesse for the foundation. `LICENSE-superpowers` and `NOTICE` stay in t
   sets the window. The state is a file per session id under `$XDG_STATE_HOME/triqual/workflow-gate/`, and the hook
   allows whenever its state is unusable.
 
-## memory-report 0.5.0 (unreleased)
+## memory-report 0.5.0
 
 ### Added
 

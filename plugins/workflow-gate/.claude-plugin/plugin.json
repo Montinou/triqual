@@ -1,1 +1,1 @@
-{ "name": "workflow-gate", "version": "0.2.0", "description": "Caps the agents a Workflow script launches per model: fable 3, opus 8, sonnet 12, haiku unlimited.", "author": { "name": "Montinou" }, "license": "MIT" }
+{ "name": "workflow-gate", "version": "0.3.0", "description": "Caps the agents a Workflow script launches per model: fable 3, opus 8, sonnet 12, haiku unlimited.", "author": { "name": "Montinou" }, "license": "MIT" }
