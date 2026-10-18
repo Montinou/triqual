@@ -81,7 +81,7 @@ export const idOf = (home, name) => pluginId(home, name);
 export const SHIM_COMMANDS = {
   tasks: ['progress-tracking', 'cli/tasks.mjs'],
   'progress-init': ['progress-tracking', 'cli/progress-init.mjs'],
-  suggest: ['skill-suggest', 'cli/suggest.mjs'],
+  suggest: ['methodology', 'cli/suggest.mjs'],
   doctor: ['methodology', 'cli/doctor.mjs'],
   sync: ['methodology', 'cli/sync.mjs'],
   'upstream-diff': ['methodology', 'cli/upstream-diff.mjs'],

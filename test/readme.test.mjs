@@ -55,7 +55,14 @@ test('README documents triqual tasks, triqual ui and the status-line snippet', (
   assert.match(README, /\| `triqual ui \[--port N\] \[--open\]` \|/);
   assert.ok(README.includes('seg=$(command -v triqual >/dev/null && triqual tasks line 2>/dev/null)'));
   assert.doesNotMatch(README, /`triqual tasks`[^\n]*arrive in later releases/);
-  assert.match(README, /`triqual suggest` arrives in a later release/);
+  assert.doesNotMatch(README, /`triqual suggest` arrives in a later release/);
+  const suggest = README.split('\n').filter((line) => line.startsWith('| `triqual suggest '));
+  assert.equal(suggest.length, 1, 'one triqual suggest row');
+  assert.match(suggest[0], /^\| `triqual suggest "<text>" \[--json\]` \|/);
+  for (const needle of ['headjack suggest', '<headjack-suggestions>', '--session-id', '^[A-Za-z0-9][A-Za-z0-9._@:-]{0,127}$', '`brainstorming`', '`writing-plans`', '`using-methodology`']) {
+    assert.ok(suggest[0].includes(needle), `the triqual suggest row lacks ${needle}`);
+  }
+  assert.match(suggest[0], /Exits 0 .*3 when Headjack is not installed.*1 when .*2 on usage/);
   assert.doesNotMatch(README, /`triqual upstream-diff` arrives? in (a )?later release/);
   assert.match(README, /git 2\.31/);
   assert.match(README, /--separate-git-dir/);

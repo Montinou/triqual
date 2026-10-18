@@ -123,8 +123,9 @@ replaced skills):
   repository, so `references/github-issues.md` files the issue without them. It searches and files with an
   authenticated `gh` only (`gh auth status` first); upstream's unauthenticated curl and prefilled-link fallbacks are
   dropped, since this system's repository may be private. Reason: §11.
-- `using-methodology` adds a "This System" section: how to treat a `skill-suggest` suggestion (offer it, never
-  install without the user's OK), the language rule, and the supersede rule "never use a `superpowers:*` skill when
+- `using-methodology` adds a "This System" section: how to treat a `<headjack-suggestions>` block, which
+  `triqual suggest` prints (offer a fitting skill, never install without the user's OK; a non-zero exit or empty
+  output is no suggestion, skipped silently), the language rule, and the supersede rule "never use a `superpowers:*` skill when
   one is listed: `methodology` supersedes it" (E.3). Its skill-priority examples name `methodology:*` skills, its
   platform list keeps Claude Code, Codex and Hermes Agent (the four removed references below), and its references
   name `methodology` skills and the `finishing-branch` rename. Reason: §11 and E.3.
@@ -133,11 +134,11 @@ replaced skills):
 - `brainstorming` and `writing-plans` take their tracking paths from `triqual tasks paths --json`, with three cases: opted
   in (`specsDir`, `plansDir`, `progress`, `status`), not opted in (`docs/specs/` and `docs/plans/`, no `triqual tasks`
   command, never creating `progress.md`) and `triqual` missing (as not opted in, said once). `brainstorming` runs
-  `triqual suggest` at the start and skips it silently on exit 3. The spec audit (`brainstorming`) and the plan audit
+  `triqual suggest` at the start and skips it silently on a non-zero exit or empty output. The spec audit (`brainstorming`) and the plan audit
   (`writing-plans`) always dispatch `roles:final-adversarial-reviewer` with `spec-document-reviewer-prompt.md`, which
   now covers plans too. Reason: §11, E.4 and E.5.
 - `writing-plans` emits §6.2's task format with the `**Role:**` line (E.5) on every task and its rule for choosing
-  among the task roles; fills `**Skills:**` from `triqual suggest` only when it exists; ends, when opted in, with
+  among the task roles; fills `**Skills:**` from `triqual suggest --json` (`suggestions[].slug`) and omits the line when it gives none; ends, when opted in, with
   `triqual tasks init <plan>` (in local mode a draft in the OS temp dir and `triqual tracking write plan <draft>`, the same as
   `triqual tasks init --adopt <draft>`, since Claude Code protects `.git/` from agent file writes) and the plan's registration in `progress.md` and `status.md`. Its plan
   header and handoff name `methodology:*` skills, and the Native option says each task still gets its reviews (E.4).

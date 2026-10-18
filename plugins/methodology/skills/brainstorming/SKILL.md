@@ -57,7 +57,7 @@ allowed while those prerequisites remain incomplete.
 
 ## Vault Skills and Tracking Paths
 
-At the start, run `triqual suggest "<the request>"` to spot vault skills that fit it, and treat a fitting one as `methodology:using-methodology` says. On exit 3 from `triqual suggest` (skill-suggest is not installed yet), or when `triqual` is not on `PATH` (`command -v triqual` fails, or exit 127), skip this silently.
+At the start, run `triqual suggest "<the request>"` to spot vault skills that fit it: its output is a `<headjack-suggestions>` block, and you treat a fitting skill as `methodology:using-methodology` says. On a non-zero exit from `triqual suggest` (exit 3: headjack is not installed), on empty output, or when `triqual` is not on `PATH` (`command -v triqual` fails, or exit 127), there is no suggestion: skip this silently.
 
 Before writing a spec, run `triqual tasks paths --json` once for the tracking paths:
 - **Opted in** (`"optedIn": true`; an older `triqual` prints the same fields without `optedIn`): specs go to `specsDir`. In local mode (`"mode": "local"`) `specsDir` lives under the git dir, so the spec stays out of git. In store mode (`"mode": "store"`) it lives in the store's documents directory, outside the working tree.

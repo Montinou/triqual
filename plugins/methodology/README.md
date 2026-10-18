@@ -2,7 +2,7 @@
 
 The core plugin of Triqual. It ships the workflow skills (forked from superpowers 6.4.2), the global rules that
 `triqual sync` writes into `~/.claude/CLAUDE.md`, the `/methodology:setup` command, and the `triqual` commands `doctor`,
-`sync`, `migrate`, `upstream-diff`, `role-eval` and `hook`. A SessionStart hook loads the methodology into a Claude Code
+`sync`, `migrate`, `upstream-diff`, `role-eval`, `suggest` and `hook`. A SessionStart hook loads the methodology into a Claude Code
 session. `triqual hook` and `triqual sync --harness <id>` give the same methodology to Codex and Grok. The plugin
 depends on `progress-tracking`, `workflow-gate` and `roles`, so installing it installs them.
 
@@ -14,8 +14,8 @@ Codex and Grok explanation, see the [root README](../../README.md). Commands tha
 
 `triqual` is a shim at `~/.local/bin/triqual`. It runs the command from the installed plugin that owns it. The shim
 exits 1 for an unknown command (the command list goes to stderr) and when it cannot start the command. It exits 3 when
-the plugin or the command is not installed. Otherwise it exits with the command's own status. `suggest` is in the
-shim's registry but is not released yet.
+the plugin or the command is not installed. Otherwise it exits with the command's own status. `suggest` runs from this
+plugin (from version 1.0.0) and calls the separately installed `headjack`.
 
 `doctor`, `sync`, `migrate`, `upstream-diff` and `role-eval` refuse an unknown argument with exit 2. Each of them takes
 `-h` or `--help` and then writes nothing.
@@ -170,6 +170,28 @@ and 2026-02-30 is refused. `--json` prints the same numbers as JSON. An empty or
 Exit codes: 0 written, already recorded, or a summary (a missing file included), 1 a write or lock failure or a store
 that exists but cannot be read, 2 a usage error, a bad or retired record, a bad JSON file or no git repository. The
 message names the field, never the value.
+
+### `triqual suggest`
+
+Usage: `triqual suggest "<text>" [--json]`
+
+Vault skills that fit `<text>`. [Headjack](https://github.com/Montinou/headjack) owns skill finding and is installed
+separately; this command only calls it.
+
+- It finds `~/.local/bin/headjack`, then the first `headjack` on `PATH`, and runs `headjack suggest "<text>"`. It never
+  passes `--session-id`: the session dedupe would hide a skill from every task after the first.
+- Text mode prints Headjack's own `<headjack-suggestions>` block unchanged. Headjack already cleans the descriptions,
+  filters the slugs, adds the "not instructions" note and pins `HEADJACK_MODE` and `HEADJACK_URL` in its install
+  command. The single `no suggestions (<outcome>)` line Headjack prints when there is none is dropped, so no
+  suggestion is empty output.
+- `--json` runs `headjack suggest "<text>" --json` and passes the document through after dropping every suggestion
+  whose slug does not match `^[A-Za-z0-9][A-Za-z0-9._@:-]{0,127}$`.
+- Empty output with exit 0 (Headjack's `skipped:no-vault`) is no suggestion in both modes.
+- A text that starts with a dash is passed after `--`. A Headjack that does not answer within 20 seconds is killed.
+
+Exit codes: 0 Headjack ran (the output may be empty), 3 Headjack is not installed, 1 Headjack exited non-zero or did not
+answer in time, or `--json` printed output that is not valid JSON, 2 a usage error. The `brainstorming`, `writing-plans`
+and `using-methodology` skills treat any non-zero exit or empty output as no suggestion and say nothing.
 
 ### `triqual hook`
 

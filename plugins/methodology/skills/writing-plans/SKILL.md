@@ -200,7 +200,7 @@ git commit -m "feat: add specific feature"
 The lines under the heading follow the task ledger's plan format:
 - `**Tier:**` names the task's tier (see Task Tiers); it is the first line.
 - `**Depends on:**` lists the tasks that must be done first, as `T1, T3`; omit the line when a task has none.
-- `**Skills:**` lists the vault skills the task needs: run `triqual suggest` on the task's text and keep the fitting slugs. On exit 3 from `triqual suggest` (skill-suggest is not installed yet), or when `triqual` is not on `PATH` (`command -v triqual` fails, or exit 127), omit the line silently.
+- `**Skills:**` lists the vault skills the task needs: run `triqual suggest "<the task's text>" --json` and keep the fitting `suggestions[].slug` values. On a non-zero exit from `triqual suggest` (exit 3: headjack is not installed), on empty output, or when `triqual` is not on `PATH` (`command -v triqual` fails, or exit 127), omit the line silently.
 - `**Role:**` names the task's role (see Task Roles).
 
 ## What a Step Contains

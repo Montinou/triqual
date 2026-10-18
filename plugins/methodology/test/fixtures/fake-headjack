@@ -1,0 +1,37 @@
+#!/bin/sh
+# A fake `headjack` for suggest.test.mjs. Put it first on PATH under the name `headjack`, or at ~/.local/bin/headjack.
+# Behavior comes from the environment (all optional):
+#   FAKE_HEADJACK_LOG       file that receives each call: one argument per line, then a line holding `---`
+#   FAKE_HEADJACK_OUT       the stdout of a call without --json, printed as is (no newline added)
+#   FAKE_HEADJACK_JSON_OUT  the stdout of a call with --json, printed as is (no newline added)
+#   FAKE_HEADJACK_ERR       text printed to stderr
+#   FAKE_HEADJACK_EXIT      the exit status (default 0)
+#   FAKE_HEADJACK_SLEEP     seconds to sleep before answering (the process is replaced, so a kill ends it at once)
+# It prints nothing else and never reads stdin.
+set -u
+
+if [ -n "${FAKE_HEADJACK_LOG:-}" ]; then
+  printf '%s\n' "$@" >> "$FAKE_HEADJACK_LOG"
+  printf '%s\n' '---' >> "$FAKE_HEADJACK_LOG"
+fi
+
+if [ -n "${FAKE_HEADJACK_SLEEP:-}" ]; then
+  exec sleep "$FAKE_HEADJACK_SLEEP"
+fi
+
+json=0
+for arg in "$@"; do
+  if [ "$arg" = "--json" ]; then json=1; fi
+done
+
+if [ -n "${FAKE_HEADJACK_ERR:-}" ]; then
+  printf '%s' "$FAKE_HEADJACK_ERR" >&2
+fi
+
+if [ "$json" = 1 ]; then
+  printf '%s' "${FAKE_HEADJACK_JSON_OUT-}"
+else
+  printf '%s' "${FAKE_HEADJACK_OUT-}"
+fi
+
+exit "${FAKE_HEADJACK_EXIT:-0}"

@@ -480,6 +480,25 @@ test('doctor reports a triqual shim that lacks a command the installed plugins s
   });
 });
 
+// `triqual suggest` runs from the methodology plugin itself (it used to belong to a skill-suggest plugin).
+const SUGGEST_LINE = "  suggest: ['methodology', 'cli/suggest.mjs'],\n";
+const SHIM_WITHOUT_SUGGEST = SHIM_TEXT.replace(SUGGEST_LINE, '');
+
+test('doctor reports a triqual shim that lacks `suggest` once the installed methodology ships it', async () => {
+  assert.notEqual(SHIM_WITHOUT_SUGGEST, SHIM_TEXT, 'the suggest line was not found in setup/triqual-shim.mjs');
+  assert.deepEqual(SHIPPED.methodology.filter((f) => f === 'cli/suggest.mjs'), ['cli/suggest.mjs']);
+  await withHome(async ({ home }) => {
+    const r = await diagnose({ home, cwd: home, run: fakeRun().run });
+    assert.equal(r.failures.length, 1, r.failures.join('\n'));
+    assert.ok(r.failures[0].includes(`lacks ${BRAND.cli} suggest, which the installed methodology ships`), r.failures[0]);
+    assert.ok(r.failures[0].endsWith(`: ${RERUN_FIX}`), r.failures[0]);
+  }, (p) => { p.shimText = SHIM_WITHOUT_SUGGEST; p.ships = { methodology: SHIPPED.methodology }; });
+  // The current shim with the same install: nothing to report.
+  await withHome(async ({ home }) => {
+    assert.deepEqual(await diagnose({ home, cwd: home, run: fakeRun().run }), { failures: [], warnings: [] });
+  }, (p) => { p.ships = { methodology: SHIPPED.methodology }; });
+});
+
 test('doctor names every command a shim without a command map lacks', async () => {
   await withHome(async ({ home }) => {
     const r = await diagnose({ home, cwd: home, run: fakeRun().run });
