@@ -257,13 +257,3 @@ test('hooks.json wires PreToolUse(Workflow) to scripts/gate.mjs', () => {
   assert.equal(entry.hooks[0].timeout, 10);
   assert.equal(entry.hooks[0].statusMessage, 'workflow-gate: checking agent budget and role dispatch');
 });
-
-test('ROLE_MODELS matches the roles plugin frontmatter', () => {
-  const agents = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'roles', 'agents');
-  const src = readFileSync(GATE, 'utf8');
-  for (const f of readdirSync(agents).filter((x) => x.endsWith('.md'))) {
-    const model = readFileSync(join(agents, f), 'utf8').match(/^model:\s*(\S+)/m)[1];
-    const family = ['fable', 'opus', 'sonnet', 'haiku'].find((x) => model.includes(x));
-    assert.match(src, new RegExp(`"${f.slice(0, -3)}": "${family}"`), f);
-  }
-});

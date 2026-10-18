@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -584,12 +584,7 @@ test('reconcile refreshes a pending task\'s role from the plan and keeps a start
   assert.equal(Object.hasOwn(task(r2.ledger, 'T2'), 'role'), false);
 });
 
-test('every roles:* task role names an agent in plugins/roles/agents', () => {
-  const agents = new Set(readdirSync(join(REPO_ROOT, 'plugins', 'roles', 'agents'))
-    .filter((f) => f.endsWith('.md')).map((f) => `roles:${f.slice(0, -3)}`));
-  const named = TASK_ROLES.filter((r) => r.startsWith('roles:'));
-  assert.ok(named.length > 0);
-  for (const role of named) assert.ok(agents.has(role), `${role} is not an agent in plugins/roles/agents`);
+test('the default task role is one of the task roles', () => {
   assert.ok(TASK_ROLES.includes(DEFAULT_ROLE));
 });
 

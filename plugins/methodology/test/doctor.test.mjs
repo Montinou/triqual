@@ -23,8 +23,9 @@ const REPO_ROOT = dirname(dirname(PLUGIN_ROOT));
 const GATE_TEMPLATE = readFileSync(join(REPO_ROOT, 'plugins', 'progress-tracking', 'templates', 'progress-gate.sh'), 'utf8');
 const GLOBAL = readFileSync(join(PLUGIN_ROOT, 'rules', 'global.md'), 'utf8');
 const IDS = ['methodology', 'progress-tracking', 'workflow-gate', 'roles'].map((n) => `${n}@${BRAND.marketplace}`);
-const ROLES = ['brief-writer', 'tdd-implementer', 'complex-implementer', 'safety-reviewer', 'spec-reviewer',
-  'review-fixer', 'final-adversarial-reviewer', 'hunter'];
+// The role names come from the agent files; test/roles-consistency.test.mjs checks doctor's own list against them.
+const ROLES = readdirSync(join(REPO_ROOT, 'plugins', 'roles', 'agents')).filter((f) => f.endsWith('.md'))
+  .map((f) => f.slice(0, -3)).sort();
 const SUPERSEDED = 'superpowers@superpowers-marketplace';
 const HEADJACK_ARGS = ['headjack', ['search', 'ping', '-k', '1', '--json'], { timeoutMs: 10000 }];
 // The shim as released on this branch: a clean machine's ~/.local/bin/triqual.mjs; the alias and the forwarder beside it.
@@ -425,12 +426,6 @@ test('doctor reports a triqual shim that is missing, a dangling symlink or not a
       assert.ok(r.failures[0].includes(BOOTSTRAP_FIX), r.failures[0]);
     }, (p) => { p.shim = shim; });
   }
-});
-
-test('doctor checks for a duplicate of every role the roles plugin ships, and no other', () => {
-  const shipped = readdirSync(join(REPO_ROOT, 'plugins', 'roles', 'agents')).filter((f) => f.endsWith('.md'))
-    .map((f) => f.slice(0, -3));
-  assert.deepEqual([...ROLES].sort(), shipped.sort());
 });
 
 test('doctor no longer reports a leftover safety-shadow agent, a role the roles plugin retired', async () => {
