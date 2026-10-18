@@ -79,6 +79,12 @@ test('without the shim', () => withHome(async ({ io, out, err }) => {
   assert.equal(out.join(''), USAGE);
 }, { shim: false }));
 
+test('setup is routed to the installer, not forwarded', () => withHome(async ({ io, out, argvFile }) => {
+  assert.deepEqual(await main(['setup', '--help'], io), { code: 0, signal: null });
+  assert.match(out.join(''), /usage: triqual setup/);
+  assert.equal(ran(argvFile), false, 'the shim never runs');
+}));
+
 test('a signal is re-raised', () => withHome(({ env }) => {
   const r = spawnSync(process.execPath, [BIN, 'doctor'], { env: { ...env, STUB_SIGNAL: 'SIGTERM' }, encoding: 'utf8' });
   assert.equal(r.signal, 'SIGTERM');

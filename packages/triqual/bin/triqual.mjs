@@ -5,6 +5,7 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { forward, shimPath } from '../lib/forward.mjs';
+import { runSetup } from '../lib/setup.mjs';
 
 const VERSION = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8')).version;
 const HELP = new Set(['help', '--help', '-h']);
@@ -24,6 +25,7 @@ export async function main(argv, { env = process.env, stdout = process.stdout, s
     stdout.write(`${VERSION}\n`);
     return { code: 0, signal: null };
   }
+  if (first === 'setup') return { code: await runSetup(argv.slice(1), { env, stdout, stderr }), signal: null };
   const home = env.HOME;
   const isHelp = argv.length === 0 || (argv.length === 1 && HELP.has(first));
   if (!existsSync(shimPath(home))) {
