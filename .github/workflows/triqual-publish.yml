@@ -1,0 +1,48 @@
+# Publishes the triqual npm package (packages/triqual) when a triqual-v<version> tag is pushed. npm trusted
+# publishing (OIDC) authenticates the publish and adds provenance: no npm token is stored anywhere.
+name: triqual-publish
+
+on:
+  push:
+    tags:
+      - 'triqual-v*'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    if: github.repository == 'Montinou/triqual'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Only a commit on main is published
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "$GITHUB_REF_NAME is not on main: a tag can only publish what is on main"; exit 1; }
+      - name: The tag matches the package version
+        run: |
+          version=$(node -p "require('./packages/triqual/package.json').version")
+          if [ "$GITHUB_REF_NAME" != "triqual-v$version" ]; then
+            echo "tag $GITHUB_REF_NAME does not match packages/triqual/package.json version $version (expected triqual-v$version)"
+            exit 1
+          fi
+      - name: npm 11.5.1 or newer (trusted publishing)
+        run: |
+          current=$(npm --version)
+          if [ "$(printf '%s\n' 11.5.1 "$current" | sort -V | head -n 1)" != 11.5.1 ]; then npm install -g npm@11; fi
+          npm --version
+      - name: Package tests
+        run: node --test packages/triqual/test/*.test.mjs
+      - name: Pack check
+        run: node --test packages/triqual/test/pack.test.mjs
+      - name: Publish
+        working-directory: packages/triqual
+        run: npm publish --access public
