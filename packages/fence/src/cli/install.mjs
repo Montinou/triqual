@@ -285,6 +285,119 @@ function probeGit(gitPath, env, run) {
   return { pin };
 }
 
+// Bundles the watchdog of the package copy `pkgDir` (the staged copy, or an installed
+// versions/<v>) with the Node path pinned, and runs the smoke test on the bundle and that copy.
+// Shared by install, upgrade and rollback. -> {ok, watchdogText, sm} | {ok: false, reason}
+export async function bundleAndSmoke({ pkgDir, node, work, smoke = runSmoke, policy }) {
+  let watchdogText;
+  let bundle;
+  try {
+    const bundler = await import(pathToFileURL(nodePath.join(pkgDir, 'src', 'build', 'bundle-watchdog.mjs')).href);
+    watchdogText = bundler.buildWatchdog({ nodePath: node });
+    bundle = nodePath.join(work, 'bundle', 'fence-hook.mjs');
+    nodeFs.mkdirSync(nodePath.dirname(bundle), { recursive: true });
+    nodeFs.writeFileSync(bundle, watchdogText, { mode: 0o644 });
+  } catch (err) {
+    return { ok: false, reason: `the package's watchdog could not be bundled: ${errText(err)}` };
+  }
+  const sm = smoke({ watchdogPath: bundle, engineDir: pkgDir, policy });
+  if (!sm || sm.ok !== true) return { ok: false, reason: `the smoke test failed: ${(sm?.failures ?? ['no result']).join('; ')}` };
+  return { ok: true, watchdogText, sm };
+}
+
+// Steps 6 and 7 of the install, shared with upgrade and rollback: place `staging` as `target`
+// (skipped when it is null: `target` is an installed version), replace the bundle, the watchdog
+// trampoline, the CLI module and its trampoline, run the INSTALLED trampoline end to end against
+// `target`, then switch `current` by write-temp-then-rename. Every replaced file is undone when a
+// step fails, so a failure leaves the old files and the old `current`. -> {ok} | {ok: false, reason}
+export function activateVersion({ paths, version, target, staging = null, watchdogText, node, work, run, env, policyFile }) {
+  const steps = [];
+  try {
+    if (staging !== null) steps.push(placeVersion(staging, target));
+    steps.push(replaceFile(paths.watchdogBundle, watchdogText, 0o644));
+    steps.push(replaceFile(paths.watchdog, trampolineText(node, paths.watchdogBundle), 0o755));
+    steps.push(replaceFile(paths.shimModule, shimText(paths.shareDir), 0o644));
+    steps.push(replaceFile(paths.shim, trampolineText(node, paths.shimModule), 0o755));
+    const problem = installedLauncherProblem(paths, { target, version, policyFile, workDir: work, run, env });
+    if (problem) throw new Error(problem);
+    writeAtomic(paths.current, `${version}\n`, 0o644);
+  } catch (err) {
+    for (const s of steps.reverse()) {
+      try {
+        s.rollback();
+      } catch {
+        // best effort: the original failure is the one reported
+      }
+    }
+    return { ok: false, reason: errText(err) };
+  }
+  for (const s of steps) {
+    try {
+      s.commit();
+    } catch {
+      // a leftover backup is harmless
+    }
+  }
+  return { ok: true };
+}
+
+// The smoke result doctor reads (<state>/smoke.json).
+export function writeSmokeResult(paths, { version, sm, now = Date.now }) {
+  writeAtomic(paths.smokeResult, `${JSON.stringify({ version, ok: true, latencyMs: sm.latencyMs ?? [], at: new Date(now()).toISOString() })}\n`, 0o644);
+}
+
+// The version names under versions/ (directories whose name is an exact semver).
+export function installedVersions(paths) {
+  let names = [];
+  try {
+    names = nodeFs.readdirSync(paths.versionsDir);
+  } catch {
+    return [];
+  }
+  return names
+    .filter((n) => isExactVersion(n))
+    .filter((n) => {
+      try {
+        return nodeFs.statSync(nodePath.join(paths.versionsDir, n)).isDirectory();
+      } catch {
+        return false;
+      }
+    })
+    .sort();
+}
+
+// The version `current` names when it is an installed one, else null (read before a switch, to
+// know which version becomes the previous one).
+export function readInstalledCurrent(paths) {
+  try {
+    const text = nodeFs.readFileSync(paths.current, 'utf8').trim();
+    return isExactVersion(text) && nodeFs.existsSync(nodePath.join(paths.versionsDir, text, 'src', 'engine.mjs')) ? text : null;
+  } catch {
+    return null;
+  }
+}
+
+// Keeps exactly one previous version (spec, "CLI"): after `version` became current over
+// `previous`, every other semver-named directory under versions/ goes. Names that are not versions
+// are never touched. -> {pruned, warnings}
+export function pruneVersions(paths, { version, previous }) {
+  const pruned = [];
+  const warnings = [];
+  for (const name of installedVersions(paths)) {
+    if (name === version || name === previous) continue;
+    try {
+      nodeFs.rmSync(nodePath.join(paths.versionsDir, name), { recursive: true, force: true });
+      pruned.push(name);
+    } catch (err) {
+      warnings.push(`pruning ${name} failed: ${errText(err)}`);
+    }
+  }
+  return { pruned, warnings };
+}
+
+// Exports for the commands built on the same swap (upgrade, rollback, uninstall).
+export { errText, failed, findOnPath, nodePathProblem, nodeVersionProblem, writeAtomic };
+
 export function hostSteps(paths) {
   return [
     'Claude Code: run `claude plugin marketplace add Montinou/triqual`, then `claude plugin install fence@triqual`, and restart Claude Code; `fence doctor` checks that the plugin is enabled.',
@@ -391,46 +504,16 @@ export async function install({
     const policyExists = nodeFs.existsSync(paths.policy);
     const chosenText = nodeFs.existsSync(nodePath.join(staging, chosenName)) ? nodeFs.readFileSync(nodePath.join(staging, chosenName), 'utf8') : null;
 
-    const bundler = await import(pathToFileURL(nodePath.join(staging, 'src', 'build', 'bundle-watchdog.mjs')).href);
-    const watchdogText = bundler.buildWatchdog({ nodePath: node });
-    const bundle = nodePath.join(work, 'bundle', 'fence-hook.mjs');
-    nodeFs.mkdirSync(nodePath.dirname(bundle));
-    nodeFs.writeFileSync(bundle, watchdogText, { mode: 0o644 });
-
     const smokePolicy = policyExists ? paths.policy : chosenText !== null ? nodePath.join(staging, chosenName) : undefined;
-    const sm = smoke({ watchdogPath: bundle, engineDir: staging, policy: smokePolicy });
-    if (!sm || sm.ok !== true) return fail(`the smoke test failed: ${(sm?.failures ?? ['no result']).join('; ')}`);
+    const built = await bundleAndSmoke({ pkgDir: staging, node, work, smoke, policy: smokePolicy });
+    if (!built.ok) return fail(built.reason);
+    const { watchdogText, sm } = built;
 
     // 6 and 7: place and replace (undoable), check the installed launcher, switch `current`
-    const steps = [];
-    try {
-      steps.push(placeVersion(staging, target));
-      staging = null;
-      steps.push(replaceFile(paths.watchdogBundle, watchdogText, 0o644));
-      steps.push(replaceFile(paths.watchdog, trampolineText(node, paths.watchdogBundle), 0o755));
-      steps.push(replaceFile(paths.shimModule, shimText(paths.shareDir), 0o644));
-      steps.push(replaceFile(paths.shim, trampolineText(node, paths.shimModule), 0o755));
-      const policyFile = policyExists ? paths.policy : chosenText !== null ? nodePath.join(target, chosenName) : undefined;
-      const problem = installedLauncherProblem(paths, { target, version, policyFile, workDir: work, run, env });
-      if (problem) throw new Error(problem);
-      writeAtomic(paths.current, `${version}\n`, 0o644);
-    } catch (err) {
-      for (const s of steps.reverse()) {
-        try {
-          s.rollback();
-        } catch {
-          // best effort: the original failure is the one reported
-        }
-      }
-      return fail(errText(err));
-    }
-    for (const s of steps) {
-      try {
-        s.commit();
-      } catch {
-        // a leftover backup is harmless
-      }
-    }
+    const policyFile = policyExists ? paths.policy : chosenText !== null ? nodePath.join(target, chosenName) : undefined;
+    const previousCurrent = readInstalledCurrent(paths);
+    const act = activateVersion({ paths, version, target, staging, watchdogText, node, work, run, env, policyFile });
+    if (!act.ok) return fail(act.reason);
 
     // 8-10: after the switch, failures are warnings
     const warnings = [];
@@ -454,9 +537,17 @@ export async function install({
       warnings.push(`the package ships no policies/${policyChoice}.json; no policy was written`);
     }
 
-    later(`writing the smoke result ${paths.smokeResult}`, () =>
-      writeAtomic(paths.smokeResult, `${JSON.stringify({ version, ok: true, latencyMs: sm.latencyMs ?? [], at: new Date(now()).toISOString() })}\n`, 0o644),
-    );
+    later(`writing the smoke result ${paths.smokeResult}`, () => writeSmokeResult(paths, { version, sm, now }));
+
+    // exactly one previous version is kept: the one that was current (a reinstall of the current
+    // version, or a first install, has no new previous one and prunes nothing)
+    const previous = previousCurrent !== null && previousCurrent !== version ? previousCurrent : null;
+    let pruned = [];
+    if (previous !== null) {
+      const p = pruneVersions(paths, { version, previous });
+      pruned = p.pruned;
+      warnings.push(...p.warnings);
+    }
 
     const git = probeGit(gitPath, env, run);
     if (git.warning) warnings.push(git.warning);
@@ -474,6 +565,8 @@ export async function install({
       ok: true,
       version,
       enginePath: nodePath.join(target, 'src', 'engine.mjs'),
+      previous,
+      pruned,
       paths,
       policy,
       choices,
@@ -490,6 +583,7 @@ export async function install({
   } catch (err) {
     return fail(`install failed: ${errText(err)}`);
   } finally {
+    // renamed away (or rolled back) by activateVersion once placed: removing the name is then a no-op
     if (staging !== null) nodeFs.rmSync(staging, { recursive: true, force: true });
     if (work !== null) nodeFs.rmSync(work, { recursive: true, force: true });
   }
