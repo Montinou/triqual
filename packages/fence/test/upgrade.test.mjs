@@ -26,6 +26,10 @@ const V1 = '0.1.0';
 const V2 = '0.2.0';
 const V3 = '0.3.0';
 const TTY = { isTTY: true };
+// The watchdog deadline of the bundles these tests install, so the installed-launcher check does
+// not flake on a loaded machine (production keeps the watchdog's 3000 ms).
+const DEADLINE = 20_000;
+const SPAWN_TIMEOUT_MS = 60_000;
 const AUDIT_OK = 'audited 1 package in 0s\n\n1 package has a verified registry signature\n\n1 package has a verified attestation\n';
 
 let counter = 0;
@@ -61,7 +65,7 @@ function fakeRun({ sudoFail = false, cliStatus = {}, audit = AUDIT_OK } = {}) {
     const name = path.basename(cmd);
     calls.push({ cmd, name, args: [...args] });
     if (name === 'fence-hook') {
-      return spawnSync(cmd, args, { input: opts.input, env: opts.env, cwd: opts.cwd, encoding: 'utf8', timeout: 20_000 });
+      return spawnSync(cmd, args, { input: opts.input, env: opts.env, cwd: opts.cwd, encoding: 'utf8', timeout: SPAWN_TIMEOUT_MS });
     }
     if (cmd === SUDO) return { status: sudoFail && args[0] === '-v' ? 1 : 0, stdout: '', stderr: '' };
     if (cmd === NPM && args[0] === 'install') {
@@ -74,7 +78,7 @@ function fakeRun({ sudoFail = false, cliStatus = {}, audit = AUDIT_OK } = {}) {
     if (name === 'git') return { status: 0, stdout: 'git version 2.47.1 (fake)\n', stderr: '' };
     if (name === 'claude' || name === 'codex') return { status: cliStatus[name] ?? 0, stdout: '', stderr: cliStatus[name] ? `${name} failed (fake)` : '' };
     if (cmd === NODE) {
-      return spawnSync(cmd, args, { input: opts.input, env: opts.env, cwd: opts.cwd, encoding: 'utf8', timeout: 20_000 });
+      return spawnSync(cmd, args, { input: opts.input, env: opts.env, cwd: opts.cwd, encoding: 'utf8', timeout: SPAWN_TIMEOUT_MS });
     }
     return { status: 127, stdout: '', stderr: `unexpected program ${cmd}` };
   };
@@ -102,7 +106,7 @@ async function installed({ cli = [] } = {}) {
   const env = { PATH: binDir('git', ...cli) };
   const f = fakeRun();
   const s = okSmoke();
-  const base = { home, run: f.run, env, nodePath: NODE, npmPath: NPM, smoke: s.smoke };
+  const base = { home, run: f.run, env, nodePath: NODE, npmPath: NPM, smoke: s.smoke, deadlineMs: DEADLINE };
   const r = await install({ ...base, version: V1 });
   assert.equal(r.ok, true, r.reason);
   return { home, env, p: fencePaths(home), base };
@@ -159,6 +163,8 @@ test('upgrade keeps exactly one previous version', async () => {
   // the launchers are the same files, pointing at the same Node and bundle
   assert.equal(read(p.watchdog), `#!/bin/sh\nexec '${NODE}' '${p.watchdogBundle}' "$@"\n`);
   assert.equal(read(p.watchdogBundle).split('\n')[0], `#!${NODE}`);
+  // the injected deadline reached the bundle the installed-launcher check ran
+  assert.match(read(p.watchdogBundle), new RegExp(`^export const DEADLINE_MS = ${DEADLINE};$`, 'm'));
   // a third version prunes the first one
   const r3 = await upgrade({ ...base, run: fakeRun().run, smoke: s.smoke, version: V3 });
   assert.equal(r3.ok, true, r3.reason);
@@ -244,6 +250,7 @@ test('rollback switches back and requires the gate', async () => {
   assert.equal(s.calls[0].engineDir, path.join(p.versionsDir, V1));
   assert.equal(read(p.current), `${V1}\n`);
   assert.match(read(p.watchdogBundle), /built-from-previous\n$/);
+  assert.match(read(p.watchdogBundle), new RegExp(`^export const DEADLINE_MS = ${DEADLINE};$`, 'm'));
   assert.equal(read(p.watchdogBundle).split('\n')[0], `#!${NODE}`);
   assert.ok(f.calls.some((c) => c.name === 'fence-hook' && c.args[0] === 'pre'));
   const rec = JSON.parse(read(p.smokeResult));

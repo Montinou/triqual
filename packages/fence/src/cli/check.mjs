@@ -14,6 +14,8 @@
 //        log or written-files index of the real install is read or written): a Claude
 //        Bash/Monitor payload, or a Codex payload for a Codex shell tool, with the example
 //        command text (or argv) and the temporary repo as cwd.
+//        runTest(args, io, {home}) takes the home directory from its third argument (default
+//        os.homedir()); `fence apply` passes its own so a draft is tested against the same home.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -55,8 +57,7 @@ function describeError(err, file) {
 }
 
 // Loads the policy for a command; returns {loaded} or {code} after printing the error.
-function load(args, io) {
-  const home = os.homedir();
+function load(args, io, home = os.homedir()) {
   let file;
   try {
     file = parseArgs(args, home).policy;
@@ -179,8 +180,8 @@ function shellDecision(ex, file, repo, aux, home) {
   return JSON.parse(r.stdout);
 }
 
-export function runTest(args, io) {
-  const r = load(args, io);
+export function runTest(args, io, { home } = {}) {
+  const r = load(args, io, home ?? os.homedir());
   if (!r.loaded) return r.code;
   const { policy } = r.loaded;
   const opts = { profile: 'default', grants: [], ctx: { home: r.home, platform: process.platform, caseInsensitive: false } };

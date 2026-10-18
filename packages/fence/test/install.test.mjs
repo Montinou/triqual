@@ -24,6 +24,10 @@ const NODE = process.execPath;
 const NPM = '/fake/bin/npm';
 const VERSION = '0.1.0';
 const TTY = { isTTY: true };
+// The watchdog deadline of the bundles these tests install, so the smoke test and the
+// installed-launcher check do not flake on a loaded machine (production keeps 3000 ms).
+const DEADLINE = 20_000;
+const SPAWN_TIMEOUT_MS = 60_000;
 
 const AUDIT_OK = 'audited 1 package in 0s\n\n1 package has a verified registry signature\n\n1 package has a verified attestation\n';
 const AUDIT_NO_ATTESTATION = 'audited 1 package in 0s\n\n1 package has a verified registry signature\n';
@@ -64,7 +68,7 @@ function fakeRun({ audit = { status: 0, stdout: AUDIT_OK }, sudoFail = false, gi
     calls.push({ cmd, args: [...args], cwd: opts.cwd, env: opts.env });
     if (path.basename(cmd) === 'fence-hook') {
       if (launcher === 'fail') return { status: 1, stdout: '', stderr: 'launcher failed (fake)' };
-      return spawnSync(cmd, args, { input: opts.input, env: opts.env, cwd: opts.cwd, encoding: 'utf8', timeout: 20_000 });
+      return spawnSync(cmd, args, { input: opts.input, env: opts.env, cwd: opts.cwd, encoding: 'utf8', timeout: SPAWN_TIMEOUT_MS });
     }
     if (cmd === SUDO) return { status: sudoFail && args[0] === '-v' ? 1 : 0, stdout: '', stderr: '' };
     if (cmd === NPM && args[0] === 'install') {
@@ -76,7 +80,7 @@ function fakeRun({ audit = { status: 0, stdout: AUDIT_OK }, sudoFail = false, gi
     if (path.basename(cmd) === 'git') return { status: gitStatus, stdout: gitOut, stderr: '' };
     if (cmd === NODE) {
       if (args[0] === '--version' && nodeVersion) return { status: 0, stdout: `${nodeVersion}\n`, stderr: '' };
-      return spawnSync(cmd, args, { input: opts.input, env: opts.env, cwd: opts.cwd, encoding: 'utf8', timeout: 20_000 });
+      return spawnSync(cmd, args, { input: opts.input, env: opts.env, cwd: opts.cwd, encoding: 'utf8', timeout: SPAWN_TIMEOUT_MS });
     }
     return { status: 127, stdout: '', stderr: `unexpected program ${cmd}` };
   };
@@ -98,7 +102,7 @@ function setup(runOpts = {}) {
   const env = { PATH: gitDir() };
   const f = fakeRun(runOpts);
   const s = okSmoke();
-  const opts = (extra = {}) => ({ version: VERSION, home, run: f.run, env, nodePath: NODE, npmPath: NPM, smoke: s.smoke, ...extra });
+  const opts = (extra = {}) => ({ version: VERSION, home, run: f.run, env, nodePath: NODE, npmPath: NPM, smoke: s.smoke, deadlineMs: DEADLINE, ...extra });
   return { home, env, f, s, opts, p: fencePaths(home) };
 }
 
@@ -154,9 +158,11 @@ test('a successful install writes versions/<v>, current, fence-hook, fence', asy
   const home = newDir('home');
   const f = fakeRun();
   // the real smoke test: the bundled watchdog of the copied package against its own engine
-  const r = await install({ version: VERSION, home, run: f.run, env: { PATH: gitDir() }, nodePath: NODE, npmPath: NPM });
+  const r = await install({ version: VERSION, home, run: f.run, env: { PATH: gitDir() }, nodePath: NODE, npmPath: NPM, deadlineMs: DEADLINE });
   assert.equal(r.ok, true, r.reason);
   const p = fencePaths(home);
+  // the injected deadline reached the bundle that the smoke test and the launcher check ran
+  assert.match(read(p.watchdogBundle), new RegExp(`^export const DEADLINE_MS = ${DEADLINE};$`, 'm'));
   assert.equal(JSON.parse(read(path.join(p.versionsDir, VERSION, 'package.json'))).version, VERSION);
   assert.equal(read(p.current), `${VERSION}\n`);
   // ~/.local/bin/fence-hook and ~/.local/bin/fence are two-line sh trampolines that exec the pinned

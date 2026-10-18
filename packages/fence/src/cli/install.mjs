@@ -1,7 +1,7 @@
 // `fence install --version <exact> [--from-tarball <file>]` (spec, "CLI" and "Layout / Installed state").
 //
 //   install({version, fromTarball?, home, run, env?, stdin?, nodePath?, npmPath?, gitPath?,
-//            smoke?, policyChoice?, io?, now?}) -> Promise<{ok, reason?, ...}>
+//            smoke?, policyChoice?, io?, now?, deadlineMs?}) -> Promise<{ok, reason?, ...}>
 //
 // The order is binding. A failure up to and including step 7 returns {ok: false, reason} and leaves
 // the installed state as it was: nothing is written before the smoke test passes, and the files
@@ -43,6 +43,9 @@
 // probe and the installed launcher), `env` (PATH for the git lookup, the agent-session check, the
 // base of npm's cleaned environment), `stdin` (the TTY check), `smoke` (defaults to runSmoke),
 // `now` (the smoke record's clock). The work directory lives under os.tmpdir() and is removed.
+// `deadlineMs` (module API only, never a flag or environment variable; omitted in production, so
+// the watchdog keeps its 3000 ms): baked into the bundle and given to the smoke test, so tests on
+// loaded machines can give the smoke runs and the installed-launcher check more time.
 
 import { randomBytes } from 'node:crypto';
 import nodeFs from 'node:fs';
@@ -204,8 +207,9 @@ export function shimText(shareDir) {
 
 // Runs the installed trampoline end to end: a temp HOME whose `current` points at the placed
 // version, a Write to a built-in protected path under it. The engine must deny it (Claude shape:
-// exit 0, one JSON line). -> a reason, or null.
-function installedLauncherProblem(paths, { target, version, policyFile, workDir, run, env }) {
+// exit 0, one JSON line). The bundle carries its own deadline (`deadlineMs`, when one was baked into
+// it by bundleAndSmoke); the process timeout leaves room beyond it. -> a reason, or null.
+function installedLauncherProblem(paths, { target, version, policyFile, workDir, run, env, deadlineMs }) {
   const root = nodePath.join(workDir, 'launcher-check');
   const home = nodePath.join(root, 'home');
   const share = nodePath.join(home, '.local', 'share', 'fence');
@@ -228,7 +232,7 @@ function installedLauncherProblem(paths, { target, version, policyFile, workDir,
     env: { HOME: home, PATH: typeof env?.PATH === 'string' ? env.PATH : '/usr/bin:/bin' },
     cwd: root,
     encoding: 'utf8',
-    timeout: PROBE_TIMEOUT_MS,
+    timeout: deadlineMs === undefined ? PROBE_TIMEOUT_MS : deadlineMs + PROBE_TIMEOUT_MS,
   });
   const f = failed(r);
   if (f) return `the installed launcher ${paths.watchdog} failed (${f}${r?.stderr ? `: ${String(r.stderr).trim().slice(0, 200)}` : ''})`;
@@ -288,19 +292,21 @@ function probeGit(gitPath, env, run) {
 // Bundles the watchdog of the package copy `pkgDir` (the staged copy, or an installed
 // versions/<v>) with the Node path pinned, and runs the smoke test on the bundle and that copy.
 // Shared by install, upgrade and rollback. -> {ok, watchdogText, sm} | {ok: false, reason}
-export async function bundleAndSmoke({ pkgDir, node, work, smoke = runSmoke, policy }) {
+// `deadlineMs` (module API only; omitted in production) is baked into the bundle and handed to the
+// smoke test, so both the smoke runs and the installed-launcher check run under it.
+export async function bundleAndSmoke({ pkgDir, node, work, smoke = runSmoke, policy, deadlineMs }) {
   let watchdogText;
   let bundle;
   try {
     const bundler = await import(pathToFileURL(nodePath.join(pkgDir, 'src', 'build', 'bundle-watchdog.mjs')).href);
-    watchdogText = bundler.buildWatchdog({ nodePath: node });
+    watchdogText = bundler.buildWatchdog(deadlineMs === undefined ? { nodePath: node } : { nodePath: node, deadlineMs });
     bundle = nodePath.join(work, 'bundle', 'fence-hook.mjs');
     nodeFs.mkdirSync(nodePath.dirname(bundle), { recursive: true });
     nodeFs.writeFileSync(bundle, watchdogText, { mode: 0o644 });
   } catch (err) {
     return { ok: false, reason: `the package's watchdog could not be bundled: ${errText(err)}` };
   }
-  const sm = smoke({ watchdogPath: bundle, engineDir: pkgDir, policy });
+  const sm = smoke(deadlineMs === undefined ? { watchdogPath: bundle, engineDir: pkgDir, policy } : { watchdogPath: bundle, engineDir: pkgDir, policy, deadlineMs });
   if (!sm || sm.ok !== true) return { ok: false, reason: `the smoke test failed: ${(sm?.failures ?? ['no result']).join('; ')}` };
   return { ok: true, watchdogText, sm };
 }
@@ -310,7 +316,7 @@ export async function bundleAndSmoke({ pkgDir, node, work, smoke = runSmoke, pol
 // trampoline, the CLI module and its trampoline, run the INSTALLED trampoline end to end against
 // `target`, then switch `current` by write-temp-then-rename. Every replaced file is undone when a
 // step fails, so a failure leaves the old files and the old `current`. -> {ok} | {ok: false, reason}
-export function activateVersion({ paths, version, target, staging = null, watchdogText, node, work, run, env, policyFile }) {
+export function activateVersion({ paths, version, target, staging = null, watchdogText, node, work, run, env, policyFile, deadlineMs }) {
   const steps = [];
   try {
     if (staging !== null) steps.push(placeVersion(staging, target));
@@ -318,7 +324,7 @@ export function activateVersion({ paths, version, target, staging = null, watchd
     steps.push(replaceFile(paths.watchdog, trampolineText(node, paths.watchdogBundle), 0o755));
     steps.push(replaceFile(paths.shimModule, shimText(paths.shareDir), 0o644));
     steps.push(replaceFile(paths.shim, trampolineText(node, paths.shimModule), 0o755));
-    const problem = installedLauncherProblem(paths, { target, version, policyFile, workDir: work, run, env });
+    const problem = installedLauncherProblem(paths, { target, version, policyFile, workDir: work, run, env, deadlineMs });
     if (problem) throw new Error(problem);
     writeAtomic(paths.current, `${version}\n`, 0o644);
   } catch (err) {
@@ -420,6 +426,7 @@ export async function install({
   policyChoice = 'example',
   io,
   now = Date.now,
+  deadlineMs,
 } = {}) {
   if (typeof run !== 'function') throw new Error('install: no process runner was given');
   const fail = (reason) => ({ ok: false, reason });
@@ -505,14 +512,14 @@ export async function install({
     const chosenText = nodeFs.existsSync(nodePath.join(staging, chosenName)) ? nodeFs.readFileSync(nodePath.join(staging, chosenName), 'utf8') : null;
 
     const smokePolicy = policyExists ? paths.policy : chosenText !== null ? nodePath.join(staging, chosenName) : undefined;
-    const built = await bundleAndSmoke({ pkgDir: staging, node, work, smoke, policy: smokePolicy });
+    const built = await bundleAndSmoke({ pkgDir: staging, node, work, smoke, policy: smokePolicy, deadlineMs });
     if (!built.ok) return fail(built.reason);
     const { watchdogText, sm } = built;
 
     // 6 and 7: place and replace (undoable), check the installed launcher, switch `current`
     const policyFile = policyExists ? paths.policy : chosenText !== null ? nodePath.join(target, chosenName) : undefined;
     const previousCurrent = readInstalledCurrent(paths);
-    const act = activateVersion({ paths, version, target, staging, watchdogText, node, work, run, env, policyFile });
+    const act = activateVersion({ paths, version, target, staging, watchdogText, node, work, run, env, policyFile, deadlineMs });
     if (!act.ok) return fail(act.reason);
 
     // 8-10: after the switch, failures are warnings

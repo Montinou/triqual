@@ -1,7 +1,8 @@
 // `fence upgrade --version <exact>` and `fence rollback` (spec, "CLI").
 //
-//   upgrade({version, home, run, env?, nodePath?, npmPath?, smoke?, io?, now?}) -> Promise<result>
-//   rollback({home, run, env?, nodePath?, smoke?, io?, now?})                    -> Promise<result>
+//   upgrade({version, home, run, env?, nodePath?, npmPath?, smoke?, io?, now?, deadlineMs?}) -> Promise<result>
+//   rollback({home, run, env?, nodePath?, smoke?, io?, now?, deadlineMs?})                    -> Promise<result>
+//   deadlineMs: as for install (module API only; omitted in production, the watchdog keeps 3000 ms).
 //
 // Both reuse install's staged swap (activateVersion in install.mjs): the new files replace the old
 // ones by write-temp-then-rename, the INSTALLED launcher is run end to end against the target
@@ -125,6 +126,7 @@ export async function upgrade({
   smoke = runSmoke,
   io,
   now = Date.now,
+  deadlineMs,
 } = {}) {
   const fail = (reason) => ({ ok: false, reason });
   let work = null;
@@ -156,7 +158,7 @@ export async function upgrade({
     if (!nodeFs.existsSync(nodePath.join(staging, 'src', 'engine.mjs'))) return fail('the package has no src/engine.mjs');
 
     const target = nodePath.join(paths.versionsDir, version);
-    const built = await bundleAndSmoke({ pkgDir: staging, node, work, smoke, policy: policyFor(paths, staging) });
+    const built = await bundleAndSmoke({ pkgDir: staging, node, work, smoke, policy: policyFor(paths, staging), deadlineMs });
     if (!built.ok) return fail(`fence ${cur.version} stays current; ${version} was not installed: ${built.reason}`);
     // the installed launcher check names the policy by its final location
     const policyFile = policyFor(paths, staging, target);
@@ -171,6 +173,7 @@ export async function upgrade({
       run,
       env,
       policyFile,
+      deadlineMs,
     });
     if (!act.ok) return fail(`fence ${cur.version} stays current; ${version} was not installed: ${act.reason}`);
 
@@ -207,6 +210,7 @@ export async function rollback({
   smoke = runSmoke,
   io,
   now = Date.now,
+  deadlineMs,
 } = {}) {
   const fail = (reason) => ({ ok: false, reason });
   let work = null;
@@ -230,9 +234,9 @@ export async function rollback({
     work = nodeFs.realpathSync(nodeFs.mkdtempSync(nodePath.join(os.tmpdir(), 'fence-rollback-')));
     const policy = policyFor(paths, target);
     // the bundle and the trampolines belong to the target version: built from its own package copy
-    const built = await bundleAndSmoke({ pkgDir: target, node, work, smoke, policy });
+    const built = await bundleAndSmoke({ pkgDir: target, node, work, smoke, policy, deadlineMs });
     if (!built.ok) return fail(`fence ${cur.version} stays current; ${to} was not rolled back to: ${built.reason}`);
-    const act = activateVersion({ paths, version: to, target, watchdogText: built.watchdogText, node, work, run, env, policyFile: policy });
+    const act = activateVersion({ paths, version: to, target, watchdogText: built.watchdogText, node, work, run, env, policyFile: policy, deadlineMs });
     if (!act.ok) return fail(`fence ${cur.version} stays current; ${to} was not rolled back to: ${act.reason}`);
 
     const warnings = [];

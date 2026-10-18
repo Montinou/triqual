@@ -1,6 +1,6 @@
 // The install smoke test (spec, "CLI": install and upgrade run it before switching `current`).
 //
-//   runSmoke({watchdogPath, engineDir, policy?, samples?}) -> {ok, failures, latencyMs}
+//   runSmoke({watchdogPath, engineDir, policy?, samples?, deadlineMs?}) -> {ok, failures, latencyMs}
 //
 // Runs the REAL watchdog (the installed bundle, or src/watchdog.mjs) with process.execPath, which
 // in turn spawns the engine of `engineDir` (a versions/<v> directory: <engineDir>/src/engine.mjs),
@@ -20,14 +20,24 @@
 // the payload writes to a built-in protected path under the temp HOME. The undecided payload is
 // expected to be denied when the policy's default profile says `undecided: "deny"`.
 // runSmoke never throws: any problem is a failure string.
+//
+// `deadlineMs` (module API only; default the watchdog's DEADLINE_MS, 3000) is the deadline the
+// watchdog runs under. At the default the watchdog file is run as is, exactly as in production.
+// Any other value (tests on loaded machines pass a longer one) runs it through a two-line ESM
+// wrapper in the temp directory that imports the watchdog's `main` and passes the deadline; the
+// watchdog itself takes no flag or environment variable for it.
 
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+import { DEADLINE_MS } from '../watchdog.mjs';
 
 export const DEFAULT_SAMPLES = 5;
 const SPAWN_TIMEOUT_MS = 10_000;
+const SPAWN_GRACE_MS = 5_000;
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const FALLBACK_VERSION = '0.0.0';
 const ALLOW_RULE_ID = 'fence-smoke-allow';
@@ -127,12 +137,26 @@ function mismatches(host, kind, run) {
   return run.status === 0 && run.stdout === '' && run.stderr === '' ? [] : [`expected exit 0 and no output, got ${got}`];
 }
 
-export function runSmoke({ watchdogPath, engineDir, policy, samples = DEFAULT_SAMPLES } = {}) {
+// The ESM wrapper that runs the watchdog's main under `deadlineMs`.
+function wrapperText(watchdogPath, deadlineMs) {
+  return [
+    `import { main } from ${JSON.stringify(pathToFileURL(watchdogPath).href)};`,
+    `const r = await main(process.argv.slice(2), { stdin: process.stdin, deadlineMs: ${deadlineMs} });`,
+    'process.stderr.write(r.stderr, () => process.stdout.write(r.stdout, () => process.exit(r.exit)));',
+    '',
+  ].join('\n');
+}
+
+export function runSmoke({ watchdogPath, engineDir, policy, samples = DEFAULT_SAMPLES, deadlineMs = DEADLINE_MS } = {}) {
   const failures = [];
   const latencyMs = [];
   const result = () => ({ ok: failures.length === 0, failures, latencyMs });
   let root = null;
   try {
+    if (!(Number.isSafeInteger(deadlineMs) && deadlineMs > 0)) {
+      failures.push(`the deadline must be a positive whole number of milliseconds, got ${String(deadlineMs)}`);
+      return result();
+    }
     if (typeof watchdogPath !== 'string' || !fs.existsSync(watchdogPath)) {
       failures.push(`the watchdog was not found${typeof watchdogPath === 'string' ? ` at ${watchdogPath}` : ''}`);
       return result();
@@ -163,12 +187,18 @@ export function runSmoke({ watchdogPath, engineDir, policy, samples = DEFAULT_SA
     const policyFile = path.join(root, 'policy.json');
     fs.writeFileSync(policyFile, JSON.stringify(withSmokeRule(read.object)));
 
+    let entry = watchdogPath;
+    if (deadlineMs !== DEADLINE_MS) {
+      entry = path.join(root, 'run-watchdog.mjs');
+      fs.writeFileSync(entry, wrapperText(path.resolve(watchdogPath), deadlineMs));
+    }
+    const timeout = Math.max(SPAWN_TIMEOUT_MS, deadlineMs + SPAWN_GRACE_MS);
     const env = { HOME: home, PATH: process.env.PATH ?? '/usr/bin:/bin' };
     const run = (host, payload) =>
       spawnSync(
         process.execPath,
-        [watchdogPath, 'pre', '--host', host, '--policy', policyFile, '--state-dir', state, '--admin-dir', admin],
-        { input: JSON.stringify(payload), encoding: 'utf8', env, cwd, timeout: SPAWN_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 },
+        [entry, 'pre', '--host', host, '--policy', policyFile, '--state-dir', state, '--admin-dir', admin],
+        { input: JSON.stringify(payload), encoding: 'utf8', env, cwd, timeout, maxBuffer: 4 * 1024 * 1024 },
       );
 
     const fixed = payloads(home, cwd);

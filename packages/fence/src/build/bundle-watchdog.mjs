@@ -1,6 +1,8 @@
 // Watchdog bundler (spec, "Watchdog" and "Layout"): writes `fence-hook` as one ESM file.
 //
-//   buildWatchdog({nodePath = process.execPath}) -> string
+//   buildWatchdog({nodePath = process.execPath, deadlineMs?}) -> string
+//     deadlineMs (module API only, for tests on loaded machines): the bundle's DEADLINE_MS instead
+//     of the watchdog's 3000; omitted, the bundle is byte-for-byte the production one.
 //   writeWatchdog(outFile, {nodePath}) -> void          (write-temp-then-rename, mode 0755)
 //   node bundle-watchdog.mjs <out-file> [--node <absolute node path>]
 //
@@ -59,9 +61,15 @@ function bindClause(clause, source, hasDefault) {
   return out;
 }
 
-export function buildWatchdog({ nodePath: node = process.execPath } = {}) {
+// The watchdog's deadline line; a `deadlineMs` given to buildWatchdog replaces its value.
+const DEADLINE_LINE_RE = /^export const DEADLINE_MS = 3000;$/m;
+
+export function buildWatchdog({ nodePath: node = process.execPath, deadlineMs } = {}) {
   if (typeof node !== 'string' || !node.startsWith('/') || /[\s\0]/.test(node)) {
     throw new Error('bundle-watchdog: the Node path must be absolute with no whitespace (it becomes the #! line)');
+  }
+  if (deadlineMs !== undefined && !(Number.isSafeInteger(deadlineMs) && deadlineMs > 0)) {
+    throw new Error(`bundle-watchdog: the deadline must be a positive whole number of milliseconds, got ${String(deadlineMs)}`);
   }
   const builtins = new Map(); // "node:fs" -> namespace variable
   const modules = new Map(); // absolute file -> variable
@@ -118,7 +126,11 @@ export function buildWatchdog({ nodePath: node = process.execPath } = {}) {
     return name;
   }
 
-  const entry = rewriteImports(WATCHDOG_ENTRY, nodeFs.readFileSync(WATCHDOG_ENTRY, 'utf8'));
+  let entry = rewriteImports(WATCHDOG_ENTRY, nodeFs.readFileSync(WATCHDOG_ENTRY, 'utf8'));
+  if (deadlineMs !== undefined) {
+    if (!DEADLINE_LINE_RE.test(entry)) throw new Error('bundle-watchdog: the watchdog has no DEADLINE_MS line to set the deadline on');
+    entry = entry.replace(DEADLINE_LINE_RE, `export const DEADLINE_MS = ${deadlineMs};`);
+  }
   for (const v of builtins.values()) if (!IDENT.test(v)) throw new Error(`bundle-watchdog: bad identifier ${v}`);
   const hoisted = [...builtins].map(([spec, v]) => `import * as ${v} from '${spec}';`).join('\n');
   return [
