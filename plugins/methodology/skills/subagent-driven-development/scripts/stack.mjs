@@ -20,6 +20,8 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFil
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { PlanError, readPhases } from './lib/plan.mjs';
+
 const EXIT_USAGE = 2;
 const EXIT_REFUSED = 3;
 const EXIT_GH = 5;
@@ -131,123 +133,32 @@ export function ghStackMembers(opts = {}) {
 
 // --- plan parsing -----------------------------------------------------------------------------------------------
 
-const H1 = /^# (.+)$/;
-const PREFIX = /^\*\*Branch prefix:\*\*\s*(.+)$/;
-const PHASE_HEADING = /^## Phase (\d+): (.+)$/;
-const TASK_HEADING = /^### Task (\d+): (.+)$/;
-const PHASE_FIELD = /^\*\*(Slice|Branch|PR title|Stands alone because|Phase check):\*\*\s*(.*)$/;
-const FIELD_KEYS = {
-  Slice: 'slice',
-  Branch: 'branch',
-  'PR title': 'prTitle',
-  'Stands alone because': 'standsAlone',
-  'Phase check': 'check',
-};
-const BRANCH_NUMBER = /^(\d{2})-\S/;
-const PLAN_SUFFIX = / Implementation Plan$/;
-const UNPHASED_CHECK = "the repository's full test command";
-const TAB_COLUMNS = 4;
-const FENCE_INDENT_LIMIT = 4;
-// The fence rule of progress-tracking's parsePlan: a run of 3+ backticks or tildes, an info string that holds no
-// backtick after backticks, indented fewer than four columns.
-const FENCE = /^(`{3,}(?=[^`]*$)|~{3,})(.*)$/;
-
-function fenceOf(line) {
-  const [indent] = /^[ \t]*/.exec(line);
-  const columns = [...indent].reduce((n, c) => n + (c === '\t' ? TAB_COLUMNS : 1), 0);
-  return columns < FENCE_INDENT_LIMIT ? FENCE.exec(line.slice(indent.length)) : null;
-}
-
-const unquote = (s) => s.trim().replace(/^`([^`]*)`$/, '$1');
-
 function checkRef(name, what) {
   const res = spawnSync('git', ['check-ref-format', '--branch', name], { stdio: 'ignore' });
   if (res.status !== 0) fail(EXIT_USAGE, `${what} "${name}" is not a valid git branch name`);
 }
 
-// Phases of a plan: { prefix, phases: [{ n, title, slice, branch, prTitle, standsAlone, check, tasks }] }. Heading
-// and field lines inside fenced code blocks are not read. A plan with no `**Branch prefix:**` line was written before
-// phases existed (or has no `## Phase` heading): it is one phase, and any `## Phase` heading in it is ignored.
+// Phases of a plan: { prefix, phases: [{ n, title, slice, branch, prTitle, standsAlone, check, tasks }] }, read with the
+// shared plan reader (lib/plan.mjs, a byte-identical copy of progress-tracking's), which skips heading and field lines
+// inside fenced code blocks and checks the phase order, fields, prefix and branch numbers. A plan with no
+// `**Branch prefix:**` line was written before phases existed (or has no `## Phase` heading): it is one phase, and any
+// `## Phase` heading in it is ignored. The reader's names map back to the state file's (`branchPrefix` → `prefix`,
+// `phaseCheck` → `check`, task ids `T<n>` → n), and every branch name passes `git check-ref-format` here, since the
+// reader runs no process.
 export function parsePhases(text, planFile) {
-  const stem = basename(planFile, '.md');
-  let h1 = null;
-  let prefix = null;
-  let fence = null;
-  let current = null;
-  const phases = [];
-  const early = []; // tasks met before any phase
-  const all = []; // every task, in plan order
-  let stray = null; // the first task under a non-phase heading after a phase began
-  const lines = text.split(/\r?\n/);
-  for (const [i, line] of lines.entries()) {
-    const f = fenceOf(line);
-    if (fence) {
-      if (f && f[1][0] === fence.run[0] && f[1].length >= fence.run.length && !f[2].trim()) fence = null;
-      continue;
-    }
-    if (f) {
-      fence = { run: f[1], line: i + 1 };
-      continue;
-    }
-    let m;
-    if ((m = H1.exec(line))) {
-      h1 ??= m[1].trim();
-    } else if ((m = PREFIX.exec(line))) {
-      prefix ??= unquote(m[1]);
-    } else if ((m = PHASE_HEADING.exec(line))) {
-      current = {
-        n: Number(m[1]), title: m[2].trim(), slice: null, branch: null, prTitle: null, standsAlone: null,
-        check: null, tasks: [], sawTask: false,
-      };
-      phases.push(current);
-    } else if (line.startsWith('## ')) {
-      current = null;
-    } else if ((m = TASK_HEADING.exec(line))) {
-      const n = Number(m[1]);
-      all.push(n);
-      if (phases.length === 0) early.push(n);
-      else if (!current) stray ??= `task ${n} is outside any phase (line ${i + 1})`;
-      else {
-        current.tasks.push(n);
-        current.sawTask = true;
-      }
-    } else if (current && !current.sawTask && (m = PHASE_FIELD.exec(line))) {
-      current[FIELD_KEYS[m[1]]] = m[1] === 'Branch' ? unquote(m[2]) : m[2].trim();
-    }
+  let read;
+  try {
+    read = readPhases(text, basename(planFile, '.md'));
+  } catch (e) {
+    if (e instanceof PlanError) fail(EXIT_USAGE, e.message);
+    throw e;
   }
-  if (fence) fail(EXIT_USAGE, `unclosed code fence opened at line ${fence.line}`);
-
-  if (phases.length === 0 || !prefix) {
-    const title = (h1 ?? stem).replace(PLAN_SUFFIX, '');
-    const branch = `${stem}/01-plan`;
-    checkRef(branch, 'branch');
-    return {
-      prefix: stem,
-      phases: [{
-        n: 1, title, slice: null, branch, prTitle: title, standsAlone: null, check: UNPHASED_CHECK, tasks: all,
-      }],
-    };
-  }
-
-  if (stray) fail(EXIT_USAGE, stray);
-  if (early.length > 0) fail(EXIT_USAGE, `task ${early[0]} comes before the first phase`);
-  checkRef(prefix, 'branch prefix');
-  for (const [i, phase] of phases.entries()) {
-    const where = `phase ${phase.n}`;
-    if (phase.n !== i + 1) fail(EXIT_USAGE, `${where} is out of order: phases are numbered 1, 2, 3 ... in plan order`);
-    if (!phase.branch) fail(EXIT_USAGE, `${where} lacks **Branch:**`);
-    if (!phase.prTitle) fail(EXIT_USAGE, `${where} lacks **PR title:**`);
-    if (!phase.branch.startsWith(`${prefix}/`)) {
-      fail(EXIT_USAGE, `${where} branch "${phase.branch}" does not start with the branch prefix "${prefix}/"`);
-    }
-    const nn = BRANCH_NUMBER.exec(phase.branch.slice(prefix.length + 1));
-    if (!nn || Number(nn[1]) !== phase.n) {
-      fail(EXIT_USAGE, `${where} branch "${phase.branch}" must be ${prefix}/${String(phase.n).padStart(2, '0')}-<slug>`);
-    }
+  checkRef(read.branchPrefix, 'branch prefix');
+  const phases = read.phases.map(({ phaseCheck, tasks, ...phase }) => {
     checkRef(phase.branch, 'branch');
-    delete phase.sawTask;
-  }
-  return { prefix, phases };
+    return { ...phase, check: phaseCheck, tasks: tasks.map((id) => Number(id.slice(1))) };
+  });
+  return { prefix: read.branchPrefix, phases };
 }
 
 // --- state file -------------------------------------------------------------------------------------------------

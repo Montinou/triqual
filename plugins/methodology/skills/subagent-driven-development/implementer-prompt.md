@@ -193,7 +193,7 @@ Subagent (<task role>):
 
 **Placeholders:**
 - `<task role>` — the task's `**Role:**`: `roles:tdd-implementer`, `roles:complex-implementer` or `roles:review-fixer`
-- `[BRIEF_FILE]` — the path `bash scripts/task-brief PLAN_FILE N` printed
+- `[BRIEF_FILE]` — the path `node scripts/task-brief PLAN_FILE N` printed
 - `[REPORT_FILE]` — the report file named after the brief (`task-N-report.md`)
 - `[TRACKING]` — the Tracking section, kept only when the repo is opted in, with `[MODE]` (`"committed"`, `"local"` or `"store"`), `[PROGRESS_PATH]` and `[STATUS_PATH]` from `triqual tasks paths --json`, and `[TASKS_LEDGER_PATH]`, the plan's `*.tasks.json` beside it in `plansDir`; `[PROGRESS_PATH]`, `[STATUS_PATH]` and `[TASKS_LEDGER_PATH]` are dropped in store mode, which has no such files
 - `[TASK_SKILLS]` — the Task Skills section, kept only when the brief has a `**Skills:**` line

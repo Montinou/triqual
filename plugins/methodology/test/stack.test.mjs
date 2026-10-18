@@ -235,7 +235,7 @@ test('init exits 2 on malformed phases', () => {
     'a branch whose NN differs from the phase number': PHASED.replace('demo/02-edge', 'demo/03-edge'),
     'a branch that is not a valid ref (..)': PHASED.replace('demo/01-core', 'demo/01-co..re'),
     'a branch that is not a valid ref (.lock)': PHASED.replace('demo/01-core', 'demo/01-core.lock'),
-    'a branch that is not a valid ref (space)': PHASED.replace('demo/01-core', 'demo/01-co re'),
+    'a branch that is not a valid ref (space)': PHASED.replace('**Branch:** demo/01-core', '**Branch:** `demo/01-co re`'),
     'a prefix that is not a valid ref': PHASED.replaceAll('demo', 'de mo'),
   };
   for (const [name, plan] of Object.entries(cases)) {

@@ -895,7 +895,9 @@ test('in a store repo every script that takes PLAN_FILE accepts the plan path in
     const plansDir = JSON.parse(r.triqual('tasks', 'paths', '--json')).plansDir;
     const planPath = join(plansDir, STORE_PLAN_NAME);
     assert.ok(existsSync(planPath), `no stored plan at ${planPath}`);
-    const sdd = (script, args) => spawnSync('bash', [join(SKILLS, SDD, 'scripts', script), ...args], { cwd: r.dir, env: r.env, encoding: 'utf8' });
+    // task-brief is a Node script, the others bash ones: each runs by its interpreter.
+    const sdd = (script, args) =>
+      spawnSync(script === 'task-brief' ? process.execPath : 'bash', [join(SKILLS, SDD, 'scripts', script), ...args], { cwd: r.dir, env: r.env, encoding: 'utf8' });
     // The plan's path in plansDir: sdd-workspace, task-brief, task-start, review-package and task-done all take it.
     const ws = sdd('sdd-workspace', [planPath]);
     assert.equal(ws.status, 0, ws.stdout + ws.stderr);

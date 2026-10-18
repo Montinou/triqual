@@ -57,6 +57,7 @@ Fork-only files built from an upstream file, with their source.
   draft PR, per plan phase). It keeps its state beside the SDD workspace under `.methodology/`, which is the same
   self-ignoring directory `sdd-workspace` resolves, and finds plan fences by progress-tracking's `parsePlan` rule
   (stacked-execution spec U4, R1-R9).
+- `subagent-driven-development/scripts/lib/plan.mjs` ← `subagent-driven-development/scripts/task-brief` — the shared plan reader, a byte-identical copy of progress-tracking's `lib/plan.mjs`
 - `using-methodology/references/grok-tools.md` ← `using-superpowers/references/codex-tools.md` — fork-only: a harness
   reference in the form of upstream's Codex one, for Grok, which upstream does not cover. It states the F.11 P6d
   result: Grok's `spawn_subagent` cannot select a named agent, so role dispatch is unavailable there and SDD is

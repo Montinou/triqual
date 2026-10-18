@@ -85,6 +85,9 @@ const PLAN = `# Demo plan
 
 - [ ] **Step 1:** do three.
 `;
+// A script runs by its interpreter, as its shebang names it: node for a Node script, bash otherwise (as the skills
+// invoke them, since some extractors drop the exec bits).
+const interpreter = (path) => (/^#!.*\bnode\b/.test(readFileSync(path, 'utf8').split('\n', 1)[0]) ? process.execPath : 'bash');
 const repo = () => {
   const home = mkdtempSync(join(tmpdir(), 'sdd-home-'));
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'sdd-repo-')));
@@ -99,7 +102,7 @@ const repo = () => {
   git('add', '-A');
   git('commit', '-q', '-m', 'plan');
   const run = (script, ...args) =>
-    spawnSync('bash', [join(SCRIPTS, script), ...args], { cwd: dir, env, encoding: 'utf8' });
+    spawnSync(interpreter(join(SCRIPTS, script)), [join(SCRIPTS, script), ...args], { cwd: dir, env, encoding: 'utf8' });
   const cleanup = () => {
     rmSync(dir, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
@@ -574,6 +577,24 @@ test('task-brief ends a task at the next level 1-3 heading outside a fence', () 
     assert.ok(three.includes('**Depends on:** T2'));
     assert.ok(!three.some((l) => l.startsWith('## After Merge')), 'Task 3 runs into the After Merge section');
     assert.equal(r.run('task-brief', PHASED_PLAN, '9', join(r.dir, 'none-9.md')).status, 3, 'Task 9 is inside a fence');
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('task-brief stops at ## After Merge', () => {
+  const r = repo();
+  try {
+    const plan = join(r.dir, 'docs', 'plans', 'after-merge-plan.md');
+    writeFileSync(plan, `${PLAN}\n## After Merge\n\n- [ ] Tag the release.\n`);
+    const out = join(r.dir, 'last.md');
+    const res = r.run('task-brief', plan, '3', out);
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, /^wrote .*last\.md: 7 lines$/m);
+    assert.equal(
+      readFileSync(out, 'utf8'),
+      ['### Task 3: Third', '', '**Depends on:** T2', '**Role:** coordinator', '', '- [ ] **Step 1:** do three.', '', ''].join('\n'),
+    );
   } finally {
     r.cleanup();
   }

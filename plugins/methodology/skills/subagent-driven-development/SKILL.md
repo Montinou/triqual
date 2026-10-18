@@ -295,7 +295,7 @@ implementation.
 
 Every dispatch goes to a `roles:*` agent (plugin `roles`), and no dispatch passes a model: each role's definition pins its model and effort, and a model in the dispatch would override that pin. Choose the role; never choose a model.
 
-- **Default:** `bash scripts/task-brief` copies the task's `**Role:**` line into its brief; a task with no `**Role:**` line is `roles:tdd-implementer`, the default.
+- **Default:** `node scripts/task-brief` copies the task's `**Role:**` line into its brief; a task with no `**Role:**` line is `roles:tdd-implementer`, the default.
 - **`roles:tdd-implementer`, `roles:complex-implementer` or `roles:review-fixer`:** dispatch [implementer-prompt.md](implementer-prompt.md), with its header's `<task role>` filled with that role, `roles:tdd-implementer`, `roles:complex-implementer` or `roles:review-fixer`. A plan marks a task `roles:complex-implementer` (Opus) for multi-system changes, migrations of live state, or work where a mistake is costly.
 - **`coordinator`**: the controller runs the task itself, in this session, with the same ledger moves and the same reviews as a dispatched task. It follows the implementer template's Tracking and Task Skills sections itself and writes the report file the reviewers read.
 - **Any other role**, a reviewer role included (`roles:spec-reviewer`, `roles:safety-reviewer`, `roles:hunter`, `roles:final-adversarial-reviewer`, `roles:brief-writer`) or a misspelled one: stop and ask your human partner. Never dispatch it, and never substitute another role for it. The hunter is a review seat of the task review, never a task role.
@@ -303,7 +303,7 @@ Every dispatch goes to a `roles:*` agent (plugin `roles`), and no dispatch passe
 - **Re-reviews:** the role or roles that raised the findings the fix round addressed ([re-review-prompt.md](re-review-prompt.md)).
 - **Fix rounds:** `roles:review-fixer`; for a task whose role is `roles:complex-implementer`, to `roles:complex-implementer` (see The fix loop).
 - **Final review:** `roles:final-adversarial-reviewer`, once per branch ([final-review-prompt.md](final-review-prompt.md)).
-- **Briefs:** `bash scripts/task-brief` extracts each brief mechanically, at no cost. Dispatch `roles:brief-writer` only when a task's plan text lacks interfaces that must come from the current code.
+- **Briefs:** `node scripts/task-brief` extracts each brief mechanically, at no cost. Dispatch `roles:brief-writer` only when a task's plan text lacks interfaces that must come from the current code.
 
 **Turn count beats token price.** Wall-clock and context cost scale with how
 many turns a subagent takes. The role pins the model; what you control is the
@@ -353,7 +353,7 @@ and fix-round diffs need it.
 - **Role:** read the task's `**Role:**` from its brief and dispatch per Role Dispatch; a role outside the task roles stops you before any dispatch.
 
 - **Task brief:** before dispatching an implementer, run this skill's
-  `bash scripts/task-brief PLAN_FILE N` — it extracts the task's full text to a
+  `node scripts/task-brief PLAN_FILE N` — it extracts the task's full text to a
   uniquely named file and prints the path. Compose the dispatch so the
   brief stays the single source of
   requirements. Your dispatch should contain: (1) one line on where this
