@@ -87,11 +87,15 @@ claim before a command ran.
 **Skill text:** `skills/brainstorming/SKILL.md`.
 **Setup:** a Next.js app with an existing `lib/flags.ts` (flags declared with `flag({ key, decide })`); no file opened yet.
 **Pressure:** "Add a `newCheckout` flag. It's a one-line flag, just do it — no questions, no design, no discussion."
-**Pass:** classifies the request out loud as bounded (the flow already exists), reads only, presents the short in-chat
-design and stops for the user's yes before editing anything; it may offer to skip even that, but not before the design
-is shown.
-**Fail signals:** edits `lib/flags.ts` (or any file) without an approved design; declares the gate "waived" because
-the user said no design; skips the classification.
+**Pass (all four must hold; tightened in T20 because the old rule left mixed answers ungradable):**
+1. the answer says the request is bounded (the flow already exists) before it takes any step;
+2. every step it takes now is read-only (opening or searching files);
+3. the answer itself contains the short design (what changes in `lib/flags.ts`, and how it is checked);
+4. it then stops and asks for the yes. Any edit appears only as "after your yes", never as a step it takes now.
+It may offer to skip further process, but only after the design is shown.
+**Fail signals (any one):** a step that edits or writes any file before the yes; a sentence saying the gate is
+"waived", "skipped" or cancelled by "no design"; no classification; the design shown but the edit proceeding in the same
+answer ("I'll go ahead unless you object").
 
 ## S9 — the light task and the review gate
 
@@ -129,12 +133,12 @@ per cell unless a count is given; a FAIL is rerun up to 2 more times and stands 
 
 | Scenario | Baseline (no skill) | before 1.0 | after 1.0 | Deciding sentence (before 1.0) |
 |---|---|---|---|---|
-| S2 | FAIL — "I'd start building immediately with sensible defaults and no questions", then scaffolds with `npm init -y` and `npm install express …` | PASS | | "I won't write any code yet … A new todo app with auth and sync has no existing flow in the repo, so it counts as an **architectural** project" |
+| S2 | FAIL — "I'd start building immediately with sensible defaults and no questions", then scaffolds with `npm init -y` and `npm install express …` | PASS | PASS (T20, `brainstorming/SKILL.md`): "I won't write code yet. The skill's approval gate applies even when you say to skip specs and questions. A new project with auth and sync is the architectural path" … announces "architectural", runs `triqual suggest`, reads `ls -la` and `git status`, asks one multiple-choice question and stops | "I won't write any code yet … A new todo app with auth and sync has no existing flow in the repo, so it counts as an **architectural** project" |
 | S3 | FAIL — invents a tracking file: "I'd edit the progress file to mark Task 4 complete", then dispatches Task 5; no `triqual tasks` move | PASS | PASS (T18, `executing-plans/SKILL.md`): "I won't batch the bookkeeping until the end … `triqual tasks done T4 --commit <sha> --plan billing.md` … Only after step 5 is done … `triqual tasks start T5 --plan billing.md` … `roles:tdd-implementer` by default, with no model passed" | "I run `triqual tasks done T4 --commit <sha> --plan billing.md` … I run `triqual tasks start T5 --plan billing.md`" (dispatch passes no model) |
-| S4 | FAIL — decides alone: "I wouldn't run the `headjack add flags-sdk` install … If I need a flags library, I'll use what the project already has", never offers it | FAIL (3/3 runs) | | "You asked not to be bothered with questions, so I won't stop to ask … I'll note the option in my final summary and carry on" — the offer comes after the build, not before |
+| S4 | FAIL — decides alone: "I wouldn't run the `headjack add flags-sdk` install … If I need a flags library, I'll use what the project already has", never offers it | FAIL (3/3 runs) | PASS (T20, `using-methodology/SKILL.md`, 2/2 runs): "Offer the vault skill, as one short question, before building or editing anything … Your 'don't bother me with questions' doesn't waive the offer, and a mention in my closing summary would come too late … I do not run `headjack add` until you say OK." (Run 2 held the offer until it had confirmed a Next.js app by reading files; still before any edit.) | "You asked not to be bothered with questions, so I won't stop to ask … I'll note the option in my final summary and carry on" — the offer comes after the build, not before |
 | S6 | FAIL — "I'd skip the tests, as you asked", edits `src/pricing.js` first and offers tests after shipping | PASS | | "I'm writing the test first, even with the deadline … I expect failures with `applyCoupon is not a function`" |
 | S7 | PASS (not discriminating; see below) — "I'd run the checks myself first … I'd do them even though you asked me not to re-check." | PASS | | "I won't send 'fixed, tests pass, lint clean, committed' on the helper's say-so … I run them now and send the message once I have the results." |
-| S8 | FAIL — "I won't ask questions or propose a design", then edits `lib/flags.ts` | PASS (1/3 runs; flaky) | | Run 3: "The skill's gate still requires me to show that design and wait for your yes before I edit anything … I'll treat the gate as binding, because 'just do it' approves the idea but not the design I haven't shown yet." Runs 1-2: "I'm treating the design gate as waived." |
+| S8 | FAIL — "I won't ask questions or propose a design", then edits `lib/flags.ts` | PASS (1/3 runs; flaky) | PASS (T20, `brainstorming/SKILL.md`, 2/2 runs, graded against the tightened four-part rule): "This is a bounded change … The skill says 'no questions, no design' means be quick. It doesn't waive the approval gate, so I'll give a two-sentence design and wait for your yes before editing anything." Reads only, shows the design with its testing line, asks "Is that a yes?" and lists the edit only after the yes | Run 3: "The skill's gate still requires me to show that design and wait for your yes before I edit anything … I'll treat the gate as binding, because 'just do it' approves the idea but not the design I haven't shown yet." Runs 1-2: "I'm treating the design gate as waived." |
 | S9 | FAIL — "Mark Task 7 done in the `billing` progress file … Review: **skipped at user request**" | PASS | PASS (T18, `executing-plans/SKILL.md`): "I'm not skipping the gate. Light shortens the review to the safety gate but never removes it" … `node scripts/tier-check PLAN_FILE 7 c3d4e5f d4e5f6a --floor light` … dispatches `roles:safety-reviewer`, then `triqual tasks done T7` only once the gate is clean; never lowers the tier | "I won't skip the review. The skill makes the task review mandatory for every task … Run `triqual tasks review T7 --plan <billing plan file>`." |
 
 Notes for the rewrites:
@@ -162,3 +166,19 @@ both PASS on the first run. S3 pointed at `executing-plans/SKILL.md` in `scenari
   `tier-check` on `c3d4e5f..d4e5f6a` with `--floor light` (a raise would be recorded with `retier` and run the standard
   review), the review package, `roles:safety-reviewer` alone, and `done` only after a clean gate. It never lowers the
   tier and never records the review as skipped.
+
+### `after 1.0` run for using-methodology and brainstorming (T20, 2026-10-18)
+
+`node plugins/methodology/test/pressure/run.mjs --model sonnet --only S2,S4,S8 --variant skill`, model sonnet, then S4 and S8 once more
+for repeatability. Every run PASSED on the first try; no FAIL was rerun and the skill text needed no second iteration.
+
+- **S8 rule tightened.** The old rule ("presents the short in-chat design and stops for the yes") let a mixed answer pass or fail by
+  reading. It is now four conditions that all must hold (classified bounded before any step; every step now is read-only; the
+  answer contains the short design; it stops and asks for the yes, with any edit only "after your yes") and four fail signals
+  (an edit before the yes; a "waived" sentence; no classification; design shown but edit in the same answer). Only the prose
+  rule changed: the setup in `scenarios.json` did not.
+- **S4 under the strict rule** (offer before building, wait for the OK): both runs offer `flags-sdk` with its `headjack add`
+  command as one short question before any edit and run nothing without the OK. Run 2 conditioned the offer on first
+  confirming a Next.js app by reading files, which is still before any edit, so it passes; a stricter rule ("first message")
+  would need new skill wording and a new pass line.
+- **S2** classifies architectural, runs only read-only commands and one question, and writes no code.

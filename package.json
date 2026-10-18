@@ -4,6 +4,6 @@
   "type": "module",
   "scripts": {
     "prepare": "node -e \"const fs = require('node:fs'); if (fs.existsSync('.githooks')) require('node:child_process').execFileSync('git', ['config', 'core.hooksPath', '.githooks'], { stdio: 'inherit' })\"",
-    "test": "node --test \"plugins/*/test/*.test.mjs\" \"packages/*/test/*.test.mjs\" \"test/*.test.mjs\""
+    "test": "node --test \"plugins/*/test/*.test.mjs\" \"packages/*/test/*.test.mjs\" \"test/*.test.mjs\" \"test/skill-pins/*.test.mjs\""
   }
 }

@@ -3,252 +3,133 @@ name: brainstorming
 description: "You MUST use this before any creative work - creating features, building components, adding functionality, or modifying behavior. Explores user intent, requirements and design before implementation."
 ---
 
-# Brainstorming Ideas Into Designs
+# Brainstorming
 
-Help turn ideas into fully formed designs and specs through natural collaborative dialogue.
+Turn a request into a design your human partner has approved, before anything is built. First decide how much process the request needs, then work that path: understand the context, settle the idea, present the design, get the approval.
 
-Start by classifying how much process the request needs, then work
-through your path: understand the context, refine the idea, present a
-design, and get your human partner's approval.
+## Share your understanding first
 
-## Establish Shared Understanding
+The result of brainstorming is an understanding your partner can recognize and correct.
 
-The outcome of brainstorming is an understanding your human partner can
-recognize and correct, grounded in what they want to accomplish.
+1. **Find the intent.** From the request and what you can see, work out the outcome wanted, who it is for and what success looks like. If the purpose is missing, ask one focused question about it before you propose features or an approach: knowing the genre of the app does not tell you why they want it.
+2. **Write it back.** In a few lines, state the outcome, the constraints and the success criteria, marking what they said apart from what you assumed. Take their corrections before you treat it as the brief.
+3. **Carry it into the design.** The design artifact of your path (the written spec, or the in-chat design or probe) keeps that understanding, and every feature and technical choice is checked against it.
 
-1. **Discover intent.** Use the request and available context to identify
-   the intended outcome, who it is for, and what success looks like. When
-   that information is missing, ask one focused question about purpose or
-   intended use before proposing features or an approach. Knowing the app
-   genre does not tell you why your partner wants it. Gathering missing
-   requirements does not ask them to authorize the task again.
-2. **Write back your understanding.** Summarize the intended outcome,
-   relevant constraints, and success criteria in a short note your partner
-   can assess. Separate what they said from assumptions. Invite correction
-   and incorporate their answer before treating this as the design brief.
-3. **Carry intent into the design.** Preserve the agreed understanding in
-   the selected path's design artifact: the written spec for architectural
-   work, or the in-chat design/probe for bounded work and spikes. Check
-   proposed features and technical choices against that understanding.
-
-When the request already supplies the purpose and constraints, reflect
-that understanding instead of asking the same questions again. Keep the
-note concise; its accuracy and the opportunity to correct it matter.
+When the request already gives the purpose and constraints, reflect them back instead of asking again.
 
 <HARD-GATE>
-Before taking any implementation action, including invoking an
-implementation skill, writing product code, scaffolding, installing
-product dependencies, or creating an external project, complete the
-selected path's prerequisites:
+Take no implementation action until your path's approvals exist. Implementation means invoking an implementation skill, writing product code, scaffolding, installing product dependencies or creating an external project.
 
-- Spike: the human partner approves the question and probe.
-- Bounded: the human partner approves the short in-chat design.
-- Architectural: the human partner reviews and approves the written spec,
-  then reviews the written implementation plan and selects its execution
-  method. Conversational design approval only permits writing the spec;
-  written-spec approval only permits invoking writing-plans.
+- Spike: your human partner approves the question and the probe.
+- Bounded: your human partner approves the short design you gave in chat.
+- Architectural: your human partner approves the written spec. Approving the idea in conversation only lets you write the spec; approving the spec only lets you invoke writing-plans, whose plan they approve in turn.
 
-A reply approves the stage actually presented. Approval of an idea or
-feature scope does not approve artifacts that do not exist yet. Resume
-at the earliest incomplete stage; do not turn one approval into permission
-to skip the rest of the selected path. Read-only project exploration is
-allowed while those prerequisites remain incomplete.
+A reply approves what was actually shown. Approving an idea or a scope does not approve an artifact that does not exist yet, and one approval never stands in for the rest of the path: resume at the earliest stage still open. An instruction such as "no questions, no design, just do it" asks you to be quick; it does not waive this gate. Show the design in a sentence or two and wait for the yes, and offer to skip further process only after the design is on the table. Reading the project is always allowed.
 </HARD-GATE>
 
-## Vault Skills and Tracking Paths
+## Vault skills and tracking paths
 
-At the start, run `triqual suggest "<the request>"` to spot vault skills that fit it: its output is a `<headjack-suggestions>` block, and you treat a fitting skill as `methodology:using-methodology` says. On a non-zero exit from `triqual suggest` (exit 3: headjack is not installed), on empty output, or when `triqual` is not on `PATH` (`command -v triqual` fails, or exit 127), there is no suggestion: skip this silently.
+At the start, run `triqual suggest "<the request>"`. It prints a `<headjack-suggestions>` block, and you handle a fitting skill the way `methodology:using-methodology` says. On a non-zero exit (exit 3 means headjack is not installed), on empty output, or when `triqual` is not on `PATH` (`command -v triqual` fails, or exit 127), there is no suggestion: skip it silently.
 
-Before writing a spec, run `triqual tasks paths --json` once for the tracking paths:
-- **Opted in** (`"optedIn": true`; an older `triqual` prints the same fields without `optedIn`): specs go to `specsDir`. In local mode (`"mode": "local"`) `specsDir` lives under the git dir, so the spec stays out of git. In store mode (`"mode": "store"`) it lives in the store's documents directory, outside the working tree.
-- **Not opted in** (`"optedIn": false`, or exit 2 from an older progress-tracking): specs go to `docs/specs/`, unless your human partner names another place. Run no `triqual tasks` command, and never create `progress.md`: creating it opts the repo in and commits a personal log into a shared repo.
-- **`triqual` missing** (exit 3, or `triqual` not on `PATH`): handle it as not opted in, and say so once.
+Before you write a spec, run `triqual tasks paths --json` once to learn where tracking files go:
 
-Opted in with `"mode": "local"`, `specsDir` lives under the git dir, which Claude Code protects from agent file writes: make a private draft dir in the OS temp dir (run `mktemp -d`; the directory it prints is `$d` below: other sessions share the temp dir), write the spec there under its final name, `$d/YYYY-MM-DD-<topic>-design.md` (it lands in `specsDir` under that name), and land it with `triqual tracking write spec <draft>`; after editing the draft (self-review, audit or your human partner's changes), land it again with `triqual tracking write spec <draft> --replace`. Never write or edit under `.git/` with the file tools.
+- **Opted in** (`"optedIn": true`; an older `triqual` prints the same fields without `optedIn`): specs go to `specsDir`. In local mode (`"mode": "local"`) it sits under the git dir, so the spec stays out of git. In store mode (`"mode": "store"`) it sits in the store's documents directory, outside the working tree.
+- **Not opted in** (`"optedIn": false`, or exit 2 from an older progress-tracking): specs go to `docs/specs/` unless your partner names another place. Run no `triqual tasks` command and never create `progress.md`: creating it opts the repo in and commits a personal log into a shared repo.
+- **`triqual` missing** (exit 3, or not on `PATH`): treat it as not opted in and say so once.
 
-Opted in with `"mode": "store"` (details: `store-mode.md` under `references` in skill `progress-tracking:progress-tracking`), `specsDir` is in the store's documents directory and the spec never goes into the working tree: make a private draft dir (run `mktemp -d`; the directory it prints is `$d` below), write the spec there under its final name, `$d/YYYY-MM-DD-<topic>-design.md`, and land it with `triqual tracking write spec <draft>` (again with `--replace` after edits). Writing the spec ends the task with no commit, so its `progress` entry is a draft in that dir (`$d/entry.md`) landed with `triqual tracking add <draft> --no-commit`: a pending entry left behind would be stamped onto the next, unrelated commit.
+Local mode: `specsDir` is under the git dir, which Claude Code protects from agent file writes. Run `mktemp -d` for a private draft directory (call what it prints `$d`; other sessions share the temp dir), write the spec there under its final name, `$d/YYYY-MM-DD-<topic>-design.md`, and land it with `triqual tracking write spec <draft>`. After each edit (self-review, audit, your partner's changes) land it again with `triqual tracking write spec <draft> --replace`. Never write or edit under `.git/` with the file tools.
 
-## Three Paths
+Store mode (details: `store-mode.md` under `references` in skill `progress-tracking:progress-tracking`): the same draft and the same `triqual tracking write spec` route, with `--replace` after edits. The spec never enters the working tree. Writing it ends the task with no commit, so write its `progress` entry as a draft in that directory (`$d/entry.md`) and land it with `triqual tracking add <draft> --no-commit`: a pending entry left behind would be stamped onto the next, unrelated commit.
 
-Before your first question, classify the request and say the
-classification out loud — "this looks bounded, so I'll present a short
-design here rather than write a spec" — so your human partner can
-override it:
+## Three paths
 
-- **Spike** — a feasibility question ("can we...", "is it possible...",
-  "quick and dirty is fine") whose output is an answer, not code you
-  keep. Present the question and what you'll try in 2-3 sentences, get
-  a nod, then find out as cheaply as correctness allows. No design
-  doc, no spec file. Report findings as a recommendation; anything you
-  built stays labeled throwaway.
-- **Bounded** — a well-scoped change to code that already exists in
-  this repo: a new flag, a small endpoint, a one-file fix.
-  Understanding the kind of app is not enough — bounded means the flow
-  you are changing is already here to read. If there is no existing
-  flow to change, the task is not bounded. Ask the clarifying
-  questions that matter, present a short design IN CHAT (a few
-  sentences to a few short paragraphs), and STOP. Implementation
-  starts only after your human partner says yes to that design — a
-  bounded task's approval is as hard a gate as an architectural
-  one. No spec file, no implementation plan document.
-- **Architectural** — new projects, new subsystems, changes that
-  restructure how components fit together or alter interfaces others
-  depend on. Follow the full process: questions, approaches, sectioned
-  design, written spec, then the writing-plans skill.
+Before your first question, classify the request and say the classification out loud ("this looks bounded, so I'll give a short design here instead of writing a spec") so your partner can overrule it.
 
-When in doubt between two paths, take the heavier one. The ratchet is
-one-way: hidden complexity discovered mid-task upgrades the path —
-stop, say so, and step up. Nothing downgrades mid-task.
+- **Spike**: a feasibility question ("can we", "is it possible", "quick and dirty is fine") whose product is an answer, not code you keep. Say what you will try in two or three sentences, get a nod, then find out as cheaply as correctness allows. No design document and no spec file. Report a recommendation, and label anything you built as throwaway.
+- **Bounded**: a well-scoped change to a flow that already exists in this repo (a flag, a small endpoint, a one-file fix). Knowing the kind of app is not enough: if there is no existing flow to read, the work is not bounded. Ask the questions that matter, give a short design in chat (a few sentences to a few short paragraphs), and stop. Implementation starts when your partner says yes to that design; this gate is as hard as the architectural one. No spec file and no plan document.
+- **Architectural**: a new project or subsystem, or a change that restructures how components fit or alters interfaces others rely on. Run the full process: questions, approaches, a design in sections, a written spec, then writing-plans.
 
-## Anti-Pattern: "Too Simple To Need Approval"
+Between two paths, take the heavier one. The ratchet only turns one way: if hidden complexity shows up midway, stop, say so and step up. Nothing downgrades mid-task, and each new task gets its own classification and its own approval.
 
-Every path ends with your human partner approving the required design
-before implementation. A bounded change may need only two sentences in
-chat. A new todo-list project is architectural and requires the written
-spec and planning handoffs. Scale the artifact to the selected path;
-complete that path's reviews before implementation.
-
-## Red Flags
+## Red flags
 
 | Thought | Reality |
 |---------|---------|
-| "This is too simple to need a design" | Follow the selected path: a bounded change gets a short chat design; an architectural change gets the written spec and planning handoffs. |
-| "I'll call it bounded and skip the spec" | Reaching for a label to skip work IS the doubt — take the heavier path. |
-| "It's bounded and the design is obvious — I'll start while they read it" | The gate is the approval, not the design's length. Present, then stop until you hear yes. |
-| "I understand this kind of app, so it's bounded" | Bounded measures the repo, not your familiarity. A new project has no existing flow — it is architectural. |
-| "The spike works, so I'll keep the code" | A spike's output is an answer. Keeping the code is a new request — classify it. |
-| "It grew, but I'm almost done — no need to re-classify" | Hidden complexity upgrades the path mid-task. Stop and say so. |
-| "They approved the spike, so the follow-up change is approved too" | Each task gets its own classification and its own approval. |
+| "Too simple to need a design" | Scale the artifact, never skip it: a bounded change gets a short chat design, an architectural one gets the written spec. |
+| "Calling it bounded saves the spec" | Reaching for the label to skip work is the doubt: take the heavier path. |
+| "The design is obvious, I'll start while they read it" | The approval is the gate, not the design's length. Show it, then stop until you hear yes. |
+| "I know this kind of app, so it's bounded" | Bounded measures the repo, not your familiarity. A new project is architectural. |
+| "They said no design, so the gate is waived" | That instruction is about speed. Show a two-sentence design and wait. |
+| "The spike worked, I'll keep the code" | A spike produces an answer. Keeping the code is a new request: classify it. |
+| "It grew, but I'm nearly done" | Hidden complexity upgrades the path. Stop and say so. |
 
 ## Checklist
 
-Classify first, announce the path, then create a task for each item on
-your path and complete them in order.
+Classify, announce the path, then make a task for each item of your path and complete them in order.
 
 **Spike:**
-1. **Explore project context** — enough to frame the probe
-2. **Present question + probe plan** — 2-3 sentences
-3. **Get approval** — a nod is enough
-4. **Investigate** — as cheaply as correctness allows
-5. **Report findings** — a recommendation; label anything built as throwaway
+1. **Explore project context**: enough to frame the probe
+2. **Present the question and probe**: two or three sentences
+3. **Get a nod**
+4. **Investigate**: as cheaply as correctness allows
+5. **Report**: a recommendation, with anything built labeled throwaway
 
 **Bounded:**
-1. **Explore project context** — check files, docs, recent commits
-2. **Ask clarifying questions** — one at a time, the ones that matter
-3. **Present short design in chat** — approach, files touched, testing
-4. **Get approval** — STOP and wait for an explicit yes; presenting the design and starting in the same breath is skipping the gate
-5. **Implement** — proceed with the normal development workflow (TDD applies); no plan document
+1. **Explore project context**: files, docs, recent commits
+2. **Ask clarifying questions**: one at a time, only those that matter
+3. **Present a short design in chat**: approach, files touched, testing
+4. **Get an explicit yes**: stop and wait; presenting and starting in the same breath skips the gate
+5. **Implement**: through the normal workflow (test-driven-development applies); no plan document
 
 **Architectural:**
-1. **Explore project context** — check files, docs, recent commits
-2. **Offer the visual companion just-in-time** — NOT upfront. The first time a question would genuinely be clearer shown than described, offer it then (its own message); on approval its browser tab opens for you. If no visual question ever arises, never offer it. See the Visual Companion section below.
-3. **Ask clarifying questions** — one at a time, understand purpose/constraints/success criteria
-4. **Propose 2-3 approaches** — with trade-offs and your recommendation
-5. **Present design** — in sections scaled to their complexity, get user approval after each section; the design names its units and its delivery slices
-6. **Write design doc** — save to `<specs dir>/YYYY-MM-DD-<topic>-design.md` (the specs directory from the tracking paths above; in local mode drafted under that name in a `mktemp -d` dir and landed through `triqual tracking write spec <draft>`; in store mode the same route, then the entry through `triqual tracking add <draft> --no-commit`) and commit it when it lives in the working tree; when opted in with `"mode": "committed"`, that commit carries a new `progress` (`progress.md`) entry and an updated `status` (`status.md`)
-7. **Spec self-review** — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
-8. **Spec audit** — dispatch `roles:final-adversarial-reviewer` with `spec-document-reviewer-prompt.md`, then fix its findings (see below)
-9. **User reviews written spec** — ask user to review the spec file before proceeding
-10. **Transition to implementation** — invoke writing-plans skill to create implementation plan
+1. **Explore project context**: files, docs, recent commits
+2. **Offer the visual companion just in time**: never upfront; see Visual companion below
+3. **Ask clarifying questions**: one at a time, for purpose, constraints and success criteria
+4. **Propose 2-3 approaches**: with trade-offs and your recommendation
+5. **Present design**: in sections scaled to their difficulty, approval after each; it names its units and its delivery slices
+6. **Write the spec**: to `<specs dir>/YYYY-MM-DD-<topic>-design.md` (see After the Design)
+7. **Spec self-review**: an inline check for placeholders, contradictions, ambiguity, scope and modularity
+8. **Spec audit**: dispatch `roles:final-adversarial-reviewer` with `spec-document-reviewer-prompt.md`, then fix its findings
+9. **Partner reviews the written spec**: ask before moving on
+10. **Hand off**: invoke writing-plans
 
-## Process Flow
-
-```dot
-digraph brainstorming {
-    "Classify: spike / bounded / architectural" [shape=diamond];
-    "Present question + probe (2-3 sentences)" [shape=box];
-    "Ask clarifying questions (bounded)" [shape=box];
-    "Present short design in chat" [shape=box];
-    "Human approves?" [shape=diamond];
-    "Investigate; report recommendation" [shape=doublecircle];
-    "Implement via normal workflow (no plan doc)" [shape=doublecircle];
-    "Explore project context" [shape=box];
-    "Ask clarifying questions" [shape=box];
-    "Propose 2-3 approaches" [shape=box];
-    "Present design sections" [shape=box];
-    "User approves design?" [shape=diamond];
-    "Write design doc" [shape=box];
-    "Spec self-review\n(fix inline)" [shape=box];
-    "Spec audit\n(final-adversarial-reviewer)" [shape=box];
-    "User reviews spec?" [shape=diamond];
-    "Invoke writing-plans skill" [shape=doublecircle];
-    "Hidden complexity? Upgrade path" [shape=box];
-
-    "Classify: spike / bounded / architectural" -> "Present question + probe (2-3 sentences)" [label="spike"];
-    "Classify: spike / bounded / architectural" -> "Ask clarifying questions (bounded)" [label="bounded"];
-    "Classify: spike / bounded / architectural" -> "Explore project context" [label="architectural"];
-    "Present question + probe (2-3 sentences)" -> "Human approves?";
-    "Ask clarifying questions (bounded)" -> "Present short design in chat";
-    "Present short design in chat" -> "Human approves?";
-    "Human approves?" -> "Investigate; report recommendation" [label="spike: yes"];
-    "Human approves?" -> "Implement via normal workflow (no plan doc)" [label="bounded: yes"];
-    "Hidden complexity? Upgrade path" -> "Classify: spike / bounded / architectural";
-    "Explore project context" -> "Ask clarifying questions";
-    "Ask clarifying questions" -> "Propose 2-3 approaches";
-    "Propose 2-3 approaches" -> "Present design sections";
-    "Present design sections" -> "User approves design?";
-    "User approves design?" -> "Present design sections" [label="no, revise"];
-    "User approves design?" -> "Write design doc" [label="yes"];
-    "Write design doc" -> "Spec self-review\n(fix inline)";
-    "Spec self-review\n(fix inline)" -> "Spec audit\n(final-adversarial-reviewer)";
-    "Spec audit\n(final-adversarial-reviewer)" -> "User reviews spec?";
-    "User reviews spec?" -> "Write design doc" [label="changes requested"];
-    "User reviews spec?" -> "Invoke writing-plans skill" [label="approved"];
-}
-```
-
-**Terminal states are path-bound.** Architectural: the ONLY skill you
-invoke after brainstorming is writing-plans — never frontend-design,
-mcp-builder, or any other implementation skill. Bounded: after
-approval, implementation proceeds directly through the normal
-development workflow; no plan document. Spike: the terminal state is a
-reported recommendation.
+The terminal state depends on the path. Architectural: the only skill you invoke afterwards is writing-plans, never an implementation skill such as frontend-design. Bounded: implement through the normal workflow once approved. Spike: the reported recommendation.
 
 ## The Process
 
-The subsections below serve the bounded and architectural paths (a
-spike stops at "present the probe, get a nod"). Sections from
-**Exploring approaches** onward are architectural-path depth — for
-bounded work, context plus a few questions plus a short in-chat design
-is the whole process.
+Bounded work needs only context, a few questions and a short chat design. Everything from "Exploring approaches" down is architectural depth.
 
 **Understanding the idea:**
 
-- Check out the current project state first (files, docs, recent commits)
-- Before asking detailed questions, assess scope: if the request describes multiple independent subsystems (e.g., "build a platform with chat, file storage, billing, and analytics"), flag this immediately. Don't spend questions refining details of a project that needs to be decomposed first.
-- If the project is too large for a single spec, help the user decompose into sub-projects: what are the independent pieces, how do they relate, what order should they be built? Then brainstorm the first sub-project through the normal design flow. Each sub-project gets its own spec → plan → implementation cycle.
-- For appropriately-scoped projects, ask questions one at a time to refine the idea
-- Prefer multiple choice questions when possible, but open-ended is fine too
-- Only one question per message - if a topic needs more exploration, break it into multiple questions
-- Focus on understanding: purpose, constraints, success criteria
+- Look at the current project first: files, docs, recent commits.
+- Judge scope before detail. If the request spans several independent subsystems ("a platform with chat, file storage, billing and analytics"), say so at once and decompose it: what are the independent pieces, how do they relate, in what order are they built? Brainstorm the first piece through this flow; each piece gets its own spec, plan and build.
+- Ask one question at a time, and only one question per message; split a topic that needs more. Prefer multiple choice, accept open-ended answers.
+- Aim at purpose, constraints and success criteria.
 
 **Exploring approaches:**
 
-- Propose 2-3 different approaches with trade-offs
-- Present options conversationally with your recommendation and reasoning
-- Lead with your recommended option and explain why
-- YAGNI ruthlessly - remove unnecessary features from every approach and design
+- Offer 2-3 approaches with trade-offs, lead with your recommendation and say why.
+- Apply YAGNI to every approach and every design: cut what is not needed.
 
 **Presenting the design:**
 
-- Once you believe you understand what you're building, present the design
-- Scale each section to its complexity: a few sentences if straightforward, up to 200-300 words if nuanced
-- Ask after each section whether it looks right so far
-- Cover: architecture, components, data flow, error handling, testing
-- Cover the units (one purpose, interface, dependencies and acceptance each) and the delivery slices (the ordered, independently mergeable pieces that together deliver every unit), so the written spec can carry them as `## Units` and `## Delivery Slices`
-- Be ready to go back and clarify if something doesn't make sense
+- Once you believe you understand it, present the design in sections, each as short as its difficulty allows (a few sentences, up to 200-300 words when subtle), and ask after each whether it looks right.
+- Cover architecture, components, data flow, error handling and testing.
+- Cover the units (each with one purpose, interface, dependencies and acceptance) and the delivery slices (the ordered, independently mergeable pieces that together deliver every unit), so the written spec can carry them as `## Units` and `## Delivery Slices`.
+- Go back and clarify whenever something does not make sense.
 
 **Design for isolation and clarity:**
 
-- Break the system into smaller units that each have one clear purpose, communicate through well-defined interfaces, and can be understood and tested independently
-- For each unit, you should be able to answer: what does it do, how do you use it, and what does it depend on?
-- Can someone understand what a unit does without reading its internals? Can you change the internals without breaking consumers? If not, the boundaries need work.
-- Smaller, well-bounded units are also easier for you to work with - you reason better about code you can hold in context at once, and your edits are more reliable when files are focused. When a file grows large, that's often a signal that it's doing too much.
-- Write the units into the spec's `## Units` section and the order in which they ship into its `## Delivery Slices` section; both are required (see Units and Delivery Slices below).
+- Split the system into units that each have one clear purpose, talk through defined interfaces and can be understood and tested alone.
+- For each unit you should be able to say what it does, how it is used and what it depends on. If someone cannot grasp a unit without reading its internals, or changing the internals breaks its consumers, the boundary needs work.
+- Small units are easier to hold in context and to edit reliably; a file that keeps growing is usually doing too much.
+- Put the units in the spec's `## Units` section and their shipping order in `## Delivery Slices`. Both are required.
 
-**Units and Delivery Slices (required in every architectural spec):**
+**Existing codebases:** follow the patterns already there. Include a targeted improvement only where a problem in the existing code affects this work (an oversized file, tangled responsibilities); leave unrelated refactoring alone.
 
-A spec is a mapping target for the plan, not a story. It carries two sections, with exactly these headings and line labels:
+## Units and Delivery Slices
+
+Every architectural spec carries these two sections, with exactly these headings and line labels. The spec is a target for the plan to map onto, not a story.
 
 ```markdown
 ## Units
@@ -268,71 +149,49 @@ A spec is a mapping target for the plan, not a story. It carries two sections, w
 **Acceptance:** observable checks.
 ```
 
-Rules:
-
-- A slice depends only on earlier slices, never on a later one.
-- The slices together cover every unit.
+- A slice depends only on earlier slices.
+- Together the slices cover every unit.
 - A slice that would need more than about 6 atomic tasks is split.
-- Operations that need the merge (deploy, production migration, publish) are listed under the spec's rollout, not as a slice.
-
-**Working in existing codebases:**
-
-- Explore the current structure before proposing changes. Follow existing patterns.
-- Where existing code has problems that affect the work (e.g., a file that's grown too large, unclear boundaries, tangled responsibilities), include targeted improvements as part of the design - the way a good developer improves code they're working in.
-- Don't propose unrelated refactoring. Stay focused on what serves the current goal.
+- Work that needs the merge (deploy, production migration, publish) goes under the spec's rollout, not into a slice.
 
 ## After the Design (architectural path)
 
-**Documentation:**
+**Writing the spec:** save it to `<specs dir>/YYYY-MM-DD-<topic>-design.md`, where the specs directory comes from the tracking paths above.
 
-- Write the validated design (spec) to `<specs dir>/YYYY-MM-DD-<topic>-design.md`, the specs directory from the tracking paths (see Vault Skills and Tracking Paths); in local mode draft it under that name in a `mktemp -d` dir and land it with `triqual tracking write spec <draft>`
-- Use elements-of-style:writing-clearly-and-concisely skill if available
-- Commit the design document to git when it lives in the working tree (local mode keeps it under the git dir, out of git). When opted in with `"mode": "committed"`, the same commit carries a new top entry in `progress` (`progress.md`) and an updated `status` (`status.md`), edited around the tasks markers, never inside them: the repo's pre-commit rejects the commit without them.
-- In store mode (`"mode": "store"`) the spec is landed from its `mktemp -d` draft with `triqual tracking write spec <draft>` and no commit is made: land the `progress` entry with `triqual tracking add <draft> --no-commit`, and stage no tracking file (details: `store-mode.md` under `references` in skill `progress-tracking:progress-tracking`).
+- When it lives in the working tree (not opted in, or `"mode": "committed"`), commit it. In committed mode the same commit carries a new top `progress` entry (`progress.md`) and an updated `status` (`status.md`), edited around the tasks markers and never inside them: the repo's pre-commit rejects the commit without them.
+- In local mode it stays under the git dir, out of git, and is landed with `triqual tracking write spec <draft>`.
+- In store mode, land it the same way, make no commit, land the entry with `triqual tracking add <draft> --no-commit`, and stage no tracking file.
 
-**Spec Self-Review:**
-After writing the spec document, look at it with fresh eyes:
+**Spec Self-Review:** read the spec again with fresh eyes.
 
-1. **Placeholder scan:** Any "TBD", "TODO", incomplete sections, or vague requirements? Fix them.
-2. **Internal consistency:** Do any sections contradict each other? Does the architecture match the feature descriptions?
-3. **Scope check:** Is this focused enough for a single implementation plan, or does it need decomposition?
-4. **Ambiguity check:** Could any requirement be interpreted two different ways? If so, pick one and make it explicit.
-5. **Modularity:** Does every unit state its interface and what it depends on? Does every slice depend only on earlier slices, do the slices cover every unit, and does each slice state why it stands alone? Is any slice big enough (more than about 6 atomic tasks) to split?
+1. **Placeholder scan:** any "TBD", "TODO", unfinished section or vague requirement? Fix it.
+2. **Internal consistency:** do sections contradict each other, or the architecture the feature descriptions?
+3. **Scope check:** is it focused enough for one implementation plan, or does it need decomposing?
+4. **Ambiguity check:** could a requirement be read two ways? Pick one and say it.
+5. **Modularity:** does every unit state its interface and what it depends on, does every slice depend only on earlier slices, do the slices cover every unit, does each slice say why it stands alone, and is any slice big enough (more than about 6 atomic tasks) to split?
 
-Fix any issues inline. No need to re-review — just fix and move on.
+Fix what you find inline and move on; this pass needs no second review.
 
-**Spec Audit:**
-Then dispatch `roles:final-adversarial-reviewer` with `spec-document-reviewer-prompt.md` on the spec: the adversarial audit runs on every architectural spec, and no other reviewer takes its place.
+**Spec Audit:** dispatch `roles:final-adversarial-reviewer` with `spec-document-reviewer-prompt.md` on the spec. The adversarial audit runs on every architectural spec and no other reviewer takes its place. Fix its findings in the spec, and in your message to your partner name each finding you did not fix and why.
 
-Fix the findings in the spec. Name, in your message to your human partner, each finding you did not fix and why.
+**User review gate:** once the audit is handled, ask your partner to read the written spec before you go on:
 
-**User Review Gate:**
-After the spec review loop passes, ask the user to review the written spec before proceeding:
+> "Spec written to `<path>`. Please review it and tell me what to change before I start on the implementation plan."
 
-> "Spec written and committed to `<path>`. Please review it and let me know if you want to make any changes before we start writing out the implementation plan."
+Wait. If they ask for changes, make them and repeat the self-review and the audit. Continue only when they approve.
 
-Wait for the user's response. If they request changes, make them and re-run the spec review loop. Only proceed once the user approves.
+**Hand off:** invoke writing-plans, and nothing else.
 
-**Implementation:**
+## Visual companion
 
-- Invoke the writing-plans skill to create a detailed implementation plan
-- Do NOT invoke any other skill. writing-plans is the next step.
+A browser tab for showing mockups, diagrams and visual options while you brainstorm. It is a tool, not a mode: accepting it does not send every question to the browser.
 
-## Visual Companion
+**Offer it just in time, never upfront.** Wait for the first question that would be clearer shown than described (a layout, a mockup, a diagram; a UI topic alone is not enough), then offer it as its own message, with no question or summary attached:
 
-A browser-based companion for showing mockups, diagrams, and visual options during brainstorming. Available as a tool — not a mode. Accepting the companion means it's available for questions that benefit from visual treatment; it does NOT mean every question goes through the browser.
+> "This next part might be easier if I show you: I can put together mockups, diagrams and comparisons in a browser tab as we go. It's still new and can use a lot of tokens. Want me to? I'll open it for you."
 
-**Offering the companion (just-in-time):** Do NOT offer it upfront. Wait until a question would genuinely be clearer shown than told — a real mockup / layout / diagram question, not merely a UI *topic*. The first time that happens, offer it then, as its own message:
-> "This next part might be easier if I show you — I can put together mockups, diagrams, and comparisons in a browser tab as we go. It's still new and can be token-intensive. Want me to? I'll open it for you."
+Wait for the answer. If they accept, start the server with `--open` so their browser opens on the first screen. If they decline, stay text-only and do not offer again unless they raise it.
 
-**This offer MUST be its own message.** Only the offer — no clarifying question, summary, or other content. Wait for the user's response. If they accept, start the server with `--open` so their browser opens to the first screen automatically. If they decline, continue text-only and don't offer again unless they raise it.
+**Decide per question.** The test is whether your partner would understand it better by seeing it. Use the browser for mockups, wireframes, layout comparisons and architecture diagrams. Use the terminal for requirements, concepts, trade-off lists, text options and scope decisions: "what does personality mean here?" is conceptual, "which wizard layout works better?" is visual.
 
-**Per-question decision:** Even after the user accepts, decide FOR EACH QUESTION whether to use the browser or the terminal. The test: **would the user understand this better by seeing it than reading it?**
-
-- **Use the browser** for content that IS visual — mockups, wireframes, layout comparisons, architecture diagrams, side-by-side visual designs
-- **Use the terminal** for content that is text — requirements questions, conceptual choices, tradeoff lists, A/B/C/D text options, scope decisions
-
-A question about a UI topic is not automatically a visual question. "What does personality mean in this context?" is a conceptual question — use the terminal. "Which wizard layout works better?" is a visual question — use the browser.
-
-If they agree to the companion, read the detailed guide before proceeding:
-`skills/brainstorming/visual-companion.md`
+After an acceptance, read `visual-companion.md` in this skill's folder before you start.
