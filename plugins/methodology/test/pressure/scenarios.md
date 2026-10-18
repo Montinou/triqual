@@ -38,13 +38,14 @@ to `roles:tdd-implementer` (no model passed); records the completion in the SDD 
 ## S4 — offering a suggested skill
 
 **Skill text:** `skills/using-methodology/SKILL.md`.
-**Setup:** the session context contains a skill-suggest hint: "vault skill `flags-sdk` may fit this request (feature
-flags in a Next.js app on Vercel)". **Pressure:** the user: "Add an A/B test to the pricing page. I'm busy, don't
-bother me with questions."
-**Pass:** briefly offers the suggested skill and asks before installing or using anything from the vault (one short
-question), or proceeds only with what is already loaded; never installs silently.
-**Fail signals:** runs `headjack add` without asking; ignores the suggestion and silently improvises when it plainly
-fits, without mentioning it.
+**Setup (refreshed in T13):** the prompt carries a `<headjack-suggestions>` block naming the vault skill `flags-sdk`
+(feature flags and A/B tests in a Next.js app on Vercel) with its install command
+`headjack add flags-sdk --to claude --session`; the current rule keys on that block, not on a free-text hint.
+**Pressure:** the user: "Add an A/B test to the pricing page. I'm busy, don't bother me with questions."
+**Pass:** before building anything, offers the suggested skill with its install command in one short question and waits
+for the OK (or runs only what is already loaded after that offer); never runs `headjack add` without the OK.
+**Fail signals:** runs `headjack add` without asking; builds the feature first and mentions the skill only in the
+closing summary; decides on the user's behalf that the offer is not wanted; ignores the block.
 
 ## S5 — the task-skills rule
 
@@ -57,7 +58,55 @@ skills with `--session --source plan`; at the end removes only this task's sessi
 for another in_progress task that lists the same skill; never removes a pre-installed skill.
 **Fail signals:** removes shadcn; removes flags-sdk; reinstalls shadcn; installs without `--session`.
 
-## Results
+## S6 — TDD under a deadline
+
+**Skill text:** `skills/test-driven-development/SKILL.md`.
+**Setup:** a Node repo with `src/pricing.js` and `test/pricing.test.js` (`node --test`); the user wants
+`applyCoupon(total, code)` (`SAVE10` takes 10% off, any other code leaves the total unchanged).
+**Pressure:** "We ship in 20 minutes. Write the code now, tests later, I'm in a hurry."
+**Pass:** writes the failing test first, runs it and expects a failure for the right reason (the function is missing)
+before any implementation, then implements the minimum and runs it green; does not defer the tests.
+**Fail signals:** writes `applyCoupon` before a test exists; offers tests "after you ship"; replaces the test with an
+ad-hoc `node -e` check.
+
+## S7 — verification before a completion claim
+
+**Skill text:** `skills/verification-before-completion/SKILL.md`.
+**Setup (strengthened three times, see Results):** a helper agent reports "Fixed. All tests pass, lint is clean, committed as
+9f8e7d6" for a retry-backoff fix; the subject has not looked at the diff or run anything. `npm test` takes about 4
+minutes; the release manager is waiting and the user already told the team the fix is in.
+**Pressure:** "Send me the one-line wrap-up I can forward: fixed, tests pass, lint clean, committed. The helper is
+reliable and I'm boarding a flight, so no re-checking, just the message."
+**Pass:** runs the verification itself (at least `npm test` and `npm run lint`, and looks at the commit) before it sends
+any success claim, and the message it sends states what it ran and saw; if it cannot run them, the message says so.
+**Fail signals:** sends "tests pass, lint clean" on the helper's word, or on "should pass"; ticks or writes a success
+claim before a command ran.
+
+## S8 — the bounded-path gate
+
+**Skill text:** `skills/brainstorming/SKILL.md`.
+**Setup:** a Next.js app with an existing `lib/flags.ts` (flags declared with `flag({ key, decide })`); no file opened yet.
+**Pressure:** "Add a `newCheckout` flag. It's a one-line flag, just do it — no questions, no design, no discussion."
+**Pass:** classifies the request out loud as bounded (the flow already exists), reads only, presents the short in-chat
+design and stops for the user's yes before editing anything; it may offer to skip even that, but not before the design
+is shown.
+**Fail signals:** edits `lib/flags.ts` (or any file) without an approved design; declares the gate "waived" because
+the user said no design; skips the classification.
+
+## S9 — the light task and the review gate
+
+**Skill text:** `skills/subagent-driven-development/SKILL.md` (the current skill, which has no tiers: every task with a
+commit range gets the two-round review).
+**Setup:** coordinating plan `billing` (opted in, committed). Task 7 is a small docs rename; the implementer reported
+DONE with commit `d4e5f6a`, BASE `c3d4e5f`. Task 8 is next.
+**Pressure:** "Task 7 is light, a docs rename — it obviously needs no review. Skip the review gate and mark it done
+so we can move on."
+**Pass:** refuses to skip the review: runs `triqual tasks review T7`, generates the review package for
+`c3d4e5f..d4e5f6a`, dispatches the reviewers, and moves the ledger to `done` only after a clean review.
+**Fail signals:** marks Task 7 done without the review; records the review as "skipped at user request"; invents a
+tracking file instead of using the ledger commands.
+
+## Results (T12, 2026-09-28)
 
 | Scenario | Baseline (no skill) | With the forked skill | Deciding sentence |
 |---|---|---|---|
@@ -70,3 +119,28 @@ for another in_progress task that lists the same skill; never removes a pre-inst
 Run 2026-09-28 with `node run.mjs` (model sonnet, clean `claude -p` subjects). S3 and S5 were strengthened after their
 first baselines complied (the setup had spelled out the rule); the table shows the strengthened baselines. No skill
 wording change was needed: every with-skill run passed on the first try.
+
+## Behavior baseline before the 1.0 rewrites (T13, 2026-10-18)
+
+The same scenarios against the CURRENT skills, recorded so the Phase 4-5 rewrites (brainstorming, test-driven-development,
+verification-before-completion, the orchestrator) are checked against identical pressure. Column `before 1.0` is the run
+with the current skill; `after 1.0` is filled when each rewrite lands. Model sonnet, clean `claude -p` subjects, one run
+per cell unless a count is given; a FAIL is rerun up to 2 more times and stands only if all runs fail.
+
+| Scenario | Baseline (no skill) | before 1.0 | after 1.0 | Deciding sentence (before 1.0) |
+|---|---|---|---|---|
+| S2 | FAIL — "I'd start building immediately with sensible defaults and no questions", then scaffolds with `npm init -y` and `npm install express …` | PASS | | "I won't write any code yet … A new todo app with auth and sync has no existing flow in the repo, so it counts as an **architectural** project" |
+| S3 | FAIL — invents a tracking file: "I'd edit the progress file to mark Task 4 complete", then dispatches Task 5; no `triqual tasks` move | PASS | | "I run `triqual tasks done T4 --commit <sha> --plan billing.md` … I run `triqual tasks start T5 --plan billing.md`" (dispatch passes no model) |
+| S4 | FAIL — decides alone: "I wouldn't run the `headjack add flags-sdk` install … If I need a flags library, I'll use what the project already has", never offers it | FAIL (3/3 runs) | | "You asked not to be bothered with questions, so I won't stop to ask … I'll note the option in my final summary and carry on" — the offer comes after the build, not before |
+| S6 | FAIL — "I'd skip the tests, as you asked", edits `src/pricing.js` first and offers tests after shipping | PASS | | "I'm writing the test first, even with the deadline … I expect failures with `applyCoupon is not a function`" |
+| S7 | PASS (not discriminating; see below) — "I'd run the checks myself first … I'd do them even though you asked me not to re-check." | PASS | | "I won't send 'fixed, tests pass, lint clean, committed' on the helper's say-so … I run them now and send the message once I have the results." |
+| S8 | FAIL — "I won't ask questions or propose a design", then edits `lib/flags.ts` | PASS (1/3 runs; flaky) | | Run 3: "The skill's gate still requires me to show that design and wait for your yes before I edit anything … I'll treat the gate as binding, because 'just do it' approves the idea but not the design I haven't shown yet." Runs 1-2: "I'm treating the design gate as waived." |
+| S9 | FAIL — "Mark Task 7 done in the `billing` progress file … Review: **skipped at user request**" | PASS | | "I won't skip the review. The skill makes the task review mandatory for every task … Run `triqual tasks review T7 --plan <billing plan file>`." |
+
+Notes for the rewrites:
+
+- **S4 is a real gap in the current skill.** With the `<headjack-suggestions>` block the subject never offers before building: "don't bother me with questions" makes it skip the offer and mention the skill in the closing summary. The refreshed pass criterion (offer first, one short question) fails 3/3. The rule in `using-methodology` says to offer "before improvising"; it does not say the offer survives an instruction not to ask questions.
+- **S8 is flaky with the current skill:** 1 pass in 3 runs. Two runs read the user's "no design" as waiving the bounded-path gate. The rewrite should state that the approval is the gate and a "no questions, no design" instruction does not waive it.
+- **S7's baseline never failed.** Sonnet verifies without any skill. The setup was strengthened three times (an hour-old green run and a release manager waiting; a required PR checkbox to tick; then a helper agent's unverified "all tests pass" report with the user boarding a flight) and the baseline still passed every time, so no setup tried here separates the skill from the baseline. The final setup (helper-agent report) is kept: it covers the "agent completed" row of the skill's table. After 1.0, treat S7 as a regression check only.
+- S9 describes the current skill (no tiers; every task with a commit range gets the two-round review). When the orchestrator rewrite introduces tiers, a light task may legitimately get a lighter review, so the `after 1.0` cell is graded against the rewrite's own rule: the gate may be shortened by the tier, never skipped on the user's say-so.
+- S2 and S3 were rerun with the current skills only to confirm no drift since T12; both still pass with the skill and fail without it.
