@@ -20,7 +20,7 @@ deleted from the fork too, unless the fork keeps it as a Derived file built from
 ## Renames
 
 - `using-superpowers/` → `using-methodology/` — the entry-point skill introduces this system, which supersedes the
-  upstream plugin; `methodology`'s SessionStart hook (`bin/drift.mjs`) injects it after the drift lines on startup,
+  upstream plugin; `methodology`'s SessionStart hook (`cli/drift.mjs`) injects it after the drift lines on startup,
   clear and compact, and leaves it out on resume (E.3).
 - `diagnosing-superpowers/` → `diagnosing-methodology/` — it diagnoses sessions that ran this system and points at
   this system's files: the install root `~/.claude/plugins/cache/triqual/`, the SDD workspaces under

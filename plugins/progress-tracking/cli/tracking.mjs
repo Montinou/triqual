@@ -485,6 +485,7 @@ export async function restoreCommand(p, io = {}) {
   const r = await restoreSnapshot({ home, env }, p.snapshot);
   const c = r.counts;
   if (r.safety) print(`saved the replaced database as ${r.safety}`);
+  if (r.broken) print(`moved the database that did not open to ${r.broken}`);
   for (const file of r.orphans ?? []) print(`moved a leftover write-ahead log file of the lost database to ${file}`);
   print(`restored ${p.snapshot} into ${r.db}${r.copied ? ' (there was no database: the snapshot was copied in)' : ''}: `
     + `${c.entries} entries, ${c.status} status sections, ${c.plans} plans, ${c.tasks} tasks, ${c.task_events} task events`);

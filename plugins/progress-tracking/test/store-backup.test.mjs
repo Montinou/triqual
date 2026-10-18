@@ -236,6 +236,43 @@ test('restore over a database first saves it as a private pre-restore snapshot i
   assert.equal(inStore(a, (s) => s.get("SELECT COUNT(*) AS n FROM entries WHERE title = 'A correction'").n), 0);
 }));
 
+test('restore over a database that does not open moves it into backups/, leaves no sidecar beside the new one, and restores the snapshot', () => withTemp(({ dir, envFor, run, inStore }) => {
+  const { repo } = buildHistory(dir);
+  const a = envFor('a');
+  exit(run(repo, ['import'], a), 0);
+  const snapshot = join(dir, 'snap.db');
+  inStore(a, (s) => s.snapshotTo(snapshot));
+  const b = envFor('b');
+  mkdirSync(dirname(b.TRIQUAL_TRACKING_DB), { recursive: true });
+  const junk = 'not a database at all, just some text that is long enough to not be empty\n'.repeat(20);
+  writeFileSync(b.TRIQUAL_TRACKING_DB, junk);
+  writeFileSync(`${b.TRIQUAL_TRACKING_DB}-wal`, 'stale wal');
+  const r = run(dir, ['restore', snapshot, '--yes'], b);
+  exit(r, 0);
+  const backups = join(dirname(b.TRIQUAL_TRACKING_DB), 'backups');
+  // SQLite drops a WAL that does not belong to a database when the store tries to open it; any sidecar still there is
+  // moved beside the broken file.
+  const moved = readdirSync(backups).filter((n) => n.startsWith('broken-'));
+  assert.equal(moved.filter((n) => /^broken-[0-9TZ-]+\.db$/.test(n)).length, 1);
+  const file = join(backups, moved.find((n) => n.endsWith('.db')));
+  assert.equal(readFileSync(file, 'utf8'), junk, 'the broken file is kept as it was');
+  assert.ok(r.stdout.includes(file), 'the path is printed');
+  assert.equal(existsSync(`${b.TRIQUAL_TRACKING_DB}-wal`), false);
+  assert.equal(statSync(b.TRIQUAL_TRACKING_DB).mode & 0o777, 0o600);
+  assert.equal(inStore(b, (s) => s.get('SELECT COUNT(*) AS n FROM entries').n), 6);
+}));
+
+test('restore over a database that does not open, from a bad snapshot, refuses and leaves the file in place', () => withTemp(({ dir, envFor, run }) => {
+  const b = envFor('b');
+  mkdirSync(dirname(b.TRIQUAL_TRACKING_DB), { recursive: true });
+  writeFileSync(b.TRIQUAL_TRACKING_DB, 'broken');
+  const junk = join(dir, 'junk.db');
+  writeFileSync(junk, 'not a snapshot either\n'.repeat(20));
+  exit(run(dir, ['restore', junk, '--yes'], b), 2);
+  assert.equal(readFileSync(b.TRIQUAL_TRACKING_DB, 'utf8'), 'broken');
+  assert.equal(existsSync(join(dirname(b.TRIQUAL_TRACKING_DB), 'backups')), false);
+}));
+
 test('restore on a terminal: a "no" leaves the database untouched, a "yes" restores', async () => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'pt-backup-tty-')));
   try {

@@ -1,6 +1,6 @@
 ---
 name: progress-tracking
-description: Use in any repo that has progress.md or status.md at its root, or .git/methodology/progress.md (local mode), or when the session context says the repo uses strict progress tracking — when finishing a task, before committing, when executing a plan task by task, dispatching or reviewing subagent work, doing a rollout step, or when the Stop hook blocks for a missing progress.md entry. Defines what counts as a task, the exact entry format, when status.md changes, how the task ledger moves with triqual tasks, local mode, and how subagents take part. To opt a new repo in, use /progress-tracking:progress-init.
+description: Use in any repo that has progress.md or status.md at its root, or .git/methodology/progress.md (local mode), or the store-mode marker, or when the session context says the repo uses strict progress tracking — when finishing a task, before committing, when executing a plan task by task, dispatching or reviewing subagent work, doing a rollout step, or when the Stop hook blocks for a missing progress.md entry. Defines what counts as a task, the exact entry format, when status.md changes, how the task ledger moves with triqual tasks, local mode, and how subagents take part. To opt a new repo in, use /progress-tracking:progress-init.
 ---
 
 # Strict progress tracking
@@ -13,7 +13,7 @@ session; whatever is not in them is lost.
 | `progress.md` | Log of what was done | Append-only, one entry per task, newest **on top** |
 | `status.md` | Snapshot of the overall state | Edited in place; never accumulates history |
 
-They live at the repo root (committed mode) or in `.git/methodology/` (local mode). Never guess paths:
+They live at the repo root (committed mode) or in `.git/methodology/` (local mode); in store mode they are rows in the local database, with no files. Never guess paths:
 `triqual tasks paths --json` prints `mode`, `progress`, `status`, `plansDir` and `specsDir`; outside an opted-in repo it
 prints `"optedIn": false` and exits 0. Both carry `notOptedInMessage` and `localHookLines`. Without `triqual` on PATH, run
 `node "${CLAUDE_PLUGIN_ROOT}/cli/tasks.mjs" <subcommand> …` instead.
@@ -146,4 +146,4 @@ history with `triqual tracking log`. All the rules: [references/store-mode.md](r
   a store that cannot be read fails closed, naming `triqual tracking restore`.
 - **SessionStart hook:** injects `status.md`, the latest entry and one line per active plan.
 
-The hooks act only in opted-in repos (`progress.md` in either root).
+The hooks act only in opted-in repos: store mode (the `triqual.tracking=store` git config marker, which wins), or `progress.md` in either root.
