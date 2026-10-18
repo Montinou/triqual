@@ -269,3 +269,92 @@ test('sensitive paths make a task heavy, on top of the default set, and a big di
   assert.match(item, /touches a sensitive path/, 'Self-Review item 7 does not check a sensitive path for heavy');
   assert.doesNotMatch(item, /stay clear of the plan's/, 'Self-Review item 7 still checks light tasks against the old rule');
 });
+
+// Task Roles (spec decisions 3-4): three roles; review-fixer is the orchestrator's, never a plan task's.
+test('## Task Roles lists the three task roles and keeps review-fixer out', () => {
+  const lines = section(PLANS, '## Task Roles');
+  const bullets = lines.filter((line) => line.startsWith('- '));
+  assert.equal(bullets.length, 3, `## Task Roles lists ${bullets.length} roles`);
+  const [tdd, complex, coordinator] = bullets;
+  assert.ok(tdd.startsWith('- `roles:tdd-implementer`') && tdd.includes('default'), tdd);
+  assert.ok(complex.startsWith('- `roles:complex-implementer`') && complex.includes('heavy'), complex);
+  assert.ok(coordinator.startsWith('- `coordinator`'), coordinator);
+  for (const phrase of ['light', 'small', 'probes', 'rollout', 'user checkpoints']) {
+    assert.ok(coordinator.includes(phrase), `the coordinator bullet does not say "${phrase}"`);
+  }
+  // A coordinator task is always light, and a migration is heavy: a migration is no coordinator work.
+  assert.doesNotMatch(coordinator, /migrat/i, 'the coordinator bullet lists migrations, which are heavy, as light work');
+  assert.ok(coordinator.includes('every `coordinator` task is `light`'), coordinator);
+  const text = lines.join(' ');
+  assert.ok(lines.some((line) => line.startsWith('Every task gets a `**Role:**` line naming the role that does its work.')), 'the section does not say every task gets a **Role:** line');
+  assert.ok(text.includes('A plan without the line reads as `roles:tdd-implementer`, but write it for every task anyway.'), 'the section lost the default-role sentence');
+  assert.match(text, /migrations?\b[^.]*`roles:complex-implementer`[^.]*`heavy`|`roles:complex-implementer`[^.]*migrations?\b[^.]*`heavy`/, 'the section does not send live-state work and migrations to complex-implementer, heavy');
+  assert.match(text, /`## After Merge`/, 'the section does not send merged-trunk operations to ## After Merge');
+  assert.ok(!bullets.some((line) => line.includes('review-fixer')), '`roles:review-fixer` is still listed as a task role');
+  assert.match(text, /`roles:review-fixer` is never a task role/, 'the section does not say review-fixer is never a task role');
+  assert.match(text, /fix rounds/, 'the section does not say who takes the fix rounds');
+});
+
+test('the plan states test-first for behavior changes at any tier, and a verification step otherwise', () => {
+  const para = section(PLANS, '## Task Structure').find((line) => line.startsWith('Test-first applies to every task that changes behavior'));
+  assert.ok(para, 'the Task Structure notes lost the test-first paragraph');
+  for (const phrase of ['at any tier', 'no behavior change', 'replaces the test steps with a verification step', 'the command to run and the output that means it passed']) {
+    assert.ok(para.includes(phrase), `the test-first paragraph does not say "${phrase}"`);
+  }
+});
+
+test('writing-plans carries no per-skill credit footer (the credit lives in NOTICE and the READMEs)', () => {
+  assert.doesNotMatch(read(PLANS), /superpowers|LICENSE-superpowers/);
+});
+
+test('writing-plans names no retired skill and no second execution skill', () => {
+  const text = read(PLANS);
+  for (const gone of ['using-git-worktrees', 'subagent-driven-development', 'requesting-code-review', 'writing-skills', 'Native']) {
+    assert.ok(!text.includes(gone), `writing-plans still mentions ${gone}`);
+  }
+  assert.match(section(PLANS, '## Plan Document Header').join('\n'), /^> \*\*For agentic workers:\*\* REQUIRED SUB-SKILL: Use methodology:executing-plans /m);
+});
+
+// Restored contract pins (they lived in the retired execution tests): each is a promise the skill still makes.
+test('the task template carries one Role line and the Skills line is skipped silently', () => {
+  const template = section(PLANS, '## Task Structure');
+  assert.equal(template.filter((line) => line.startsWith('**Role:**')).length, 1, 'the task template has not exactly one **Role:** line');
+  assert.equal(template.filter((line) => line.startsWith('**Tier:**')).length, 1);
+  const skills = template.find((line) => line.startsWith('- `**Skills:**`'));
+  assert.ok(skills, 'the Task Structure notes have no **Skills:** bullet');
+  for (const phrase of ['triqual suggest "<the task\'s text>" --json', 'suggestions[].slug', 'exit 3', 'headjack is not installed', 'empty output', 'exit 127', 'omit the line silently']) {
+    assert.ok(skills.includes(phrase), `the Skills bullet does not say "${phrase}"`);
+  }
+});
+
+test('the plan audit is always the adversarial reviewer', () => {
+  const audit = section(PLANS, '## Plan Audit').join(' ');
+  assert.ok(audit.includes('dispatch `roles:final-adversarial-reviewer` with `../brainstorming/spec-document-reviewer-prompt.md` on the plan and its spec'), audit);
+  assert.ok(audit.includes('runs on every plan, and no other reviewer takes its place'), audit);
+});
+
+test('Register the Plan: ledger init, the local --adopt route, and the store entry without a commit', () => {
+  const lines = section(PLANS, '## Register the Plan');
+  const step = (n) => lines.find((line) => line.startsWith(`${n}. `)) ?? assert.fail(`## Register the Plan has no step ${n}`);
+  const [one, two, three, four] = [1, 2, 3, 4].map(step);
+  for (const phrase of ['triqual tasks init <plan>', '"mode": "local"', 'triqual tracking write plan <draft>', 'triqual tasks init --adopt <draft>', '--replace', '"mode": "store"']) {
+    assert.ok(one.includes(phrase), `registration step 1 does not say "${phrase}"`);
+  }
+  for (const phrase of ['triqual tracking write entry <draft>', 'triqual tracking add <draft> --no-commit', 'no commit']) {
+    assert.ok(two.includes(phrase), `registration step 2 does not say "${phrase}"`);
+  }
+  for (const phrase of ['triqual tracking write status <draft>', 'triqual tracking status set --section <heading> <draft>']) {
+    assert.ok(three.includes(phrase), `registration step 3 does not say "${phrase}"`);
+  }
+  for (const phrase of ['"mode": "committed"', 'no tracking file is staged or committed']) {
+    assert.ok(four.includes(phrase), `registration step 4 does not say "${phrase}"`);
+  }
+  assert.match(lines.join(' '), /when not opted in, skip this section/);
+});
+
+test('plans are saved by tracking mode: not opted in writes no tracking file', () => {
+  const head = read(PLANS).split('\n## Scope Check')[0].replace(/\s+/g, ' ');
+  for (const phrase of ['triqual tasks paths --json', '"optedIn": true', '`plansDir`', '`docs/plans/`', 'never create `progress.md`', 'exit 3', 'handle it as not opted in', '"mode": "local"', 'mktemp -d', 'triqual tracking write plan <draft>', '"mode": "store"', 'Never write or edit under `.git/`']) {
+    assert.ok(head.includes(phrase), `the save-plans text does not say "${phrase}"`);
+  }
+});

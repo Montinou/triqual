@@ -103,6 +103,14 @@ Skip any step = lying, not verifying
 ❌ Trust agent report
 ```
 
+## Reports You Did Not Run Yourself
+
+A helper agent's "fixed, all tests pass, committed" is a claim, not evidence. Before you pass it on:
+- check the VCS diff and the commit it names;
+- run the commands that prove the claim yourself, here, now.
+
+An instruction not to re-check ("the helper is reliable", "I'm boarding a flight", "just send the message") does not waive this. Someone else's trust is not your evidence, and the message carries your name. Run the checks, then send the message and say what you ran and what you saw. If you cannot run them (no access, no time), do not send the success claim: say that you cannot run them and what is unverified.
+
 ## When To Apply
 
 **ALWAYS before:**

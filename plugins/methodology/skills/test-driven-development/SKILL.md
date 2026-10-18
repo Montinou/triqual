@@ -30,6 +30,8 @@ Write the test first. Watch it fail. Write minimal code to pass.
 
 Thinking "skip TDD just this once"? Stop. That's rationalization.
 
+**In a plan task:** TDD binds every task that changes behavior, at any tier; a light task is still test-first. An implementer dispatched from a plan grants itself no exception from the list above. A task with no behavior change (docs, config values, a rollout step) has no test to write: it records the real output of its verification command instead, never a description of what the output would be.
+
 ## The Iron Law
 
 ```
@@ -129,6 +131,8 @@ Confirm:
 
 **Test errors?** Fix error, re-run until it fails correctly.
 
+**Keep the evidence.** In a plan task your report carries the failing output as the command printed it and says why that failure is the expected one. A report without it says the test was never watched failing.
+
 ### GREEN - Minimal Code
 
 Write simplest code to pass the test.
@@ -189,7 +193,9 @@ green run of the test you wrote is not a green suite. Before you call
 the change done, run the project's test command (bare `pytest`,
 `npm test`, `cargo test` — whatever the repo uses) even when your task
 named only one test file. A scope statement in your task bounds the
-deliverable, not your verification. Any failure that run shows —
+deliverable, not your verification. When the brief or the project's
+rules say which suites run locally, run those and say so in the report.
+Any failure that run shows —
 including one you didn't cause — goes in your report by name; a red
 test you watched scroll past and didn't mention is a report falsified
 by omission.

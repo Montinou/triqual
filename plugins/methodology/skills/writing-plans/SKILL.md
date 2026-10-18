@@ -11,7 +11,7 @@ Write implementation plans for an engineer who has not seen this codebase or thi
 
 **Announce at start:** "I'm using the writing-plans skill to create the implementation plan."
 
-**Context:** Plans run in the current checkout on stacked phase branches. A worktree exists only when your human partner asked for one (`methodology:using-git-worktrees`); never write a plan step that creates one.
+**Context:** Plans run in the current checkout on stacked phase branches. A worktree exists only when your human partner asked for one; never write a plan step that creates one.
 
 **Save plans to:** `YYYY-MM-DD-<feature-name>.md` in the plans directory. Run `triqual tasks paths --json` once, before writing the plan:
 - **Opted in** (`"optedIn": true`; an older `triqual` prints the same fields without `optedIn`): plans go to `plansDir`, and the plan is registered when done (see Register the Plan).
@@ -127,11 +127,10 @@ owns the code, in that task's own step style.]
 
 Every task gets a `**Role:**` line naming the role that does its work. Choosing the role:
 - `roles:tdd-implementer` is the default: code and tests written test-first. Most tasks take it.
-- `roles:complex-implementer` takes a task where a mistake is costly: multi-system changes, migrations of live state, or other work that needs the stronger model. Same test-first discipline; mark only the tasks that need it.
-- `roles:review-fixer` takes a task whose work is fixing review findings: a planned fix round, or answering review feedback on existing code.
-- `coordinator` takes work the controller must do itself: probes, rollout steps (migrations, deploys, env vars), user checkpoints, and anything that needs your human partner in the loop.
+- `roles:complex-implementer` takes a task where a mistake is costly: multi-system changes, migrations of live state, or other work that needs the stronger model. Same test-first discipline; mark only the tasks that need it, and tier them `heavy`.
+- `coordinator` takes work the controller must do itself: probes, rollout steps (deploys, env vars, status updates), user checkpoints, and anything that needs your human partner in the loop. It may also take a small, low-risk fix, within the `light` code allowance; every `coordinator` task is `light`.
 
-Reviewer roles and the brief writer serve a task and are never its role; the execution skills dispatch them. A plan without the line reads as `roles:tdd-implementer`, but write it for every task anyway.
+Live-state work and migrations are never coordinator work: they take `roles:complex-implementer` and are `heavy`, and a production operation that needs the merged trunk is an `## After Merge` item. `roles:review-fixer` is never a task role: the orchestrator dispatches it for fix rounds, so a plan never plans one. Reviewer roles and the brief writer serve a task and are never its role either. A plan without the line reads as `roles:tdd-implementer`, but write it for every task anyway.
 
 ## Task Tiers
 
@@ -202,6 +201,8 @@ The lines under the heading follow the task ledger's plan format:
 - `**Depends on:**` lists the tasks that must be done first, as `T1, T3`; omit the line when a task has none.
 - `**Skills:**` lists the vault skills the task needs: run `triqual suggest "<the task's text>" --json` and keep the fitting `suggestions[].slug` values. On a non-zero exit from `triqual suggest` (exit 3: headjack is not installed), on empty output, or when `triqual` is not on `PATH` (`command -v triqual` fails, or exit 127), omit the line silently.
 - `**Role:**` names the task's role (see Task Roles).
+
+Test-first applies to every task that changes behavior, at any tier. A task with no behavior change (docs, config values, a rollout step) replaces the test steps with a verification step: the command to run and the output that means it passed.
 
 ## What a Step Contains
 
