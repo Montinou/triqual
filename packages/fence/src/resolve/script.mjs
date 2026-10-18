@@ -22,7 +22,8 @@
 //   {type:'code', files, modules, isolated}
 //       make-free runners of repository code: python <file> / -m <module>, pytest <file>, node
 //       <file> (and -r/--import files), deno run <file>, go run <file.go>, cargo run, npx, and a
-//       foreign shell (fish, csh, ...) given a script file. files are the named files (node: with
+//       foreign shell (fish, csh, ...) given a script file, and perl/ruby/php/lua/tclsh/Rscript/
+//       julia/bun given one (tables/embedded.mjs interpreterScript). files are the named files (node: with
 //       the extensions node tries), modules python -m names (looked for in the cwd unless
 //       `isolated`: -I or -P keep the cwd off sys.path).
 //
@@ -40,6 +41,7 @@ import nodeFs from 'node:fs';
 
 import { UNKNOWN } from '../norm/unknown.mjs';
 import { shellScriptFile, shellKind, appletArgv, stdinPath } from '../norm/unwrap.mjs';
+import { interpreterScript } from '../tables/embedded.mjs';
 
 /** Largest script file read (the normalizer's per-level command cap). */
 export const SCRIPT_CAP = 32 * 1024;
@@ -433,7 +435,7 @@ function makeRoute(argv) {
 // ---------------------------------------------------------------------------------------------
 // Other runners of repository code
 
-const PYTHON = /^python[0-9.]*$/;
+const PYTHON = /^pythonw?[0-9.]*$/;
 const PY_VALUE = 'WX';
 const PYTEST_VALUE = new Set(
   words('-k -m -p -c -o -W -n -r --rootdir --basetemp --confcutdir --deselect --ignore --ignore-glob --junitxml --junit-xml --log-file --tb --maxfail --durations --cov --cov-report --import-mode --override-ini --capture --log-level --log-cli-level --pyargs -x'),
@@ -632,6 +634,10 @@ function codeRoute(prog, argv) {
     }
     return code(files);
   }
+  // perl, ruby, php (-f), lua, tclsh, Rscript, julia, bun run|file: the script file is repository
+  // code the normalizer cannot read (an agent-written one is opaque)
+  const other = interpreterScript(argv);
+  if (other !== null) return code(other.files);
   if (FOREIGN.has(prog)) {
     // a script file operand (inline code and fed stdin are unwrap.mjs's)
     const f = argv.slice(1).find((a) => !isStr(a) || !a.startsWith('-'));

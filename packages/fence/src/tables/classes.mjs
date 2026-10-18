@@ -144,7 +144,7 @@ function canonName(name) {
   const lower = name.toLowerCase();
   if (D.has(lower)) return lower;
   if (lower.length > 1 && lower[0] === 'g' && GNU_COREUTILS.has(lower.slice(1)) && D.has(lower.slice(1))) return lower.slice(1);
-  if (/^python[0-9.]*$/.test(lower)) return 'python';
+  if (/^pythonw?[0-9.]*$/.test(lower)) return 'python';
   if (/^pip[0-9.]*$/.test(lower)) return 'pip';
   if (/^(?:mkfs|mke2fs|newfs)(?:\.[a-z0-9]+)?$/.test(lower)) return 'mkfs';
   if (/^nc\.(?:openbsd|traditional)$/.test(lower)) return 'nc';

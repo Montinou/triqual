@@ -39,6 +39,16 @@ function makeRepo({ head = 'ref: refs/heads/feature\n', branches = ['feature', '
   return root;
 }
 
+// A repository whose .git/hooks holds an executable pre-commit (inert text: only ever read).
+function hookedRepo(root) {
+  fs.mkdirSync(path.join(root, '.git', 'objects'), { recursive: true });
+  fs.mkdirSync(path.join(root, '.git', 'refs', 'heads'), { recursive: true });
+  write(path.join(root, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+  write(path.join(root, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\necho hook\n');
+  fs.chmodSync(path.join(root, '.git', 'hooks', 'pre-commit'), 0o755);
+  return root;
+}
+
 function ctxAt(cwd, extra = {}) {
   return { cwd, home: HOME, env: {}, ...extra };
 }
@@ -568,9 +578,13 @@ test('mv/ln taint reaches paths that pass through an operand, with .. after it',
 
 test('git subcommands outside the known list, and -c alias, make the branch UNKNOWN', () => {
   const here = makeRepo();
-  for (const c of ['git co main', 'git -c alias.x=checkout x main', 'git frobnicate', 'git $(pick) main']) {
+  for (const c of ['git co main', 'git frobnicate']) {
     assert.equal(cmds(`${c} && git commit`, here).at(-1).repo.branch, UNKNOWN, c);
   }
+  // T32: git -c with an alias.* key is opaque (embedded code), before any branch question
+  assert.equal(opaque('git -c alias.x=checkout x main && git commit', here).construct, 'embedded-code');
+  // and an UNKNOWN word where a git option may stand (--config-env=…) is not proven clean
+  assert.equal(opaque('git $(pick) main && git commit', here).construct, 'embedded-code');
   for (const c of ['git status', 'git add .', 'git commit -m x', 'git log', 'git diff', 'git stash', 'git fetch']) {
     assert.equal(cmds(`${c} && git commit`, here).at(-1).repo.branch, 'feature', c);
   }
@@ -585,8 +599,17 @@ test('a repository created in the command is UNKNOWN for later commands', () => 
     'mkdir -p r/.git && cd r && git commit',
     'mkdir r && echo "gitdir: /x" > r/.git && cd r && git commit',
   ]) {
-    assert.equal(cmds(t, outside).at(-1).repo, UNKNOWN, t);
+    // a hook-running git after a non-git write in a repository fence cannot resolve (here the
+    // agent's own gitdir pointer) may run a hook that write planted: opaque git-hooks (T32); the
+    // repository is still UNKNOWN for the commands fence can follow
+    if (t.includes('echo')) {
+      assert.equal(opaque(t, outside).construct, 'git-hooks', t);
+      assert.equal(cmds(t.replace(/git commit$/, 'git log'), outside).at(-1).repo, UNKNOWN, t);
+    } else assert.equal(cmds(t, outside).at(-1).repo, UNKNOWN, t);
   }
+  // the same with a real hooked gitdir behind the pointer
+  const behind = hookedRepo(dir());
+  assert.equal(opaque(`mkdir r2 && echo "gitdir: ${path.join(behind, '.git')}" > r2/.git && cd r2 && git commit`, outside).construct, 'git-hooks');
   // inside an existing repository, the new nested one shadows it
   const here = makeRepo();
   assert.equal(cmds('git init n && cd n && git commit', here).at(-1).repo, UNKNOWN);
@@ -761,7 +784,13 @@ test('the loop scan applies PRE_STEPS and the eval/source/. rule like the walk',
 test('a repo lookup from a directory that does not exist yet is UNKNOWN, not null', () => {
   const outside = dir();
   fs.mkdirSync(path.join(outside, 'exists'));
-  assert.equal(cmds('cp -r ../r n && cd n && git commit', outside).at(-1).repo, UNKNOWN);
+  // ../r is a real repository with an executable pre-commit hook: the copy brings it along
+  hookedRepo(path.join(outside, '..', 'r'));
+  assert.equal(cmds('cp -r ../r n && cd n && git log', outside).at(-1).repo, UNKNOWN);
+  // T32: git commit there may run the hook the copy brought: opaque git-hooks
+  assert.equal(opaque('cp -r ../r n && cd n && git commit', outside).construct, 'git-hooks');
+  // in place (no copy) the operator's hook is runs-repo-code
+  assert.ok(cmds('cd ../r && git commit', outside).at(-1).classes.includes('runs-repo-code'));
   assert.equal(cmds('git -C nowhere commit', outside)[0].repo, UNKNOWN);
   assert.equal(cmds('cd exists && git commit', outside).at(-1).repo, null);
 });
@@ -807,7 +836,12 @@ test('a non-literal target after builtin/command is opaque, in the walk and the 
 test('a directory an earlier command deletes or moves counts as missing for repo lookups', () => {
   const d = dir();
   fs.mkdirSync(path.join(d, 'sub'));
-  assert.equal(cmds('rm -rf sub && cp -r ../r sub && cd sub && git commit', d).at(-1).repo, UNKNOWN);
-  assert.equal(cmds('mv sub old && cp -r ../r sub && cd sub && git commit', d).at(-1).repo, UNKNOWN);
+  hookedRepo(path.join(d, '..', 'r'));
+  assert.equal(cmds('rm -rf sub && cp -r ../r sub && cd sub && git log', d).at(-1).repo, UNKNOWN);
+  // T32: the copied repository's hook may run: opaque git-hooks
+  assert.equal(opaque('rm -rf sub && cp -r ../r sub && cd sub && git commit', d).construct, 'git-hooks');
+  assert.equal(opaque('mv sub old && cp -r ../r sub && cd sub && git commit', d).construct, 'embedded-code');
+  // (bare `git`: after the mv every later word is UNKNOWN, and an UNKNOWN git word is opaque since T32)
+  assert.equal(cmds('mv sub old && cp -r ../r sub && cd sub && git', d).at(-1).repo, UNKNOWN);
   assert.equal(cmds('cd sub && git commit', d).at(-1).repo, null);
 });

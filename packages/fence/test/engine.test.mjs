@@ -290,6 +290,11 @@ test('a missing git.json makes git checkout opaque in a repo tracking .claude/',
   const share = dir();
   write(path.join(share, 'git.json'), JSON.stringify({ path: '/usr/bin/git', version: '2.39.0' }));
   assert.deepEqual(readGitPin(share), { path: '/usr/bin/git', version: '2.39.0' });
+  // an optional deadline is kept only when it is a bounded positive integer
+  write(path.join(share, 'git.json'), JSON.stringify({ path: '/usr/bin/git', version: '2.46.0', deadlineMs: 15000 }));
+  assert.deepEqual(readGitPin(share), { path: '/usr/bin/git', version: '2.46.0', deadlineMs: 15000 });
+  write(path.join(share, 'git.json'), JSON.stringify({ path: '/usr/bin/git', version: '2.46.0', deadlineMs: 10 ** 9 }));
+  assert.deepEqual(readGitPin(share), { path: '/usr/bin/git', version: '2.46.0' });
 });
 
 test('an unknown FENCE_PROFILE denies', () => {
@@ -415,7 +420,8 @@ test('the git pin is wired: a recorded pin runs the check through the pinned bin
   const fake = path.join(dir(), 'fake-git');
   write(fake, `#!${process.execPath}\nrequire('node:fs').appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + '\\n');\n`);
   fs.chmodSync(fake, 0o755);
-  const home = pinnedHome({ path: fake, version: '2.46.0' });
+  // a 15 s limit for this pin: the stub is a node script, slow to start under parallel CI load
+  const home = pinnedHome({ path: fake, version: '2.46.0', deadlineMs: 15000 });
   const repo = makeRepo({ branch: 'feature', claudeDir: true });
   const d = bash('git checkout main', repo, { env: { HOME: home } });
   assert.equal(d.decision, 'undecided', JSON.stringify(d));

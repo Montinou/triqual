@@ -46,6 +46,20 @@ test('PYTHONPATH=. python3 x is opaque', () => {
   loading('PYTHONPATH=. python3 x');
 });
 
+test('PYTHONSAFEPATH is a code-loading variable', () => {
+  assert.ok(CODE_LOADING_VARS.names.includes('PYTHONSAFEPATH'));
+  assert.equal(isCodeLoadingAssignment('PYTHONSAFEPATH', '1'), true);
+  loading(`PYTHONSAFEPATH=1 python3 -c 'print(1)'`);
+  loading('export PYTHONSAFEPATH=1');
+});
+
+test('PYTHONINSPECT is a code-loading variable', () => {
+  assert.ok(CODE_LOADING_VARS.names.includes('PYTHONINSPECT'));
+  assert.equal(isCodeLoadingAssignment('PYTHONINSPECT', '1'), true);
+  loading(`PYTHONINSPECT=1 python3 -I -c 'print(1)'`);
+  loading('export PYTHONINSPECT=1');
+});
+
 test('export BASH_ENV=f then bash is opaque', () => {
   loading('export BASH_ENV=f; bash');
   loading('export BASH_ENV=f && bash');

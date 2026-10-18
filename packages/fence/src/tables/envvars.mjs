@@ -16,6 +16,10 @@ import { isUnknown } from '../norm/unknown.mjs';
 export const CODE_LOADING_VARS = Object.freeze({
   names: Object.freeze([
     'NODE_OPTIONS', 'NODE_PATH', 'PYTHONPATH', 'PYTHONSTARTUP', 'PYTHONHOME', 'PYTHONUSERBASE',
+    // changes what inline python imports from the cwd (the interpreter allowlist's cwd rule)
+    'PYTHONSAFEPATH',
+    // runs an interactive interpreter on stdin after the program (python -i)
+    'PYTHONINSPECT',
     'BASH_ENV', 'ENV', 'ZDOTDIR', 'PROMPT_COMMAND', 'LD_PRELOAD', 'LD_LIBRARY_PATH',
     'GIT_SSH', 'GIT_SSH_COMMAND', 'GIT_EXEC_PATH', 'GIT_ASKPASS', 'SSH_ASKPASS', 'GIT_PAGER', 'PAGER',
     'EDITOR', 'VISUAL', 'GIT_EDITOR', 'PERL5OPT', 'PERL5LIB', 'RUBYOPT', 'RUBYLIB',

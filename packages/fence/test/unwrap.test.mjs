@@ -264,11 +264,12 @@ test('glob ** inside bash/sh/dash text is UNKNOWN; zsh -c keeps zsh semantics', 
   assert.deepEqual(cmds("bash -c 'cat a/*'", d).at(-1).argv, ['cat', 'a/notes']);
 });
 
-test('wrapper scripts (env -S, flock -c, watch, find -exec sh -c) are re-parsed; sudo -s stays opaque', () => {
+test('wrapper scripts (env -S, flock -c, find -exec sh -c) are re-parsed; watch is opaque embedded code; sudo -s stays opaque', () => {
   const d = dir();
   assert.deepEqual(cmds("env -S 'touch ./marker'", d).at(-1).argv, ['touch', './marker']);
   assert.deepEqual(cmds("flock ./l -c 'echo ok'", d).at(-1).argv, ['echo', 'ok']);
-  assert.deepEqual(cmds('watch -n 1 ls', d).at(-1).argv, ['ls']);
+  // T32: watch is on the spec's embedded-code list (editors, pagers, runners): opaque
+  assert.equal(opaque('watch -n 1 ls', d).construct, 'embedded-code');
   let cs = cmds("find . -exec sh -c 'cp ./a ./b' \\;", d);
   assert.deepEqual(argvs(cs).slice(1), [['sh', '-c', 'cp ./a ./b'], ['cp', './a', './b']]);
   assert.equal(cs[0].argv[0], 'find');
@@ -442,12 +443,6 @@ test('foreign shells with inline code or a fed stdin, and command runners with a
     "tcsh <<< 'ls'",
     'fish < ./notes',
     'fish "$Q"',
-    "script -q -c 'touch ./marker' /dev/null",
-    "script --command='ls' ./log",
-    'script ./log ls',
-    "expect -c 'spawn ls'",
-    'expect ./run.exp',
-    "echo 'spawn ls' | expect",
     "tmux new-session 'touch ./marker'",
     'tmux send-keys ls Enter',
     "tmux -c 'ls'",
@@ -457,8 +452,21 @@ test('foreign shells with inline code or a fed stdin, and command runners with a
     assert.equal(opaque(t, d).construct, 'foreign-shell', t);
   }
   // a bare launch (no code, nothing fed) is not opaque
-  for (const t of ['fish', 'pwsh', 'csh -f', 'fish --version', 'tmux', 'screen -r', 'script', 'script ./log', 'su', 'su - root', 'sg staff', 'newgrp staff']) {
+  for (const t of ['fish', 'pwsh', 'csh -f', 'fish --version', 'tmux', 'screen -r', 'su', 'su - root', 'sg staff', 'newgrp staff']) {
     assert.ok(Array.isArray(run(t, d).commands), t);
+  }
+  // T32: script and expect are on the spec's embedded-code list: opaque in every form
+  for (const t of [
+    "script -q -c 'touch ./marker' /dev/null",
+    "script --command='ls' ./log",
+    'script ./log ls',
+    'script',
+    'script ./log',
+    "expect -c 'spawn ls'",
+    'expect ./run.exp',
+    "echo 'spawn ls' | expect",
+  ]) {
+    assert.equal(opaque(t, d).construct, 'embedded-code', t);
   }
 });
 

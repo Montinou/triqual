@@ -1128,9 +1128,11 @@ test('read-only programs keep a cd certain; those that can write do not', () => 
   const sub = path.join(d, 'sub');
   assert.equal(run('cat f; head -n 2 g; wc -l h; sort i; uniq j; cut -f1 k; cd sub; rm y', d).at(-1).cwd, sub);
   assert.equal(run('grep -r x .; rg needle; ls; stat f; file f; base64 f; diff a b; cmp a b; tail -f x; cd sub; rm y', d).at(-1).cwd, sub);
-  for (const pre of ['sort -o out in', 'uniq in out', 'xxd -r in out', 'base64 -o out in', 'rg --pre cmd x', 'tree -o out']) {
+  for (const pre of ['sort -o out in', 'uniq in out', 'xxd -r in out', 'base64 -o out in', 'tree -o out']) {
     assert.equal(run(`${pre}; cd sub; rm y`, d).at(-1).cwd, UNKNOWN, pre);
   }
+  // T32: rg --pre runs embedded code: the whole call is opaque
+  assert.equal(normalize('rg --pre cmd x; cd sub; rm y', { cwd: d, home: NHOME, env: {} }).opaque.construct, 'embedded-code');
   assert.ok(CERTAIN_CD_PREDECESSORS.some((e) => e.program === 'cat'));
 });
 
@@ -1428,8 +1430,12 @@ test('fix 6 (binding): argv allow rules cover everyday commands end to end', () 
 test('fix 7: rg checks every program-running flag before a cd stays certain', () => {
   const d = work();
   fs.mkdirSync(path.join(d, 'sub'));
-  for (const pre of ['rg --hostname-bin cmd x', 'rg --hostname-bin=cmd x', 'rg --pre cmd x', 'rg --pre=cmd x', 'rg --pre-glob "*.x" y']) {
+  for (const pre of ['rg --pre-glob "*.x" y']) {
     assert.equal(run(`${pre}; cd sub; rm y`, d).at(-1).cwd, UNKNOWN, pre);
+  }
+  // T32: the program-running flags make the call opaque (embedded code)
+  for (const pre of ['rg --hostname-bin cmd x', 'rg --hostname-bin=cmd x', 'rg --pre cmd x', 'rg --pre=cmd x']) {
+    assert.equal(normalize(`${pre}; cd sub; rm y`, { cwd: d, home: NHOME, env: {} }).opaque.construct, 'embedded-code', pre);
   }
   assert.equal(run('rg needle; cd sub; rm y', d).at(-1).cwd, path.join(d, 'sub'));
 });

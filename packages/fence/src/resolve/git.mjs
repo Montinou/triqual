@@ -196,7 +196,38 @@ export function gitConfigFiles(gitDir, io) {
       if (rel === '') return UNKNOWN;
       common = rel.startsWith('/') ? rel : joinTo(gitDir, rel);
     }
-    const queue = [...new Set([joinTo(common, 'config'), joinTo(gitDir, 'config'), joinTo(gitDir, 'config.worktree'), joinTo(common, 'config.worktree')])].map((f) => ({ f, depth: 0 }));
+    return closure([joinTo(common, 'config'), joinTo(gitDir, 'config'), joinTo(gitDir, 'config.worktree'), joinTo(common, 'config.worktree')], io, readCapped);
+  } catch {
+    return UNKNOWN;
+  }
+}
+
+/**
+ * The given config files (the global ones: ~/.gitconfig, $XDG_CONFIG_HOME/git/config) and every
+ * file they include, transitively, under the same rules and caps as gitConfigFiles.
+ * @param {string[]} files absolute
+ * @param {{read: (path: string) => string|null, home?: string}} io
+ * @returns {string[]|typeof UNKNOWN}
+ */
+export function gitConfigClosure(files, io) {
+  try {
+    if (!Array.isArray(files) || !files.every(isAbs) || !io || typeof io.read !== 'function') return UNKNOWN;
+    const readCapped = (p) => {
+      const t = io.read(p);
+      if (t === null || t === undefined) return null;
+      if (typeof t !== 'string' || t.length > MAX_CONFIG_BYTES) throw new Error('unreadable');
+      return t;
+    };
+    return closure(files, io, readCapped);
+  } catch {
+    return UNKNOWN;
+  }
+}
+
+// Breadth-first over `path =` includes (every [include] and [includeIf] counts).
+function closure(start, io, readCapped) {
+  try {
+    const queue = [...new Set(start)].map((f) => ({ f, depth: 0 }));
     const out = [];
     const seen = new Set();
     while (queue.length > 0) {
@@ -270,4 +301,127 @@ export function bindGitTreeDiff(opts) {
   const fn = (repo, target, subpaths) => gitTreeDiff(repo, target, subpaths, o);
   fn.gitPath = o.gitPath;
   return fn;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Config entries, for alias bodies and core.hooksPath (read in-process; git is never run).
+
+/**
+ * The `key = value` entries of a git config text, in order: {key, value}. key is
+ * `section[.subsection].name` with the section and name in lower case (a quoted subsection keeps its
+ * case; a legacy `[section.sub]` is lower-cased whole); value is the unquoted, unescaped string, or
+ * null for a bare key (boolean true). null when the text is not valid config syntax (git refuses
+ * such a file), so callers can fail closed.
+ * @param {string} text
+ * @returns {{key: string, value: string|null}[] | null}
+ */
+export function gitConfigEntries(text) {
+  try {
+    if (typeof text !== 'string') return null;
+    const out = [];
+    const n = text.length;
+    let i = 0;
+    let section = null;
+    const space = (c) => c === ' ' || c === '\t' || c === '\r';
+    const skipComment = () => {
+      while (i < n && text[i] !== '\n') i++;
+    };
+    while (i < n) {
+      const c = text[i];
+      if (space(c) || c === '\n') {
+        i++;
+        continue;
+      }
+      if (c === '#' || c === ';') {
+        skipComment();
+        continue;
+      }
+      if (c === '[') {
+        i++;
+        let name = '';
+        while (i < n && /[A-Za-z0-9.-]/.test(text[i])) name += text[i++];
+        if (name === '') return null;
+        let sub = null;
+        if (space(text[i])) {
+          while (space(text[i])) i++;
+          if (text[i] !== '"') return null;
+          i++;
+          sub = '';
+          for (;;) {
+            if (i >= n || text[i] === '\n') return null;
+            if (text[i] === '\\') {
+              if (i + 1 >= n || text[i + 1] === '\n') return null;
+              sub += text[i + 1];
+              i += 2;
+              continue;
+            }
+            if (text[i] === '"') break;
+            sub += text[i++];
+          }
+          i++;
+        }
+        if (text[i] !== ']') return null;
+        i++;
+        section = sub === null ? name.toLowerCase() : `${name.toLowerCase()}.${sub}`;
+        continue;
+      }
+      if (!/[A-Za-z]/.test(c) || section === null) return null;
+      let key = '';
+      while (i < n && /[A-Za-z0-9-]/.test(text[i])) key += text[i++];
+      while (space(text[i])) i++;
+      const full = `${section}.${key.toLowerCase()}`;
+      if (i >= n || text[i] === '\n' || text[i] === '#' || text[i] === ';') {
+        out.push({ key: full, value: null });
+        continue;
+      }
+      if (text[i] !== '=') return null;
+      i++;
+      while (space(text[i])) i++;
+      let value = '';
+      let pending = ''; // unquoted whitespace, kept only when more text follows
+      let quoted = false;
+      for (;;) {
+        if (i >= n) break;
+        const ch = text[i];
+        if (ch === '\n') {
+          if (quoted) return null;
+          break;
+        }
+        if (!quoted && (ch === '#' || ch === ';')) {
+          skipComment();
+          break;
+        }
+        if (ch === '\\') {
+          const e = text[i + 1];
+          i += 2;
+          if (e === '\n') continue; // a line continuation
+          const map = { n: '\n', t: '\t', b: '\b', '\\': '\\', '"': '"' };
+          if (e === undefined || !Object.hasOwn(map, e)) return null;
+          value += pending + map[e];
+          pending = '';
+          continue;
+        }
+        if (ch === '"') {
+          quoted = !quoted;
+          value += pending;
+          pending = '';
+          i++;
+          continue;
+        }
+        if (!quoted && space(ch)) {
+          pending += ch;
+          i++;
+          continue;
+        }
+        value += pending + ch;
+        pending = '';
+        i++;
+      }
+      if (quoted) return null;
+      out.push({ key: full, value });
+    }
+    return out;
+  } catch {
+    return null;
+  }
 }

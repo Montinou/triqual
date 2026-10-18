@@ -1,6 +1,9 @@
 // The git binary pinned at install (T34 writes `<shareDir>/git.json` as {path, version}).
 //
-//   readGitPin(shareDir, fs?) -> {path, version} | null
+//   readGitPin(shareDir, fs?) -> {path, version, deadlineMs?} | null
+//
+// deadlineMs (optional, 1..MAX_PIN_DEADLINE_MS) is the bounded check's time limit for this pin;
+// without it the check keeps its default.
 //
 // null when the file is missing, unreadable, not strict JSON, or does not carry an absolute `path`
 // and a string `version`. The pin is returned as written, old versions included: the engine binds
@@ -12,6 +15,8 @@ import nodeFs from 'node:fs';
 import nodePath from 'node:path';
 
 const MAX_PIN_BYTES = 64 * 1024;
+/** The longest time limit a pin may give the bounded git check. */
+export const MAX_PIN_DEADLINE_MS = 30000;
 
 const isAbs = (s) => typeof s === 'string' && s.startsWith('/') && !s.includes('\0');
 
@@ -24,7 +29,9 @@ export function readGitPin(shareDir, fsImpl = nodeFs) {
     const v = JSON.parse(fsImpl.readFileSync(file, 'utf8'));
     if (v === null || typeof v !== 'object' || Array.isArray(v)) return null;
     if (!isAbs(v.path) || typeof v.version !== 'string' || v.version === '') return null;
-    return { path: v.path, version: v.version };
+    const pin = { path: v.path, version: v.version };
+    if (Number.isInteger(v.deadlineMs) && v.deadlineMs > 0 && v.deadlineMs <= MAX_PIN_DEADLINE_MS) pin.deadlineMs = v.deadlineMs;
+    return pin;
   } catch {
     return null;
   }

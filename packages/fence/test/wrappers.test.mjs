@@ -190,7 +190,8 @@ test("env -S 'rm x' yields a script", () => {
   // the joined words is not reconstructed)
   assert.deepEqual(cmds("env -S 'touch ./marker'").map((c) => c.argv), [['env', '-S', 'touch ./marker'], ['touch', './marker']]);
   assert.deepEqual(cmds("flock /tmp/l -c 'echo ok'").at(-1).argv, ['echo', 'ok']);
-  assert.deepEqual(cmds('watch ls').at(-1).argv, ['ls']);
+  // T32: watch is on the spec's embedded-code list: the normalizer is opaque on it
+  assert.equal(opaque('watch ls').construct, 'embedded-code');
   assert.equal(opaque('sudo -s ls').construct, 'nested-script');
   // watch -x runs its argv directly
   assert.deepEqual(inner('watch', '-x', 'rm', 'x'), ['rm', 'x']);

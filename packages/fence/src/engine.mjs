@@ -200,7 +200,7 @@ function decidePre(args, { stdin, now, isRootOwned, fsImpl, env, trace, written 
     normalized = adapterOpaque(parsed.opaque.reason);
   } else if (typeof parsed.command === 'string') {
     const pin = readGitPin(nodePath.join(home, '.local', 'share', 'fence'), fsImpl);
-    const gitTreeDiff = bindGitTreeDiff(pin ? { gitPath: pin.path, gitVersion: pin.version } : {});
+    const gitTreeDiff = bindGitTreeDiff(pin ? { gitPath: pin.path, gitVersion: pin.version, ...(pin.deadlineMs ? { deadlineMs: pin.deadlineMs } : {}) } : {});
     const { set: writtenIndex, incomplete: writtenIndexIncomplete } = readWritten(stateDir, { now, fs: fsImpl, maxReadBytes: written.maxReadBytes });
     if (writtenIndexIncomplete) recordHealth(stateDir, { writtenReadFailure: { at: new Date(now).toISOString() } }, { fs: fsImpl });
     normalized = normalize(parsed.command, { cwd: parsed.cwd, home, env, gitTreeDiff, writtenIndex, writtenIndexIncomplete, fs: fsImpl });

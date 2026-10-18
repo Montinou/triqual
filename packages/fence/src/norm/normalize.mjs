@@ -98,6 +98,12 @@
 //   holds the repo's config or an include; `git-tree-update` per the spec). ctx.writtenIndex,
 //   ctx.readFile, ctx.gitTreeDiff and ctx.patchTargets are the injected capabilities; the
 //   normalizer itself still never spawns.
+// - Embedded code and interpreters (T32, tables/embedded.mjs): programs that run code their words
+//   carry (rg --pre, awk system/pipes, sed e, tar --to-command, ssh -o ProxyCommand, git -c code
+//   keys, editors and pagers) are opaque `embedded-code`; python -c / node -e / a heredoc fed to
+//   them go through checkPython/checkNode (`interp-code`, `interp-flag`); git aliases are re-parsed,
+//   hook-running git commands are runs-repo-code or opaque (gitCommands), and `git config` of a
+//   code key writes the config file (gitConfigStep).
 // - Linear time: the parser is linear; the walker visits each node once except for loop unrolling,
 //   which is bounded by UNROLL_BUDGET per loop and MAX_STEPS overall (past it: opaque `size`), and
 //   glob expansion shares one time budget per call. Never throws: internal errors are opaque
@@ -138,10 +144,13 @@ import { checkPathWrite } from '../eval/builtin.mjs';
 import { stripOne, findExecs, valueFlags, MAX_WRAP_DEPTH } from '../tables/wrappers.mjs';
 import { isCodeLoadingAssignment } from '../tables/envvars.mjs';
 import { bulkOf, PROTECTED_SUBGLOBS, MAX_WALK_ENTRIES, MAX_WALK_DEPTH, TREE_PATHSPECS, UNNAMEABLE } from '../tables/bulk.mjs';
-import { gitTreeDiff as defaultGitTreeDiff, gitConfigFiles, inProtectedSubpath, indexMentionsProtected, MAX_CONFIG_BYTES, NOT_A_REVISION } from '../resolve/git.mjs';
+import { gitTreeDiff as defaultGitTreeDiff, gitConfigFiles, gitConfigClosure, gitConfigEntries, inProtectedSubpath, indexMentionsProtected, MAX_CONFIG_BYTES, NOT_A_REVISION } from '../resolve/git.mjs';
 import { patchTargets as defaultPatchTargets, patchTargetsFromText } from '../resolve/patch.mjs';
 import { readScript, shebangShell, readPackageScripts, scriptRoute, SCRIPT_CAP, LIFECYCLE_SCRIPTS } from '../resolve/script.mjs';
 import { isAgentWritten } from '../log/written.mjs';
+import { embeddedCode, embeddedCodeVerdict, inlineInterpreter, gitConfigWrite } from '../tables/embedded.mjs';
+import { checkPython } from '../tables/interp-python.mjs';
+import { checkNode } from '../tables/interp-node.mjs';
 
 /** Most nodes walked in one call (loop unrolling included); past it the call is opaque. */
 export const MAX_STEPS = 200000;
@@ -180,12 +189,15 @@ const MAX_UNWRAP = MAX_WRAP_DEPTH;
 
 // Programs that run code read from stdin (carry rule 2). Shells and eval are left to unwrap.mjs,
 // which re-parses a literal feed and is opaque on any other.
-const STDIN_INTERPRETERS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'eval', 'source', '.', 'node', 'nodejs', 'perl', 'ruby']);
+const STDIN_INTERPRETERS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'eval', 'source', '.', 'node', 'nodejs', 'perl', 'ruby', 'php', 'lua', 'luajit']);
+// versioned spellings (perl5.34, ruby3.2, php8.3, lua5.4) run code from stdin too
+const VERSIONED_INTERPRETER = /^(?:perl|ruby|php|lua)[0-9.]+$/;
 const NESTED_HANDLED = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'eval']);
-const PYTHON = /^python[0-9.]*$/;
+const PYTHON = /^pythonw?[0-9.]*$/;
 
 // git global options that take a separate value.
-const GIT_VALUE_OPTS = new Set(['-c', '--namespace', '--config-env', '--super-prefix', '--exec-path']);
+// (a bare --exec-path takes no value: it prints the directory; --exec-path=<dir> is opaque, embeddedStep)
+const GIT_VALUE_OPTS = new Set(['-c', '--namespace', '--config-env', '--super-prefix']);
 // git subcommands that can change which branch HEAD names (besides checkout/switch).
 const GIT_BRANCH_CHANGERS = new Set(['branch', 'symbolic-ref', 'bisect', 'rebase', 'update-ref']);
 // git builtins known to leave HEAD's branch name alone. git runs a builtin before any alias of the
@@ -748,6 +760,19 @@ class PathTrie {
       stack.push(next);
     }
     return false;
+  }
+
+  // hit(path), or a path added under it (a realpath: no `..`)
+  touches(path) {
+    if (this.hit(path)) return true;
+    if (typeof path !== 'string') return false;
+    let node = this.root;
+    for (const seg of path.split('/')) {
+      if (seg === '' || seg === '.') continue;
+      node = node.get(fold(seg));
+      if (!node) return false;
+    }
+    return true;
   }
 }
 
@@ -1350,9 +1375,113 @@ function stdinInterpreterStep(eff, info) {
   const base = prog.toLowerCase(); // case-insensitive volumes run `BASH` as bash
   // a shell (or eval) spelled exactly as unwrap.mjs reads it: its feed is judged there
   if (NESTED_HANDLED.has(base) && (base !== 'eval' || eff.argv[0] === 'eval')) return;
-  if (STDIN_INTERPRETERS.has(base) || PYTHON.test(base)) {
+  if (STDIN_INTERPRETERS.has(base) || PYTHON.test(base) || VERSIONED_INTERPRETER.test(base)) {
+    // python/node with -c/-e code read stdin as data; a literal feed with no other program is
+    // the code itself: interpreterStep checks both
+    if (PYTHON.test(base) || base === 'node' || base === 'nodejs') {
+      const inv = inlineInterpreter(eff.argv);
+      if (inv !== null && !inv.opaque && (inv.mode === 'c' || heredocCode(info))) return;
+    }
     throw new Opaque('unsupported', 'stdin-interpreter', info.off);
   }
+}
+
+// Interpreter inline code (spec, "Interpreter inline code"): python -c, node -e/-p and a literal
+// feed of a program to python/node go through checkPython/checkNode (an UNKNOWN code word, a flag
+// that loads code, or code outside the allowlist is opaque); perl/ruby/php/lua inline code is
+// opaque. checkPython gets the effective cwd's entry names (plus files written earlier in the
+// call) and the written-files index (plus this call's writes; null when incomplete); the paths its
+// open() calls read are resolved from the effective cwd and added to the command's reads.
+function interpreterStep(eff, info, sh, g) {
+  const inv = inlineInterpreter(eff.argv);
+  if (inv === null) return;
+  const off = info.off || 0;
+  if (inv.opaque) throw new Opaque(inv.opaque.reason, inv.opaque.construct, off);
+  // perl, ruby, php, lua, tcl, R, julia, deno: a program read from a fed stdin is never checked
+  if (inv.lang !== 'python' && inv.lang !== 'node') {
+    if (info.stdin) throw new Opaque('unsupported', 'stdin-interpreter', off);
+    return;
+  }
+  let codes = inv.codes;
+  if (inv.mode === 'stdin') {
+    // no program fed (an interactive start), or a non-literal feed stdinInterpreterStep refused
+    if (!info.stdin || !heredocCode(info)) return;
+    codes = [info.feed];
+  }
+  if (inv.gated !== null) throw new Opaque('unsupported', 'interp-flag', off);
+  if (codes.some((c) => typeof c !== 'string')) throw new Opaque('unknown', 'interp-code', off);
+  for (const code of codes) {
+    const r = inv.lang === 'python' ? checkPython(code, { isolated: inv.isolated, cwdFiles: cwdEntries(eff.cwd, g), writtenIndex: pythonWrittenIndex(g) }) : checkNode(code);
+    if (!r || r.safe !== true) throw new Opaque('unsupported', 'interp-code', off);
+    for (const p of Array.isArray(r.reads) ? r.reads : []) {
+      const real = typeof p === 'string' ? pathAt(sh, g, p) : UNKNOWN;
+      pushAll(eff.reads, [isAbs(real) ? real : UNKNOWN]);
+    }
+  }
+}
+
+// A literal heredoc or herestring is the program fed to an interpreter (a pipe stays opaque
+// stdin-interpreter: the spec routes heredocs, not pipes, to the allowlist).
+function heredocCode(info) {
+  return info.heredocFeed === true && typeof info.feed === 'string';
+}
+
+/** Most entries of the effective cwd read for the python cwd rule; more is unknown (opaque without -I). */
+export const MAX_CWD_ENTRIES = 4096;
+
+// The entry names of the cwd as python would see them when the command runs: the listing now plus
+// the first segment of every path an earlier command of this call wrote under it. null when
+// unknown (an UNKNOWN cwd or write, a write at or above the cwd, a read error, too many entries).
+function cwdEntries(cwd, g) {
+  if (!isAbs(cwd)) return null;
+  let names;
+  try {
+    const list = g.fs.readdirSync(cwd);
+    if (!Array.isArray(list) || list.length > MAX_CWD_ENTRIES) return null;
+    names = list.map((e) => (typeof e === 'string' ? e : e && typeof e.name === 'string' ? e.name : null));
+    if (names.some((x) => x === null)) return null;
+  } catch {
+    return null;
+  }
+  for (const c of g.commands) {
+    for (const p of writeEntries(c).paths) {
+      if (!isAbs(p) || covers(p, cwd)) return null;
+      if (!covers(cwd, p)) continue;
+      const rest = p.slice(cwd === '/' ? 1 : cwd.length + 1);
+      names.push(rest.split('/')[0]);
+    }
+  }
+  return names;
+}
+
+// The written-files index for checkPython: the session's index plus every path this call wrote
+// before the command; null (unknown: opaque) when the index is incomplete or a write is UNKNOWN.
+function pythonWrittenIndex(g) {
+  if (g.writtenIncomplete) return null;
+  const out = new Set(g.written);
+  for (const c of g.commands) {
+    for (const p of writeEntries(c).paths) {
+      if (!isAbs(p)) return null;
+      out.add(p);
+    }
+  }
+  return out;
+}
+
+// Programs that run embedded code (tables/embedded.mjs): opaque unless their flags and script are
+// proven clean, also when a wrapper layer is one of them (watch -x). sed's r/R and w/W files are
+// reads and writes; awk -f / sed -f program files are a file route (scriptCommands).
+function embeddedStep(eff, info, sh, g) {
+  const off = info.off || 0;
+  for (const layer of info.unwrapped || []) {
+    if (Array.isArray(layer) && typeof layer[0] === 'string' && embeddedCodeVerdict(layer) !== 'ok') throw new Opaque('unsupported', 'embedded-code', off);
+  }
+  if (eff.argv.length === 0 || typeof eff.argv[0] !== 'string') return;
+  const r = embeddedCode(eff.argv);
+  if (r.verdict !== 'ok') throw new Opaque('unsupported', 'embedded-code', off);
+  for (const w of r.reads) pushAll(eff.reads, [pathAt(sh, g, w)]);
+  for (const w of r.writes) pushAll(eff.writes, [pathAt(sh, g, w)]);
+  info.embeddedFiles = r.files;
 }
 
 // Proxy variables that send a connection to another host (a prefix assignment of the command).
@@ -1705,6 +1834,22 @@ function judgePatch(eff, b, info, sh, g, res) {
   }
 }
 
+// A git config reader: the text of a config file (null when it does not exist), size-checked first
+// (a file over the cap is never read: gitConfigFiles answers UNKNOWN); other errors throw.
+function configReader(g) {
+  return (p) => {
+    try {
+      const st = g.fs.statSync(p);
+      if (!st.isFile() || st.size > MAX_CONFIG_BYTES) throw new Error('config-size');
+      const t = g.readFile ? g.readFile(p) : g.fs.readFileSync(p, 'utf8');
+      return typeof t === 'string' ? t : t === null || t === undefined ? null : String(t);
+    } catch (e) {
+      if (MISSING_CODES.has(e && e.code)) return null;
+      throw e;
+    }
+  };
+}
+
 function writtenSet(index) {
   const out = new Set();
   if (index === null || typeof index !== 'object' || typeof index[Symbol.iterator] !== 'function') return out;
@@ -1721,19 +1866,7 @@ function configWritten(gitDir, eff, g) {
   if (g.writtenIncomplete) return true;
   if (g.written.size === 0 && earlier.size === 0) return false;
   if (!isAbs(gitDir)) return true;
-  const read = (p) => {
-    try {
-      // the size first: a file over the cap is never read (gitConfigFiles answers UNKNOWN)
-      const st = g.fs.statSync(p);
-      if (!st.isFile() || st.size > MAX_CONFIG_BYTES) throw new Error('config-size');
-      const t = g.readFile ? g.readFile(p) : g.fs.readFileSync(p, 'utf8');
-      return typeof t === 'string' ? t : t === null || t === undefined ? null : String(t);
-    } catch (e) {
-      if (MISSING_CODES.has(e && e.code)) return null;
-      throw e;
-    }
-  };
-  const files = gitConfigFiles(gitDir, { read, home: g.home });
+  const files = gitConfigFiles(gitDir, { read: configReader(g), home: g.home });
   if (!Array.isArray(files)) return true;
   const hit = (p) => g.written.has(p) || earlier.has(p);
   return files.some((f) => hit(f) || hit(resolvePath(f, '/', g.home, g.fs)));
@@ -1827,7 +1960,7 @@ function bulkStep(eff, info, sh, g) {
  * throw an Opaque. info = {node, off, stdin, unwrapped}: unwrapped lists the argv of every wrapper
  * layer PRE_STEPS removed, outermost first.
  */
-export const FINISH_STEPS = [stdinInterpreterStep, commandEffectsStep, bulkStep];
+export const FINISH_STEPS = [stdinInterpreterStep, interpreterStep, embeddedStep, commandEffectsStep, bulkStep, gitConfigStep];
 
 // ---------------------------------------------------------------------------------------------
 // Code-loading variables (tables/envvars.mjs holds the list). loadingVar is the one place that
@@ -2404,6 +2537,7 @@ function finish(eff, info, sh, g) {
   if (!predecessorOk(eff.argv)) g.allSafe = false;
   nestedCommands(eff, info, sh, g);
   scriptCommands(eff, info, sh, g, at);
+  gitCommands(eff, info, sh, g, at);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2752,6 +2886,7 @@ function runFileText(text, child, cwd, agent, S) {
   if (Array.isArray(r)) return true;
   g.commands.length = start;
   if (g.writeScan !== null && g.writeScan.upto > start) g.writeScan = null; // rewind past the dropped commands
+  if (g.hookWriters !== undefined && g.hookWriters.upto > start) g.hookWriters = undefined;
   g.pendingRuns = g.pendingRuns.filter((run) => run.at < start);
   g.pipes = g.pipes.filter((r) => r[0] < start);
   g.jobs = g.jobs.filter((j) => j.s < start);
@@ -2967,7 +3102,9 @@ function codeRoute(route, S) {
 // The files a finished command runs (see above). at: the command's index in g.commands.
 function scriptCommands(eff, info, sh, g, at) {
   if (eff.argv.length === 0 || typeof eff.argv[0] !== 'string') return;
-  const route = scriptRoute(eff.argv, sh.kind);
+  let route = scriptRoute(eff.argv, sh.kind);
+  // awk -f / sed -f: a program file of repository code (embeddedStep found it)
+  if (route === null && Array.isArray(info.embeddedFiles) && info.embeddedFiles.length > 0) route = { type: 'code', files: info.embeddedFiles, modules: [], isolated: true };
   if (route === null) return;
   const S = { eff, info, sh, g, at, off: info.off || 0, runs: [] };
   // a route fence cannot follow: stdin as the file, an inline makefile, an unknown option
@@ -2978,6 +3115,322 @@ function scriptCommands(eff, info, sh, g, at) {
   else if (route.type === 'code') codeRoute(route, S);
   // the commands the file itself ran are its own, not concurrent writers of it
   for (const run of S.runs) run.end = g.commands.length;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Git code paths (spec, "Files a command runs", the Git bullet). Config is read in-process
+// (resolve/git.mjs); git is never run.
+//
+// - `git config` (or `config set|unset|edit|rename-section|remove-section`) that sets one of the
+//   code-running keys (tables/embedded.mjs isGitCodeKey: alias.*, core.hooksPath, core.sshCommand,
+//   core.pager, core.editor, core.fsmonitor, include.*, includeIf.*, filter.*, diff.*.textconv,
+//   credential.helper, …) writes the config file it targets: the repository's config (the common
+//   dir's for a linked worktree; config.worktree for --worktree), the global files for --global,
+//   the named file for --file. The write joins `writes`, so later commands of the call see the
+//   config as written (configWritten, the alias and hook checks below). `git -c` with such a key
+//   is opaque (embeddedStep).
+// - `git <x>` where <x> is not a builtin fence knows: every definition of alias.<x> in the global
+//   config files and the repository's (includes followed, conditions ignored) is re-parsed — a `!`
+//   body as `sh -c` code run from the work tree's top level with the arguments appended, any other
+//   body as `git <global options> <body> <arguments>` — one more nesting level each. An UNKNOWN
+//   repository, unreadable or invalid config, or a config file written earlier in the call (the
+//   alias on disk may not be the one that runs) is opaque `git-alias`.
+// - commit, merge, rebase, push, pull, checkout, switch, am, cherry-pick, revert run hooks from
+//   core.hooksPath (every value in the config files) or <common dir>/hooks: an executable entry
+//   other than `*.sample` makes the command runs-repo-code; a hook file in the written-files index,
+//   a hooks directory written earlier in the call, or an agent-written repository config / include
+//   (configWritten; an incomplete index counts) or global/system config is opaque. A repository or
+//   hooks directory fence cannot read is runs-repo-code, or opaque `git-hooks` when the agent may
+//   have written anything (as unknownFile).
+// - Every other ref-updating sub-command (branch, tag, fetch, update-ref, stash, reset) runs the
+//   reference-transaction hook: an agent-written file in the hooks directory, or one written earlier
+//   in the call, is opaque `git-hooks` (no runs-repo-code: the spec's list above is the one that
+//   carries it).
+// - After a `git config` of a code key earlier in the call, any later hook-running, ref-updating or
+//   alias command is opaque `git-config-written`.
+// - Config files read: the system file (ctx.gitSystemConfig, default /etc/gitconfig;
+//   GIT_CONFIG_SYSTEM / GIT_CONFIG_NOSYSTEM from the host environment), the global files and the
+//   repository's. Known plumbing sub-commands skip the alias lookup.
+
+const HOOK_SUBS = new Set(['commit', 'merge', 'rebase', 'push', 'pull', 'checkout', 'switch', 'am', 'cherry-pick', 'revert']);
+// ref-updating sub-commands (reference-transaction hook); HOOK_SUBS are a subset
+const REF_SUBS = new Set(['branch', 'tag', 'fetch', 'update-ref', 'stash', 'reset', ...HOOK_SUBS]);
+// plumbing names: git builtins, never an alias
+const GIT_PLUMBING = new Set(['write-tree', 'hash-object', 'cat-file', 'ls-files', 'rev-parse', 'rev-list', 'update-index', 'read-tree', 'commit-tree', 'update-ref', 'symbolic-ref', 'for-each-ref', 'diff-tree', 'ls-tree', 'mktree', 'show-ref', 'check-ref-format', 'merge-base', 'name-rev']);
+/** Most entries of a hooks directory read; more is unknown. */
+export const MAX_HOOK_ENTRIES = 1024;
+
+// The repoOf() result a finished git command works on.
+function gitRepoOf(eff, sh, g) {
+  return g.gitRepos.has(eff) ? g.gitRepos.get(eff).repo : cwdRepo(sh, g);
+}
+
+// The common dir of a gitdir (a linked worktree's `commondir`), a realpath, or UNKNOWN.
+function commonDirOf(gitDir, g) {
+  let t;
+  try {
+    t = configReader(g)(joinAbs(gitDir, 'commondir'));
+  } catch {
+    return UNKNOWN;
+  }
+  if (t === null) return gitDir;
+  const rel = t.trim();
+  if (rel === '') return UNKNOWN;
+  return realOf(rel.startsWith('/') ? rel : joinAbs(gitDir, rel), g);
+}
+
+// The global config files git reads: GIT_CONFIG_GLOBAL from the host environment, else
+// $XDG_CONFIG_HOME/git/config (or ~/.config/git/config) and ~/.gitconfig. [] without a home.
+function globalConfigStarts(g) {
+  const env = g.hostEnv;
+  if (Object.hasOwn(env, 'GIT_CONFIG_GLOBAL') && typeof env.GIT_CONFIG_GLOBAL === 'string') return isAbs(env.GIT_CONFIG_GLOBAL) ? [env.GIT_CONFIG_GLOBAL] : [];
+  if (!isAbs(g.home)) return [];
+  const xdg = Object.hasOwn(env, 'XDG_CONFIG_HOME') && isAbs(env.XDG_CONFIG_HOME) ? env.XDG_CONFIG_HOME : joinAbs(g.home, '.config');
+  return [joinAbs(xdg, 'git/config'), joinAbs(g.home, '.gitconfig')];
+}
+
+// The system config file: GIT_CONFIG_NOSYSTEM drops it, GIT_CONFIG_SYSTEM moves it (host
+// environment), else ctx.gitSystemConfig (tests) or /etc/gitconfig.
+function systemConfigStarts(g) {
+  const env = g.hostEnv;
+  if (Object.hasOwn(env, 'GIT_CONFIG_NOSYSTEM') && typeof env.GIT_CONFIG_NOSYSTEM === 'string' && env.GIT_CONFIG_NOSYSTEM !== '' && env.GIT_CONFIG_NOSYSTEM !== '0' && env.GIT_CONFIG_NOSYSTEM.toLowerCase() !== 'false') return [];
+  if (Object.hasOwn(env, 'GIT_CONFIG_SYSTEM') && typeof env.GIT_CONFIG_SYSTEM === 'string') return isAbs(env.GIT_CONFIG_SYSTEM) ? [env.GIT_CONFIG_SYSTEM] : [];
+  return isAbs(g.gitSystemConfig) ? [g.gitSystemConfig] : [];
+}
+
+// {global, repo}: the config file lists (includes followed), or UNKNOWN. `global` holds the
+// system file too.
+function configFileSets(raw, g) {
+  const io = { read: configReader(g), home: g.home };
+  const starts = [...systemConfigStarts(g), ...globalConfigStarts(g)];
+  const global = starts.length === 0 ? [] : gitConfigClosure(starts, io);
+  if (!Array.isArray(global)) return UNKNOWN;
+  if (raw === null) return { global, repo: [] };
+  const repo = gitConfigFiles(raw.gitDir, io);
+  if (!Array.isArray(repo)) return UNKNOWN;
+  return { global, repo };
+}
+
+// The entries of the config files in order, or UNKNOWN (unreadable or invalid).
+function configEntries(files, g) {
+  const read = configReader(g);
+  const out = [];
+  for (const f of files) {
+    let t;
+    try {
+      t = read(f);
+    } catch {
+      return UNKNOWN;
+    }
+    if (t === null) continue;
+    const e = gitConfigEntries(t);
+    if (e === null) return UNKNOWN;
+    for (const x of e) out.push(x);
+  }
+  return out;
+}
+
+// Was any of the files written by a command before index `at` in this call (or, with `index`, by
+// the agent earlier: the written-files index, an incomplete one counting)?
+function filesWritten(files, g, at, index) {
+  if (index && g.writtenIncomplete) return true;
+  for (const f of files) {
+    const real = realOf(f, g);
+    for (const p of [f, real]) {
+      if (!isAbs(p)) return true;
+      if (writtenInCall(p, g, at)) return true;
+      if (index && isAgentWritten(p, g.written, caseInsensitiveAt(p, g))) return true;
+    }
+  }
+  return false;
+}
+
+// Did a command before index `at` write the directory, something under it, or a path above it?
+function dirWrittenInCall(dir, g, at) {
+  const w = writeScan(g, at);
+  if (w.unknown || w.trie.touches(dir)) return true;
+  const fd = fold(dir);
+  for (const e of w.exact) if (e === fd || e.startsWith(`${fd}/`)) return true;
+  return false;
+}
+
+// Could a command before index `at` have written a hook file somewhere (for a repository fence
+// cannot resolve)? Any write, UNKNOWN ones included, except those of git itself other than `git config`
+// (what git commands write is repository content and objects: running it is the runs-repo-code
+// case) and of mkdir (directories only). A cursor over g.commands: linear per call.
+function hookWriterInCall(g, at) {
+  let w = g.hookWriters;
+  if (w === undefined) {
+    w = { upto: 0, any: false };
+    g.hookWriters = w;
+  }
+  for (; w.upto < at && w.upto < g.commands.length; w.upto++) {
+    const c = g.commands[w.upto];
+    const prog = programName(c.argv[0]);
+    if (prog === 'mkdir') continue;
+    if (prog === 'git') {
+      const o = gitOptions(c.argv);
+      if (o !== null && o.sub !== 'config') continue; // a config write may set core.hooksPath
+    }
+    if (writeEntries(c).paths.length > 0) w.any = true;
+  }
+  return w.any;
+}
+
+// FINISH step: a `git config` that sets a code-running key writes its config file.
+function gitConfigStep(eff, info, sh, g) {
+  if (commandKind(eff.argv) !== 'git') return;
+  const o = gitOptions(eff.argv);
+  if (o === null || o.sub !== 'config') return;
+  const w = gitConfigWrite(eff.argv.slice(o.subIndex + 1));
+  if (w === null) return;
+  g.codeConfigWritten = true;
+  const paths = [];
+  if (w.scope === 'local' || w.scope === 'worktree') {
+    const raw = gitRepoOf(eff, sh, g);
+    if (raw === null) return; // not a repository: git refuses
+    if (isUnknown(raw) || !raw || !isAbs(raw.gitDir)) paths.push(UNKNOWN);
+    else if (w.scope === 'worktree') paths.push(realOf(joinAbs(raw.gitDir, 'config.worktree'), g));
+    else {
+      const common = commonDirOf(raw.gitDir, g);
+      paths.push(isAbs(common) ? realOf(joinAbs(common, 'config'), g) : UNKNOWN);
+    }
+  } else if (w.scope === 'global') {
+    const starts = globalConfigStarts(g);
+    if (starts.length === 0) paths.push(UNKNOWN);
+    for (const p of starts) paths.push(realOf(p, g));
+  } else if (w.scope === 'system') {
+    paths.push('/etc/gitconfig');
+  } else {
+    paths.push(w.scope && typeof w.scope.file === 'string' ? pathAt(sh, g, w.scope.file) : UNKNOWN);
+  }
+  pushAll(
+    eff.writes,
+    paths.map((p) => (isAbs(p) ? p : UNKNOWN)),
+  );
+}
+
+// The git aliases and hooks a finished git command runs (see above). at: its index in g.commands.
+function gitCommands(eff, info, sh, g, at) {
+  if (eff.argv.length === 0 || commandKind(eff.argv) !== 'git') return;
+  const o = gitOptions(eff.argv);
+  if (o === null || typeof o.sub !== 'string') return;
+  const sub = o.sub;
+  const off = info.off || 0;
+  if (REF_SUBS.has(sub)) {
+    if (g.codeConfigWritten) throw new Opaque('unsupported', 'git-config-written', off);
+    return gitHooks(eff, info, sh, g, at, HOOK_SUBS.has(sub));
+  }
+  if (GIT_KNOWN_SUBS.has(sub) || GIT_BRANCH_CHANGERS.has(sub) || GIT_PLUMBING.has(sub)) return undefined;
+  if (g.codeConfigWritten) throw new Opaque('unsupported', 'git-config-written', off);
+  return gitAlias(eff, o, info, sh, g, at);
+}
+
+function gitAlias(eff, o, info, sh, g, at) {
+  const off = info.off || 0;
+  const raw = gitRepoOf(eff, sh, g);
+  if (raw !== null && (isUnknown(raw) || !raw || !isAbs(raw.gitDir))) throw new Opaque('unknown', 'git-alias', off);
+  const sets = configFileSets(raw, g);
+  if (isUnknown(sets)) throw new Opaque('unknown', 'git-alias', off);
+  const files = [...sets.global, ...sets.repo];
+  if (filesWritten(files, g, at, false)) throw new Opaque('unsupported', 'git-alias', off);
+  const entries = configEntries(files, g);
+  if (isUnknown(entries)) throw new Opaque('unknown', 'git-alias', off);
+  const key = `alias.${o.sub.toLowerCase()}`;
+  const bodies = [];
+  for (const e of entries) if (e.key.toLowerCase() === key && typeof e.value === 'string' && !bodies.includes(e.value)) bodies.push(e.value);
+  if (bodies.length === 0) return;
+  // an UNKNOWN word is a positional parameter in the child: UNKNOWN there too
+  const quote = (a) => (typeof a === 'string' ? shellQuote(a) : '"$1"');
+  const args = eff.argv.slice(o.subIndex + 1).map(quote).join(' ');
+  const tail = args === '' ? '' : ` ${args}`;
+  for (const body of bodies) {
+    let text;
+    let cwd;
+    if (body.startsWith('!')) {
+      text = `${body.slice(1)}${tail}`;
+      // git runs a shell alias from the top of the work tree
+      cwd = raw === null ? eff.cwd : isAbs(raw.root) ? raw.root : UNKNOWN;
+    } else {
+      text = `${['git', ...eff.argv.slice(1, o.subIndex).map(quote)].join(' ')} ${body}${tail}`;
+      cwd = eff.cwd;
+    }
+    const child = { kind: 'bash', subshell: true, stdin: info.stdin === true, reset: resetsEnv(info.unwrapped), cwd, env: eff.env, sh, g, off };
+    const r = reparse(text, g.nest + 1, child);
+    if (!Array.isArray(r)) throw new Opaque(r.opaque.reason, r.opaque.construct, off);
+  }
+}
+
+// runs: a sub-command of the spec's hook list (runs-repo-code, config and unknown-repository rules);
+// otherwise only an agent-written (or in-call written) hook file is judged.
+function gitHooks(eff, info, sh, g, at, runs = true) {
+  const off = info.off || 0;
+  const raw = gitRepoOf(eff, sh, g);
+  if (raw === null) return; // not a repository: git fails
+  const unknownHooks = () => {
+    if (!runs) return;
+    if (g.writtenIncomplete || g.written.size > 0 || hookWriterInCall(g, at)) throw new Opaque('unknown', 'git-hooks', off);
+    addClass(eff, 'runs-repo-code');
+  };
+  if (isUnknown(raw) || !raw || !isAbs(raw.gitDir)) return unknownHooks();
+  if (runs && configWritten(raw.gitDir, eff, g)) throw new Opaque('unsupported', 'git-config-written', off);
+  const sets = configFileSets(raw, g);
+  if (isUnknown(sets)) return unknownHooks();
+  if (runs && filesWritten(sets.global, g, at, true)) throw new Opaque('unsupported', 'git-config-written', off);
+  const entries = configEntries([...sets.global, ...sets.repo], g);
+  if (isUnknown(entries)) return unknownHooks();
+  const dirs = [];
+  for (const e of entries) {
+    if (e.key !== 'core.hookspath') continue;
+    const v = e.value;
+    if (typeof v !== 'string' || v === '' || (v.startsWith('~') && !v.startsWith('~/'))) return unknownHooks();
+    let p;
+    if (v.startsWith('~/')) p = isAbs(g.home) ? joinAbs(g.home, v.slice(2)) : UNKNOWN;
+    else if (v.startsWith('/')) p = v;
+    else p = isAbs(raw.root) ? joinAbs(raw.root, v) : UNKNOWN;
+    if (!isAbs(p)) return unknownHooks();
+    dirs.push(p);
+  }
+  if (dirs.length === 0) {
+    const common = commonDirOf(raw.gitDir, g);
+    if (!isAbs(common)) return unknownHooks();
+    dirs.push(joinAbs(common, 'hooks'));
+  }
+  let executable = false;
+  for (const d of dirs) {
+    const dir = realOf(d, g);
+    if (!isAbs(dir)) return unknownHooks();
+    if (dirWrittenInCall(dir, g, at)) throw new Opaque('unsupported', 'git-hooks', off);
+    let names;
+    try {
+      names = g.fs.readdirSync(dir);
+    } catch (e) {
+      if (MISSING_CODES.has(e && e.code)) continue;
+      return unknownHooks();
+    }
+    if (!Array.isArray(names) || names.length > MAX_HOOK_ENTRIES) return unknownHooks();
+    for (const n0 of names) {
+      const name = typeof n0 === 'string' ? n0 : n0 && n0.name;
+      if (typeof name !== 'string') return unknownHooks();
+      if (name.endsWith('.sample')) continue;
+      const p = joinAbs(dir, name);
+      const real = realOf(p, g);
+      for (const x of [p, real]) {
+        if (!isAbs(x) || isAgentWritten(x, g.written, caseInsensitiveAt(x, g))) throw new Opaque('unsupported', 'git-hooks', off);
+      }
+      try {
+        const st = g.fs.statSync(real);
+        if (st.isFile() && (st.mode & 0o111) !== 0) executable = true;
+      } catch {
+        executable = true; // cannot tell: it may run
+      }
+    }
+  }
+  if (runs && executable) addClass(eff, 'runs-repo-code');
+  // a ref update outside the spec's hook list runs reference-transaction: with an incomplete
+  // written index an executable hook may be the agent's
+  if (!runs && executable && g.writtenIncomplete) throw new Opaque('unknown', 'git-hooks', off);
+  return undefined;
 }
 
 // The child's starting state, inside the scope reparse opened (undone afterwards).
@@ -3188,7 +3641,10 @@ function walkSimple(node, sh, g) {
     const opsRaw = opsOf(cmdArgv);
     eff.ops = opsRaw.map((o) => ({ path: resolveIn(sh, g, o.path), op: o.op }));
     const feed = stdin ? feedOf(node, sh, targets, heredocs) : undefined;
-    finish(eff, { node, off: node.off, stdin, unwrapped: inner.layers, feed, scripts: inner.scripts }, sh, g);
+    // the feed is the node's own last stdin redirection, a heredoc or herestring
+    let heredocFeed = false;
+    for (const r of node.redirs) if ((r.fd === undefined || r.fd === 0) && STDIN_REDIRS.has(r.op)) heredocFeed = r.op === '<<' || r.op === '<<-' || r.op === '<<<';
+    finish(eff, { node, off: node.off, stdin, unwrapped: inner.layers, feed, heredocFeed, scripts: inner.scripts }, sh, g);
     afterCommand(eff, opsRaw, sh, g);
     runExecs(inner, node, sh, g, stdin, inner.layers.length + 1);
   });
@@ -3649,6 +4105,9 @@ export function normalize(command, ctx) {
       jobs: [],
       runCount: 0,
       jobCount: 0,
+      // T32: a `git config` of a code key earlier in the call; the system git config file read
+      codeConfigWritten: false,
+      gitSystemConfig: c.gitSystemConfig === null ? null : isAbs(c.gitSystemConfig) ? c.gitSystemConfig : '/etc/gitconfig',
     };
     g.expandGlob = globWithBudget(typeof c.expandGlob === 'function' ? c.expandGlob : null, fsImpl, g);
     // bash without globstar reads `**` as `*`: inside sh/bash/dash/ksh text such a glob is UNKNOWN
