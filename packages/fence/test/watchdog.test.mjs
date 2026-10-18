@@ -171,6 +171,31 @@ describe('HATCH', () => {
     }
   });
 
+  test('during a hatch session-start still renders the engine additionalContext; every other event stays silent', async () => {
+    const file = (inst) => path.join(inst.admin, 'hatch.json');
+    const recordingContext = (record) =>
+      `import fs from 'node:fs';\nfs.readFileSync(0);\nfs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({ argv: process.argv.slice(2) }));\n` +
+      `process.stdout.write(JSON.stringify({ additionalContext: 'fence hatch is open until later' }) + '\\n');\n`;
+    const inst = install({ engine: recordingContext });
+    write(file(inst), hatch({ created: iso(Date.now() - 60000), expires: iso(Date.now() + H) }));
+    for (const host of ['claude', 'codex']) {
+      const r = await run(inst, ['session-start', '--host', host], { lstat: rootify(file(inst)) });
+      assert.deepEqual(r, renderSessionStart(host, 'fence hatch is open until later'), host);
+      for (const event of ['pre', 'post', 'precompact']) assert.deepEqual(await run(inst, [event, '--host', host], { lstat: rootify(file(inst)) }), SILENT, `${host} ${event}`);
+    }
+    // the engine ran record-only for the session start too
+    assert.ok(readRecord(inst).argv.includes('--record-only'));
+
+    // an engine that fails, answers nothing usable or has no context: the no-output shape (fail open)
+    const stubs = [() => ENGINES.crash(), () => ENGINES.garbage(), () => ENGINES.nonzero(), (record) => ENGINES.normal({}, record), () => ENGINES.context(''), null];
+    for (const engine of stubs) {
+      const broken = install({ engine });
+      write(file(broken), hatch({ created: iso(Date.now() - 60000), expires: iso(Date.now() + H) }));
+      for (const host of ['claude', 'codex']) assert.deepEqual(await run(broken, ['session-start', '--host', host], { lstat: rootify(file(broken)) }), SILENT, String(engine));
+      assert.equal(fs.existsSync(path.join(broken.state, 'log')), false, 'a session start never gets a watchdog line');
+    }
+  });
+
   test('malformed JSON is no hatch', () => {
     assert.equal(hatchIsValid(ROOT, '{"created": "2026-10-17T11:00:00Z", "expires":', NOW), false);
     assert.equal(hatchIsValid(ROOT, '[]', NOW), false);

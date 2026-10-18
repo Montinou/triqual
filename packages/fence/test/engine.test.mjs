@@ -317,11 +317,23 @@ test('an unknown event on pre denies with the event named', () => {
   assert.match(post.reason, /PostToolUse/);
 });
 
-test('precompact and session-start are stubs returning {}; post returns {} too', () => {
+test('precompact returns {}; post returns {} too', () => {
   const repo = makeRepo({ branch: 'feature' });
-  for (const event of ['post', 'precompact', 'session-start']) {
+  for (const event of ['post', 'precompact']) {
     assert.deepEqual(spawnEngine(claudePayload('Bash', { command: 'ls' }, repo), { event }), {});
   }
+});
+
+test('session-start returns the keep-list as additionalContext, on both hosts, and never a decision', () => {
+  const repo = makeRepo({ branch: 'feature' });
+  for (const host of ['claude', 'codex']) {
+    const out = spawnEngine({ hook_event_name: 'SessionStart', session_id: 'sess-1', cwd: repo, source: 'startup' }, { event: 'session-start', host });
+    assert.deepEqual(Object.keys(out), ['additionalContext'], host);
+    assert.match(out.additionalContext, /^fence policy, profile default \(undecided: /);
+    assert.match(out.additionalContext, /delete-outside-repo: deny/);
+  }
+  // fails open: a policy that does not load gives {} and never a deny
+  assert.deepEqual(spawnEngine({}, { event: 'session-start', d: dirs('{ not json') }), {});
 });
 
 // ---- fix round 1 --------------------------------------------------------------------------------

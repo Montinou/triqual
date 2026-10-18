@@ -3,14 +3,16 @@
 //
 //   prune(stateDir, now, {days = 30, fs}) -> {removed: number}
 //
-// Removes <stateDir>/log/YYYY-MM-DD.jsonl files whose whole (UTC) day is older than the window, and
-// <stateDir>/written/<session>.txt files not modified within it. Only files with those exact name shapes
-// are touched, only regular files (lstat; a symlink is left alone), and only inside real directories (a
-// symlinked log/ or written/ is not entered). Never throws.
+// Removes <stateDir>/log/YYYY-MM-DD.jsonl files whose whole (UTC) day is older than the window,
+// <stateDir>/written/<session>.txt files not modified within it, and the compaction keep-list snapshots
+// <stateDir>/keep/<session>.md (and the temp files of a write that never finished) not modified within it.
+// Only files with those exact name shapes are touched, only regular files (lstat; a symlink is left alone),
+// and only inside real directories (a symlinked log/, written/ or keep/ is not entered). Never throws.
 
 import nodeFs from 'node:fs';
 import nodePath from 'node:path';
 
+import { KEEP_DIR, KEEP_NAME, KEEP_TMP } from '../hooks/keeplist.mjs';
 import { DAY_MS, RETENTION_DAYS, WRITTEN_DIR, WRITTEN_NAME } from './written.mjs';
 
 const LOG_NAME = /^(\d{4})-(\d{2})-(\d{2})\.jsonl$/;
@@ -59,6 +61,7 @@ export function prune(stateDir, now = Date.now(), { days = RETENTION_DAYS, fs: f
       return Number.isFinite(start) && start + DAY_MS <= cutoff;
     });
     removed += removeIf(fsImpl, nodePath.join(stateDir, WRITTEN_DIR), (name, st) => WRITTEN_NAME.test(name) && st.mtimeMs < cutoff);
+    removed += removeIf(fsImpl, nodePath.join(stateDir, KEEP_DIR), (name, st) => (KEEP_NAME.test(name) || KEEP_TMP.test(name)) && st.mtimeMs < cutoff);
     return { removed };
   } catch {
     return { removed: 0 };
