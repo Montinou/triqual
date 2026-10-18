@@ -1,6 +1,7 @@
 // `triqual setup`: checks its arguments and the prerequisites, adds or updates the triqual marketplace, installs the
 // methodology plugin when missing, then runs the bootstrap that plugin ships, which does the rest of the setup.
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { installPathOf, LEGACY_MARKETPLACE, MARKETPLACE, newestCacheDir } from './plugins.mjs';
 
@@ -74,19 +75,32 @@ export async function runSetup(args, { env = process.env, stdout = process.stdou
     if (install.code !== 0) return install.code;
   }
 
-  const pluginDir = installPathOf(home) ?? newestCacheDir(home);
+  let pluginDir = installPathOf(home) ?? newestCacheDir(home);
   if (pluginDir === null) {
     stderr.write('triqual setup: the methodology plugin is not installed after claude plugin install; '
       + 'run claude plugin install methodology@triqual --scope user and look at its output\n');
     return 1;
   }
-  const r = spawnSync(process.execPath, [join(pluginDir, 'setup', 'bootstrap.mjs'), ...args], { env, stdio: 'inherit' });
+  // methodology ships setup/bootstrap.mjs since 0.7.0: an older install is updated once before giving up.
+  if (!existsSync(bootstrapOf(pluginDir))) {
+    const update = claude(['plugin', 'update', `methodology@${MARKETPLACE}`, '--scope', 'user']);
+    if (update.code !== 0) return update.code;
+    pluginDir = installPathOf(home) ?? newestCacheDir(home) ?? pluginDir;
+  }
+  if (!existsSync(bootstrapOf(pluginDir))) {
+    stderr.write(`triqual setup: the installed methodology plugin has no installer (${bootstrapOf(pluginDir)}): `
+      + 'it is older than 0.7.0; run claude plugin update methodology@triqual --scope user, then npx triqual setup again\n');
+    return 1;
+  }
+  const r = spawnSync(process.execPath, [bootstrapOf(pluginDir), ...args], { env, stdio: 'inherit' });
   if (r.error) {
     stderr.write(`triqual setup: cannot run the installer in ${pluginDir}: ${r.error.message}\n`);
     return 1;
   }
   return r.status ?? 1;
 }
+
+const bootstrapOf = (pluginDir) => join(pluginDir, 'setup', 'bootstrap.mjs');
 
 // The prerequisites that are missing, as one line each: Node below the floor, git or claude not on PATH.
 function prerequisitesMissing(env) {

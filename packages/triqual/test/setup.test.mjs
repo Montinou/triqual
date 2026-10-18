@@ -20,11 +20,13 @@ fs.appendFileSync(process.env.STUB_LOG, JSON.stringify(args) + '\\n');
 const n = fs.readFileSync(process.env.STUB_LOG, 'utf8').trim().split('\\n').length;
 if (process.env['STUB_FAIL_' + n]) process.exit(Number(process.env['STUB_FAIL_' + n]));
 if (args.join(' ') === 'plugin marketplace list --json') { process.stdout.write(process.env.STUB_MARKETS ?? '[]'); process.exit(0); }
-if (args[0] === 'plugin' && args[1] === 'install' && process.env.STUB_INSTALL_DIR) {
+const writeEntry = (dir) => {
   const file = path.join(process.env.HOME, '.claude', 'plugins', 'installed_plugins.json');
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify({ version: 2, plugins: { 'methodology@triqual': [{ scope: 'user', installPath: process.env.STUB_INSTALL_DIR }] } }));
-}
+  fs.writeFileSync(file, JSON.stringify({ version: 2, plugins: { 'methodology@triqual': [{ scope: 'user', installPath: dir }] } }));
+};
+if (args[0] === 'plugin' && args[1] === 'install' && process.env.STUB_INSTALL_DIR) writeEntry(process.env.STUB_INSTALL_DIR);
+if (args[0] === 'plugin' && args[1] === 'update' && process.env.STUB_UPDATE_DIR) writeEntry(process.env.STUB_UPDATE_DIR);
 process.exit(0);
 `;
 
@@ -87,6 +89,29 @@ test('installed machine', () => withMachine(async ({ env, io, calls, boots, cach
   assert.equal(await runSetup([], io), 0);
   assert.deepEqual(calls(), [LIST, 'plugin marketplace update triqual']);
   assert.deepEqual(boots(), [{ dir, argv: [] }]);
+}));
+
+test('an installed methodology without a bootstrap (older than 0.7.0) is updated first', () => withMachine(async ({ env, io, calls, boots, cache, installed }) => {
+  const old = join(cache, '0.6.1');
+  mkdirSync(old, { recursive: true });
+  installed(old);
+  const fresh = fakePlugin(join(cache, '0.7.4'));
+  Object.assign(env, { STUB_MARKETS: JSON.stringify([{ name: 'triqual' }]), STUB_UPDATE_DIR: fresh });
+  assert.equal(await runSetup(['--yes'], io), 0);
+  assert.deepEqual(calls(), [LIST, 'plugin marketplace update triqual', 'plugin update methodology@triqual --scope user']);
+  assert.deepEqual(boots(), [{ dir: fresh, argv: ['--yes'] }]);
+}));
+
+test('a methodology still without a bootstrap after the update stops with a hint, not a crash', () => withMachine(async ({ env, io, err, boots, cache, installed }) => {
+  const old = join(cache, '0.6.1');
+  mkdirSync(old, { recursive: true });
+  installed(old);
+  env.STUB_MARKETS = JSON.stringify([{ name: 'triqual' }]);
+  assert.equal(await runSetup([], io), 1);
+  assert.match(err.join(''), /^triqual setup: .*setup\/bootstrap\.mjs/m);
+  assert.match(err.join(''), /claude plugin update methodology@triqual --scope user/);
+  assert.doesNotMatch(err.join(''), /Cannot find module/);
+  assert.deepEqual(boots(), []);
 }));
 
 test('fallback to the cache', () => withMachine(async ({ env, io, boots, cache }) => {
