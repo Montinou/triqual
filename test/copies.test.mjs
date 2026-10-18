@@ -12,9 +12,10 @@ const PLUGINS = join(ROOT, 'plugins');
 // [source, copy], both relative to plugins/.
 const COPIES = [
   ['progress-tracking/lib/plan.mjs', 'methodology/skills/subagent-driven-development/scripts/lib/plan.mjs'],
+  ['methodology/cli/lib/lock.mjs', 'workflow-gate/scripts/lock.mjs'],
 ];
 
-test('plan.mjs copies are byte-identical', () => {
+test('shared-code copies are byte-identical', () => {
   for (const [source, copy] of COPIES) {
     const original = readFileSync(join(PLUGINS, source));
     const copied = readFileSync(join(PLUGINS, copy));

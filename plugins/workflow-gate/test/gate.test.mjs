@@ -248,9 +248,9 @@ test('hooks.json wires PreToolUse(Workflow) to scripts/gate.mjs', () => {
   const file = join(dirname(fileURLToPath(import.meta.url)), '..', 'hooks', 'hooks.json');
   const { hooks } = JSON.parse(readFileSync(file, 'utf8'));
   assert.deepEqual(Object.keys(hooks), ['PreToolUse']);
-  assert.equal(hooks.PreToolUse.length, 1);
-  const [entry] = hooks.PreToolUse;
-  assert.equal(entry.matcher, 'Workflow');
+  assert.equal(hooks.PreToolUse.length, 2);
+  const entry = hooks.PreToolUse.find((e) => e.matcher === 'Workflow');
+  assert.ok(entry, 'no PreToolUse entry with matcher Workflow');
   assert.equal(entry.hooks.length, 1);
   assert.equal(entry.hooks[0].type, 'command');
   assert.equal(entry.hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs"');

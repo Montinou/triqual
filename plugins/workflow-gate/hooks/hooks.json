@@ -6,6 +6,12 @@
         "hooks": [
           { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs\"", "timeout": 10, "statusMessage": "workflow-gate: checking agent budget and role dispatch" }
         ]
+      },
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs\" agent", "timeout": 10, "statusMessage": "workflow-gate: checking same-model agent burst" }
+        ]
       }
     ]
   }
