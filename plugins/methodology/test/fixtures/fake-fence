@@ -1,0 +1,24 @@
+#!/bin/sh
+# A fake `fence` for doctor.test.mjs and hook.test.mjs. Put it first on PATH under the name `fence`.
+# Behavior comes from the environment (all optional):
+#   FAKE_FENCE_LOG    file that receives each call: one argument per line, then a line holding `---`
+#   FAKE_FENCE_OUT    the stdout of `fence version`, printed as is (default `fence 0.0.0-test`, no newline added)
+#   FAKE_FENCE_EXIT   the exit status (default 0)
+#   FAKE_FENCE_SLEEP  seconds to sleep before answering (the process is replaced, so a kill ends it at once)
+# It prints nothing to stderr and never reads stdin.
+set -u
+
+if [ -n "${FAKE_FENCE_LOG:-}" ]; then
+  printf '%s\n' "$@" >> "$FAKE_FENCE_LOG"
+  printf '%s\n' '---' >> "$FAKE_FENCE_LOG"
+fi
+
+if [ -n "${FAKE_FENCE_SLEEP:-}" ]; then
+  exec sleep "$FAKE_FENCE_SLEEP"
+fi
+
+if [ "${1:-}" = "version" ]; then
+  printf '%s' "${FAKE_FENCE_OUT-fence 0.0.0-test}"
+fi
+
+exit "${FAKE_FENCE_EXIT:-0}"

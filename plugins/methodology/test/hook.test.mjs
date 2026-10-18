@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,6 +29,21 @@ const resolve = (id) => ({ [METHODOLOGY]: M_ROOT, [TRACKING]: PT_ROOT })[id] ?? 
 const HEADER = 'This repo uses strict progress tracking (skill progress-tracking:progress-tracking)';
 const ENTRY = '# Progress\n\n## 2026-09-29 — Hook\n- done\n';
 const TRACKED = { mode: 'committed', progress: '/r/progress.md', status: '/r/status.md', root: '/r' };
+
+// The environment the hook helpers detect fence in: a PATH with nothing on it, so a fence installed on this machine
+// never changes a test. A test that wants fence passes `env` with the directory withFence() makes.
+const NO_FENCE_ENV = { PATH: join(tmpdir(), 'triqual-hook-no-fence-path') };
+const FAKE_FENCE = join(TEST_DIR, 'fixtures', 'fake-fence');
+const FENCE_LINE = 'fence is active: a denied call is a stop-and-ask, never a retry.';
+async function withFence(fn) {
+  const dir = mkdtempSync(join(tmpdir(), 'triqual-hook-fence-'));
+  copyFileSync(FAKE_FENCE, join(dir, 'fence'));
+  try {
+    return await fn({ PATH: dir });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 const fixture = (id, file) => JSON.parse(readFileSync(join(FIXTURES, id, file), 'utf8'));
 const batch = (file) => readFileSync(join(FIXTURES, 'grok', file), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
@@ -123,7 +138,7 @@ function grok(home, deps = {}) {
     let out;
     logged.push(...await quietly(async () => {
       out = await hook({
-        home, harness: 'grok', event, payload, resolve, runScript: s.runScript,
+        home, harness: 'grok', event, payload, resolve, runScript: s.runScript, env: deps.env ?? NO_FENCE_ENV, detect: deps.detect,
         background: (arg) => { backgrounds.push(arg); }, now: c.now,
       });
     }));
@@ -141,7 +156,7 @@ function codex(home, deps = {}) {
     let out;
     logged.push(...await quietly(async () => {
       out = await hook({
-        home, harness: 'codex', event, payload, resolve, runScript: s.runScript,
+        home, harness: 'codex', event, payload, resolve, runScript: s.runScript, env: deps.env ?? NO_FENCE_ENV,
         background: deps.background ?? ((arg) => { backgrounds.push(arg); }), now: c.now,
       });
     }));
@@ -534,6 +549,79 @@ test('grok delivers once and confirms', () => withHome({}, async (home) => {
   assert.equal((await g.run('pre-tool-use', withTool(PRE, 'id-later'))).stdout, null);
   assert.equal(g.scripts.of(DRIFT).length, 1);
   assert.deepEqual(g.logged, [], 'nothing on stderr');
+}));
+
+// ---- fence (spec U9): the Grok session context says a denied call is a stop-and-ask ----
+
+test('grok session context carries the fence line right after the methodology part, only with fence', () => withHome({}, async (home) => {
+  await withFence(async (env) => {
+    const g = grok(home, { env });
+    const context = contextOf((await g.run('pre-tool-use', PRE)).stdout);
+    assert.ok(context.startsWith(`${METHODOLOGY_TEXT}\n\n${FENCE_LINE}\n\n${HEADER}`), context.slice(METHODOLOGY_TEXT.length, METHODOLOGY_TEXT.length + 200));
+    assert.equal(context.split(FENCE_LINE).length, 2, 'the line appears once');
+    assert.ok(context.length < 9500, `${context.length}`);
+    // The gate part is fitted to what the line leaves.
+    const methodology = `${METHODOLOGY_TEXT}\n\n${FENCE_LINE}`;
+    assert.equal(budgetOf(g.scripts.of(GATE)[0].args), 9500 - methodology.length - 5);
+  });
+  const plain = grok(home);
+  const without = contextOf((await plain.run('pre-tool-use', inSession(PRE, 'id-no-fence-session'))).stdout);
+  assert.ok(!without.includes('fence'), 'no mention of fence without it');
+  assert.ok(without.startsWith(`${METHODOLOGY_TEXT}\n\n${HEADER}`));
+  assert.equal(budgetOf(plain.scripts.of(GATE)[0].args), 9500 - METHODOLOGY_TEXT.length - 5);
+}));
+
+test('the fence line needs a fence that answers: a failing fence adds nothing', () => withHome({}, async (home) => {
+  await withFence(async (env) => {
+    const g = grok(home, { env: { ...env, FAKE_FENCE_EXIT: '3' } });
+    const context = contextOf((await g.run('pre-tool-use', PRE)).stdout);
+    assert.ok(!context.includes(FENCE_LINE));
+  });
+}));
+
+test('codex session-start does not carry the fence line', () => withHome({}, async (home) => {
+  await withFence(async (env) => {
+    const c = codex(home, { env });
+    assert.ok(!contextOf((await c.run('session-start', fixture('codex', 'session-start-startup.json'))).stdout).includes(FENCE_LINE));
+  });
+}));
+
+test('the fence line follows the methodology plugin being enabled, not the text its drift part returned', () => withHome({}, async (home) => {
+  await withFence(async (env) => {
+    // Enabled, but drift printed nothing: the line still goes out, ahead of the gate part.
+    const quiet = grok(home, { env, scripts: scripts({ drift: () => ({ code: 0, stdout: contextJson('') }) }) });
+    const context = contextOf((await quiet.run('pre-tool-use', inSession(PRE, 'id-quiet-drift'))).stdout);
+    assert.ok(context.startsWith(`${FENCE_LINE}\n\n${HEADER}`), context.slice(0, 160));
+  });
+}));
+
+test('with methodology disabled in Claude the fence line is not sent, and fence is not even looked for', () => withHome({ methodology: false }, async (home) => {
+  await withFence(async (env) => {
+    const seen = [];
+    const g = grok(home, { env, detect: (...args) => { seen.push(args); return { version: '1', profile: null }; } });
+    const context = contextOf((await g.run('pre-tool-use', PRE)).stdout);
+    assert.ok(context.startsWith(HEADER), context.slice(0, 120));
+    assert.ok(!context.includes(FENCE_LINE));
+    assert.deepEqual(seen, []);
+  });
+}));
+
+test('fence detection gets at most the time left before the Grok deadline, and none when it has passed', () => withHome({}, async (home) => {
+  const seen = [];
+  const detect = (env, timeoutMs) => { seen.push(timeoutMs); return { version: '1', profile: null }; };
+  // Grok pre-tool-use: 10 s minus 2 s. Nothing used: the hook offers all 8 s, and detectFence caps its run at 2 s.
+  let g = grok(home, { detect });
+  await g.run('pre-tool-use', inSession(PRE, 'id-fresh'));
+  // Drift used 7.2 s: 800 ms are left.
+  let c = clock();
+  g = grok(home, { detect, clock: c, scripts: scripts({ drift: () => { c.advance(7_200); return { code: 0, stdout: contextJson('m') }; } }) });
+  await g.run('pre-tool-use', inSession(PRE, 'id-late'));
+  // Drift used everything: no detection, no line.
+  c = clock();
+  g = grok(home, { detect, clock: c, scripts: scripts({ drift: () => { c.advance(8_000); return { code: 0, stdout: contextJson('m') }; } }) });
+  const out = await g.run('pre-tool-use', inSession(PRE, 'id-over'));
+  assert.deepEqual(seen, [8000, 800]);
+  assert.ok(!contextOf(out.stdout).includes(FENCE_LINE));
 }));
 
 test('grok parallel batch emits once', () => withHome({}, async (home) => {

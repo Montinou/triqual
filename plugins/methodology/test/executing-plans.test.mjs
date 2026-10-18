@@ -408,6 +408,130 @@ test('worktrees: detect isolation, native tool first, git fallback, baseline che
   }
 });
 
+// ---- fence cooperation (design U9) ----
+
+// The denial rule, one sentence, the same everywhere: a refusal that names fence, a policy or a protected path, or that
+// the agent cannot explain, is a denial and a stop-and-ask, with or without fence detected. `fence hatch` appears only
+// here, in the clause that forbids suggesting it. test/skills-contract.test.mjs pins it in every carrier too.
+const DENIAL_RULE = 'A refusal that names fence, a policy or a protected path, or that you cannot explain, is a denial: stop, report the denied call and its path, and ask the human; never retry a variant of the call, never suggest `fence hatch`, and never edit fence\'s policy; when in doubt, stop.';
+
+// Every template that dispatches a role carries the rule in its own Denied by Policy section, and so does every role's
+// agent definition (a fix dispatch and a brief-writer dispatch have no template of their own).
+const RULE_TEMPLATES = [
+  'implementer-prompt.md', 're-review-prompt.md', 'task-reviewer-prompt.md', 'safety-review-prompt.md', 'hunter-prompt.md',
+  'final-review-prompt.md',
+];
+
+test('the denial rule is in the orchestrator and in every dispatch template', () => {
+  assert.ok(flat(read(`${EP}/SKILL.md`)).includes(DENIAL_RULE), 'SKILL.md lacks the denial rule');
+  for (const file of RULE_TEMPLATES) {
+    const text = read(`${EP}/${file}`);
+    assert.ok(flat(text).includes(DENIAL_RULE), `${file} lacks the denial rule`);
+    assert.ok(text.includes('## Denied by Policy'), `${file} has no Denied by Policy section`);
+    assert.equal(text.split(DENIAL_RULE.slice(0, 40)).length, 2, `${file} carries the rule more than once`);
+  }
+});
+
+test('every role agent definition carries the denial rule and says how it asks the human', () => {
+  const files = readdirSync(AGENTS).filter((n) => n.endsWith('.md'));
+  assert.equal(files.length, 8, files.join(', '));
+  for (const file of files) {
+    const agent = flat(readFileSync(join(AGENTS, file), 'utf8'));
+    assert.ok(agent.includes(DENIAL_RULE), `${file} lacks the denial rule`);
+    assert.ok(agent.includes('BLOCKED'), `${file} does not say how it asks the human`);
+  }
+});
+
+test('every fix dispatch carries the implementer section, and the Build dispatch names it', () => {
+  const loop = flat(section(skill(), '### 5. The fix loop'));
+  assert.ok(loop.includes('template\'s Denied by Policy section'), 'the fix loop does not hand the fixer the Denied by Policy section');
+  const build = flat(section(skill(), '### 2. Build'));
+  assert.ok(build.includes('the template\'s Denied by Policy section'), 'the build dispatch does not name the Denied by Policy section');
+});
+
+test('the generic BLOCKED handler sends a denied call to Denied by Policy, with no re-dispatch and no ruling', () => {
+  const line = flat(skill()).split(' - **').find((bullet) => bullet.startsWith('BLOCKED:'));
+  assert.ok(line, 'no BLOCKED bullet');
+  assert.ok(
+    line.includes('A BLOCKED reply that reports a denied call goes to [Denied by Policy](#denied-by-policy), with no re-dispatch and no ruling'),
+    'the BLOCKED bullet does not hand a denial to Denied by Policy',
+  );
+  assert.ok(line.indexOf('Denied by Policy') < line.indexOf('a context problem gets more context'), 'the denial clause must come first');
+});
+
+test('the stops list names a fence denial as the security-sensitive stop', () => {
+  assert.ok(flat(skill()).includes('a security-sensitive action (a fence denial included)'));
+});
+
+test('a refusal that matches the rule is a denial even when the ledger says Fence: none; detection is rerun and the line updated', () => {
+  const text = flat(section(skill(), '## Denied by Policy'));
+  for (const phrase of [
+    '**Detection can be stale.**',
+    'whether or not the ledger\'s `Fence:` line says none',
+    'run fence detection again (`command -v fence`, then `fence version`)',
+    'append a new `Fence:` line with the result',
+    'Only a failure you can explain without fence, a policy or a protected path',
+    'its agent definition says so',
+  ]) {
+    assert.ok(text.includes(phrase), `the Denied by Policy section does not say ${phrase}`);
+  }
+  assert.doesNotMatch(text, /Without fence detected a refused call is an ordinary failure/);
+  assert.doesNotMatch(text, /its template says so/);
+  assert.ok(flat(section(skill(), '## Ledger vocabulary')).includes('the last `Fence:` line counts'));
+});
+
+test('the fallback printout prints a mode only when it is plain letters and a slug only when it matches the slug rule', () => {
+  const text = flat(section(skill(), '### Fence'));
+  for (const phrase of [
+    'only when the mode is plain letters',
+    '`^[A-Za-z0-9][A-Za-z0-9._@:-]{0,127}$`',
+    'skip any other slug and say so',
+  ]) {
+    assert.ok(text.includes(phrase), `the Fence section does not say ${phrase}`);
+  }
+});
+
+test('the orchestrator stops a task on a denial, ledgers it and asks, as the security-sensitive stop', () => {
+  const text = flat(section(skill(), '## Denied by Policy'));
+  for (const phrase of [
+    DENIAL_RULE,
+    '`Denied by policy: <call> — <path>`',
+    'dispatch nothing else for that task',
+    'no fix round',
+    'ask your human partner',
+    'security-sensitive stop',
+    'BLOCKED',
+  ]) {
+    assert.ok(text.includes(phrase), `the Denied by Policy section does not say ${phrase}`);
+  }
+  assert.ok(flat(section(skill(), '## Ledger vocabulary')).includes('`Denied by policy: <call> — <path>`'));
+  assert.ok(flat(section(skill(), '## Ledger vocabulary')).includes('`Fence: <version>`'));
+});
+
+test('the pinned headjack add printout runs only when fence is detected, and the implementer then installs nothing', () => {
+  const text = flat(section(skill(), '### Fence'));
+  for (const phrase of [
+    '`command -v fence`',
+    '`fence version`',
+    'exits 0',
+    '`Fence: <version>`',
+    'only when fence is detected',
+    '`triqual suggest',
+    '`HEADJACK_MODE=<mode> headjack add <slug> --to claude --session --source plan`',
+    '`HEADJACK_URL`',
+    'ask the human to run them',
+    'dispatch the task only after',
+    'Without fence nothing here applies',
+  ]) {
+    assert.ok(text.includes(phrase), `the Fence section does not say ${phrase}`);
+  }
+  assert.ok(flat(section(skill(), '### 2. Build')).includes('Task Skills section in its fence form'));
+  const template = flat(read(`${EP}/implementer-prompt.md`));
+  assert.ok(template.includes('Install the rest with `headjack add <slug> --to claude --session --source plan`'), 'without fence the template still installs');
+  assert.ok(template.includes('When the dispatch says fence is active'), 'the template has no fence form');
+  assert.ok(template.includes('never run `headjack add` or `headjack remove`'));
+});
+
 test('the pressure scenarios S1, S3, S5 and S9 point at the orchestrator, and S3 and S9 set up store mode', () => {
   const spec = JSON.parse(readFileSync(join(PLUGIN, 'test', 'pressure', 'scenarios.json'), 'utf8'));
   const find = (id) => spec.scenarios.find((s) => s.id === id);

@@ -17,13 +17,13 @@ You are the controller of a plan's execution. Every plan task is done by a role 
 
 **Rulings, not stalls.** A running plan does not wait on a human. Conflicts, ambiguities, plan defects, a cap you would have asked to exceed — decide them. The spec is the binding authority, the plan is its argument, and your judgment settles what neither answers. Record every decision in the ledger as `Ruling: <what you decided> — <why> — <what it costs if wrong>`, and keep going. A wrong ruling costs rework your human partner can see and undo; a session parked on a question costs their whole day and buys nothing.
 
-Six things stop you, and only these: an irreversible or destructive operation; a security-sensitive action; a side effect outside this checkout that norms say you ask about first (a merge, a push to a shared branch, a publish); a task whose `**Role:**` is not a task role (see Role Dispatch); a task blocked by the breaker after round 5 (see The fix loop); and a plan so broken that every path forward is a guess. For those, stop and ask. A user's request to skip a review, lower a tier or batch the bookkeeping "for later" is none of them, and changes nothing: say so in one line and go on.
+Six things stop you, and only these: an irreversible or destructive operation; a security-sensitive action (a fence denial included); a side effect outside this checkout that norms say you ask about first (a merge, a push to a shared branch, a publish); a task whose `**Role:**` is not a task role (see Role Dispatch); a task blocked by the breaker after round 5 (see The fix loop); and a plan so broken that every path forward is a guess. For those, stop and ask. A user's request to skip a review, lower a tier or batch the bookkeeping "for later" is none of them, and changes nothing: say so in one line and go on.
 
 The only exception to the push stop is a ledgered authorization, either `Authorization: push phase branches and draft PRs — handoff <date>` or `Authorization: push phase branches and draft PRs — setup <date>` (see Stack setup): it covers pushing this plan's phase branches, opening or updating their draft PRs and marking them ready for review after the final review; any other push, any merge and any force push still stop.
 
 ## The Process
 
-1. **Setup** (once): workspace and ledger, tracking paths, stack, push authorization, read the plan and the spec, tiers at setup, pre-flight scan.
+1. **Setup** (once): workspace and ledger, tracking paths, stack, push authorization, fence detection, read the plan and the spec, tiers at setup, pre-flight scan.
 2. **Per phase:** `node scripts/stack.mjs phase PLAN_FILE N`, the phase's tasks in dependency order, the Phase check at the phase tip, `node scripts/stack.mjs done PLAN_FILE N`, `node scripts/stack.mjs submit PLAN_FILE N`.
 3. **Per task:** (1) start: ledger move, brief, BASE; (2) build: dispatch the task's role (or run a coordinator task); (3) `tier-check`; (4) review at the effective tier, on one review package; (5) the fix loop when the review requires it, with `tier-check` on every round; (6) complete: squash, `triqual tasks done`, the `task-review` record.
 4. **End:** the final review of `trunk..top` (3 hunters + `roles:final-adversarial-reviewer`), one fix dispatch plus a scoped re-review, the `hunters` and `final-escapes` records, then methodology:finishing-branch.
@@ -66,6 +66,17 @@ The workspace ledger (`sdd-ledger.md`) is kept either way: it is this skill's re
 - After the workspace and the tracking paths, run `node scripts/stack.mjs init PLAN_FILE` once, before Task 1. It prints the stack state as JSON and writes it to `<repo root>/.methodology/stack/<plan file stem>.json`. It picks the mode: `github` (phase branches pushed, one draft PR each) when `gh`, `gh stack` and a GitHub remote are all available, else `local`. `init` is safe to re-run: when the state file exists it prints it and changes nothing, which is how a resumed run finds its stack.
 - **Committed tracking mode stops the run.** `init` exits 3 with `committed tracking mode cannot hold one commit per task: switch with triqual progress-init --store (or --local)`. Stop before Task 1 and tell your human partner to switch with `triqual progress-init --store` (or `--local`). Any other exit 3, and exit 2, names its cause: rule on it, ledger the `Ruling:`, and fix it or stop if every path forward is a guess.
 - **Push authorization.** Pushing this plan's phase branches, opening their draft PRs and marking them ready for review after the final review is allowed only with a ledger line `Authorization: push phase branches and draft PRs — handoff <date>`, which you write yourself at setup, before Task 1, when your human partner chose (or confirmed) the execution at the writing-plans handoff in this conversation, or `Authorization: push phase branches and draft PRs — setup <date>`, which you write on a yes below. When the ledger lacks any `Authorization:` line and this conversation holds no such choice (a new session on an existing plan), ask once, before Task 1. A yes: write the `setup <date>` line. A no: run `node scripts/stack.mjs mode PLAN_FILE local` and ledger `Authorization: declined — stack in local mode`; the run goes on with local branches only. Any `Authorization:` line, the declined one included, means the question was answered and is never asked again.
+
+### Fence
+
+Fence is a policy harness that denies calls under protected paths. It is optional: detect it once at setup. Fence is detected when `command -v fence` finds it and `fence version` exits 0 (two plain commands, one after the other). Write one ledger line, `Fence: <version>` (the first line `fence version` prints) or `Fence: none`; a resumed run reads the last such line instead of detecting again. Without fence nothing here applies and the Task Skills section is used as written. [Denied by Policy](#denied-by-policy) applies to every run, whatever that line says, because the line can be stale.
+
+With fence detected, installing a skill is the human's step, never the implementer's: an install writes many files under fence-protected paths, outside this checkout. The pinned `headjack add` printout runs only when fence is detected, once per task whose brief has a `**Skills:**` line, before its first dispatch (a fix round does not print it again). A coordinator task follows it too.
+
+1. Run `triqual suggest "<the task's title and goal>"` (text mode) and print the pinned install commands in its block for the slugs of the `**Skills:**` line. When it prints nothing or exits non-zero, print one command per slug yourself: `HEADJACK_MODE=<mode> headjack add <slug> --to claude --session --source plan`, with `<mode>` the `mode` of that slug's suggestion in `triqual suggest "<the task's title and goal>" --json`; print the prefix only when the mode is plain letters (any other mode is printed without it), and a slug only when it matches headjack's slug rule `^[A-Za-z0-9][A-Za-z0-9._@:-]{0,127}$`: skip any other slug and say so.
+2. When `HEADJACK_URL` is not set and the vault is hosted, tell your human partner to set it before running the commands.
+3. Then ask the human to run them and to answer when they have, ledger `Skills: T<N> printed for the human — <slugs>`, and dispatch the task only after that answer. A human who declines gets the task dispatched anyway, with `Ruling: T<N> skills not installed — human declined — <what it costs if wrong>` in the ledger; the implementer then reports a missing skill instead of installing it.
+4. Dispatch with the Task Skills section in its fence form (see [implementer-prompt.md](implementer-prompt.md)) and a line in the dispatch saying fence is active: the implementer neither adds nor removes a skill.
 
 ### Read the plan
 
@@ -153,7 +164,7 @@ Before the first task of phase N, run `node scripts/stack.mjs phase PLAN_FILE N`
 
 ### 2. Build
 
-Dispatch the task's role with [implementer-prompt.md](implementer-prompt.md). Your dispatch contains: (1) one line on where this task fits; (2) the brief path, introduced as "read this first — it is your requirements, with the exact values to use verbatim"; (3) interfaces and decisions from earlier tasks that the brief cannot know; (4) your resolution of any ambiguity you noticed in the brief; (5) the report-file path and report contract; (6) when opted in, the Tracking section, and when the brief has a `**Skills:**` line, the Task Skills section. Exact values appear only in the brief.
+Dispatch the task's role with [implementer-prompt.md](implementer-prompt.md). Your dispatch contains: (1) one line on where this task fits; (2) the brief path, introduced as "read this first — it is your requirements, with the exact values to use verbatim"; (3) interfaces and decisions from earlier tasks that the brief cannot know; (4) your resolution of any ambiguity you noticed in the brief; (5) the report-file path and report contract; (6) the template's Denied by Policy section, when opted in the Tracking section, and when the brief has a `**Skills:**` line, the Task Skills section in its fence form when fence is detected (after the printout in Fence). Exact values appear only in the brief.
 
 - A dispatch prompt describes one task, not the session's history. Never paste accumulated prior-task summaries into later dispatches: a fresh subagent needs its task, the interfaces it touches, and the global constraints.
 - The dispatch carries the no-subagents contract (it is in the template): the implementer never dispatches subagents, and never a reviewer. Review arrives from you, after the report.
@@ -177,7 +188,7 @@ Implementers report one of four statuses:
 - **DONE:** when opted in, run `triqual tasks review T<N> --plan <plan>`, then go to step 3.
 - **DONE_WITH_CONCERNS:** read the concerns first. Correctness or scope concerns are addressed before review; observations are noted and the task goes to review (with the same `review` move).
 - **NEEDS_CONTEXT:** provide the missing context and re-dispatch.
-- **BLOCKED:** a context problem gets more context and a re-dispatch to the same role; a task that needs more reasoning than its role brings is broken into smaller pieces or re-dispatched with your ruling on the approach (never override the role's model); a plan defect gets a ruling, ledgered, carried in the re-dispatch. Never ignore an escalation or force the same dispatch to retry without changes.
+- **BLOCKED:** A BLOCKED reply that reports a denied call goes to [Denied by Policy](#denied-by-policy), with no re-dispatch and no ruling. Otherwise a context problem gets more context and a re-dispatch to the same role; a task that needs more reasoning than its role brings is broken into smaller pieces or re-dispatched with your ruling on the approach (never override the role's model); a plan defect gets a ruling, ledgered, carried in the re-dispatch. Never ignore an escalation or force the same dispatch to retry without changes.
 
 If the implementer asks questions — before starting or mid-task — answer clearly and completely before it implements.
 
@@ -226,7 +237,7 @@ Everything else enters the loop. A fix round is one fix dispatch, one `tier-chec
 
 - **Ledger moves:** when opted in, run `triqual tasks rework T<N> --plan <plan>` at the start of each fix round, before the fix dispatch, and `triqual tasks review T<N> --plan <plan>` when the fixer reports back and the re-review starts.
 - **Who fixes:** rounds 1–3 resume the same `roles:review-fixer` (round 1 dispatches it with the open findings verbatim, the brief path and the report-file path; when the task's own role is `roles:review-fixer`, round 1 resumes the implementer); rounds 4–5 dispatch a fresh `roles:review-fixer` each round, with the brief path, the report-file path, the open findings, and this framing: "A prior fixer attempted this task [N] times; you own it now. Read the report file for what was tried." A `roles:complex-implementer` task keeps its role: rounds 1–3 resume its own implementer, rounds 4–5 a fresh `roles:complex-implementer`. A coordinator task's rounds go to `roles:review-fixer`, never to you. If your harness cannot message a live subagent, dispatch a fresh one with the same three inputs.
-- Every fix dispatch carries the implementer template's Tracking section when opted in, and its Task Skills section when the brief has a `**Skills:**` line.
+- Every fix dispatch carries the implementer template's Denied by Policy section (the fixer's agent definition carries the rule too, but a fix dispatch has no template of its own), its Tracking section when opted in, and its Task Skills section when the brief has a `**Skills:**` line (in its fence form when fence is detected).
 - **Fix commits fold into the task's own commit.** A fix round commits with `git commit --fixup=<the task's first commit>`, never an amend, a rebase or a reset: name that commit (the first line of `git rev-list --reverse BASE..HEAD`) in the fix dispatch.
 - **Evidence:** before the re-review, confirm the fix report names the covering tests, the command run and its output; a fix that changes behavior starts with a test that reproduces the finding.
 - **Re-check the tier every round.** Record FIX_BASE (the head the previous review saw); `tier-check` runs again on each round's `FIX_BASE..HEAD` and on the cumulative `BASE..HEAD`, each with the current floor, and the re-review follows the higher tier. A raise is recorded before the re-review: a `Tier raised:` line, and `retier` when opted in. When a round raises the task, the raised tier's full review (its round 1 and round 2, hunters included) runs on the cumulative package `BASE..HEAD`, because that tier's review never ran on this task; otherwise fix rounds and re-reviews send no hunters.
@@ -257,6 +268,18 @@ When the phase's last task is complete, close the phase before starting the next
 - **Done and submit.** Run `node scripts/stack.mjs done PLAN_FILE N`, then `node scripts/stack.mjs submit PLAN_FILE N`. In GitHub mode `submit` pushes this plan's phase branches only (the ledgered authorization covers it), opens or updates the draft PR and prints `Phase <N>: submitted (<branch>, PR #<n> draft)`; ledger that line. In local mode it prints `local mode: nothing to submit`; ledger `Phase <N>: complete (<branch>, local)`.
 - **`submit` exits 5** when `gh` failed, and records nothing: ledger a `Ruling:` that names the `gh` message, retry once, and when it fails again run `node scripts/stack.mjs mode PLAN_FILE local`, ledger the `Ruling:`, and continue in local mode.
 - **A submitted phase is final:** never amend it, never rebase it and never force push it. A defect found in the code of an earlier, submitted phase is fixed in the current task's commit; at the final review it is fixed in the final fix commit.
+
+## Denied by Policy
+
+Fence refuses a call, and the wording of its refusal is not something this skill can rely on. A refused call is not a puzzle to solve: a variant of the call, another path to the same effect and a workaround through another tool are all the retry this rule forbids. The rule below holds in every run, whatever the ledger's `Fence:` line says, and it is the same sentence in every template and every role's agent definition.
+
+A refusal that names fence, a policy or a protected path, or that you cannot explain, is a denial: stop, report the denied call and its path, and ask the human; never retry a variant of the call, never suggest `fence hatch`, and never edit fence's policy; when in doubt, stop.
+
+- **A subagent's denial.** Any role you dispatch (implementer, fixer, reviewer, hunter, brief writer) that meets a denial stops and replies BLOCKED with the denied call and its path (its agent definition says so, and so does its template where it has one). Take that reply as the denial: do not resume the agent with a hint, do not re-dispatch the task, and do not dispatch another role to finish the work.
+- **Your own denial** (a call you make, a `stack.mjs` or `triqual` command) is handled the same way.
+- **The stop.** Write `Denied by policy: <call> — <path>` to the ledger, dispatch nothing else for that task (no fix round, no re-review, no later task that depends on it), and ask your human partner with the denied call, its path and the refusal text verbatim. This is the security-sensitive stop above: a fence denial is never ruled on, because a ruling would route around it.
+- **The answer.** Only your human partner's answer reopens the task. When they say the way is open (they ran the step themselves, or changed the policy themselves), resume the task as it stood.
+- **Detection can be stale.** A refusal that matches the rule is a denial whether or not the ledger's `Fence:` line says none, because fence may have been installed since setup: stop, run fence detection again (`command -v fence`, then `fence version`), and append a new `Fence:` line with the result. Only a failure you can explain without fence, a policy or a protected path (a typo, a missing file, a failing test) is ordinary and follows the normal flow.
 
 ## Records
 
@@ -338,6 +361,9 @@ The workspace ledger, `sdd-ledger.md`, is append-only, one line per event, in th
 
 - `# SDD ledger — plan: <plan file path>` (first line)
 - `Authorization: push phase branches and draft PRs — handoff <date>` / `— setup <date>`, or `Authorization: declined — stack in local mode`
+- `Fence: <version>` / `Fence: none` (appended again whenever detection is rerun; the last `Fence:` line counts)
+- `Skills: T<N> printed for the human — <slugs>`
+- `Denied by policy: <call> — <path>`
 - `Tier: T<N> <tier>`
 - `Tier raised: T<N> <from> → <to> — <reason>`
 - `Budget: hunters <matrix> → <used> for T<N> — <reason tied to the diff>`
@@ -386,6 +412,7 @@ Use methodology:finishing-branch.
 | "The implementer spawned its own reviewer — free extra assurance" | It's a duplicate seat; the task review is the gate. A worker-spawned reviewer is a defect to flag. |
 | "I'll name a model to be safe" | A model in the dispatch overrides the role's pinned model. Choose the role; pass no model. |
 | "The plan says a reviewer role implements this task — close enough" | A reviewer role is never a task role. Stop and ask. |
+| "The denied call has a harmless variant" | A variant is a retry. A fence denial stops the task and asks the human; it is never ruled on or routed around. |
 
 ## Example
 

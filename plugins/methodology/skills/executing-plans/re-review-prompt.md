@@ -63,6 +63,12 @@ Subagent (roles:spec-reviewer):
     verdict counts for nothing. If the diff feels too large for one
     pass, review it in passes yourself and say so in your report.
 
+    ## Denied by Policy
+
+    A refusal that names fence, a policy or a protected path, or that you cannot explain, is a denial: stop, report the denied call and its path, and ask the human; never retry a variant of the call, never suggest `fence hatch`, and never edit fence's policy; when in doubt, stop.
+
+    You ask the human through your report: end it with the denied call, its path and the reason verbatim, and review nothing further. The controller relays it.
+
     ## Scope
 
     Your scope is the findings list and the fix diff. Verdict every finding.

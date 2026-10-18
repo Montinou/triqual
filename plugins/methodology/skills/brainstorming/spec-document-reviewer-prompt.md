@@ -40,6 +40,12 @@ Subagent (roles:final-adversarial-reviewer):
     | Phases | A phase with no slice; a task depending on a later phase; a phase without a branch, PR title, Phase check or committing task; a merge-dependent operation written as a task instead of under `## After Merge` |
     | Tiers | A task tiered lower than its content justifies by the rubric; a plan with tiers on some tasks only; a coordinator task not light; a complex-implementer task not heavy |
 
+    ## Denied by Policy
+
+    A refusal that names fence, a policy or a protected path, or that you cannot explain, is a denial: stop, report the denied call and its path, and ask the human; never retry a variant of the call, never suggest `fence hatch`, and never edit fence's policy; when in doubt, stop.
+
+    You ask the human through your final message: it replaces the output format below. Begin it with BLOCKED, then the denied call, its path and the refusal text verbatim, and audit nothing further. The controller relays it.
+
     ## Calibration
 
     **Only flag issues that would cause real problems during planning or implementation.**

@@ -59,6 +59,12 @@ Subagent (roles:safety-reviewer):
     reviewer you spawn duplicates one of them at full cost, and its
     verdict counts for nothing.
 
+    ## Denied by Policy
+
+    A refusal that names fence, a policy or a protected path, or that you cannot explain, is a denial: stop, report the denied call and its path, and ask the human; never retry a variant of the call, never suggest `fence hatch`, and never edit fence's policy; when in doubt, stop.
+
+    You ask the human through your final message: it replaces the output format below. Begin it with BLOCKED, then the denied call, its path and the reason verbatim, and review nothing further. The controller relays it.
+
     ## Do Not Trust the Report
 
     Treat the implementer's report as unverified claims. Check its

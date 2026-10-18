@@ -364,6 +364,29 @@ const reviewerTemplateProblems = ({ skills }) => {
   return first?.trim() === REVIEWER_DISPATCH ? [] : [`${REVIEWER_TEMPLATE}: first dispatch line is ${JSON.stringify(first)}`];
 };
 
+// fence cooperation (design U9): a denial is a stop-and-ask, and `fence hatch` appears only in the clause that forbids
+// suggesting it: the one sentence of FENCE_DENIAL_RULE, whole. A paragraph is text between blank lines; a sentence is
+// text up to a full stop, question mark or exclamation mark, with line breaks folded.
+const FENCE_DENIAL_RULE = 'A refusal that names fence, a policy or a protected path, or that you cannot explain, is a denial: stop, report the denied call and its path, and ask the human; never retry a variant of the call, never suggest `fence hatch`, and never edit fence\'s policy; when in doubt, stop.';
+const FENCE_PINS = [
+  { skill: 'executing-plans', text: FENCE_DENIAL_RULE, why: 'a fence denial is a stop-and-ask, never a retry' },
+  { skill: 'finishing-branch', text: FENCE_DENIAL_RULE, why: 'a fence denial is a stop-and-ask in every run' },
+  { skill: 'finishing-branch', text: 'a local merge to a protected branch is a human step', why: 'with fence installed the merge is the human\'s to run' },
+];
+// The sentences of `text` that name fence hatch and are not FENCE_DENIAL_RULE.
+const hatchOffenders = (text) =>
+  text.split(/\n\s*\n/).flatMap((paragraph) => paragraph.replace(/\s*\n\s*/g, ' ').trim().split(/(?<=[.!?])\s+/))
+    .filter((sentence) => /fence hatch/i.test(sentence) && sentence !== FENCE_DENIAL_RULE);
+const fenceHatchProblems = ({ skills }) =>
+  skillFiles(skills)
+    .filter((path) => path.endsWith('.md'))
+    .flatMap((path) => hatchOffenders(read(skills, path)).map((sentence) => `${path}: ${sentence.slice(0, 80)}`));
+// The last heading (indented ones, inside a prompt template, included) before the first occurrence of `needle` in `text`.
+const headingBefore = (text, needle) => {
+  const at = text.indexOf(needle);
+  return at < 0 ? null : (text.slice(0, at).match(/^ *#{1,6} .*$/gm) ?? []).at(-1)?.trim() ?? null;
+};
+
 // A temp skill tree for the meta-tests: `files` maps `<skill>/<path>` to its text.
 const fixture = (t, files, { agents = [], commands = [] } = {}) => {
   const root = mkdtempSync(join(tmpdir(), 'skills-contract-'));
@@ -469,6 +492,57 @@ test('executing-plans keeps the gate on every task with commits', () => {
   assert.deepEqual(pinProblems(REAL, PINS.filter((p) => p.skill === 'executing-plans')), []);
 });
 
+test('executing-plans keeps the fence stop-and-ask line and finishing-branch the fence human step', () => {
+  assert.deepEqual(pinProblems(REAL, FENCE_PINS), []);
+});
+
+test('no skill or template names fence hatch except in the clause that forbids suggesting it', () => {
+  assert.deepEqual(fenceHatchProblems(REAL), []);
+  const carriers = skillFiles(REAL.skills).filter((path) => path.endsWith('.md') && /fence hatch/.test(read(REAL.skills, path)));
+  assert.deepEqual(carriers, [
+    'brainstorming/spec-document-reviewer-prompt.md',
+    'executing-plans/SKILL.md', 'executing-plans/final-review-prompt.md', 'executing-plans/hunter-prompt.md',
+    'executing-plans/implementer-prompt.md', 'executing-plans/re-review-prompt.md', 'executing-plans/safety-review-prompt.md',
+    'executing-plans/task-reviewer-prompt.md', 'finishing-branch/SKILL.md', 'reviewing-code/reviewer-prompt.md',
+  ]);
+  // The role agents are outside the skills; their definitions are checked the same way.
+  for (const file of readdirSync(REAL.agents).filter((name) => name.endsWith('.md'))) {
+    assert.deepEqual(hatchOffenders(readFileSync(join(REAL.agents, file), 'utf8')), [], file);
+  }
+});
+
+// The denial rule reaches every role that can meet a denial: each dispatch template (a prompt file with a `Subagent (`
+// dispatch) and each role agent definition carries it once, under its own heading. A new template or role without it
+// fails here.
+const DISPATCH_TEMPLATES = skillFiles(REAL.skills).filter(
+  (path) => path.endsWith('-prompt.md') && /^\s*Subagent \(/m.test(read(REAL.skills, path)),
+);
+const ROLE_AGENT_FILES = readdirSync(REAL.agents).filter((name) => name.endsWith('.md')).sort();
+const carrierProblems = (label, text) => {
+  const flatText = text.replace(/\s*\n\s*/g, ' ');
+  const problems = [];
+  if (flatText.split(FENCE_DENIAL_RULE).length !== 2) problems.push(`${label}: the denial rule must appear exactly once`);
+  if (headingBefore(text, FENCE_DENIAL_RULE)?.replace(/^#+ /, '') !== 'Denied by Policy') problems.push(`${label}: not under a Denied by Policy heading`);
+  return problems;
+};
+
+test('every dispatch template and every role agent carries the denial rule once, under its own heading', () => {
+  assert.ok(DISPATCH_TEMPLATES.length >= 8, DISPATCH_TEMPLATES.join(', '));
+  for (const needed of ['reviewing-code/reviewer-prompt.md', 'brainstorming/spec-document-reviewer-prompt.md']) {
+    assert.ok(DISPATCH_TEMPLATES.includes(needed), `${needed} is not recognized as a dispatch template`);
+  }
+  assert.equal(ROLE_AGENT_FILES.length, 8, ROLE_AGENT_FILES.join(', '));
+  assert.deepEqual([
+    ...DISPATCH_TEMPLATES.flatMap((path) => carrierProblems(path, read(REAL.skills, path))),
+    ...ROLE_AGENT_FILES.flatMap((file) => carrierProblems(`roles/agents/${file}`, readFileSync(join(REAL.agents, file), 'utf8'))),
+  ], []);
+});
+
+test('the denial rule stands under its own heading in the orchestrator and finishing-branch, not under a fence-only one', () => {
+  assert.equal(headingBefore(read(REAL.skills, 'executing-plans/SKILL.md'), FENCE_DENIAL_RULE), '## Denied by Policy');
+  assert.equal(headingBefore(read(REAL.skills, 'finishing-branch/SKILL.md'), FENCE_DENIAL_RULE), '### Denied by Policy');
+});
+
 test('NOTICE names superpowers and its author', () => {
   const notice = readFileSync(REAL.notice, 'utf8');
   for (const needle of ['superpowers', 'Jesse Vincent', 'github.com/obra/superpowers', 'MIT', 'LICENSE-superpowers']) {
@@ -561,6 +635,19 @@ test('the checks fail on a seeded defect', async (t) => {
     assert.deepEqual(reviewerTemplateProblems(p), [`${REVIEWER_TEMPLATE}: first dispatch line is "Subagent (roles:hunter):"`]);
     const ok = fixture(t2, { [REVIEWER_TEMPLATE]: '# T\n\n```\nSubagent (roles:spec-reviewer):\n  description: x\n```\n' });
     assert.deepEqual(reviewerTemplateProblems(ok), []);
+  });
+  await t.test('fence hatch outside the denial rule sentence, even in a sentence that forbids suggesting it', (t2) => {
+    const p = fixture(t2, {
+      'a/notes.md': 'When denied, you may try `fence hatch` to open it.\nNever mind.',
+      'a/prompt.md': `## Denied by Policy\n\n    ${FENCE_DENIAL_RULE.replace(', and ask', ',\n    and ask')}\n\nThen ask the human.`,
+      'a/partial.md': 'You may stop, but never suggest `fence hatch`, and then retry a variant.',
+      'b/notes.md': 'Use Fence Hatch for this.',
+    });
+    assert.deepEqual(fenceHatchProblems(p), [
+      'a/notes.md: When denied, you may try `fence hatch` to open it.',
+      'a/partial.md: You may stop, but never suggest `fence hatch`, and then retry a variant.',
+      'b/notes.md: Use Fence Hatch for this.',
+    ]);
   });
   await t.test('a scheme with a variable host outside the allow list, and a stale exemption', (t2) => {
     const p = fixture(t2, {

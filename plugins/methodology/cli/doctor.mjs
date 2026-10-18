@@ -1,7 +1,7 @@
 // `triqual doctor [--repo]`: a read-only diagnosis of the methodology install on this machine, and of each harness
 // config.json records as set up (spec Addendum F.5). Every check yields failure lines (each with its fix) or warnings;
 // a missing or malformed file is a line, never a crash. Nothing is ever written; every CLI call goes through the
-// injected `run`. Exit codes: 0 no failures (and for --help/-h), 1 failures, 2 an unknown argument.
+// injected `run`, except the one `fence version` call (lib/fence.mjs, information only, a 2 s timeout). Exit codes: 0 no failures (and for --help/-h), 1 failures, 2 an unknown argument.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
@@ -20,6 +20,7 @@ import {
 } from './lib/harnesses.mjs';
 import { activeMarketplace, BRAND, brandDir, pluginId } from './lib/brand.mjs';
 import { legacyCliPresent } from './lib/cli-files.mjs';
+import { detectFence } from './lib/fence.mjs';
 import { isUnreadable, legacyScan } from './lib/legacy-scan.mjs';
 import { realRun } from './lib/run.mjs';
 import { configPath, readMethodologyConfig, supersededEnabled } from './lib/settings.mjs';
@@ -1226,7 +1227,15 @@ function legacyChecks(home, failures, warnings) {
   }
 }
 
-export async function doctor({ home, cwd, repo = false, run }) {
+// Fence is information, never a check (spec U9): one note, `fence <version>` with `, profile <FENCE_PROFILE>` when set.
+// No fence on PATH gives no note, so a machine without it reports exactly what it did before.
+function fenceNotes(env) {
+  const fence = detectFence(env);
+  if (fence === null) return [];
+  return [`fence ${fence.version}${fence.profile === null ? '' : `, profile ${fence.profile}`}`];
+}
+
+export async function doctor({ home, cwd, repo = false, run, env = process.env }) {
   const failures = [];
   const warnings = [];
   nodeCheck(process.versions.node, failures);
@@ -1246,9 +1255,10 @@ export async function doctor({ home, cwd, repo = false, run }) {
   if (repo && installs.methodology !== null && !config.keepSuperseded) {
     projectSupersededCheck(home, cwd, installs.methodology, warnings);
   }
-  if (!repo) return { failures, warnings };
+  const fence = fenceNotes(env);
+  if (!repo) return fence.length === 0 ? { failures, warnings } : { failures, warnings, notes: fence };
   await repoChecks(home, cwd, installs['progress-tracking'], run, failures, warnings);
-  return { failures, warnings, notes: await trackingModes(installs['progress-tracking'], run, cwd) };
+  return { failures, warnings, notes: [...fence, ...await trackingModes(installs['progress-tracking'], run, cwd)] };
 }
 
 // The CLI's run lives in lib/run.mjs (triqual sync uses it too); doctor keeps exporting it for bootstrap.

@@ -71,6 +71,12 @@ Subagent (<task role>):
     review would strengthen my report" — that review is already scheduled.
     Report instead.
 
+    ## Denied by Policy
+
+    A refusal that names fence, a policy or a protected path, or that you cannot explain, is a denial: stop, report the denied call and its path, and ask the human; never retry a variant of the call, never suggest `fence hatch`, and never edit fence's policy; when in doubt, stop.
+
+    You ask the human through your final message: reply BLOCKED with the denied call, its path and the reason verbatim, and change nothing more. The controller relays it. This holds in a fix round too.
+
     ## Tracking
 
     [TRACKING — include this section only when the repo is opted in (`triqual tasks paths --json`); drop it when it is not opted in or `triqual` is missing]
@@ -91,6 +97,8 @@ Subagent (<task role>):
     2. Install the rest with `headjack add <slug> --to claude --session --source plan`.
     3. When you finish, remove only the skills you added in this task, and only while they are still session entries (`headjack remove <slug> --from claude`). Never run `remove` on a skill that was installed before the task.
     4. When opted in, skip the removal while another task in the plan's task ledger is `in_progress` and lists the same skill: the last task that uses it removes it. In `"mode": "store"` there is no ledger file to read: take the other `in_progress` tasks' skills from `triqual tasks export --json` (`plans[].tasks[].skills`) instead.
+
+    **Fence form.** When the dispatch says fence is active, the human has already installed the skills the brief names, so steps 1 to 4 do not apply: never run `headjack add` or `headjack remove`, use the skills as they stand, and when one is missing say so in your report instead of installing it.
 
     ## Code Organization
 
@@ -235,4 +243,4 @@ squash and `triqual tasks done` finished:
 - `[PROGRESS_PATH]` — see `[TRACKING]`
 - `[STATUS_PATH]` — see `[TRACKING]`
 - `[TASKS_LEDGER_PATH]` — see `[TRACKING]`
-- `[TASK_SKILLS]` — the Task Skills section, kept only when the brief has a `**Skills:**` line
+- `[TASK_SKILLS]` — the Task Skills section, kept only when the brief has a `**Skills:**` line; with fence detected the dispatch also says "fence is active", which selects the section's fence form

@@ -13,3 +13,9 @@ Method: for each behavior the brief specifies, write the failing test first, run
 Discipline: transcribe code the brief provides; when the toolchain rejects it, make the smallest fix that preserves names and behavior and document it. Never widen scope. Never print secrets. Never dispatch subagents or reviewers: the controller reviews your diff after you report.
 
 Report: write the full report to the path the controller gives (steps done, RED/GREEN evidence per cycle, verification output, files changed, deviations with reasons, deferred checks, concerns). Reply with only: status (DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT), commits, one-line test summary, concerns, report path. Escalate with BLOCKED or NEEDS_CONTEXT instead of guessing.
+
+## Denied by Policy
+
+A refusal that names fence, a policy or a protected path, or that you cannot explain, is a denial: stop, report the denied call and its path, and ask the human; never retry a variant of the call, never suggest `fence hatch`, and never edit fence's policy; when in doubt, stop.
+
+You ask the human through your final message: it replaces your usual one. Begin it with BLOCKED, then the denied call, its path and the refusal text verbatim, and do nothing more. The controller relays it.

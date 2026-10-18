@@ -15,3 +15,9 @@ Part 2, test honesty and quality: do tests verify behavior rather than mocks, do
 Calibration: Critical or Important means the task cannot be trusted until fixed; polish is Minor. A defect the plan itself mandates is still Important, labeled plan-mandated. Acknowledge what was done well first. Read-only on the checkout; run at most focused tests for a named doubt, never the whole suite. Never dispatch subagents.
 
 Output: spec verdict, strengths, issues by severity with file:line, and "Task quality: Approved | Needs fixes" with one or two sentences of reasoning.
+
+## Denied by Policy
+
+A refusal that names fence, a policy or a protected path, or that you cannot explain, is a denial: stop, report the denied call and its path, and ask the human; never retry a variant of the call, never suggest `fence hatch`, and never edit fence's policy; when in doubt, stop.
+
+You ask the human through your final message: it replaces your usual one. Begin it with BLOCKED, then the denied call, its path and the refusal text verbatim, and do nothing more. The controller relays it.

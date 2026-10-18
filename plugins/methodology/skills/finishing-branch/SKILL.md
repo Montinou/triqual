@@ -106,6 +106,8 @@ Which option?
 
 **Stack menus:** when the state file exists, present one of the two menus below, chosen by the `mode` in `node ../executing-plans/scripts/stack.mjs status PLAN_FILE`, in place of the 3 or 2 options above; with no state file, the current menu above stays.
 
+**With fence detected,** say in the menu that a local merge is a human step (Step 6, With fence installed).
+
 **Stack link check (GitHub mode):** when the workspace ledger's `Phase <N>: submitted` or `ready` lines (the workspace is deleted at executing-plans' Finish, so then the final message's copy of them), or the latest `submit` output, end `; stack link missing`, the PRs are not linked as a stack on GitHub: say so when you present the menu and before offering `gh stack merge`, because an unlinked stack cannot be merged atomically (the owner links it, or merges the PRs one at a time, bottom first).
 
 **Draft stack:** when `node ../executing-plans/scripts/stack.mjs status PLAN_FILE` shows a GitHub-mode phase still `submitted`, its PR is a draft, and `gh stack merge` refuses draft PRs. Two things leave a phase `submitted`: the final review left residual Critical or Important findings (executing-plans then pushed the fix commit without marking anything ready), or a `submit … --open` that failed (exit 5) after a clean review. Say which when you present the menu: list the findings from the closing entry or the final message, or name the failed `--open`. You never mark the PRs ready or merge on your own: marking them ready is `node ../executing-plans/scripts/stack.mjs submit PLAN_FILE <top N> --open`, and only your human partner's answer authorizes it; "Merge now" needs that answer first.
@@ -141,6 +143,17 @@ is theirs.
 
 ## Step 6: Execute Choice
 
+### Denied by Policy
+
+This holds in every run, with or without fence detected.
+
+A refusal that names fence, a policy or a protected path, or that you cannot explain, is a denial: stop, report the denied call and its path, and ask the human; never retry a variant of the call, never suggest `fence hatch`, and never edit fence's policy; when in doubt, stop.
+
+### With fence installed
+
+Fence is a policy harness that denies calls under protected paths. It is detected when `command -v fence` finds it and `fence version` exits 0 (two plain commands, one after the other; the `Fence:` line of the workspace ledger, while the workspace exists, answers the same). Without fence nothing in this section applies.
+
+With fence detected, a local merge to a protected branch is a human step. The base branch (the trunk) is protected, and so is any branch your human partner names as protected. That covers Option 1, the stack's local Option 1 (Stacked plan: local mode) and the trunk fast-forward of "After a stack merge": you do not run the `checkout`, `pull`, `merge` or `merge --ff-only` on `<MAIN_ROOT>` yourself. Print those commands as plain commands with the real branch names, ask the human to run them, and go on to what follows the merge (the suite on the merged result, the cleanup) only after they answer that they did. Option 2 (push and open a PR) is unchanged.
 ### Option 1: Merge Locally
 
 First get the main repo root: `GIT_COMMON` (Step 3) is the git dir shared by every worktree, so its parent is the main checkout.

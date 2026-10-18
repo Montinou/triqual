@@ -2,13 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, cpSync, statSync, symlinkSync, realpathSync, chmodSync,
-  existsSync, utimesSync,
+  existsSync, utimesSync, copyFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { doctor, git, nodeCheck, realRun, SHIM_COMMANDS, STORE_HOOKS, STORE_SCRIPTS } from '../cli/doctor.mjs';
+import { doctor as runDoctor, git, nodeCheck, realRun, SHIM_COMMANDS, STORE_HOOKS, STORE_SCRIPTS } from '../cli/doctor.mjs';
 import { STORE_HOOK_LINES } from '../../progress-tracking/lib/store-hooks.mjs';
 import { COMMANDS } from '../setup/triqual-shim.mjs';
 import { MARKERS } from '../cli/lib/fsx.mjs';
@@ -16,6 +16,7 @@ import { codexBridgeDir } from '../cli/lib/harnesses.mjs';
 import { codexPluginTable, grokStaleEntries, syncHarness } from '../cli/lib/harness-sync.mjs';
 import { manifestPath, readManifest } from '../cli/lib/harness-manifest.mjs';
 import { BRAND } from '../cli/lib/brand.mjs';
+import { detectFence } from '../cli/lib/fence.mjs';
 import { installCli } from '../../../bin/bootstrap.mjs';
 
 const PLUGIN_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -32,6 +33,10 @@ const HEADJACK_ARGS = ['headjack', ['search', 'ping', '-k', '1', '--json'], { ti
 const SHIM_TEXT = readFileSync(join(REPO_ROOT, 'plugins', 'methodology', 'setup', 'triqual-shim.mjs'), 'utf8');
 const ALIAS_TEXT = readFileSync(join(REPO_ROOT, 'plugins', 'methodology', 'setup', `${BRAND.legacy.cli}-alias.mjs`), 'utf8');
 const FORWARDER_TEXT = readFileSync(join(REPO_ROOT, 'plugins', 'methodology', 'setup', `${BRAND.legacy.launcher}-forwarder`), 'utf8');
+// doctor looks for fence on PATH. Every call here sees a PATH with nothing on it unless a test passes its own `env`,
+// so a fence installed on this machine never changes a result.
+const NO_FENCE_ENV = { PATH: join(tmpdir(), 'cm-doctor-no-fence-path') };
+const doctor = (args) => runDoctor({ env: NO_FENCE_ENV, ...args });
 const section = (body = GLOBAL.trim()) => `# Machine\n\n${MARKERS.start}\n${body}\n${MARKERS.end}\n`;
 
 // A run that records its calls and answers every command with `result` (or throws it when it is an Error).
@@ -2362,4 +2367,129 @@ test('no bootstrap hint without /methodology:setup', () => {
     });
   }
   assert.deepEqual(bare, []);
+});
+
+// ---- fence (spec U9): detection, and doctor's information line ----
+
+const FAKE_FENCE = join(PLUGIN_ROOT, 'test', 'fixtures', 'fake-fence');
+// Runs fn with the directory of a PATH that holds the fake fence under the name `fence`.
+function withFenceDir(fn) {
+  const dir = mkdtempSync(join(tmpdir(), 'cm-fence-'));
+  const cleanup = () => rmSync(dir, { recursive: true, force: true });
+  copyFileSync(FAKE_FENCE, join(dir, 'fence'));
+  let result;
+  try {
+    result = fn(dir);
+  } catch (err) {
+    cleanup();
+    throw err;
+  }
+  if (result && typeof result.then === 'function') return result.finally(cleanup);
+  cleanup();
+  return result;
+}
+
+test('detectFence reads the version and FENCE_PROFILE from a fence on PATH', () => {
+  withFenceDir((dir) => {
+    assert.deepEqual(detectFence({ PATH: dir }), { version: '0.0.0-test', profile: null });
+    assert.deepEqual(detectFence({ PATH: dir, FENCE_PROFILE: 'unattended' }), { version: '0.0.0-test', profile: 'unattended' });
+    assert.deepEqual(detectFence({ PATH: dir, FENCE_PROFILE: '' }), { version: '0.0.0-test', profile: null });
+    // A version printed without the program name is taken as is.
+    assert.equal(detectFence({ PATH: dir, FAKE_FENCE_OUT: '1.2.3\n' }).version, '1.2.3');
+  });
+});
+
+test('detectFence runs `fence version` as an argument array and nothing else', () => {
+  withFenceDir((dir) => {
+    const log = join(dir, 'calls.log');
+    detectFence({ PATH: dir, FAKE_FENCE_LOG: log });
+    assert.equal(readFileSync(log, 'utf8'), 'version\n---\n');
+  });
+});
+
+test('detectFence gives null for no fence, a failing fence and a hung fence, and never throws', () => {
+  const empty = mkdtempSync(join(tmpdir(), 'cm-nofence-'));
+  try {
+    assert.equal(detectFence({ PATH: empty }), null);
+    assert.doesNotThrow(() => detectFence(undefined));
+    assert.doesNotThrow(() => detectFence({ PATH: 5 }));
+  } finally {
+    rmSync(empty, { recursive: true, force: true });
+  }
+  withFenceDir((dir) => {
+    assert.equal(detectFence({ PATH: dir, FAKE_FENCE_EXIT: '3' }), null);
+    const start = Date.now();
+    // The fake `exec`s `sleep`, so the PATH also holds the system tools; the fake still comes first.
+    assert.equal(detectFence({ PATH: `${dir}:${process.env.PATH}`, FAKE_FENCE_SLEEP: '30' }), null);
+    const took = Date.now() - start;
+    assert.ok(took >= 1500 && took < 6000, `the 2 s timeout ended the run after ${took} ms`);
+  });
+});
+
+test('detectFence strips control characters and caps the length of the version and the profile', () => {
+  withFenceDir((dir) => {
+    const dirty = detectFence({ PATH: dir, FAKE_FENCE_OUT: 'fence 1.0\u001b[31m-x\u0007\n', FENCE_PROFILE: 'un\nat\u001btended' });
+    assert.deepEqual(dirty, { version: '1.0[31m-x', profile: 'unattended' });
+    const long = detectFence({ PATH: dir, FAKE_FENCE_OUT: `fence ${'9'.repeat(500)}`, FENCE_PROFILE: 'p'.repeat(500) });
+    assert.equal(long.version, '9'.repeat(64));
+    assert.equal(long.profile, 'p'.repeat(64));
+    // A profile of control characters only is no profile.
+    assert.equal(detectFence({ PATH: dir, FENCE_PROFILE: '\u0001\u0002' }).profile, null);
+  });
+});
+
+test('detectFence takes a shorter timeout when its caller has little time left', () => {
+  withFenceDir((dir) => {
+    const start = Date.now();
+    assert.equal(detectFence({ PATH: `${dir}:${process.env.PATH}`, FAKE_FENCE_SLEEP: '30' }, 300), null);
+    const took = Date.now() - start;
+    assert.ok(took < 1500, `the 300 ms timeout ended the run after ${took} ms`);
+  });
+});
+
+test('doctor reports fence as information, with the profile when FENCE_PROFILE is set', async () => {
+  await withHome(async ({ home }) => {
+    await withFenceDir(async (dir) => {
+      const plain = await doctor({ home, cwd: home, run: fakeRun().run, env: { PATH: dir } });
+      assert.deepEqual(plain.notes, ['fence 0.0.0-test']);
+      assert.deepEqual(plain.failures.filter((f) => /fence/i.test(f)), []);
+      assert.deepEqual(plain.warnings.filter((w) => /fence/i.test(w)), []);
+      const profiled = await doctor({ home, cwd: home, run: fakeRun().run, env: { PATH: dir, FENCE_PROFILE: 'unattended' } });
+      assert.deepEqual(profiled.notes, ['fence 0.0.0-test, profile unattended']);
+    });
+  });
+});
+
+test('doctor --repo lists the fence line before the tracking lines', async () => {
+  await withHome(async ({ home, installPath }) => {
+    await withFenceDir(async (dir) => {
+      const s = makeStoreRepo(home, installPath);
+      const r = await inStoreEnv(s.env, () => fullDiagnosis(home, s.repo, { env: { PATH: dir } }));
+      assert.deepEqual(r.notes, ['fence 0.0.0-test', `tracking: ${s.root} store`]);
+    });
+  });
+});
+
+test('without fence doctor reports nothing about it and returns the same keys', async () => {
+  await withHome(async ({ home }) => {
+    const env = { PATH: join(home, 'empty-path') };
+    const plain = await doctor({ home, cwd: home, run: fakeRun().run, env });
+    assert.deepEqual(Object.keys(plain), ['failures', 'warnings']);
+    const repo = await doctor({ home, cwd: home, repo: true, run: fakeRun().run, env });
+    assert.deepEqual(Object.keys(repo), ['failures', 'warnings', 'notes']);
+    for (const line of [...plain.failures, ...plain.warnings, ...repo.notes]) assert.doesNotMatch(line, /fence/i);
+  });
+});
+
+test('the CLI prints the INFO fence line before the summary', () => {
+  withHome(({ home }) => {
+    withFenceDir((dir) => {
+      const r = spawnSync(process.execPath, [CLI], {
+        cwd: home, encoding: 'utf8', env: { HOME: home, PATH: dir, FENCE_PROFILE: 'unattended' },
+      });
+      const lines = r.stdout.trimEnd().split('\n');
+      assert.match(lines.at(-1), /^doctor: \d+ failure\(s\), \d+ warning\(s\)$/);
+      assert.equal(lines.at(-2), 'INFO fence 0.0.0-test, profile unattended', r.stdout);
+    });
+  });
 });
