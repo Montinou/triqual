@@ -295,3 +295,10 @@ test('README and CONTRIBUTING say development happens in the public repository, 
   }
   assert.doesNotMatch(contributing, /published from a private/);
 });
+
+test('README gives npx triqual setup as the terminal path and links the package page', () => {
+  assert.ok(README.includes('npx triqual setup'), 'npx triqual setup');
+  assert.ok(README.includes('from triqual 0.1.0'), 'the release it arrives in');
+  assert.ok(!README.includes('need the full setup from a clone'), 'Codex and Grok no longer need a clone');
+  assert.ok(README.includes('](packages/triqual/README.md)'), 'the package page is linked');
+});

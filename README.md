@@ -40,7 +40,18 @@ In Claude Code:
 It needs Node 22.13 or newer, git 2.31 or newer and the `claude` CLI. Installing `methodology` brings in the other
 three system plugins, `/methodology:setup` finishes the machine-level setup, and `/reload-plugins` loads what it
 installed into the session you are in (or start a new session). A SessionStart hook then loads the methodology on its
-own. Codex, Grok and the `language` question need the full setup from a clone: see [Install](#install).
+own. Codex, Grok and the `language` question need a terminal: `npx triqual setup` below, or the clone in
+[Install](#install).
+
+From a terminal (from triqual 0.1.0 on npm), the same setup plus Codex, Grok and the `language` question, with no
+clone:
+
+```bash
+npx triqual setup
+```
+
+It adds the marketplace and installs `methodology` through the `claude` CLI, then runs the installer that plugin
+ships. See the [triqual package](packages/triqual/README.md) for its flags and exit codes.
 
 ### What `bootstrap` changes on your machine
 
@@ -58,8 +69,8 @@ step. It changes this, and is safe to rerun:
   agents in `~/.claude/agents` and the legacy Workflow gate hook (skipped while the rules section still fails its
   check). See [Install](#install), steps 2 and 6.
 
-The full setup from a clone also removes the `language` key from `settings.json` after asking, and sets up Codex and
-Grok when it finds them.
+The full setup from a terminal (`npx triqual setup` or the clone) also removes the `language` key from
+`settings.json` after asking, and sets up Codex and Grok when it finds them.
 
 ## Plugins
 
@@ -70,9 +81,13 @@ Each plugin has its own reference page with every command, flag, file and enviro
 [methodology-codex](plugins/methodology-codex/README.md) (0.2.0, listed only in the Codex marketplace; see
 [Codex and Grok](#codex-and-grok)).
 
+**npm packages.** [`triqual`](packages/triqual/README.md) installs and runs triqual from a terminal (`npx triqual
+setup`). [`@triqual/headjack`](https://github.com/Montinou/headjack#readme) ships Headjack's CLI and stdio MCP server.
+Both publish from tagged releases through npm trusted publishing, with provenance.
+
 | Plugin | Version | What it ships |
 |---|---|---|
-| `methodology` | 0.7.3 | The core, and the `/methodology:setup` command that finishes the machine-level setup after a marketplace install. The global rules (`rules/global.md`) that `triqual sync` writes into a managed section of `~/.claude/CLAUDE.md`; the workflow skills forked from superpowers 6.4.2 (`methodology:brainstorming`, `writing-plans`, `subagent-driven-development` and the rest), wired to the role agents, the task ledger and progress tracking, and superseding `superpowers@*`, which `triqual sync` disables; `triqual sync`, `triqual doctor` (`triqual doctor --repo` also checks the current repo's tracking: its git gate in committed, local or store mode, and `triqual tasks check` drift), `triqual upstream-diff`, `triqual migrate`, `triqual role-eval` and `triqual hook`; a SessionStart hook that injects `methodology:using-methodology` and notices when that section drifts from the installed rules or a superseded plugin is still enabled; and, since 0.3.0, the same methodology in Codex and Grok (`triqual hook`, `triqual sync --harness <id>`, see [Codex and Grok](#codex-and-grok)). Depends on the other three plugins, so installing it installs them. |
+| `methodology` | 0.7.4 | The core, and the `/methodology:setup` command that finishes the machine-level setup after a marketplace install. The global rules (`rules/global.md`) that `triqual sync` writes into a managed section of `~/.claude/CLAUDE.md`; the workflow skills forked from superpowers 6.4.2 (`methodology:brainstorming`, `writing-plans`, `subagent-driven-development` and the rest), wired to the role agents, the task ledger and progress tracking, and superseding `superpowers@*`, which `triqual sync` disables; `triqual sync`, `triqual doctor` (`triqual doctor --repo` also checks the current repo's tracking: its git gate in committed, local or store mode, and `triqual tasks check` drift), `triqual upstream-diff`, `triqual migrate`, `triqual role-eval` and `triqual hook`; a SessionStart hook that injects `methodology:using-methodology` and notices when that section drifts from the installed rules or a superseded plugin is still enabled; and, since 0.3.0, the same methodology in Codex and Grok (`triqual hook`, `triqual sync --harness <id>`, see [Codex and Grok](#codex-and-grok)). Depends on the other three plugins, so installing it installs them. |
 | `progress-tracking` | 0.4.2 | `progress.md` (one entry per task) and `status.md` (overall state) kept current, plus a task ledger per plan (`docs/plans/<plan>.tasks.json`) that `triqual tasks` drives and renders into `status.md`: the `progress-tracking` skill, the `/progress-tracking:progress-init` command (also `triqual progress-init`), a SessionStart hook that injects the current state, a Stop hook that refuses to end a turn with changes but no `progress.md` entry, and a per-repo git `pre-commit` that requires both `progress.md` and `status.md` staged in any commit with other changes. Committed mode keeps the files in the repo; local mode (`triqual progress-init --local`, for shared team or client repos) keeps them under `<git-common-dir>/methodology/`, never committed; there the files are written through `triqual tracking write`, since Claude Code refuses an agent's file writes under `.git/`. Since 0.4.0 a third mode, store mode (`triqual progress-init --store`), keeps the entries, status and task ledgers in a local SQLite database outside the repo, for repositories whose history must carry no tracking (see [Store mode](#store-mode)); it needs Node 22.13 or newer, and `triqual tracking status` and `triqual tracking log` read it back; since 0.4.1 `triqual tracking relocate <old-root>` follows a checkout that moved to a new place. Also `triqual tasks line` for the status line and `triqual ui`, a local read-only dashboard. The hooks only act in opted-in repos. Since 0.2.3 the SessionStart context fits a character budget (`gate.mjs session-start --budget <n>`), so Codex and Grok can share one context with the methodology. |
 | `workflow-gate` | 0.2.0 | A PreToolUse hook that caps the agents a Workflow script launches per model: Fable 3, Opus 8, Sonnet 12, Haiku unlimited. Each `agent()` needs a `roles:*` agentType or a `model:`, the script declares `// MAX_AGENTS: fable=N opus=N sonnet=N`, and a non-Haiku fan-out over a dynamic list needs `.slice(0, N)`. A denial lists every problem with its fix. |
 | `roles` | 0.3.2 | Eight role agents for plan execution, dispatched as `roles:<name>`: `brief-writer`, `tdd-implementer`, `complex-implementer`, `safety-reviewer`, `spec-reviewer`, `review-fixer`, `final-adversarial-reviewer`, `hunter`. Haiku writes briefs, hunts candidates and runs the safety gate; Sonnet implements and fixes; Opus runs the spec gate, the final review and the tasks a plan marks `roles:complex-implementer`. |
@@ -81,7 +96,8 @@ Each plugin has its own reference page with every command, flag, file and enviro
 
 ## Install
 
-The [Quick start](#quick-start) is the marketplace path. This is the full setup, from a clone: it runs everything
+The [Quick start](#quick-start) is the marketplace path, and `npx triqual setup` its terminal form. This is the same
+full setup from a clone: it runs everything
 `/methodology:setup` does and also sets up Codex and Grok and asks about the `language` key in
 `~/.claude/settings.json`, which the command leaves alone.
 
