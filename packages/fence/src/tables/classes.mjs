@@ -1889,6 +1889,41 @@ for (const name of Object.keys(OTHER_VCS)) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Rows: shells. `-c CODE` is code (re-parsed by the normalizer), not a path; a script file operand
+// is read (the normalizer reads it too); the words after the code or the file are the script's own
+// arguments, which it may use as paths (read and written, as for an unmodeled program). `-o NAME`
+// and `-O NAME` take an option name; an UNKNOWN word where an option could stand is UNKNOWN.
+
+function shellFx(argv, io) {
+  let i = 1;
+  let code = false;
+  for (; i < argv.length; i++) {
+    const a = argv[i];
+    if (!isStr(a)) {
+      io.rw(UNKNOWN);
+      continue;
+    }
+    if (a === '--' || a === '-') {
+      i++;
+      break;
+    }
+    if (a.startsWith('--')) continue;
+    if (a.length < 2 || (a[0] !== '-' && a[0] !== '+')) break;
+    for (let k = 1; k < a.length; k++) {
+      if (a[k] === 'c') code = true;
+      else if (a[k] === 'o' || a[k] === 'O') i++;
+    }
+  }
+  if (i < argv.length) {
+    if (code) i++; // the code word
+    else if (isStr(argv[i]) && argv[i] !== '') io.read(argv[i++]); // the script file
+  }
+  for (; i < argv.length; i++) io.rw(argv[i]);
+  return 'mutates';
+}
+def('sh bash zsh dash ksh', { fx: (_p, io, call) => shellFx(call.argv, io) });
+
+// ---------------------------------------------------------------------------------------------
 // Rows: package managers
 
 function installClasses(name, p) {

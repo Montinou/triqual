@@ -48,7 +48,8 @@
 //   (`;`) see an UNKNOWN cwd. `builtin cd`/`command cd` are cd. With a tracked pushd stack, a cd
 //   (zsh AUTO_PUSHD) or `pushd ±N` makes the stack UNKNOWN; popd on an unknown stack, UNKNOWN cwd.
 // - eval, source and `.` leave cwd, pushd stack, branches and the set of repositories UNKNOWN for
-//   later commands (eval's literal text is re-parsed as nested commands; source/`.` is T31's).
+//   later commands (eval's literal text is re-parsed as nested commands; a sourced file is read and
+//   re-parsed by scriptCommands, T31).
 // - After an in-command mv or ln, a later word, redirect target, cd target or git -C directory whose
 //   path names one of its operands, a path under one, or passes through one (`d/../x`, read
 //   lexically and resolved; every prefix before a `..` is also resolved, so a path through another
@@ -125,6 +126,7 @@ import {
   heredocLiteral,
   bashGlobUnknown,
   resetsEnv,
+  stdinPath,
   MAX_REPARSE_DEPTH,
 } from './unwrap.mjs';
 import { opsOf } from './ops.mjs';
@@ -138,6 +140,8 @@ import { isCodeLoadingAssignment } from '../tables/envvars.mjs';
 import { bulkOf, PROTECTED_SUBGLOBS, MAX_WALK_ENTRIES, MAX_WALK_DEPTH, TREE_PATHSPECS, UNNAMEABLE } from '../tables/bulk.mjs';
 import { gitTreeDiff as defaultGitTreeDiff, gitConfigFiles, inProtectedSubpath, indexMentionsProtected, MAX_CONFIG_BYTES, NOT_A_REVISION } from '../resolve/git.mjs';
 import { patchTargets as defaultPatchTargets, patchTargetsFromText } from '../resolve/patch.mjs';
+import { readScript, shebangShell, readPackageScripts, scriptRoute, SCRIPT_CAP, LIFECYCLE_SCRIPTS } from '../resolve/script.mjs';
+import { isAgentWritten } from '../log/written.mjs';
 
 /** Most nodes walked in one call (loop unrolling included); past it the call is opaque. */
 export const MAX_STEPS = 200000;
@@ -2395,9 +2399,11 @@ function predecessorOk(argv) {
 
 function finish(eff, info, sh, g) {
   for (const step of FINISH_STEPS) step(eff, info, sh, g);
+  const at = g.commands.length;
   g.commands.push(eff);
   if (!predecessorOk(eff.argv)) g.allSafe = false;
   nestedCommands(eff, info, sh, g);
+  scriptCommands(eff, info, sh, g, at);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2461,6 +2467,517 @@ function reparse(text, depth, child) {
     g.nest = savedNest;
   }
   return g.commands.slice(start);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Files a command runs (T31; resolve/script.mjs finds the file, the walk reads it).
+//
+// - A shell script (`./x` with a sh/bash/dash/zsh shebang, `sh|bash|zsh x`, `source x` / `. x` with
+//   no shebang or a shell one) is read (SCRIPT_CAP) and re-parsed by reparse() as one more nesting
+//   level, under the same per-level and per-call caps: its commands join the call after the command
+//   that runs it. A file that cannot be read, is over the cap, or has another shebang makes the
+//   command `runs-repo-code`. A source with no slash (a PATH search) and an UNKNOWN path are not a
+//   known file.
+// - `npm run <x>`, `npm test|start|stop|restart`, `yarn <x>`, `pnpm <x>`: the package.json (the
+//   nearest one up from the cwd, or --prefix/-C/--dir/--cwd) scripts pre<x>, <x>, post<x> are
+//   re-parsed as `sh -c` code in the package directory, words after <x> appended quoted. The
+//   command itself stays `runs-repo-code` (a script's programs come from node_modules/.bin).
+// - An install (`npm install|ci`, `yarn`, `pnpm install`, …) is `package-install` and
+//   `runs-repo-code` (classes.mjs); with an agent-written package.json its preinstall, install,
+//   postinstall and prepare scripts are re-parsed too.
+// - make, pytest, python <file> / -m <module>, node <file>, npx, cargo run, go run, deno run, and a
+//   foreign shell given a file: `runs-repo-code`, the named files are reads.
+// - Provenance of a file a route runs (a realpath): written earlier in this call (any earlier
+//   command's write at or above it, an UNKNOWN write, a move/link/bulk op over it) is opaque
+//   `write-then-run`; in ctx.writtenIndex (or the index is incomplete) it is agent-written: opaque
+//   `agent-written-script` unless it re-parses cleanly (a Makefile or a non-shell file never does).
+//   The operator's file that does not re-parse cleanly is `runs-repo-code` (its partial commands
+//   dropped), except when the failure is sticky: a depth or size cap (a script that runs itself
+//   stops there), or an agent-written/write-then-run/script-path verdict from a file it runs.
+// - Commands running at the same time as a file route (other members of its pipeline, a background
+//   job of its list, or the route itself backgrounded) count as writers whatever their order: the
+//   check runs after the walk (checkConcurrentRuns, linear; more than MAX_CONCURRENT background jobs
+//   or file routes in one call is opaque `size` `region-count`). A file that resolves to stdin, a descriptor, a
+//   FIFO or a device is opaque `stdin-interpreter`. A shell script by absolute path outside the
+//   system directories is read like the project's own.
+// - A route whose file is not known (UNKNOWN word, unresolved package or makefile) is opaque
+//   `script-path` when the agent may have written it (an incomplete index, any entry in the index,
+//   or any write earlier in the call), else `runs-repo-code`.
+
+const STICKY_CONSTRUCTS = new Set(['agent-written-script', 'write-then-run', 'script-path', 'git-config-written']);
+const isSticky = (o) => o.reason === 'depth' || o.reason === 'size' || STICKY_CONSTRUCTS.has(o.construct);
+const PACKAGE_MANAGER_SHELL = 'bash'; // npm, yarn and pnpm run scripts with sh -c
+const MAKEFILES = ['GNUmakefile', 'makefile', 'Makefile'];
+const MAX_UP = 256;
+
+// The realpath of an absolute path, memoized per call (nothing runs during normalization).
+function realOf(p, g) {
+  if (!g.realCache.has(p)) g.realCache.set(p, resolvePath(p, '/', g.home, g.fs));
+  return g.realCache.get(p);
+}
+
+const dirOf = (p) => (p.lastIndexOf('/') <= 0 ? '/' : p.slice(0, p.lastIndexOf('/')));
+// Does `a` name `p` or a directory above it? (case-folded: fail closed on any volume)
+function covers(a, p) {
+  const fa = fold(a);
+  const fp = fold(p);
+  return fa === fp || fa === '/' || fp.startsWith(`${fa}/`);
+}
+
+// The reader scripts are read with: ctx.readFile when given, behind the fs's size check.
+function scriptFs(g) {
+  if (!g.readFile) return g.fs;
+  return { statSync: (p) => g.fs.statSync(p), readFileSync: (p) => g.readFile(p) };
+}
+
+// The writes of a command that can create a file: a path the command only deletes cannot (rm
+// records its operands as writes and delete ops): one write per delete op of the same path, UNKNOWN
+// included.
+function creatingWrites(c) {
+  const deletes = c.ops.filter((o) => o.op === 'delete');
+  if (deletes.length === 0) return c.writes;
+  const out = [...c.writes];
+  for (const o of deletes) {
+    const k = out.indexOf(o.path);
+    if (k >= 0) out.splice(k, 1);
+  }
+  return out;
+}
+
+// The paths a command may create (creating writes, move/link/bulk ops). A runner of repository code
+// (make, cargo, go run, …) records the directory it builds in as a write: what it writes there is
+// the repository's own code's doing, so only its exact paths (a redirect, a named output) count,
+// not the directories above the file (exactOnly).
+function writeEntries(c) {
+  const paths = [...creatingWrites(c)];
+  let moves = false;
+  for (const o of c.ops) {
+    if (o.op !== 'move' && o.op !== 'link' && o.op !== 'bulk') continue;
+    paths.push(o.path);
+    moves = true;
+  }
+  return { paths, exactOnly: c.classes.includes('runs-repo-code'), moves };
+}
+
+// Does command c write the path (see writeEntries)?
+function commandWrites(c, real) {
+  const { paths, exactOnly } = writeEntries(c);
+  return paths.some((p) => !isAbs(p) || (exactOnly ? fold(p) === fold(real) : covers(p, real)));
+}
+
+// Commands that run at the same time as a file route count as writers whatever their order
+// (`./a.sh & echo x > a.sh`, `./a.sh | echo x > a.sh`):
+// - the members of one pipeline: g.pipes holds each pipeline's command range [s, e);
+// - a backgrounded (&) job, wherever it sits: g.jobs holds {s, e, w}, the job's range and the start of
+//   its list; the job runs at the same time as every command from w to the end of the call (`wait`
+//   is not modelled).
+// A file route records itself in g.pendingRuns and is judged once the walk is over
+// (checkConcurrentRuns). More than MAX_CONCURRENT jobs or file routes in one call is opaque `size`
+// `region-count`; below that the check is one forward and one backward pass over g.commands plus
+// one pass per outermost pipeline holding a route (linear), with a confirming scan only on a hit.
+export const MAX_CONCURRENT = 256;
+
+function countConcurrent(g, key, off) {
+  g[key]++;
+  if (g[key] > MAX_CONCURRENT) throw new Opaque('size', 'region-count', off);
+}
+
+// A summary of what a set of commands wrote: {trie, exact, unknown}.
+function newSummary() {
+  return { trie: new PathTrie(), exact: new Set(), unknown: false };
+}
+
+function addWrites(sum, c) {
+  const { paths, exactOnly } = writeEntries(c);
+  for (const p of paths) {
+    if (!isAbs(p)) sum.unknown = true;
+    else if (exactOnly) sum.exact.add(fold(p));
+    else sum.trie.add(p);
+  }
+}
+
+const summaryHits = (sum, real) => sum.unknown || sum.trie.hit(real) || sum.exact.has(fold(real));
+
+// On a summary hit: is there a writer of run.real among the indices `each` visits, other than the
+// route's own command and the commands its file ran?
+function confirmWriter(g, run, each) {
+  const own = (i) => i >= run.at && i < (run.end ?? run.at + 1);
+  let found = false;
+  each((i) => {
+    if (!found && i < g.commands.length && !own(i) && commandWrites(g.commands[i], run.real)) found = true;
+  });
+  if (found) throw new Opaque('unsupported', 'write-then-run', run.off);
+}
+
+function checkConcurrentRuns(g) {
+  const runs = g.pendingRuns;
+  if (runs.length === 0) return;
+  const n = g.commands.length;
+  // pipelines: the outermost pipeline holding a route (an inner one is inside it)
+  const outer = new Map();
+  for (const run of runs) {
+    let best = null;
+    for (const r of g.pipes) if (run.at >= r[0] && run.at < r[1] && (best === null || r[1] - r[0] > best[1] - best[0])) best = r;
+    if (best === null) continue;
+    const key = `${best[0]}:${best[1]}`;
+    if (!outer.has(key)) outer.set(key, { range: best, runs: [] });
+    outer.get(key).runs.push(run);
+  }
+  for (const { range, runs: rs } of outer.values()) {
+    const sum = newSummary();
+    for (let i = range[0]; i < range[1] && i < n; i++) addWrites(sum, g.commands[i]);
+    for (const run of rs) {
+      if (!summaryHits(sum, run.real)) continue;
+      confirmWriter(g, run, (f) => {
+        for (let i = range[0]; i < range[1]; i++) f(i);
+      });
+    }
+  }
+  if (g.jobs.length === 0) return;
+  // a route at or after a job's list start: the writes of every such job (forward pass)
+  const byW = [...g.jobs].sort((x, y) => x.w - y.w);
+  const forward = [...runs].sort((x, y) => x.at - y.at);
+  const sumA = newSummary();
+  let k = 0;
+  for (const run of forward) {
+    for (; k < byW.length && byW[k].w <= run.at; k++) for (let i = byW[k].s; i < byW[k].e && i < n; i++) addWrites(sumA, g.commands[i]);
+    if (!summaryHits(sumA, run.real)) continue;
+    const jobs = byW.slice(0, k);
+    confirmWriter(g, run, (f) => {
+      for (const j of jobs) for (let i = j.s; i < j.e; i++) f(i);
+    });
+  }
+  // a route inside a job: every command from the earliest list start of the jobs holding it to the
+  // end of the call (backward pass)
+  const inside = [];
+  for (const run of runs) {
+    let m = Infinity;
+    for (const j of g.jobs) if (run.at >= j.s && run.at < j.e && j.w < m) m = j.w;
+    if (m !== Infinity) inside.push({ run, m });
+  }
+  inside.sort((x, y) => y.m - x.m);
+  const sumB = newSummary();
+  let i = n;
+  for (const { run, m } of inside) {
+    while (i > m) addWrites(sumB, g.commands[--i]);
+    if (!summaryHits(sumB, run.real)) continue;
+    confirmWriter(g, run, (f) => {
+      for (let x = m; x < n; x++) f(x);
+    });
+  }
+}
+
+// What commands before index `at` in this call wrote (creating writes, and move/link/bulk ops),
+// gathered once per call: a cursor over g.commands feeding a PathTrie (hit: the path is at or under
+// one of them) and, for runners of repository code, a set of exact paths. Linear in the commands walked; a re-parse whose commands are dropped (runFileText)
+// rewinds the cursor.
+function writeScan(g, at) {
+  let w = g.writeScan;
+  if (w === null) {
+    w = { upto: 0, trie: new PathTrie(), exact: new Set(), unknown: false, any: false, packageJson: false, anyMove: false };
+    g.writeScan = w;
+  }
+  for (; w.upto < at && w.upto < g.commands.length; w.upto++) {
+    const c = g.commands[w.upto];
+    const { paths, exactOnly, moves } = writeEntries(c);
+    if (moves) w.anyMove = true;
+    for (const p of paths) {
+      w.any = true;
+      if (!isAbs(p)) {
+        w.unknown = true;
+        continue;
+      }
+      if (exactOnly) w.exact.add(fold(p));
+      else w.trie.add(p);
+      if (fold(p.slice(p.lastIndexOf('/') + 1)) === 'package.json') w.packageJson = true;
+    }
+  }
+  return w;
+}
+
+// Was the path written by a command before index `at` in this call?
+function writtenInCall(real, g, at) {
+  const w = writeScan(g, at);
+  return w.unknown || w.trie.hit(real) || w.exact.has(fold(real));
+}
+
+function anyWriteInCall(g, at) {
+  return writeScan(g, at).any;
+}
+
+function caseInsensitiveAt(real, g) {
+  try {
+    return isCaseInsensitive(dirOf(real), g.fs);
+  } catch {
+    return true;
+  }
+}
+
+// 'call' (written earlier in this call) | 'agent' (written-files index, or an incomplete index) | 'owner'
+function provenance(real, S) {
+  if (writtenInCall(real, S.g, S.at)) return 'call';
+  if (S.g.writtenIncomplete || isAgentWritten(real, S.g.written, caseInsensitiveAt(real, S.g))) return 'agent';
+  return 'owner';
+}
+
+function scriptOpaque(construct, S, reason = 'unsupported') {
+  return new Opaque(reason, construct, S.off);
+}
+
+// The provenance of a file a route runs; throws on a write earlier in the call.
+function judgeFile(real, S) {
+  const p = provenance(real, S);
+  if (p === 'call') throw scriptOpaque('write-then-run', S);
+  if (S.runs.length === 0) countConcurrent(S.g, 'runCount', S.off); // one file route, however many files
+  const run = { real, at: S.at, end: null, off: S.off };
+  S.g.pendingRuns.push(run);
+  S.runs.push(run);
+  return p;
+}
+
+// A route whose file is not known.
+function unknownFile(S) {
+  const { g } = S;
+  if (g.writtenIncomplete || g.written.size > 0 || anyWriteInCall(g, S.at)) throw scriptOpaque('script-path', S, 'unknown');
+  addClass(S.eff, 'runs-repo-code');
+}
+
+// Re-parse a file's text as a child shell. true: its commands joined the call. false: the operator's
+// file did not re-parse cleanly (runs-repo-code, partial commands dropped). Throws when it must stay
+// opaque (agent-written, or a sticky failure).
+function runFileText(text, child, cwd, agent, S) {
+  const { g, sh, eff } = S;
+  const start = g.commands.length;
+  const r = reparse(text, g.nest + 1, { ...child, cwd, env: eff.env, sh, g, off: S.off });
+  if (Array.isArray(r)) return true;
+  g.commands.length = start;
+  if (g.writeScan !== null && g.writeScan.upto > start) g.writeScan = null; // rewind past the dropped commands
+  g.pendingRuns = g.pendingRuns.filter((run) => run.at < start);
+  g.pipes = g.pipes.filter((r) => r[0] < start);
+  g.jobs = g.jobs.filter((j) => j.s < start);
+  const o = r && r.opaque ? r.opaque : { reason: 'internal', construct: 'reparse' };
+  if (isSticky(o)) throw new Opaque(o.reason, o.construct, S.off);
+  if (agent) throw scriptOpaque('agent-written-script', S);
+  addClass(eff, 'runs-repo-code');
+  return false;
+}
+
+// The operator's file could not be read as shell code: runs-repo-code; an agent's: opaque.
+function unreadable(agent, S) {
+  if (agent) throw scriptOpaque('agent-written-script', S);
+  addClass(S.eff, 'runs-repo-code');
+}
+
+// System directories: programs there run by absolute path are the system's, not the project's.
+const SYSTEM_DIRS = ['/bin', '/usr', '/sbin', '/lib', '/etc', '/System', '/Library', '/private/etc'];
+function systemPath(real) {
+  return SYSTEM_DIRS.some((d) => covers(d, real));
+}
+
+// Does the file a route runs name stdin, a descriptor, a FIFO, a socket or a device? The word and its
+// realpath are both judged, case-folded (a case-insensitive volume opens /DEV/stdin as /dev/stdin).
+function deviceFile(word, real, g) {
+  for (const p of [word, real]) if (typeof p === 'string' && stdinPath(p.toLowerCase()) !== null) return true;
+  return isAbs(real) && specialFile(real, g);
+}
+
+// A FIFO, socket or device (stat follows symlinks): never a script file.
+function specialFile(real, g) {
+  try {
+    const st = g.fs.statSync(real);
+    for (const k of ['isFIFO', 'isSocket', 'isCharacterDevice', 'isBlockDevice']) if (typeof st[k] === 'function' && st[k]()) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+// Is the path inside the command's repository or cwd (the project's own code)?
+function inProject(real, eff) {
+  if (eff.repo && typeof eff.repo === 'object' && isAbs(eff.repo.root) && covers(eff.repo.root, real)) return true;
+  return isAbs(eff.cwd) && covers(eff.cwd, real);
+}
+
+function shellRoute(route, S) {
+  const { sh, g, eff, info } = S;
+  let real = UNKNOWN;
+  if (typeof route.file === 'string') {
+    real = pathAt(sh, g, route.file);
+    // a shell given `x` reads ./x when it exists (PATH only otherwise); `. x` and bash's `source x`
+    // search PATH first; zsh's `source x` looks in the cwd first
+    const here = isAbs(real) && exists(real, g);
+    const certain = !route.bare || (route.by === 'shell' && here) || (route.by === 'source' && route.command === 'source' && sh.kind === 'zsh' && here);
+    if (!certain) real = UNKNOWN;
+  }
+  if (!isAbs(real)) return unknownFile(S);
+  // the file resolves to stdin, a descriptor, a FIFO, a socket or a device: what it holds is not a file
+  if (deviceFile(route.file, real, g)) throw new Opaque('unsupported', 'stdin-interpreter', S.off);
+  const prov = judgeFile(real, S);
+  const agent = prov === 'agent';
+  // a program in a system directory run by its absolute path (/bin/ls, /usr/local/bin/x) is not
+  // read as repository code unless the agent wrote it; elsewhere a shell script by literal path is
+  // read, and only the project's own files fall back to runs-repo-code
+  const absolute = route.by === 'path' && route.file.startsWith('/');
+  if (absolute && !agent && systemPath(real)) return undefined;
+  const outside = absolute && !inProject(real, eff);
+  const sc0 = readScript(real, SCRIPT_CAP, scriptFs(g));
+  const shellText = sc0 !== null && sc0.shebang !== null && shebangShell(sc0.shebang) !== null;
+  if (outside && !agent && !shellText) return undefined;
+  pushAll(eff.reads, [real]);
+  const sc = sc0;
+  if (sc === null) return unreadable(agent, S);
+  let kind = route.kind;
+  if (sc.shebang !== null) {
+    const sb = shebangShell(sc.shebang);
+    if (sb === null) return unreadable(agent, S);
+    if (route.by === 'path') kind = sb.kind;
+  } else if (route.by === 'path') {
+    return unreadable(agent, S); // no shebang: not run as a shell script by path
+  }
+  const source = route.by === 'source';
+  const child = source
+    ? { kind: sh.kind, subshell: false, stdin: info.stdin === true, reset: false }
+    : { kind, subshell: true, stdin: info.stdin === true, reset: resetsEnv(info.unwrapped) };
+  runFileText(sc.text, child, eff.cwd, agent, S);
+  return undefined;
+}
+
+// The package.json a package manager reads from dir: the nearest one up, or dir/package.json.
+function packageJsonFrom(dir, g) {
+  let d = dir;
+  for (let n = 0; n < MAX_UP; n++) {
+    const p = joinAbs(d, 'package.json');
+    if (exists(p, g)) return { path: realOf(p, g), dir: d, found: true };
+    if (d === '/') break;
+    d = dirOf(d);
+  }
+  return { path: realOf(joinAbs(dir, 'package.json'), g), dir, found: false };
+}
+
+// May any package.json be agent-written (for a package manager whose package.json is not known)?
+function anyPackageWritten(S) {
+  const { g } = S;
+  if (g.writtenIncomplete) return true;
+  if (g.writtenPackageJson === null) {
+    g.writtenPackageJson = false;
+    for (const p of g.written) {
+      if (fold(p.slice(p.lastIndexOf('/') + 1)) === 'package.json') {
+        g.writtenPackageJson = true;
+        break;
+      }
+    }
+  }
+  if (g.writtenPackageJson) return true;
+  const w = writeScan(g, S.at);
+  return w.unknown || w.packageJson || w.anyMove;
+}
+
+const shellQuote = (w) => `'${w.replace(/'/g, `'\\''`)}'`;
+
+function packageRoute(route, S) {
+  const { sh, g, eff, info } = S;
+  addClass(eff, 'runs-repo-code');
+  let dir = eff.cwd;
+  if (route.base !== undefined) dir = pathAt(sh, g, route.base);
+  if (route.unresolved || !isAbs(dir)) {
+    if (anyPackageWritten(S)) throw scriptOpaque('script-path', S, 'unknown');
+    return;
+  }
+  const pj = packageJsonFrom(dir, g);
+  if (!isAbs(pj.path)) return unknownFile(S);
+  const prov = judgeFile(pj.path, S);
+  const agent = prov === 'agent';
+  if (!pj.found) return; // no package.json: the package manager runs no script of it
+  pushAll(eff.reads, [pj.path]);
+  const scripts = readPackageScripts(pj.path, scriptFs(g));
+  if (scripts === null) return unreadable(agent, S);
+  const names = [...route.names, ...(route.lifecycle && agent ? LIFECYCLE_SCRIPTS : [])];
+  const child = { kind: PACKAGE_MANAGER_SHELL, subshell: true, stdin: info.stdin === true, reset: resetsEnv(info.unwrapped) };
+  const seen = new Set();
+  for (const name of names) {
+    if (seen.has(name) || !Object.hasOwn(scripts, name)) continue;
+    seen.add(name);
+    let text = scripts[name];
+    if (name === route.main && route.args.length > 0) {
+      // an UNKNOWN word is a positional parameter in the child: UNKNOWN there too
+      text += ` ${route.args.map((a) => (typeof a === 'string' ? shellQuote(a) : '"$1"')).join(' ')}`;
+    }
+    runFileText(text, child, pj.dir, agent, S);
+  }
+  // `npm start` with no start script runs `node server.js`
+  if (route.start && !Object.hasOwn(scripts, 'start')) {
+    const server = realOf(joinAbs(pj.dir, 'server.js'), g);
+    if (isAbs(server) && exists(server, g)) {
+      pushAll(eff.reads, [server]);
+      if (judgeFile(server, S) === 'agent') throw scriptOpaque('agent-written-script', S);
+    }
+  }
+}
+
+const MAKE_ENV = ['MAKEFLAGS', 'MFLAGS', 'GNUMAKEFLAGS', 'MAKEFILES'];
+
+function makeRoute(route, S) {
+  const { sh, g, eff } = S;
+  addClass(eff, 'runs-repo-code');
+  // options given through the environment in this command (`MAKEFLAGS=--eval=… make`, or an
+  // assignment earlier in the call) are the same as on the command line
+  const env = eff.env !== null && typeof eff.env === 'object' ? eff.env : {};
+  if (MAKE_ENV.some((n) => Object.hasOwn(env, n) || sh.env.has(n))) throw new Opaque('unsupported', 'makefile-inline', S.off);
+  if (route.unresolved) return unknownFile(S);
+  let base = eff.cwd;
+  for (const d of route.dirs) {
+    if (!isAbs(base)) break;
+    base = withCwd(sh, base, () => pathAt(sh, g, d));
+  }
+  if (!isAbs(base)) return unknownFile(S);
+  const named = route.files.length > 0;
+  const files = named ? route.files.map((f) => withCwd(sh, base, () => pathAt(sh, g, f))) : MAKEFILES.map((f) => realOf(joinAbs(base, f), g));
+  // a makefile that is stdin, a descriptor, a FIFO or a device (also through a symlink) is inline
+  if (named && route.files.some((f, i) => deviceFile(f, files[i], g))) throw new Opaque('unsupported', 'makefile-inline', S.off);
+  if (files.some((f) => !isAbs(f))) return unknownFile(S);
+  for (const f of files) {
+    // a Makefile is never read as shell code: agent-written is always opaque
+    if (judgeFile(f, S) === 'agent' && (named || exists(f, g))) throw scriptOpaque('agent-written-script', S);
+    if (exists(f, g)) pushAll(eff.reads, [f]);
+  }
+}
+
+function codeRoute(route, S) {
+  const { sh, g, eff } = S;
+  addClass(eff, 'runs-repo-code');
+  const files = [];
+  for (const f of route.files) files.push(typeof f === 'string' ? pathAt(sh, g, f) : UNKNOWN);
+  for (const m of route.modules) {
+    if (typeof m !== 'string' || !/^[A-Za-z_][A-Za-z0-9_.]*$/.test(m)) {
+      if (typeof m !== 'string') files.push(UNKNOWN);
+      continue;
+    }
+    if (route.isolated) continue; // -I / -P: the cwd is not on sys.path
+    const rel = m.replace(/\./g, '/');
+    for (const tail of ['.py', '/__main__.py', '/__init__.py']) files.push(pathAt(sh, g, `${rel}${tail}`));
+  }
+  if (files.some((f) => !isAbs(f))) return unknownFile(S);
+  for (const f of files) {
+    // code in another language never re-parses cleanly as shell: agent-written is opaque
+    if (judgeFile(f, S) === 'agent' && exists(f, g)) throw scriptOpaque('agent-written-script', S);
+    if (exists(f, g)) pushAll(eff.reads, [f]);
+  }
+}
+
+// The files a finished command runs (see above). at: the command's index in g.commands.
+function scriptCommands(eff, info, sh, g, at) {
+  if (eff.argv.length === 0 || typeof eff.argv[0] !== 'string') return;
+  const route = scriptRoute(eff.argv, sh.kind);
+  if (route === null) return;
+  const S = { eff, info, sh, g, at, off: info.off || 0, runs: [] };
+  // a route fence cannot follow: stdin as the file, an inline makefile, an unknown option
+  if (route.opaque) throw new Opaque(route.opaque.reason, route.opaque.construct, S.off);
+  if (route.type === 'shell') shellRoute(route, S);
+  else if (route.type === 'package') packageRoute(route, S);
+  else if (route.type === 'make') makeRoute(route, S);
+  else if (route.type === 'code') codeRoute(route, S);
+  // the commands the file itself ran are its own, not concurrent writers of it
+  for (const run of S.runs) run.end = g.commands.length;
 }
 
 // The child's starting state, inside the scope reparse opened (undone afterwards).
@@ -2818,11 +3335,29 @@ function withRedirs(node, sh, g, body) {
 function walkList(node, sh, g) {
   let u = EMPTY;
   const items = node.items;
+  const listStart = g.commands.length;
+  const jobs = [];
+  try {
+    u = walkItems(items, sh, g, jobs);
+  } finally {
+    // a background job runs at the same time as every item of its list, and with every later
+    // command of the call, wherever the job sits ({ }, ( ), a loop or branch body; `wait` is not
+    // modelled): the open end of the second region reaches the end of the call
+    for (const r of jobs) if (r[1] > r[0]) g.jobs.push({ s: r[0], e: r[1], w: listStart });
+  }
+  return u;
+}
+
+function walkItems(items, sh, g, jobs) {
+  let u = EMPTY;
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     if (it.async) {
       // a background job: a subshell that changes the repository at an unknown time
+      countConcurrent(g, 'jobCount', it.node && typeof it.node.off === 'number' ? it.node.off : 0);
+      const s = g.commands.length;
       const r = inSubshell(sh, g, (c) => walk(it.node, c, g));
+      jobs.push([s, g.commands.length]);
       forgetGlobals(sh, g, r.touched);
       u = EMPTY;
       continue;
@@ -2882,6 +3417,7 @@ function walkPipeline(node, sh, g) {
   }
   // what each member reads from the pipe: literal echo/printf/cat/decoder output, or null
   const feeds = pipeFeeds(node.commands, node.ops);
+  const startAt = g.commands.length;
   for (let i = 0; i < n; i++) {
     const r = inSubshell(
       sh,
@@ -2899,6 +3435,7 @@ function walkPipeline(node, sh, g) {
     if (i === n - 1) forget(sh, g, r.touched);
     else forgetGlobals(sh, g, r.touched);
   }
+  if (g.commands.length > startAt) g.pipes.push([startAt, g.commands.length]);
   return EMPTY;
 }
 
@@ -3102,6 +3639,16 @@ export function normalize(command, ctx) {
       gitRepos: new WeakMap(),
       // bulk-writer source scans, per source directory
       bulkScans: new Map(),
+      // T31: what earlier commands of this call wrote (writeScan), and whether the written-files
+      // index holds any package.json (computed on first use)
+      writeScan: null,
+      writtenPackageJson: null,
+      // file routes waiting for the concurrent-write check, and the concurrent regions found
+      pendingRuns: [],
+      pipes: [],
+      jobs: [],
+      runCount: 0,
+      jobCount: 0,
     };
     g.expandGlob = globWithBudget(typeof c.expandGlob === 'function' ? c.expandGlob : null, fsImpl, g);
     // bash without globstar reads `**` as `*`: inside sh/bash/dash/ksh text such a glob is UNKNOWN
@@ -3110,6 +3657,7 @@ export function normalize(command, ctx) {
     env.touched = new Set();
     const sh = new Shell(env, isAbs(c.cwd) ? c.cwd : UNKNOWN);
     walk(tree, sh, g);
+    checkConcurrentRuns(g);
     return { commands: g.commands };
   } catch (e) {
     if (e instanceof Opaque) return { opaque: e.opaque };

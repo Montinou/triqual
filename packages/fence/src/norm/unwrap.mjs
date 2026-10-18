@@ -21,8 +21,9 @@
 //   could go, is opaque `nested-script`; a long option outside SHELL_LONG (`--rcfile f` loads a
 //   file) is opaque `shell-option`.
 // - A shell reading its script from stdin (no operand, or -s): a literal feed is re-parsed; a feed
-//   that is not literal is opaque `stdin-interpreter`; a shell running a file with stdin fed stays
-//   opaque (the file is T31's).
+//   that is not literal is opaque `stdin-interpreter`. A file operand naming stdin (`-`, /dev/stdin,
+//   /dev/fd/0, /proc/*/fd/0) is the same; another descriptor (/dev/fd/N) is opaque. Any other file
+//   operand is left to the normalizer, which reads the file (resolve/script.mjs).
 // - `eval` with literal arguments: the arguments joined with one space; an UNKNOWN argument (or an
 //   option) is opaque `eval-dynamic`.
 // - Wrapper scripts: flock -c and watch run `sh -c TEXT`; `env -S TEXT` is re-parsed as `env TEXT`
@@ -118,7 +119,7 @@ export function foreignShell(argv0, fed) {
   if (FOREIGN_SHELLS.has(base)) {
     if (fed) return bad;
     // any option outside the few that load nothing and run nothing may carry code (--init-command,
-    // -CommandWithArgs, --commands …); a script file operand is T31's
+    // -CommandWithArgs, --commands …); a script file operand is runs-repo-code (resolve/script.mjs)
     if (args.some((a) => !isStr(a) || foreignCode(a) || (a.startsWith('-') && !FOREIGN_QUIET.test(a)))) return bad;
     return null;
   }
@@ -151,6 +152,45 @@ export function foreignShell(argv0, fed) {
  * `o`/`O` in a `-`/`+` cluster take the next word as an option name (`-eo pipefail`, `-O extglob`).
  */
 export function shellInvocation(argv0) {
+  const r = parseShellArgs(argv0);
+  if (r === null || r.mode !== 'file') return r;
+  return { mode: 'file', kind: r.kind };
+}
+
+/**
+ * The script file a shell runs (`bash x.sh`, `sh -e ./x`): {file, kind} (file may be UNKNOWN), or
+ * null when argv is not a shell given a file operand (-c code, stdin, an opaque option).
+ */
+export function shellScriptFile(argv0) {
+  const r = parseShellArgs(argv0);
+  return r !== null && r.mode === 'file' ? { file: r.file, kind: r.kind } : null;
+}
+
+/**
+ * Is the word a path that names a process's stdin or another inherited descriptor: `-`, /dev/stdin,
+ * /dev/fd/N, /proc/<pid|self>/fd/N (read lexically: `.`, `..` and repeated slashes collapsed)?
+ * Returns 'stdin' for descriptor 0, 'fd' for another descriptor, null otherwise.
+ */
+export function stdinPath(word) {
+  if (!isStr(word)) return null;
+  if (word === '-') return 'stdin';
+  if (!word.startsWith('/')) return null;
+  const segs = [];
+  for (const seg of word.split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') segs.pop();
+    else segs.push(seg);
+  }
+  const p = `/${segs.join('/')}`;
+  if (p === '/dev/stdin') return 'stdin';
+  const m = /^\/(?:dev\/fd|proc\/[^/]+\/fd)\/([0-9]+)$/.exec(p);
+  if (m) return Number(m[1]) === 0 ? 'stdin' : 'fd';
+  if (/^\/(?:dev\/fd|proc\/[^/]+\/fd)(?:\/|$)/.test(p)) return 'fd';
+  return null;
+}
+
+// shellInvocation's parse; a file mode also carries the operand.
+function parseShellArgs(argv0) {
   const argv = appletArgv(argv0);
   if (!Array.isArray(argv) || !isStr(argv[0])) return null;
   const base = baseName(argv[0]);
@@ -183,7 +223,7 @@ export function shellInvocation(argv0) {
   }
   if (c) return i < argv.length ? { mode: 'c', text: argv[i], kind } : opaque('unknown', 'nested-script');
   if (s || i >= argv.length) return { mode: 'stdin', kind };
-  return { mode: 'file', kind };
+  return { mode: 'file', kind, file: argv[i] };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -438,8 +478,17 @@ function commandPlan(argv, c) {
     if (!isStr(inv.text)) return opaque('unknown', 'nested-script');
     return { text: inv.text, child: { kind: inv.kind, subshell: true, stdin: fed, reset: c.reset === true } };
   }
-  if (!fed) return null; // reads nothing it was given (a file run by path is T31's)
-  if (inv.mode === 'file') return opaque('unsupported', 'stdin-interpreter');
+  if (inv.mode === 'file') {
+    // a file operand that is stdin (`bash /dev/stdin`, `sh /dev/fd/0`, `bash /proc/self/fd/0`)
+    // keeps the stdin rule; another descriptor is never literal
+    const sp = parseShellArgs(argv).file;
+    const kind = stdinPath(sp);
+    if (kind === 'stdin') return fed ? feedPlan(c, inv.kind) : opaque('unsupported', 'stdin-interpreter');
+    if (kind === 'fd') return opaque('unsupported', 'stdin-interpreter');
+    // any other file: its code comes from the file, which the normalizer reads (resolve/script.mjs)
+    return null;
+  }
+  if (!fed) return null;
   return feedPlan(c, inv.kind);
 }
 
