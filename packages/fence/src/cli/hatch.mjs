@@ -32,7 +32,7 @@ import os from 'node:os';
 import nodePath from 'node:path';
 
 import { adminWrite } from './admin.mjs';
-import { buildManifest, manifestText } from './integrity.mjs';
+import { buildManifest, manifestText, realPathOf } from './integrity.mjs';
 import { fencePaths } from './paths.mjs';
 import { MAX_MANIFEST_BYTES, parseIso, parseManifest, sha256 } from '../watchdog/integrity.mjs';
 
@@ -124,6 +124,12 @@ function carriedBaseline(admin, stateDir, t, fsImpl) {
   return manifest;
 }
 
+// The union of the carried manifest's repo roots and the caller's (absolute strings only, real paths), sorted.
+function mergeRoots(old, extra, fsImpl) {
+  const added = (Array.isArray(extra) ? extra : []).filter((r) => typeof r === 'string' && nodePath.isAbsolute(r)).map((r) => realPathOf(r, fsImpl));
+  return [...new Set([...old, ...added])].sort();
+}
+
 export async function hatch({ argv = [], home, platform = process.platform, now = Date.now, gate, adminWriter, run, adminDir, repoRoots = [], claudeManaged, codexManaged, fs: fsImpl = nodeFs, io } = {}) {
   const say = (s) => {
     if (typeof io?.out === 'function') io.out(s);
@@ -188,8 +194,10 @@ export async function hatch({ argv = [], home, platform = process.platform, now 
   let text;
   const carried = typeof admin === 'string' ? carriedBaseline(admin, paths.stateDir, t, fsImpl) : null;
   try {
+    // a carried baseline keeps its repo roots and adds the ones this call names (resolved like
+    // buildManifest does), so a project edited during either hatch is still scanned
     const manifest = carried
-      ? { ...carried, expires }
+      ? { ...carried, expires, repoRoots: mergeRoots(carried.repoRoots, repoRoots, fsImpl) }
       : buildManifest(paths.home, paths, { created: at, expires, repoRoots, platform, claudeManaged, codexManaged, fs: fsImpl });
     text = manifestText(manifest);
   } catch (err) {

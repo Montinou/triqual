@@ -95,7 +95,8 @@ test('production wiring uses /usr/bin/sudo (read the command table in humanonly.
   ]);
 
   // a weakening command's wrapper reaches sudo through the default path (it never passes one)
-  const hatch = HUMAN_ONLY.find((e) => e.command === 'hatch');
+  // (rollback: the table gates it itself; hatch and the like gate inside their own code)
+  const hatch = HUMAN_ONLY.find((e) => e.command === 'rollback');
   const seen = fakeRun();
   hatch.handler({ stdin: TTY, env: CLEAN_ENV, run: seen.run, impl: () => 0 });
   assert.deepEqual(seen.calls.map((c) => c[0]), [literal, literal]);
@@ -232,11 +233,12 @@ test('every command in the human-only table calls requireHuman before doing anyt
     }
   }
 
-  // a weakening command whose gate fails never reaches its implementation
+  // a table-gated weakening command whose gate fails never reaches its implementation
   const hatch = HUMAN_ONLY.find((e) => e.command === 'hatch');
+  const rollback = HUMAN_ONLY.find((e) => e.command === 'rollback');
   let ran = false;
   const denied = fakeRun((cmd, args) => (args[0] === '-v' ? 1 : 0));
-  assert.throws(() => hatch.handler({ stdin: TTY, env: CLEAN_ENV, run: denied.run, impl: () => (ran = true) }), /sudo/);
+  assert.throws(() => rollback.handler({ stdin: TTY, env: CLEAN_ENV, run: denied.run, impl: () => (ran = true) }), /sudo/);
   assert.equal(ran, false);
   // no implementation registered yet: the guard still runs first, then it refuses
   assert.throws(() => hatch.handler({ stdin: { isTTY: false }, env: CLEAN_ENV, run: fakeRun().run }), /interactive terminal/);

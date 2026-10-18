@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { install } from '../src/cli/install.mjs';
+import { install, shimText } from '../src/cli/install.mjs';
 import { fencePaths, enginePath } from '../src/cli/paths.mjs';
 import { SUDO } from '../src/cli/humanonly.mjs';
 import { readGitPin } from '../src/resolve/gitpin.mjs';
@@ -507,4 +507,102 @@ test('fencePaths returns every path in the Installed state list', () => {
   assert.equal(p.shimModule, path.join(share, 'fence-cli.mjs'));
   assert.equal(p.smokeResult, path.join(state, 'smoke.json'));
   assert.throws(() => fencePaths('relative/home'), /absolute/);
+});
+
+// ---- the CLI shim when `current` is unusable ---------------------------------------------------------
+
+// Writes shimText(share) next to a share directory holding stub CLIs (versions/<name>/src/cli/index.mjs
+// whose module body writes a marker file when it is imported and whose main prints which version ran
+// and the arguments), then runs it with process.execPath. `rootName` lets a test put the share
+// directory under a path that needs shell quoting.
+function shimWorld({ current, versions, rootName = 'shim' }) {
+  const root = path.join(newDir('shimbase'), rootName);
+  const share = path.join(root, 'share');
+  const marker = path.join(newDir('shimmarker'), 'imported');
+  fs.mkdirSync(path.join(share, 'versions'), { recursive: true });
+  for (const v of versions) {
+    const dir = path.join(share, 'versions', v, 'src', 'cli');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'index.mjs'),
+      `import { appendFileSync } from 'node:fs';\nappendFileSync(${JSON.stringify(marker)}, ${JSON.stringify(v)} + '\\n');\nexport function main(args) { process.stdout.write(JSON.stringify({ ran: ${JSON.stringify(v)}, args })); return 0; }\n`,
+    );
+  }
+  if (current !== undefined) fs.writeFileSync(path.join(share, 'current'), current);
+  const module = path.join(root, 'fence-cli.mjs');
+  fs.writeFileSync(module, shimText(share));
+  const run = (...args) => spawnSync(NODE, [module, ...args], { encoding: 'utf8', timeout: SPAWN_TIMEOUT_MS });
+  return { run, share, marker, imported: () => fs.existsSync(marker) };
+}
+
+// POSIX single-quote quoting, as the shim prints paths.
+const shq = (s) => `'${String(s).replaceAll("'", "'\\''")}'`;
+
+test('with current missing or invalid, the shim imports no version: help is static, everything else exits 1 with both recovery commands', () => {
+  const versions = ['0.9.0', '0.10.0', '0.10.0-rc.1', '0.2.0', 'latest', '9.9', 'zzz', '1.0.0.bak'];
+  for (const current of [undefined, '', 'not-a-version\n', '../x\n', '0.5.0\n']) {
+    const w = shimWorld({ current, versions });
+    const label = JSON.stringify(current);
+    // help (and -h / --help) prints static text, exit 0
+    for (const command of ['help', '-h', '--help']) {
+      const r = w.run(command);
+      assert.equal(r.status, 0, `${label} ${command}: ${r.stderr}`);
+      assert.match(r.stdout, /Usage: fence/, `${label} ${command}`);
+      assert.match(r.stdout, /repair/, `${label} ${command}`);
+    }
+    // repair included, every other command exits 1 with the old message and the two commands
+    for (const command of ['repair', 'doctor', 'rollback', 'uninstall', 'check', 'version', 'hatch', 'install']) {
+      const r = w.run(command, '--x');
+      assert.equal(r.status, 1, `${label} ${command}`);
+      assert.equal(r.stdout, '', `${label} ${command}`);
+      assert.match(r.stderr, /does not name an installed version; run fence repair in your own terminal/, command);
+      assert.ok(r.stderr.includes('npx @triqual/fence@0.10.0 install'), `${label} ${command}: ${r.stderr}`);
+      assert.ok(r.stderr.includes(`${shq(NODE)} ${shq(path.join(w.share, 'versions', '0.10.0', 'src', 'cli', 'index.mjs'))} repair`), `${label} ${command}: ${r.stderr}`);
+      assert.match(r.stderr, /not covered by the integrity check/, command);
+    }
+    assert.equal(w.run().status, 1, 'no command at all');
+    assert.equal(w.imported(), false, `${label}: no version's code was imported`);
+  }
+});
+
+test('the shim names the same newest version as semver precedence does', async () => {
+  const { compareVersions } = await import('../src/cli/upgrade.mjs');
+  const sets = [
+    ['0.9.0', '0.10.0', '0.2.0'],
+    ['1.0.0-rc.1', '1.0.0-rc.2', '1.0.0-beta.11', '1.0.0-beta.2'],
+    ['1.0.0-rc.1', '1.0.0'],
+    ['1.0.0-alpha', '1.0.0-alpha.1', '1.0.0-alpha.beta', '1.0.0-1'],
+    ['2.0.0+build.5', '1.99.99'],
+  ];
+  for (const versions of sets) {
+    const expected = [...versions].sort((a, b) => compareVersions(b, a))[0];
+    const w = shimWorld({ current: undefined, versions });
+    const r = w.run('repair');
+    assert.equal(r.status, 1, r.stderr);
+    assert.ok(r.stderr.includes(`npx @triqual/fence@${expected} install`), `${versions.join(' ')}: ${r.stderr}`);
+    assert.ok(r.stderr.includes(`${path.join(w.share, 'versions', expected)}/src/cli/index.mjs`), versions.join(' '));
+    assert.equal(w.imported(), false);
+  }
+});
+
+test('the shim with no version directory names latest and no local repair; paths are shell-quoted', () => {
+  const none = shimWorld({ current: undefined, versions: ['latest'] });
+  const r = none.run('repair');
+  assert.equal(r.status, 1);
+  assert.ok(r.stderr.includes('npx @triqual/fence@latest install'), r.stderr);
+  assert.doesNotMatch(r.stderr, /index\.mjs/);
+  assert.equal(none.imported(), false);
+  // a share directory whose path holds a space and a single quote
+  const w = shimWorld({ current: undefined, versions: ['0.1.0'], rootName: "it's a dir" });
+  const q = w.run('repair');
+  assert.ok(q.stderr.includes(`${shq(NODE)} ${shq(path.join(w.share, 'versions', '0.1.0', 'src', 'cli', 'index.mjs'))} repair`), q.stderr);
+  assert.match(q.stderr, /'\\''/, 'the quote is escaped');
+  assert.equal(w.imported(), false);
+});
+
+test('with a valid current the shim still follows current for every command', () => {
+  const w = shimWorld({ current: '0.2.0\n', versions: ['0.2.0', '0.10.0'] });
+  for (const command of ['repair', 'doctor', 'version']) {
+    assert.equal(JSON.parse(w.run(command).stdout).ran, '0.2.0', command);
+  }
 });

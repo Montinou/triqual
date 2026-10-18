@@ -196,9 +196,13 @@ test('fence help, unknown commands and not-yet-built commands', () => {
   const u = fence(['bogus'], home);
   assert.equal(u.code, 1);
   assert.match(u.stderr, /bogus/);
-  const l = fence(['doctor'], home);
+  const l = fence(['replay'], home);
   assert.equal(l.code, 1);
   assert.match(l.stderr, /not yet implemented/);
+  // a human-only command run from a pipe (this spawn has no terminal) is refused by the wiring
+  const hatch = fence(['hatch'], home);
+  assert.equal(hatch.code, 1);
+  assert.match(hatch.stderr, /interactive terminal/);
 });
 
 test('fence version prints the package version', () => {

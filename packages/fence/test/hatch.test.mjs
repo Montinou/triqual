@@ -264,6 +264,31 @@ test('re-opening a hatch carries over the open baseline; an expired one carries 
   assert.equal(compareManifest(fresh).equal, true);
 });
 
+test('re-opening over a carried baseline merges the old and the new repo roots', async () => {
+  const fx = home();
+  const a = fakeAdmin();
+  const repoA = dir();
+  const repoB = dir();
+  const integrity = () => parseManifest(fs.readFileSync(path.join(a.adminDir, 'integrity.json'), 'utf8'));
+  const open = (t, repoRoots) => hatch({ argv: ['--for', '1h'], home: fx.h, now: () => t, gate: OK_GATE, adminWriter: a.adminWriter, adminDir: a.adminDir, repoRoots, ...NO_MANAGED });
+  const t0 = Date.now() - 6 * H;
+  assert.equal((await open(t0, [repoA])).ok, true);
+  assert.deepEqual(integrity().repoRoots, [repoA]);
+  // re-opened while open, from another repository: both roots are scanned at comparison time
+  assert.equal((await open(t0 + 20 * 60 * 1000, [repoB, 'relative/ignored', 7])).ok, true);
+  assert.deepEqual(integrity().repoRoots, [repoA, repoB].sort());
+  // re-opened with no roots: the old ones stay
+  assert.equal((await open(t0 + 40 * 60 * 1000, [])).ok, true);
+  assert.deepEqual(integrity().repoRoots, [repoA, repoB].sort());
+  assert.equal(integrity().created, iso(t0), 'the carried baseline keeps its creation time');
+  // a verified (stamped) manifest gives a fresh baseline: only the new roots
+  const raw = fs.readFileSync(path.join(a.adminDir, 'integrity.json'));
+  const later = t0 + 3 * H;
+  put(path.join(fx.p.verifiedDir, sha(raw)), 'ok\n', 0o600);
+  assert.equal((await open(later, [repoB])).ok, true);
+  assert.deepEqual(integrity().repoRoots, [repoB]);
+});
+
 test('a close whose hatch.json write fails after integrity.json was rewritten says to run --close again', async () => {
   const { h } = home();
   const a = fakeAdmin();
