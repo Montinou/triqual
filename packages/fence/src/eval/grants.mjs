@@ -9,6 +9,7 @@
 //   check is owner uid 0 and not group- or world-writable;
 // - it parses as a JSON object with an absolute `path` (no NUL, no `.`/`..` segment) and an ISO
 //   `expires` that is after `now` and at most GRANT_MAX_LIFETIME_MS + CLOCK_SKEW_MS ahead of it;
+// - at most MAX_GRANTS files are read, the newest names first (names sort by their leading time);
 // - no used marker `<stateDir>/grants-used/<sha>` exists, `sha` being the sha256 of the file bytes.
 // Grant = {path, expires, sha, file, stateDir}. consume(grant) writes the used marker (exclusive
 // create, `wx`) and returns {ok: true} or {ok: false, reason}; it never swallows a failure, and the
@@ -66,7 +67,9 @@ export function loadGrants(adminDir, stateDir, now, { isRootOwned = realRootChec
       return [];
     }
     const out = [];
-    for (const name of names.filter((n) => n.endsWith('.json')).sort().slice(0, MAX_GRANTS)) {
+    // Newest names first (T39 names a grant `<ms time>-<random>.json`): once grants/ holds more than
+    // MAX_GRANTS files, the ones read are the newest, so a fresh allow-once always applies.
+    for (const name of names.filter((n) => n.endsWith('.json')).sort().reverse().slice(0, MAX_GRANTS)) {
       try {
         const g = readGrant(nodePath.join(dir, name), stateDir, now, isRootOwned, fsImpl);
         if (g) out.push(g);
