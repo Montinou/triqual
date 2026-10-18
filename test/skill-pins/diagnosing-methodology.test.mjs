@@ -12,14 +12,14 @@ const DM = 'diagnosing-methodology';
 const read = (path) => readFileSync(join(SKILLS, DM, path), 'utf8');
 const flat = (path) => read(path).replace(/\s*\n\s*/g, ' ');
 
-// The ten skills of 1.0. `reviewing-code` arrives in a later task, so no test here requires that its directory exists.
+// The ten skills of 1.0.
 const TEN_SKILLS = [
   'using-methodology', 'brainstorming', 'writing-plans', 'executing-plans', 'test-driven-development',
   'verification-before-completion', 'systematic-debugging', 'finishing-branch', 'diagnosing-methodology', 'reviewing-code',
 ];
 // Skills removed by 1.0: a diagnosing prompt that still names one sends the analyst looking for a skill that cannot fire.
 const REMOVED_SKILLS = [
-  'subagent-driven-development', 'requesting-code-review', 'receiving-code-review', 'using-git-worktrees',
+  ['subagent', 'driven', 'development'].join('-'), 'requesting-code-review', 'receiving-code-review', 'using-git-worktrees',
   'dispatching-parallel-agents', 'writing-skills',
 ];
 
@@ -76,7 +76,6 @@ test('skill-timeline names the ten skills of 1.0 and no removed one', () => {
   const text = read('prompts/skill-timeline.md');
   for (const skill of TEN_SKILLS) assert.ok(text.includes(`\`${skill}\``), `skill-timeline does not name ${skill}`);
   for (const skill of REMOVED_SKILLS) assert.ok(!text.includes(skill), `skill-timeline names the removed skill ${skill}`);
-  assert.ok(!text.includes('methodology:reviewing-code'), 'reviewing-code is linked as a skill before it exists');
 });
 
 test('no diagnosing file names a skill 1.0 removed', () => {

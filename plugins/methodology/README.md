@@ -246,7 +246,7 @@ stamps.
 
 ## Skills
 
-The 14 skills in `skills/`. Claude Code names them `methodology:<name>`.
+The 10 skills in `skills/`. Claude Code names them `methodology:<name>`.
 
 | Skill | Purpose |
 |---|---|
@@ -254,15 +254,11 @@ The 14 skills in `skills/`. Claude Code names them `methodology:<name>`.
 | `brainstorming` | Before any creative work: explore intent, requirements and design before implementation. |
 | `writing-plans` | Turn a spec or requirements for a multi-step task into a plan, before touching code. |
 | `executing-plans` | Execute a plan: every task is done by a role agent, reviewed by its tier, one stacked branch and draft PR per plan phase. |
-| `dispatching-parallel-agents` | Handle two or more independent tasks that share no state or order. |
 | `test-driven-development` | Write the failing test first, for any feature or bugfix. |
 | `systematic-debugging` | Find the cause of any bug, test failure or unexpected behavior before proposing a fix. |
-| `requesting-code-review` | Ask for review when a task or major feature is complete, or before merging. |
-| `receiving-code-review` | Handle review feedback with technical checking, not blind agreement or blind implementation. |
+| `reviewing-code` | Review a commit range or a pull request outside a plan (two hunters and a spec reviewer), and act on review feedback: verify it, fix what is real, refute the rest with evidence. |
 | `verification-before-completion` | Run the verification commands and read the output before claiming work is done, fixed or passing. |
 | `finishing-branch` | When implementation is complete and tests pass: close the plan and decide how to integrate the work. |
-| `using-git-worktrees` | Work in a git worktree only when asked, or treat the linked worktree you are already in. |
-| `writing-skills` | Create or edit a skill and check that it works before deployment. |
 | `diagnosing-methodology` | Find why a session that ran these skills went wrong, or build a bug report for this system's repository, on any harness. |
 
 ## Files and environment variables

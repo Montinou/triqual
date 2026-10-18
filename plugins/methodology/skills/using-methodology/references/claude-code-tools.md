@@ -10,7 +10,7 @@ A dispatch line such as `Subagent (roles:spec-reviewer):` is an `Agent` call
 whose `subagent_type` is that role, `roles:<name>` (an agent of plugin
 `roles`). Pass no `model`: the role's definition pins its model and effort,
 and a `model` in the call would override that pin. Only a generic agent, for
-work no role covers (methodology:dispatching-parallel-agents), names a model.
+work no role covers, names a model.
 
 Coordination stays in this session. The controller of a
 methodology:executing-plans run reads every result, makes the

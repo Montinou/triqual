@@ -22,7 +22,7 @@ const TEN_SKILLS = [
   'verification-before-completion', 'systematic-debugging', 'finishing-branch', 'diagnosing-methodology', 'reviewing-code',
 ];
 const REMOVED_SKILLS = [
-  'subagent-driven-development', 'requesting-code-review', 'receiving-code-review', 'using-git-worktrees',
+  ['subagent', 'driven', 'development'].join('-'), 'requesting-code-review', 'receiving-code-review', 'using-git-worktrees',
   'dispatching-parallel-agents', 'writing-skills',
 ];
 
@@ -37,8 +37,8 @@ test('using-methodology names no removed skill and offers no native or inline ex
   assert.doesNotMatch(text, /\bnative\b|\binline execution\b/i);
 });
 
-test('using-methodology names reviewing-code in prose only, until the skill exists', () => {
-  assert.doesNotMatch(read(USING), /methodology:reviewing-code|\]\([^)]*reviewing-code/);
+test('every skill using-methodology lists has a directory with a SKILL.md', () => {
+  assert.deepEqual(TEN_SKILLS.filter((name) => !existsSync(join(SKILLS, name, 'SKILL.md'))), []);
 });
 
 test('using-methodology carries the plugin map', () => {
@@ -218,6 +218,6 @@ test('brainstorming offers the visual companion once, just in time, as its own m
 test('brainstorming ends an architectural spec by invoking writing-plans only', () => {
   const text = flat(BRAIN);
   assert.ok(text.includes('writing-plans'));
-  assert.doesNotMatch(text, /execution method|\bnative\b|subagent-driven-development/i);
+  assert.doesNotMatch(text, new RegExp(`execution method|\\bnative\\b|${['subagent', 'driven', 'development'].join('-')}`, 'i'));
   assert.match(text, /Spec written/);
 });

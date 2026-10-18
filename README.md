@@ -9,7 +9,7 @@ what was done, who reviewed it and what was run.
 
 triqual's methodology began as a fork of [superpowers](https://github.com/obra/superpowers) by Jesse Vincent (MIT). It has since been rewritten as triqual's own orchestrator; thanks to Jesse for the foundation.
 
-- **Workflow skills** (`methodology`): brainstorm, plan, execute with subagents or in one session, review and finish,
+- **Workflow skills** (`methodology`): brainstorm, plan, execute through role subagents, review code and finish,
   plus the global rules that `triqual sync` writes into `~/.claude/CLAUDE.md`.
 - **Strict progress tracking** (`progress-tracking`): one log entry per task and a task ledger per plan, enforced by
   hooks and a git `pre-commit`. The tracking lives in the repo, hidden under `.git/`, or in a local database outside it.

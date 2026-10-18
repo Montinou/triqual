@@ -31,9 +31,7 @@ edit.
 
 ## Which skills dispatch them
 
-Found by searching `roles:<name>` in `plugins/methodology/skills`.
-`methodology:dispatching-parallel-agents` lists all eight in its dispatch table, so it can
-dispatch any of them. The other skills:
+Found by searching `roles:<name>` in `plugins/methodology/skills`:
 
 | Agent | Dispatched by |
 |---|---|
@@ -41,10 +39,10 @@ dispatch any of them. The other skills:
 | `tdd-implementer` | `executing-plans`: the default task role |
 | `complex-implementer` | `executing-plans`: a task whose `**Role:**` is `roles:complex-implementer`, and its fix rounds |
 | `safety-reviewer` | `executing-plans` |
-| `spec-reviewer` | `executing-plans`, `requesting-code-review` |
+| `spec-reviewer` | `executing-plans`, `reviewing-code` |
 | `review-fixer` | `executing-plans` (fix rounds) |
 | `final-adversarial-reviewer` | `executing-plans`, `brainstorming` (spec audit), `writing-plans` (plan audit) |
-| `hunter` | `executing-plans` |
+| `hunter` | `executing-plans`, `reviewing-code` |
 
 A plan's task `**Role:**` line may be `roles:tdd-implementer` (the default when the line is
 missing), `roles:complex-implementer` or `roles:review-fixer`, or `coordinator`.

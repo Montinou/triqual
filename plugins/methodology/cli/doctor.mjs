@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isGenerated, parseRole } from './lib/agents.mjs';
 import { readManagedSection } from './lib/fsx.mjs';
@@ -945,7 +945,7 @@ function codexRulesCheck(home, path, methodologyPath, failures) {
 // The Codex skill links triqual sync wants (lib/harness-links.mjs wantedLinks). One triqual sync fixes a missing link, one of
 // ours pointing elsewhere, a dangling one or one into a superseded cache; anything else is a collision sync leaves
 // alone, listed with its fix.
-function codexLinksCheck({ home, dir, installs, patterns, keepSuperseded }, failures) {
+function codexLinksCheck({ home, dir, installs, patterns, keepSuperseded }, failures, warnings) {
   const fix = syncFix('codex');
   let want;
   try {
@@ -979,6 +979,38 @@ function codexLinksCheck({ home, dir, installs, patterns, keepSuperseded }, fail
     }
   }
   if (stale.length) failures.push(`Codex skill links in ${dir} are missing or out of date (${stale.join(', ')}): ${fix}`);
+  codexRemovedSkillLinks(dir, want, installs.methodology, warnings);
+}
+
+// A link under the Codex skills dir into a methodology install's skills/ folder (the current one or an older version's)
+// whose skill that install no longer ships: methodology 1.0 removed five skills, and a link made under 0.7.x still names
+// one. triqual sync removes the ones it recorded; this names any that stay. A link elsewhere is not methodology's.
+// Only while methodology is enabled in Claude (`want` is empty otherwise, so no skill set exists to compare with), and
+// never for a link whose skill the current install still ships.
+function codexRemovedSkillLinks(dir, want, methodology, warnings) {
+  if (!methodology?.enabled) return;
+  let names;
+  try {
+    names = readdirSync(dir).sort();
+  } catch {
+    return; // no skills dir: nothing is linked
+  }
+  for (const name of names) {
+    if (want.has(name)) continue;
+    const path = join(dir, name);
+    let cur;
+    try {
+      cur = linkState(path);
+    } catch {
+      continue;
+    }
+    // <plugins cache>/<marketplace>/methodology/<version>/skills/<skill>
+    if (cur.kind !== 'link' || basename(dirname(cur.abs)) !== 'skills') continue;
+    if (basename(dirname(dirname(dirname(cur.abs)))) !== 'methodology') continue;
+    if (existsSync(join(methodology.installPath, 'skills', basename(cur.abs), 'SKILL.md'))) continue;
+    warnings.push(`stale Codex skill link: ${name}: methodology no longer ships skill ${name}: ${syncFix('codex')}, or delete `
+      + `${path} if the link stays`);
+  }
 }
 
 // The Codex role agents, while methodology and roles are enabled in Claude: each must equal what triqual sync generates.
@@ -1070,7 +1102,7 @@ async function codexChecks(ctx, failures, warnings) {
   const methodologyPath = installs.methodology?.installPath ?? null;
   if (methodologyPath === null) return; // the missing plugin is already reported
   codexRulesCheck(home, paths.rules, methodologyPath, failures);
-  codexLinksCheck({ home, dir: paths.skills, installs, patterns, keepSuperseded: config.keepSuperseded }, failures);
+  codexLinksCheck({ home, dir: paths.skills, installs, patterns, keepSuperseded: config.keepSuperseded }, failures, warnings);
   codexAgentsCheck(home, paths.agents, installs, failures);
 }
 

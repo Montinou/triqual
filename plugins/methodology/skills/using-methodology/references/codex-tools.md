@@ -7,8 +7,7 @@ Add to your Codex config (`~/.codex/config.toml`):
 multi_agent = true
 ```
 
-This enables the multi-agent tools that skills like
-`dispatching-parallel-agents` and `executing-plans` use.
+This enables the multi-agent tools that `executing-plans` uses.
 Which tools you get depends on the multi-agent version your model
 preset selects (current presets run V2; older ones run V1). Trust your
 actual tool list over any table — including this one — when they
@@ -91,8 +90,8 @@ Skills name roles and skills in their Claude Code form. In Codex:
   `methodology:finishing-branch` is the skill `finishing-branch`).
 
 Every other `spawn_agent` you issue —
-including when you are yourself a spawned child running a fan-out, and
-the generic fallback of `dispatching-parallel-agents` — sets `model` AND
+including when you are yourself a spawned child running a fan-out —
+sets `model` AND
 `reasoning_effort` explicitly. Setting `model` alone is a trap: the
 child's effort silently resets to that model's default, not to yours.
 
@@ -122,7 +121,7 @@ The first prints `GIT_DIR` then `GIT_COMMON`; the second prints `BRANCH`.
 - `GIT_DIR != GIT_COMMON` → already in a linked worktree (skip creation)
 - `BRANCH` empty → detached HEAD (cannot branch/push/PR from sandbox)
 
-See `using-git-worktrees` Step 0 and `finishing-branch`
+See the Worktrees section of `executing-plans` and `finishing-branch`
 Step 1 for how each skill uses these signals.
 
 ## Codex App Finishing

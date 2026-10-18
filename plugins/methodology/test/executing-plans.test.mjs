@@ -32,8 +32,6 @@ const TEMPLATES = [
 ];
 // The implementer's `<task role>` placeholder is a valid dispatch type in its own template only.
 const TASK_ROLE_TEMPLATES = new Set([`${EP}/implementer-prompt.md`]);
-// The one skill that may dispatch a generic agent, which must then name its model (removed by a later task).
-const GENERIC_AGENT_SKILL = 'dispatching-parallel-agents';
 
 const read = (path) => readFileSync(join(SKILLS, path), 'utf8');
 const flat = (text) => text.replace(/\s*\n\s*/g, ' ');
@@ -206,7 +204,6 @@ test('every template of executing-plans and the spec reviewer template start the
 });
 
 test('every Subagent dispatch in any skill names a role agent', () => {
-  const generic = /^general-purpose,\s*model:\s*\S+$/;
   const bad = [];
   for (const path of walk(SKILLS).filter((p) => p.endsWith('.md'))) {
     read(path).split('\n').forEach((line, i) => {
@@ -214,8 +211,7 @@ test('every Subagent dispatch in any skill names a role agent', () => {
         const type = m[1].trim();
         const ok =
           ROLE_AGENTS.has(type) ||
-          (type === '<task role>' && TASK_ROLE_TEMPLATES.has(path)) ||
-          (path.startsWith(`${GENERIC_AGENT_SKILL}/`) && generic.test(type));
+          (type === '<task role>' && TASK_ROLE_TEMPLATES.has(path));
         if (!ok) bad.push(`${path}:${i + 1}: ${m[0]}`);
       }
       for (const m of line.matchAll(/\bSubagent\s*:/g)) bad.push(`${path}:${i + 1}: ${m[0]}`);
@@ -399,10 +395,17 @@ test('worktrees only on request, as a section of the orchestrator', () => {
   assert.ok(text.includes('native'));
 });
 
-test('the skill credits superpowers without a fork footer', () => {
+test('the skill carries no credit footer (NOTICE and the READMEs carry the credit)', () => {
   const text = skill();
-  assert.match(text, /superpowers[^\n]*Jesse Vincent[^\n]*LICENSE-superpowers/);
+  assert.doesNotMatch(text, /Jesse Vincent|LICENSE-superpowers|Started from superpowers/);
   assert.doesNotMatch(text, /Forked from/);
+});
+
+test('worktrees: detect isolation, native tool first, git fallback, baseline check and cleanup at finish', () => {
+  const text = flat(section(skill(), '## Worktrees'));
+  for (const phrase of ['git rev-parse --path-format=absolute --git-dir --git-common-dir', 'Native tool first', 'Git fallback', 'git check-ignore -q <location>', 'git worktree add', 'baseline', 'methodology:finishing-branch']) {
+    assert.ok(text.includes(phrase), `the Worktrees section does not say ${phrase}`);
+  }
 });
 
 test('the pressure scenarios S1, S3, S5 and S9 point at the orchestrator, and S3 and S9 set up store mode', () => {
@@ -461,7 +464,8 @@ test('the harness references name the one orchestrator and keep their routing st
   assert.doesNotMatch(claude, /mid-tier/i, 'claude-code-tools.md still advises an orchestrator on a mid-tier model');
   assert.match(claude, /`roles:<name>`/, 'claude-code-tools.md does not describe role dispatch');
   const codex = flat(read('using-methodology/references/codex-tools.md'));
-  assert.ok(codex.includes('`dispatching-parallel-agents` and `executing-plans` use.'), 'codex-tools.md does not name executing-plans for multi-agent support');
+  assert.ok(codex.includes('that `executing-plans` uses.'), 'codex-tools.md does not name executing-plans for multi-agent support');
+  assert.doesNotMatch(codex, /dispatching-parallel-agents/, 'codex-tools.md still names the removed dispatching-parallel-agents');
   assert.doesNotMatch(codex, /Model Selection/, 'codex-tools.md still points at Model Selection');
   // Codex: a role dispatch is spawn_agent with agent_type, and a methodology skill name drops its prefix.
   assert.match(codex, /a role dispatch `roles:<name>` is `spawn_agent` with `agent_type: "<name>"`/);

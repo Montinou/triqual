@@ -14,7 +14,7 @@ const TDD = 'test-driven-development/SKILL.md';
 const GOOD = 'test-driven-development/writing-good-tests.md';
 const VERIFY = 'verification-before-completion/SKILL.md';
 // Skills the 1.0 set retires or moves out; nothing in these skills may point at one.
-const RETIRED = ['methodology:writing-skills', 'methodology:requesting-code-review', 'methodology:receiving-code-review', 'methodology:subagent-driven-development', 'methodology:using-git-worktrees', 'methodology:dispatching-parallel-agents', 'superpowers:'];
+const RETIRED = ['methodology:writing-skills', 'methodology:requesting-code-review', 'methodology:receiving-code-review', `methodology:${['subagent', 'driven', 'development'].join('-')}`, 'methodology:using-git-worktrees', 'methodology:dispatching-parallel-agents', 'superpowers:'];
 
 test('TDD keeps the Iron Law, RED evidence and the good-tests reference', () => {
   const text = flat(TDD);

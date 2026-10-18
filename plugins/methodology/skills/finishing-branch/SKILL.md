@@ -256,7 +256,7 @@ workspace the host owns), the session stays where it is.
 **If `GIT_DIR == GIT_COMMON`:** Normal repo, no worktree to clean up. Done.
 
 **If `WORKTREE_PATH` is under `.worktrees/` or `worktrees/`:**
-methodology:using-git-worktrees created this worktree — we own cleanup:
+the Worktrees section of methodology:executing-plans created this worktree — we own cleanup:
 
 ```bash
 git -C <MAIN_ROOT> worktree remove <WORKTREE_PATH>

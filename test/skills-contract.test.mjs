@@ -21,15 +21,9 @@ const { COMMANDS } = await import(pathToFileURL(join(ROOT, 'plugins', 'methodolo
 const SHIM_BUILTINS = new Set(['help']);
 // The `using-methodology` SKILL.md is loaded into every session: keep it small.
 const USING_METHODOLOGY_MAX_CHARS = 5000;
-// Placeholder paths in example text, not references: `<skill file>` → the literals it may contain.
-const EXAMPLE_PATHS = {
-  'writing-skills/SKILL.md': ['../some-skill', 'scripts/tool.sh', 'scripts/tool.js'],
-  'writing-skills/anthropic-best-practices.md': [
-    'scripts/helper.py', 'scripts/migrate.py', 'scripts/analyze_form.py', 'scripts/validate_fields.py',
-    'scripts/fill_form.py', 'scripts/verify_output.py', 'ooxml/scripts/validate.py', 'ooxml/scripts/pack.py',
-    'scripts/validate_boxes.py', 'scripts/pdf_to_images.py',
-  ],
-};
+// Placeholder paths in example text, not references: `<skill file>` → the literals it may contain. No skill has any now
+// (writing-skills moved to headjack).
+const EXAMPLE_PATHS = {};
 
 // Later tasks extend this: the skill directories under `skills`, sorted. A directory without SKILL.md is reported by the
 // frontmatter check, so it is listed here too.
@@ -345,6 +339,31 @@ const pinProblems = ({ skills }, pins = PINS) =>
     return flat.includes(text) ? [] : [`${skill}/SKILL.md lost its pinned line: ${text} (${why})`];
   });
 
+// The ten skills of 1.0, and nothing else.
+const TEN_SKILLS = [
+  'brainstorming', 'diagnosing-methodology', 'executing-plans', 'finishing-branch', 'reviewing-code',
+  'systematic-debugging', 'test-driven-development', 'using-methodology', 'verification-before-completion', 'writing-plans',
+];
+
+// No skill tells an agent to dispatch a generic `general-purpose` agent: every dispatch names a role. The harness
+// references say what a harness does about a missing role, so they may name the generic agent to forbid it.
+const GENERIC_AGENT_EXEMPT = new Set(['using-methodology/references/codex-tools.md', 'using-methodology/references/grok-tools.md']);
+const genericAgentProblems = ({ skills }) =>
+  skillFiles(skills)
+    .filter((path) => path.endsWith('.md') && !GENERIC_AGENT_EXEMPT.has(path))
+    .flatMap((path) =>
+      read(skills, path).split('\n').flatMap((line, i) => (/general-purpose/i.test(line) ? [`${path}:${i + 1}: ${line.trim()}`] : [])),
+    );
+
+// The reviewer template of reviewing-code dispatches roles:spec-reviewer: its first dispatch line is exactly this.
+const REVIEWER_TEMPLATE = 'reviewing-code/reviewer-prompt.md';
+const REVIEWER_DISPATCH = 'Subagent (roles:spec-reviewer):';
+const reviewerTemplateProblems = ({ skills }) => {
+  if (!existsSync(join(skills, REVIEWER_TEMPLATE))) return [`${REVIEWER_TEMPLATE} is missing`];
+  const first = read(skills, REVIEWER_TEMPLATE).split('\n').find((line) => /Subagent\s*\(/.test(line));
+  return first?.trim() === REVIEWER_DISPATCH ? [] : [`${REVIEWER_TEMPLATE}: first dispatch line is ${JSON.stringify(first)}`];
+};
+
 // A temp skill tree for the meta-tests: `files` maps `<skill>/<path>` to its text.
 const fixture = (t, files, { agents = [], commands = [] } = {}) => {
   const root = mkdtempSync(join(tmpdir(), 'skills-contract-'));
@@ -410,6 +429,18 @@ test('the workspace ledger is sdd-ledger.md everywhere', () => {
 
 test('skill commands are plain', () => {
   assert.deepEqual(plainCommandProblems(REAL), []);
+});
+
+test('exactly these 10 skills exist', () => {
+  assert.deepEqual(skillDirs(), TEN_SKILLS);
+});
+
+test('no skill names a generic general-purpose agent outside the codex and grok references', () => {
+  assert.deepEqual(genericAgentProblems(REAL), []);
+});
+
+test('reviewing-code dispatches roles:spec-reviewer first in its reviewer template', () => {
+  assert.deepEqual(reviewerTemplateProblems(REAL), []);
 });
 
 test('diagnosing-methodology files and searches issues with authenticated gh only', (t) => {
@@ -512,6 +543,24 @@ test('the checks fail on a seeded defect', async (t) => {
       'd/SKILL.md': skillMd('d', 'a forked from lowercase is not the footer'),
     });
     assert.deepEqual(forkFooterProblems(p), ['a/SKILL.md', 'c/SKILL.md']);
+  });
+  await t.test('a general-purpose agent in a skill, but not in the codex and grok references', (t2) => {
+    const p = fixture(t2, {
+      'a/SKILL.md': skillMd('a', 'Dispatch a General-Purpose agent.'),
+      'using-methodology/references/codex-tools.md': 'Never spawn a general-purpose agent in place of a role.',
+      'using-methodology/references/claude-code-tools.md': 'general-purpose, model: sonnet',
+    });
+    assert.deepEqual(genericAgentProblems(p), [
+      'a/SKILL.md:5: Dispatch a General-Purpose agent.',
+      'using-methodology/references/claude-code-tools.md:1: general-purpose, model: sonnet',
+    ]);
+  });
+  await t.test('a reviewer template that is missing or dispatches another role first', (t2) => {
+    assert.deepEqual(reviewerTemplateProblems(fixture(t2, { 'a/SKILL.md': skillMd('a') })), [`${REVIEWER_TEMPLATE} is missing`]);
+    const p = fixture(t2, { [REVIEWER_TEMPLATE]: '# T\n\nSubagent (roles:hunter):\nSubagent (roles:spec-reviewer):\n' });
+    assert.deepEqual(reviewerTemplateProblems(p), [`${REVIEWER_TEMPLATE}: first dispatch line is "Subagent (roles:hunter):"`]);
+    const ok = fixture(t2, { [REVIEWER_TEMPLATE]: '# T\n\n```\nSubagent (roles:spec-reviewer):\n  description: x\n```\n' });
+    assert.deepEqual(reviewerTemplateProblems(ok), []);
   });
   await t.test('a scheme with a variable host outside the allow list, and a stale exemption', (t2) => {
     const p = fixture(t2, {

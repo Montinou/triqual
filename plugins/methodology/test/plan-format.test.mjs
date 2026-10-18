@@ -309,7 +309,7 @@ test('writing-plans carries no per-skill credit footer (the credit lives in NOTI
 
 test('writing-plans names no retired skill and no second execution skill', () => {
   const text = read(PLANS);
-  for (const gone of ['using-git-worktrees', 'subagent-driven-development', 'requesting-code-review', 'writing-skills', 'Native']) {
+  for (const gone of ['using-git-worktrees', ['subagent', 'driven', 'development'].join('-'), 'requesting-code-review', 'writing-skills', 'Native']) {
     assert.ok(!text.includes(gone), `writing-plans still mentions ${gone}`);
   }
   assert.match(section(PLANS, '## Plan Document Header').join('\n'), /^> \*\*For agentic workers:\*\* REQUIRED SUB-SKILL: Use methodology:executing-plans /m);

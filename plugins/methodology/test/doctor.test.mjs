@@ -1704,6 +1704,49 @@ test('Codex links check: a missing link fails; a collision is listed with its fi
   }, { harnesses: ['codex'] });
 });
 
+test('Codex links check: a leftover link to a removed methodology skill warns, a foreign or live link does not', async () => {
+  await withHarnessHome(async (ctx) => {
+    const skills = join(ctx.home, '.codex', 'skills');
+    const stale = (name) => `stale Codex skill link: ${name}: methodology no longer ships skill ${name}: run triqual sync `
+      + `--harness codex, or delete ${join(skills, name)} if the link stays`;
+    // Into the current install (dangling) and into an older version's cache (also dangling): both name a removed skill.
+    symlinkSync(join(ctx.installPath('methodology'), 'skills', 'requesting-code-review'), join(skills, 'requesting-code-review'));
+    symlinkSync(join(dirname(ctx.installPath('methodology')), '0.7.0', 'skills', 'writing-skills'), join(skills, 'writing-skills'));
+    // Not ours: a dangling link elsewhere, and a link into a directory that is not a plugin's skills folder.
+    symlinkSync(join(ctx.home, 'elsewhere', 'mine'), join(skills, 'mine'));
+    symlinkSync(join(ctx.home, 'notes', 'methodology', 'skills', 'old'), join(skills, 'old'));
+    const { failures, warnings } = await harnessDoctor(ctx);
+    assert.deepEqual(failures, []);
+    assert.deepEqual(warnings, [stale('requesting-code-review'), stale('writing-skills')]);
+  }, { harnesses: ['codex'] });
+});
+
+test('Codex links check: a live link into the install, under a name the install does not use, does not warn', async () => {
+  await withHarnessHome(async (ctx) => {
+    const skills = join(ctx.home, '.codex', 'skills');
+    // A skill the install still ships, linked under another name: its target SKILL.md exists, so nothing is stale.
+    symlinkSync(join(ctx.installPath('methodology'), 'skills', 'writing-plans'), join(skills, 'plans-copy'));
+    const { failures, warnings } = await harnessDoctor(ctx);
+    assert.deepEqual(failures, []);
+    assert.deepEqual(warnings, []);
+  }, { harnesses: ['codex'] });
+});
+
+test('Codex links check: with methodology disabled in Claude, links to skills the install still ships do not warn', async () => {
+  await withHarnessHome(async (ctx) => {
+    const skills = join(ctx.home, '.codex', 'skills');
+    // Sync links nothing while methodology is disabled; a link left from before points at a live skill of the install.
+    symlinkSync(join(ctx.installPath('methodology'), 'skills', 'brainstorming'), join(skills, 'brainstorming'));
+    // A skill the install does not ship is not named either: disabled, there is no skill set to compare with.
+    symlinkSync(join(ctx.installPath('methodology'), 'skills', 'writing-skills'), join(skills, 'writing-skills'));
+    const { warnings } = await harnessDoctor(ctx);
+    assert.deepEqual(warnings.filter((w) => w.startsWith('stale Codex skill link')), []);
+  }, {
+    harnesses: ['codex'],
+    tweak: (p) => { p.settings.enabledPlugins[IDS[0]] = false; },
+  });
+});
+
 test('Codex agents check: an edited agent fails; a hand-written one is listed with its fix', async () => {
   await withHarnessHome(async (ctx) => {
     const file = join(ctx.home, '.codex', 'agents', 'spec-reviewer.toml');

@@ -8,7 +8,7 @@ explicit model (so the result measures the skill text, not a role's own prompt),
 
 The subject answers in text only (no tools): the exact actions and commands it takes next, in order. The coordinator
 grades against the pass criteria and records PASS/FAIL with the deciding sentence in the results table. On a FAIL with
-the skill, tighten the skill (writing-skills: RED → rewrite → GREEN) and rerun that scenario.
+the skill, tighten the skill (headjack:writing-skills: RED → rewrite → GREEN) and rerun that scenario.
 
 Runner: `node run.mjs [--model sonnet] [--only S1,S3] [--variant baseline|skill]` runs each scenario with headless
 `claude -p` in a fresh temp directory with `--setting-sources project,local`, so no CLAUDE.md, plugin, skill or hook

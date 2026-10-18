@@ -40,14 +40,15 @@ const LATER = new Date(2026, 8, 29, 11, 0, 0);
 const METHODOLOGY_SKILLS = readdirSync(join(PLUGIN_ROOT, 'skills'), { withFileTypes: true })
   .filter((d) => d.isDirectory()).map((d) => d.name).sort();
 const OURS = [...METHODOLOGY_SKILLS, 'progress-tracking'];
-// 13 of the 14 skills of the removed superpowers 6.0.3 cache (the 14th has no counterpart in ours since 1.0); 11 share a name with ours.
+// 13 of the 14 skills of the removed superpowers 6.0.3 cache (the 14th has no counterpart in ours since 1.0); the ones that
+// share a name with ours clash, the rest do not, so NO_CLASH follows the skill set.
 const SUPERPOWERS_SKILLS = [
   'brainstorming', 'dispatching-parallel-agents', 'executing-plans', 'finishing-a-development-branch',
   'receiving-code-review', 'requesting-code-review', 'systematic-debugging',
   'test-driven-development', 'using-git-worktrees', 'using-superpowers', 'verification-before-completion',
   'writing-plans', 'writing-skills',
 ];
-const NO_CLASH = ['finishing-a-development-branch', 'using-superpowers'];
+const NO_CLASH = SUPERPOWERS_SKILLS.filter((name) => !OURS.includes(name));
 const HAND_WRITTEN = '# hand-written role\nname = "tdd-implementer"\ndescription = "mine"\n';
 const MACHINE_FILES = {
   'spark-explorer.toml': 'name = "spark-explorer"\ndescription = "Spark"\n',
@@ -582,25 +583,25 @@ test('a superseded link that still resolves is replaced unless keepSuperseded', 
 });
 
 test('a link we did not make is left alone and reported', () => withHome({}, async (home) => {
-  const mine = join(home, 'my-skills', 'writing-skills');
+  const mine = join(home, 'my-skills', 'verification-before-completion');
   write(join(mine, 'SKILL.md'), 'mine');
-  rmSync(join(skillsDir(home), 'writing-skills'));
-  symlinkSync(mine, join(skillsDir(home), 'writing-skills'));
+  rmSync(join(skillsDir(home), 'verification-before-completion'));
+  symlinkSync(mine, join(skillsDir(home), 'verification-before-completion'));
   rmSync(join(skillsDir(home), 'systematic-debugging'));
   write(join(skillsDir(home), 'systematic-debugging', 'SKILL.md'), 'a real dir');
   const r = fakeRun(home);
   const { steps } = await syncCodex(home, r);
-  assert.equal(readlinkSync(join(skillsDir(home), 'writing-skills')), mine);
+  assert.equal(readlinkSync(join(skillsDir(home), 'verification-before-completion')), mine);
   assert.equal(readFileSync(join(skillsDir(home), 'systematic-debugging', 'SKILL.md'), 'utf8'), 'a real dir');
   const skills = stepOf(steps, 'codex-skills');
   assert.equal(skills.status, 'done');
-  assert.match(skills.detail, /left alone \(not ours\): systematic-debugging, writing-skills/);
+  assert.match(skills.detail, /left alone \(not ours\): systematic-debugging, verification-before-completion/);
   const links = readManifest(home).harnesses.codex.links;
-  assert.equal(links.some((l) => l.path.endsWith('/writing-skills') || l.path.endsWith('/systematic-debugging')), false);
+  assert.equal(links.some((l) => l.path.endsWith('/verification-before-completion') || l.path.endsWith('/systematic-debugging')), false);
   // Still reported on the next sync, which is otherwise a no-op.
   const again = stepOf((await syncCodex(home, r, { now: LATER })).steps, 'codex-skills');
   assert.equal(again.status, 'already');
-  assert.match(again.detail, /left alone \(not ours\): systematic-debugging, writing-skills/);
+  assert.match(again.detail, /left alone \(not ours\): systematic-debugging, verification-before-completion/);
 }));
 
 test('methodology disabled in Claude removes our links and agents', () => withHome({}, async (home, { installs }) => {

@@ -327,9 +327,10 @@ A worktree is created only when your human partner explicitly asks for one, in t
 
 1. **Detect existing isolation first:** `git rev-parse --path-format=absolute --git-dir --git-common-dir`. Two different paths (and `git rev-parse --show-superproject-working-tree` printing nothing, so it is not a submodule) mean you are already in a linked worktree: use it, and create no other.
 2. **Native tool first:** if your harness has a native worktree tool (a tool such as `EnterWorktree`, a `/worktree` command, a `--worktree` flag), use it: it owns placement, branching and cleanup.
-3. **Git fallback**, only without a native tool: use the directory your instructions name, else an existing `.worktrees/` (or `worktrees/`), else `.worktrees/` at the project root; verify it is ignored (`git check-ignore -q .worktrees`, exit 0) and add it to `.gitignore` with a commit when it is not; then run `git worktree add <location>/<branch-name> -b <branch-name>` and move the session into it with your harness's directory tool, as a step of its own. A sandbox denial means you work in place and say so.
+3. **Git fallback**, only without a native tool: use the directory your instructions name, else an existing `.worktrees/` (or `worktrees/`), else `.worktrees/` at the project root; verify the chosen location is ignored (`git check-ignore -q <location>`, exit 0) and add it to `.gitignore` with a commit when it is not; then run `git worktree add <location>/<branch-name> -b <branch-name>` and move the session into it with your harness's directory tool, as a step of its own. A sandbox denial means you work in place and say so.
 4. **Branch name:** never exactly the plan's `**Branch prefix:**` (use `wt/<prefix>`, or a detached HEAD): `node scripts/stack.mjs init PLAN_FILE` exits 3 on a branch with the prefix's own name.
-5. **Cleanup:** whoever creates a worktree removes it when the work lands or is dropped (methodology:finishing-branch).
+5. **Clean baseline:** in a fresh worktree, install dependencies the way the project does (its manifest or lockfile says how), each command plain and on its own, then run the project's check before Task 1. Failures are reported to your human partner, who decides whether to proceed; later failures are then ambiguous otherwise.
+6. **Cleanup:** whoever creates a worktree removes it when the work lands or is dropped (methodology:finishing-branch, Step 7).
 
 ## Ledger vocabulary
 
@@ -418,5 +419,3 @@ Task 3 (light) — resumed, not re-dispatched
 [Final review: 3 hunters + roles:final-adversarial-reviewer → clean, no traced findings; hunters and final-escapes records]
 [node scripts/stack.mjs submit <plansDir>/billing.md 1 --open; final message with Rulings and After Merge; methodology:finishing-branch]
 ```
-
-Started from superpowers by Jesse Vincent (MIT), now triqual's own orchestrator — see LICENSE-superpowers.

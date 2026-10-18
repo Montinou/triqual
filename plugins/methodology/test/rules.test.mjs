@@ -162,7 +162,8 @@ test('global.md keeps the session model for coordination only', () => {
 test('global.md credits the one orchestrator, executing-plans, for every role it dispatches', () => {
   const row = roleRows().find((line) => line.includes('`roles:hunter`'));
   assert.ok(row, 'no hunter row');
-  assert.deepEqual(cells(row)[4], '`methodology:executing-plans`');
+  assert.ok(cells(row)[4].includes('`methodology:executing-plans`'), `the hunter row is not dispatched by executing-plans: ${row}`);
+  assert.ok(cells(row)[4].includes('`methodology:reviewing-code`'), `the hunter row is not dispatched by reviewing-code: ${row}`);
   for (const line of roleRows().filter((l) => /`roles:(brief-writer|tdd-implementer|complex-implementer|safety-reviewer|spec-reviewer|review-fixer|final-adversarial-reviewer|hunter)`/.test(l))) {
     assert.ok(cells(line)[4].includes('`methodology:executing-plans`'), `the row is not dispatched by executing-plans: ${line}`);
   }

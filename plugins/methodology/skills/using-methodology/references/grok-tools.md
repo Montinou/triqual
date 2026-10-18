@@ -12,7 +12,7 @@ So a skill's role dispatch (`roles:<name>`) has no Grok form:
   `executing-plans` dispatches only roles and never substitutes another
   agent.
 - The same holds for every other role dispatch (the task reviews, the
-  final review, the spec and plan audit, `requesting-code-review`):
+  final review, the spec and plan audit, `reviewing-code`):
   stop and ask your human partner before going on.
 - Never spawn a general-purpose subagent in place of a role.
 
