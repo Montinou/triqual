@@ -118,5 +118,3 @@ Skip any step = lying, not verifying
 - Paraphrases and synonyms
 - Implications of success
 - ANY communication suggesting completion/correctness
-
-Forked from superpowers 6.4.2 (skills/verification-before-completion), MIT © Jesse Vincent — see LICENSE-superpowers.

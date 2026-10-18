@@ -48,7 +48,7 @@
     "contains": "xai-SECRET-TOKEN-inspect"
   },
   {
-    "path": "plugins/methodology/test/fork.test.mjs",
+    "path": "test/companion.test.mjs",
     "contains": "randomBytes(32).toString('hex')"
   }
 ]

@@ -63,7 +63,6 @@ test('README documents triqual tasks, triqual ui and the status-line snippet', (
     assert.ok(suggest[0].includes(needle), `the triqual suggest row lacks ${needle}`);
   }
   assert.match(suggest[0], /Exits 0 .*3 when Headjack is not installed.*1 when .*2 on usage/);
-  assert.doesNotMatch(README, /`triqual upstream-diff` arrives? in (a )?later release/);
   assert.match(README, /git 2\.31/);
   assert.match(README, /--separate-git-dir/);
 });
@@ -89,10 +88,7 @@ test('README says older installs show only descriptions in the full help', () =>
   assert.match(section, /older installs[^.]*only (the )?descriptions?[^.]*until[^.]*updated/i);
 });
 
-test('README lists triqual upstream-diff as available and triqual sync with superpowers@* and keepSuperseded', () => {
-  const upstream = README.split('\n').find((line) => line.startsWith('| `triqual upstream-diff <version>'));
-  assert.ok(upstream, 'upstream-diff row');
-  for (const flag of ['--from', '--skill', '--patch', '--mark-reviewed']) assert.ok(upstream.includes(flag), flag);
+test('README lists triqual sync with superpowers@* and keepSuperseded', () => {
   const sync = README.split('\n').find((line) => line.startsWith('| `triqual sync` |'));
   assert.ok(sync, 'sync row');
   assert.doesNotMatch(sync, /none in 0\.1\.0/);

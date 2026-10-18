@@ -80,7 +80,6 @@ test('COMMANDS maps every triqual command to its plugin and cli file', () => {
     suggest: ['methodology', 'cli/suggest.mjs'],
     doctor: ['methodology', 'cli/doctor.mjs'],
     sync: ['methodology', 'cli/sync.mjs'],
-    'upstream-diff': ['methodology', 'cli/upstream-diff.mjs'],
     ui: ['progress-tracking', 'cli/ui.mjs'],
     tracking: ['progress-tracking', 'cli/tracking.mjs'],
     hook: ['methodology', 'cli/hook.mjs'],
@@ -346,7 +345,6 @@ test('DESCRIPTIONS gives every command its one-line description', () => {
     suggest: 'suggest vault skills for a request (through headjack)',
     doctor: "diagnose the install (--repo: this repo's tracking)",
     sync: "write the installed rules into ~/.claude/CLAUDE.md's managed section",
-    'upstream-diff': 'diff the forked skills against a superpowers release',
     ui: 'local read-only tracking dashboard',
     tracking: 'write a tracking file (entry, status, spec, plan) from a draft; the way to write them in local mode',
     hook: 'run a methodology hook for another harness (Codex, Grok)',
@@ -364,7 +362,7 @@ const FAKE_DOCTOR = `if (process.argv.includes('--help')) process.stdout.write($
 const FAILING_SYNC = "process.stdout.write('boom\\n');\nprocess.exit(1);\n";
 const indented = (text) => text.trimEnd().split('\n').map((l) => (l ? `      ${l}` : '')).join('\n');
 
-// A temp HOME with: methodology installed (fake doctor, failing sync, no upstream-diff file), the real
+// A temp HOME with: methodology installed (fake doctor, failing sync, no migrate file), the real
 // progress-tracking of this checkout, and no plugin that ships the synthetic `future` command, installed or released.
 const manifest = (version) => JSON.stringify({ name: 'methodology', version });
 function helpHome() {
@@ -413,7 +411,7 @@ test('triqual, triqual help, triqual --help and triqual -h print the full help t
     assert.match(row(FUTURE)[0], / \(not released yet\)$/);
     assert.ok(row(FUTURE)[0].includes('a command that no release ships'));
     // Missing from both the install and the marketplace copy: not released, whatever the plugin.
-    assert.match(row('upstream-diff')[0], / \(not released yet\)$/);
+    assert.match(row('migrate')[0], / \(not released yet\)$/);
   } finally { rmSync(home, { recursive: true, force: true }); }
 }));
 
@@ -555,21 +553,21 @@ const rowOf = (help, cmd) => help.split('\n').find((l) => l.startsWith(`  ${cmd}
 test('markers and errors are per command: the marketplace copy decides between update and not released', () => withFuture(({ file, mod }) => {
   const home = fixtureHome({ methodology: { ...plugin('methodology', '0.1.2') }, 'progress-tracking': { ...plugin('progress-tracking', '0.2.0') } });
   try {
-    // progress-tracking lacks bin/tasks.mjs, which the marketplace copy has; methodology lacks bin/upstream-diff.mjs,
+    // progress-tracking lacks bin/tasks.mjs, which the marketplace copy has; methodology lacks bin/migrate.mjs,
     // which the copy lacks too; future-plugin is listed but not installed.
     marketplaceCopy(home, [...RELEASED, FUTURE_PLUGIN], { 'progress-tracking': ['bin/tasks.mjs'] });
     const tasks = resolveCommand({ home, cwd: home, cmd: 'tasks' });
     assert.equal(tasks.status, 'update');
     assert.equal(tasks.marker, '(update progress-tracking to get it)');
     assert.ok(tasks.error.endsWith(`Update it with: claude plugin update progress-tracking@${BRAND.legacy.marketplace}`), tasks.error);
-    const diff = resolveCommand({ home, cwd: home, cmd: 'upstream-diff' });
+    const diff = resolveCommand({ home, cwd: home, cmd: 'migrate' });
     assert.equal(diff.status, 'unreleased');
     assert.equal(diff.marker, '(not released yet)');
     assert.doesNotMatch(diff.error, /update|install/i);
     const future = mod.resolveCommand({ home, cwd: home, cmd: FUTURE });
     assert.equal(future.status, 'not-installed');
     assert.equal(future.marker, '(not installed)');
-    for (const [cmd, marker] of [['tasks', '(update progress-tracking to get it)'], ['upstream-diff', '(not released yet)'], [FUTURE, '(not installed)']]) {
+    for (const [cmd, marker] of [['tasks', '(update progress-tracking to get it)'], ['migrate', '(not released yet)'], [FUTURE, '(not installed)']]) {
       const r = runShim(file, [cmd], { home, cwd: home });
       assert.equal(r.status, 3, cmd);
       assert.equal(r.stderr, `${mod.resolveCommand({ home, cwd: home, cmd }).error}\n`, cmd);
@@ -577,7 +575,7 @@ test('markers and errors are per command: the marketplace copy decides between u
     }
     // The marketplace copy cannot be read: the installed version is named and no update is suggested.
     rmSync(join(home, '.claude', 'plugins', 'known_marketplaces.json'));
-    const unknown = resolveCommand({ home, cwd: home, cmd: 'upstream-diff' });
+    const unknown = resolveCommand({ home, cwd: home, cmd: 'migrate' });
     assert.equal(unknown.status, 'unknown');
     assert.equal(unknown.marker, '(not in the installed methodology 0.1.2)');
     assert.doesNotMatch(unknown.error, /update/i);
@@ -653,12 +651,12 @@ test('helpText kills a --help that ignores SIGTERM once it times out', () => {
 
 test('helpText stops spawning once its overall budget is spent: the rest show their description only', () => {
   const hang = "setTimeout(() => console.log('late'), 5000);\n";
-  const home = fixtureHome({ methodology: { 'bin/doctor.mjs': hang, 'bin/sync.mjs': hang, 'bin/upstream-diff.mjs': hang, ...plugin('methodology', '0.1.2') } });
+  const home = fixtureHome({ methodology: { 'bin/doctor.mjs': hang, 'bin/sync.mjs': hang, 'bin/migrate.mjs': hang, ...plugin('methodology', '0.1.2') } });
   try {
     const started = Date.now();
     const help = helpText({ home, cwd: home, timeoutMs: 1000, budgetMs: 300 });
     assert.ok(Date.now() - started < 1500, `took ${Date.now() - started} ms`);
-    for (const cmd of ['doctor', 'sync', 'upstream-diff']) assert.ok(rowOf(help, cmd).endsWith(DESCRIPTIONS[cmd]), cmd);
+    for (const cmd of ['doctor', 'sync', 'migrate']) assert.ok(rowOf(help, cmd).endsWith(DESCRIPTIONS[cmd]), cmd);
     assert.doesNotMatch(help, /late/);
   } finally { rmSync(home, { recursive: true, force: true }); }
 });

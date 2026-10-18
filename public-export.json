@@ -26,6 +26,6 @@
     {"path": "plugins/methodology/test/doctor.test.mjs", "contains": "ghp_SecretLooking"},
     {"path": "plugins/methodology/test/doctor.test.mjs", "contains": "sk-live-SecretLook"},
     {"path": "plugins/methodology/test/doctor.test.mjs", "contains": "xai-SECRET-TOKEN-inspect"},
-    {"path": "plugins/methodology/test/fork.test.mjs", "contains": "randomBytes(32).toString('hex')"}
+    {"path": "test/companion.test.mjs", "contains": "randomBytes(32).toString('hex')"}
   ]
 }

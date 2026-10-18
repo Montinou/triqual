@@ -981,26 +981,6 @@ test('finishing-branch runs triqual tasks check then close, writes the closing e
   assert.deepEqual(bad, [], 'a triqual tasks command or progress.md rule outside an opted-in instruction');
 });
 
-// ---- fork.test.mjs -------------------------------------------------------------------------------------------------
-
-test('fork.test.mjs has no todo cases left', () => {
-  const source = readFileSync(join(TEST, 'fork.test.mjs'), 'utf8');
-  const pending = /const PENDING = new Set\(\[([\s\S]*?)\]\);/.exec(source);
-  assert.ok(pending, 'fork.test.mjs has no PENDING set');
-  assert.equal(pending[1].replace(/\/\/.*$/gm, '').trim(), '', `PENDING still lists: ${pending[1].trim()}`);
-  // No todo marker: the only code lines naming `todo` are caseFor's two, which yield a todo case for a PENDING skill
-  // only (and PENDING is empty).
-  const GATE = [
-    'if (!PENDING.has(skill)) return [{ todo: false }, check];',
-    '{ todo: `${skill} is adapted in a later task` },',
-  ];
-  const markers = source
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => !line.startsWith('//') && /\btodo\b/.test(line));
-  assert.deepEqual(markers, GATE, 'fork.test.mjs has a todo marker outside the PENDING gate');
-});
-
 // ---- final fix wave (plan role-tiers · final fix) --------------------------------------------------------------------
 
 test('Finish re-records every Unrecorded: record before the totals and the deletion, and lists the ones that still fail', () => {

@@ -172,5 +172,3 @@ Ready to implement <feature-name>
 | "The worktree directory is surely ignored already" | Run `git check-ignore`. An unignored worktree directory commits the whole tree into the repo. |
 | "Any directory name works" | Explicit instructions beat an existing project-local directory, which beats the `.worktrees/` default. |
 | "The workspace is fresh — baseline tests can wait" | A dirty baseline makes every later failure ambiguous. Run the tests now; proceeding past failures is your human partner's call. |
-
-Forked from superpowers 6.4.2 (skills/using-git-worktrees), MIT © Jesse Vincent — see LICENSE-superpowers.

@@ -295,5 +295,3 @@ branches and draft PRs — handoff <date>`, and merging stays your human partner
 
 **If Native chosen:**
 - **REQUIRED SUB-SKILL:** Use methodology:executing-plans
-
-Forked from superpowers 6.4.2 (skills/writing-plans), MIT © Jesse Vincent — see LICENSE-superpowers.

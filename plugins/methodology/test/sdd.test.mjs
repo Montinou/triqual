@@ -947,27 +947,18 @@ test('the inlined record examples carry the models of the roles frontmatter', ()
   for (const h of hunters.hunters) assert.equal(h.model, frontmatterModel('hunter'), `a ${h.category} hunter model is not hunter's`);
 });
 
-test('the Codex missing-role stop exempts hunter, in codex-tools.md and FORK.md alike', () => {
+test('the Codex missing-role stop exempts hunter', () => {
   const codex = read('using-methodology/references/codex-tools.md').replace(/\s+/g, ' ');
-  const fork = readFileSync(join(PLUGIN, 'FORK.md'), 'utf8').replace(/\s+/g, ' ');
   const exception = 'except `hunter`, whose absence is the review stage\'s skip rule (one `Skipped:` ledger line, never a stop)';
   assert.doesNotMatch(codex, /shadow/i, 'codex-tools.md still names the shadow');
   const missing = /\*\*Missing role:\*\* if `agent_type` does not resolve[^]*?(?= - \*\*Skills)/.exec(codex);
   assert.ok(missing, 'codex-tools.md lost its missing-role rule');
   assert.ok(missing[0].includes('stop and ask'), 'the Codex rule no longer stops and asks');
   assert.ok(missing[0].includes(exception), 'the Codex stop does not exempt hunter');
-  assert.ok(fork.includes(`a missing role stops and asks instead of spawning a generic agent (${exception})`), 'FORK.md does not carry the same exception');
   // The skip rule the exception points at exists in both review skills.
   for (const path of [SKILL, 'executing-plans/SKILL.md']) {
     assert.ok(read(path).includes('`Skipped: hunters and Haiku gate — <cause>; safety checklist runs in the spec review`'), `${path} lost the skip rule`);
   }
-});
-
-test('FORK.md names the final-review hunters for executing-plans in its dispatch row and its adaptation bullet', () => {
-  const fork = readFileSync(join(PLUGIN, 'FORK.md'), 'utf8').replace(/\s+/g, ' ');
-  assert.match(fork, /\| `executing-plans` final whole-branch review \| 3 `roles:hunter` together, then `roles:final-adversarial-reviewer`/, 'the dispatch row omits the hunters');
-  assert.ok(fork.includes('the final review dispatches 3 `roles:hunter` together, then `roles:final-adversarial-reviewer`'), 'the adaptation bullet omits the hunters');
-  assert.doesNotMatch(fork, /shadow/i, 'FORK.md still names the shadow');
 });
 
 // ---- role tiers v2 · fix 1: the safety checklist moves into the spec review when the Haiku gate is skipped ----------

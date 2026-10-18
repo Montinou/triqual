@@ -681,5 +681,3 @@ How future agents find your skill:
 6. **Loads example** (only when implementing)
 
 **Optimize for this flow** - put searchable terms early and often.
-
-Forked from superpowers 6.4.2 (skills/writing-skills), MIT © Jesse Vincent — see LICENSE-superpowers.

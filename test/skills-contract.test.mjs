@@ -147,6 +147,132 @@ const linkProblems = ({ skills }) => {
   return bad;
 };
 
+// The visual companion runs on this machine only: no skill script may contain a URL whose host is not loopback.
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+const isScript = (path) => /(^|\/)scripts\//.test(path) || /\.(js|cjs|mjs|ts|sh)$/.test(path);
+const loopbackProblems = ({ skills }) => {
+  const bad = [];
+  for (const path of skillFiles(skills).filter(isScript)) {
+    read(skills, path).split('\n').forEach((raw, i) => {
+      // Join adjacent string literals ('https:' + '//host', "http""://host") so a split URL reads whole.
+      const line = raw.replace(/(['"`])\s*\+?\s*(['"`])/g, '');
+      const urls = [
+        ...line.matchAll(/\b[a-z][a-z0-9+.-]*:\/\/(\[[^\]]*\]|[^\s'"`<>)\/:?#]*)/gi),
+        // Protocol-relative: `//host` where host is a domain, an IPv4 address or a bracketed IPv6 address.
+        ...line.matchAll(/(?<![\w:\/])\/\/(\[[0-9a-f:.]+\]|\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,})(?=[\/:'"`\s]|$)/gi),
+      ];
+      for (const m of urls) {
+        if (m[1] && !LOOPBACK_HOSTS.has(m[1].toLowerCase())) bad.push(`${path}:${i + 1}: ${m[0]}`);
+      }
+    });
+  }
+  return bad;
+};
+
+// `references/x.md`, `scripts/y.js`, ...: a backticked path whose first segment is the name of a folder some skill has
+// must resolve against its own skill's root or against the naming file's directory, so a path under a folder this skill
+// lacks fails too.
+const backtickPathProblems = ({ skills }) => {
+  const folders = new Set(
+    skillDirs(skills).flatMap((skill) =>
+      readdirSync(join(skills, skill), { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name),
+    ),
+  );
+  const bad = [];
+  for (const path of skillFiles(skills)) {
+    const skill = path.split('/')[0];
+    read(skills, path).split('\n').forEach((line, i) => {
+      for (const m of line.matchAll(/`([\w.-]+)\/([^`\s]*[^`\s/])`/g)) {
+        const target = `${m[1]}/${m[2]}`;
+        if (!folders.has(m[1]) || (EXAMPLE_PATHS[path] ?? []).includes(target)) continue;
+        if (!existsSync(join(skills, skill, target)) && !existsSync(join(skills, posix.join(posix.dirname(path), target)))) {
+          bad.push(`${path}:${i + 1}: ${target}`);
+        }
+      }
+    });
+  }
+  return bad;
+};
+
+// The skills are triqual's own: none carries the footer that attributed a file to an upstream release ("Forked from
+// superpowers 6.4.2 ..."), wherever it sits in the file. The credit lives in NOTICE and the READMEs.
+const forkFooterProblems = ({ skills }) =>
+  skillDirs(skills).flatMap((skill) => {
+    const file = join(skills, skill, 'SKILL.md');
+    return existsSync(file) && /Forked from/.test(readFileSync(file, 'utf8')) ? [`${skill}/SKILL.md`] : [];
+  });
+
+// A scheme whose host comes from a variable (`'http://' + host`, `ws://${host}`, `"https://$HOST"`) cannot be checked
+// statically, so only these known local-address builders may contain one: [skill file, its exact trimmed line].
+const LOCAL_ADDRESS_BUILDERS = [
+  ['brainstorming/scripts/server.cjs', "return 'http://' + urlHostForHttp(URL_HOST) + ':' + PORT + '/?key=' + TOKEN;"],
+  ['brainstorming/scripts/server.cjs', "return origin === 'http://' + host;"],
+  [
+    'brainstorming/scripts/helper.js',
+    "return 'ws://' + window.location.host + (key ? '/?key=' + encodeURIComponent(key) : '');",
+  ],
+];
+const SCHEME_VARIABLE = /\b[a-z][a-z0-9+.-]*:\/\/(?:['"`]\s*\+|\$\{?[A-Za-z_]|\$\()/i;
+// The offending lines, and which exemptions matched a line (an exemption that matches none is stale).
+const schemeVariableScan = ({ skills }, builders) => {
+  const bad = [];
+  const used = new Set();
+  for (const path of skillFiles(skills).filter(isScript)) {
+    read(skills, path).split('\n').forEach((line, i) => {
+      if (!SCHEME_VARIABLE.test(line)) return;
+      const k = builders.findIndex(([p, text]) => p === path && text === line.trim());
+      if (k === -1) bad.push(`${path}:${i + 1}: ${line.trim()}`);
+      else used.add(k);
+    });
+  }
+  return { bad, used };
+};
+const schemeVariableProblems = (paths, builders = LOCAL_ADDRESS_BUILDERS) => schemeVariableScan(paths, builders).bad;
+const staleBuilders = (paths, builders = LOCAL_ADDRESS_BUILDERS) => {
+  const { used } = schemeVariableScan(paths, builders);
+  return builders.filter((_, k) => !used.has(k)).map(([p, text]) => `${p}: ${text}`);
+};
+
+// The workspace ledger is `sdd-ledger.md` in every skill file. A path in the old `<workspace>/progress.md` form, in
+// `$var/progress.md` or `sdd/.../progress.md`, any `/progress.md` in a script, and the pre-rename `.superpowers/sdd`
+// directory all fail, except the one line of the workspace script that adopts a legacy ledger.
+const LEGACY_ADOPTION = {
+  path: 'subagent-driven-development/scripts/sdd-workspace',
+  line: 'legacy="$root/.superpowers/sdd/$slug/progress.md"',
+};
+const WORKSPACE_LEDGER = /(?:\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|<workspace>|sdd\/\S*?)\/progress\.md/;
+const ledgerProblems = ({ skills }) => {
+  const bad = [];
+  for (const path of skillFiles(skills)) {
+    read(skills, path).split('\n').forEach((line, i) => {
+      if (path === LEGACY_ADOPTION.path && line === LEGACY_ADOPTION.line) return;
+      const named = WORKSPACE_LEDGER.test(line) || (isScript(path) && /\/progress\.md/.test(line));
+      if (named || /\.superpowers\/sdd/.test(line)) bad.push(`${path}:${i + 1}: ${line.trim()}`);
+    });
+  }
+  return bad;
+};
+
+// diagnosing-methodology files and searches issues with the authenticated `gh` only: no `curl`, no github.com URL.
+const GH_SKILL = 'diagnosing-methodology';
+const ghOnlyProblems = ({ skills }) =>
+  skillFiles(skills)
+    .filter((path) => path.startsWith(`${GH_SKILL}/`))
+    .flatMap((path) =>
+      read(skills, path).split('\n').flatMap((line, i) =>
+        /\bcurl\b|https?:\/\/(api\.)?github\.com/.test(line) ? [`${path}:${i + 1}: ${line.trim()}`] : [],
+      ),
+    );
+
+// ... and its issues reference requires that `gh` be authenticated first: the file exists and says `gh auth status`.
+const GH_ISSUES_REFERENCE = `${GH_SKILL}/references/github-issues.md`;
+const ghAuthProblems = ({ skills }) => {
+  if (!existsSync(join(skills, GH_ISSUES_REFERENCE))) return [`${GH_ISSUES_REFERENCE} is missing`];
+  return /gh auth status/.test(read(skills, GH_ISSUES_REFERENCE)) ? [] : [`${GH_ISSUES_REFERENCE} does not require gh auth status`];
+};
+
 // Safety lines that must survive a rewrite: skill → the exact text, with why it matters.
 const PINS = [
   {
@@ -213,6 +339,39 @@ test('every relative markdown link and relative script path in the skills resolv
   assert.deepEqual(linkProblems(REAL), []);
 });
 
+test('no skill script contains a URL outside loopback hosts', () => {
+  assert.deepEqual(loopbackProblems(REAL), []);
+});
+
+test('every backticked folder/file path a skill names resolves', () => {
+  assert.deepEqual(backtickPathProblems(REAL), []);
+});
+
+test('no SKILL.md has a fork footer', () => {
+  assert.deepEqual(forkFooterProblems(REAL), []);
+});
+
+test('a scheme with a variable host appears only in the known local-address builders', () => {
+  assert.deepEqual(schemeVariableProblems(REAL), []);
+});
+
+test('every local-address exemption still names a line', () => {
+  assert.deepEqual(staleBuilders(REAL), [], 'LOCAL_ADDRESS_BUILDERS lists a line that no longer exists');
+});
+
+test('the workspace ledger is sdd-ledger.md everywhere', () => {
+  assert.deepEqual(ledgerProblems(REAL), []);
+});
+
+test('diagnosing-methodology files and searches issues with authenticated gh only', (t) => {
+  if (!existsSync(join(REAL.skills, GH_SKILL))) {
+    t.skip(`no ${GH_SKILL} skill directory (renamed or removed by a later phase: re-key GH_SKILL)`);
+    return;
+  }
+  assert.deepEqual(ghAuthProblems(REAL), [], 'the issues reference does not require an authenticated gh');
+  assert.deepEqual(ghOnlyProblems(REAL), [], 'unauthenticated fallbacks (curl, github.com URLs) remain');
+});
+
 test(`using-methodology/SKILL.md is at most ${USING_METHODOLOGY_MAX_CHARS} characters`, () => {
   const text = read(REAL.skills, 'using-methodology/SKILL.md');
   assert.ok(text.length <= USING_METHODOLOGY_MAX_CHARS, `${text.length} characters`);
@@ -273,6 +432,88 @@ test('the checks fail on a seeded defect', async (t) => {
       'a/scripts/run.sh': '',
     });
     assert.deepEqual(linkProblems(p).sort(), ['a/SKILL.md:5: gone.md', 'a/SKILL.md:6: scripts/gone.sh']);
+  });
+  await t.test('a non-loopback URL in a script, but not a loopback one or one in a markdown file', (t2) => {
+    const p = fixture(t2, {
+      'a/SKILL.md': skillMd('a', 'See https://example.com/docs.'),
+      'a/scripts/s.js': "const ok = 'http://127.0.0.1:3000';\nconst ws = 'ws://localhost/x';\nfetch('https://evil.example/' + 1);\nconst split = 'http:' + '//cdn.example.org';\nconst rel = '//cdn.example.net/x.js';",
+    });
+    assert.deepEqual(loopbackProblems(p), [
+      'a/scripts/s.js:3: https://evil.example',
+      'a/scripts/s.js:4: http://cdn.example.org',
+      'a/scripts/s.js:5: //cdn.example.net',
+    ]);
+  });
+  await t.test('a backticked path under a skill folder that does not exist, but not a good one or a non-folder prefix', (t2) => {
+    const p = fixture(t2, {
+      'a/SKILL.md': skillMd('a', 'Read `references/ok.md`, `references/gone.md`, `scripts/gone.sh` and `src/anything.md`.'),
+      'a/references/ok.md': '',
+      'b/scripts/x.sh': '',
+    });
+    assert.deepEqual(backtickPathProblems(p), [
+      'a/SKILL.md:5: references/gone.md',
+      'a/SKILL.md:5: scripts/gone.sh',
+    ]);
+  });
+  await t.test('a SKILL.md with a Forked from footer, at the end or anywhere', (t2) => {
+    const p = fixture(t2, {
+      'a/SKILL.md': skillMd('a', 'body\n\nForked from superpowers 6.4.2 (skills/a), MIT © Jesse Vincent — see LICENSE-superpowers.'),
+      'b/SKILL.md': skillMd('b', 'Credit: see NOTICE.'),
+      'c/SKILL.md': skillMd('c', 'Forked from somewhere, mid-file.\n\nMore text.'),
+      'd/SKILL.md': skillMd('d', 'a forked from lowercase is not the footer'),
+    });
+    assert.deepEqual(forkFooterProblems(p), ['a/SKILL.md', 'c/SKILL.md']);
+  });
+  await t.test('a scheme with a variable host outside the allow list, and a stale exemption', (t2) => {
+    const p = fixture(t2, {
+      'a/SKILL.md': skillMd('a'),
+      'a/scripts/s.js':
+        "const ok = 'http://' + host;\nconst bad = 'http://' + remoteHost;\nconst tpl = `ws://${remote}/x`;\nconst sh = \"https://$HOST/x\";",
+    });
+    const builders = [
+      ['a/scripts/s.js', "const ok = 'http://' + host;"],
+      ['a/scripts/gone.js', "return 'http://' + gone;"],
+    ];
+    assert.deepEqual(schemeVariableProblems(p, builders), [
+      "a/scripts/s.js:2: const bad = 'http://' + remoteHost;",
+      'a/scripts/s.js:3: const tpl = `ws://${remote}/x`;',
+      'a/scripts/s.js:4: const sh = "https://$HOST/x";',
+    ]);
+    assert.deepEqual(staleBuilders(p, builders), ["a/scripts/gone.js: return 'http://' + gone;"]);
+  });
+  await t.test('a workspace ledger that is not sdd-ledger.md, and .superpowers/sdd outside the legacy line', (t2) => {
+    const p = fixture(t2, {
+      'a/SKILL.md': skillMd('a', 'Write sdd-ledger.md. Not <workspace>/progress.md.\nNor $ws/progress.md or sdd/x/progress.md.\nOld: .superpowers/sdd/x'),
+      'a/scripts/s.sh': 'cat "$w/progress.md"',
+      'subagent-driven-development/SKILL.md': skillMd('subagent-driven-development'),
+      'subagent-driven-development/scripts/sdd-workspace': `${LEGACY_ADOPTION.line}\nlegacy2="$root/.superpowers/sdd/$slug"`,
+    });
+    assert.deepEqual(ledgerProblems(p), [
+      'a/SKILL.md:5: Write sdd-ledger.md. Not <workspace>/progress.md.',
+      'a/SKILL.md:6: Nor $ws/progress.md or sdd/x/progress.md.',
+      'a/SKILL.md:7: Old: .superpowers/sdd/x',
+      'a/scripts/s.sh:1: cat "$w/progress.md"',
+      'subagent-driven-development/scripts/sdd-workspace:2: legacy2="$root/.superpowers/sdd/$slug"',
+    ]);
+  });
+  await t.test('curl and a github.com URL in a diagnosing-methodology file, but not in another skill', (t2) => {
+    const p = fixture(t2, {
+      [`${GH_SKILL}/SKILL.md`]: skillMd(GH_SKILL, 'Use gh issue list.'),
+      [`${GH_SKILL}/references/i.md`]: 'Fallback: curl -s https://api.github.com/search/issues\nSee https://github.com/x/y',
+      'other/SKILL.md': skillMd('other', 'curl https://github.com/x'),
+    });
+    assert.deepEqual(ghOnlyProblems(p), [
+      `${GH_SKILL}/references/i.md:1: Fallback: curl -s https://api.github.com/search/issues`,
+      `${GH_SKILL}/references/i.md:2: See https://github.com/x/y`,
+    ]);
+  });
+  await t.test('a github-issues.md that is missing or lacks gh auth status, but not one that requires it', (t2) => {
+    const missing = fixture(t2, { [`${GH_SKILL}/SKILL.md`]: skillMd(GH_SKILL) });
+    assert.deepEqual(ghAuthProblems(missing), [`${GH_ISSUES_REFERENCE} is missing`]);
+    const lacking = fixture(t2, { [GH_ISSUES_REFERENCE]: 'Use `gh issue list`.' });
+    assert.deepEqual(ghAuthProblems(lacking), [`${GH_ISSUES_REFERENCE} does not require gh auth status`]);
+    const ok = fixture(t2, { [GH_ISSUES_REFERENCE]: 'First run:\n\n```\ngh auth status\n```' });
+    assert.deepEqual(ghAuthProblems(ok), []);
   });
   await t.test('a pinned line that was removed', (t2) => {
     const p = fixture(t2, { 'brainstorming/SKILL.md': skillMd('brainstorming', 'no gate here') });

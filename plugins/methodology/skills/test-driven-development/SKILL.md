@@ -330,5 +330,3 @@ Otherwise → not TDD
 ```
 
 No exceptions without your human partner's permission.
-
-Forked from superpowers 6.4.2 (skills/test-driven-development), MIT © Jesse Vincent — see LICENSE-superpowers.

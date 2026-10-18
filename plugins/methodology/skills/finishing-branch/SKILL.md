@@ -323,5 +323,3 @@ the worktree.
 | "The stack's PRs merged, so the After Merge checklist can run" | Only when the top phase is `merged`. A partial merge runs nothing: the owner merges the rest and runs the checklist from the entry and `Next`. |
 | "A stack needs a closing commit like any plan" | Stacked execution is store or local mode: no tracking file exists to stage, so there is no closing commit. |
 | "The ledger bookkeeping can ride on the merge" | The closing commit carries it, with the closing entry, before any option runs. The pre-commit rejects a commit without the tracking files. |
-
-Forked from superpowers 6.4.2 (skills/finishing-a-development-branch), MIT © Jesse Vincent — see LICENSE-superpowers.

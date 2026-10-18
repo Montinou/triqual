@@ -93,5 +93,3 @@ You: [Fix progress indicators]
 - Request clarification
 
 See template at: [code-reviewer.md](code-reviewer.md)
-
-Forked from superpowers 6.4.2 (skills/requesting-code-review), MIT © Jesse Vincent — see LICENSE-superpowers.

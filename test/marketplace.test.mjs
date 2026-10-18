@@ -203,12 +203,19 @@ test('roles\' plugin.json description lists the eight shipped role agents', () =
     + 'spec-reviewer, review-fixer, final-adversarial-reviewer, hunter.');
 });
 
-test('methodology\'s description names the fork: skills, roles dispatch and tracking', () => {
+test('methodology\'s description names its skills, roles dispatch and tracking, and no longer calls itself a fork', () => {
   const entry = readJson('.claude-plugin/marketplace.json').plugins.find((p) => p.name === 'methodology');
   const manifest = readJson('plugins/methodology/.claude-plugin/plugin.json');
   for (const description of [entry.description, manifest.description]) {
-    for (const word of [/fork/i, /skills/, /roles/, /tracking/]) assert.match(description, word, description);
+    for (const word of [/skills/, /roles/, /tracking/]) assert.match(description, word, description);
+    assert.doesNotMatch(description, /fork/i, description);
   }
+});
+
+test('the superpowers credit lives in NOTICE: it exists and names superpowers', () => {
+  const notice = join(ROOT, 'plugins/methodology/NOTICE');
+  assert.ok(existsSync(notice), 'plugins/methodology/NOTICE is missing');
+  assert.match(readFileSync(notice, 'utf8'), /superpowers/i);
 });
 
 test('the marketplace and methodology descriptions say Triqual, not the personal methodology (spec 2, brand text)', () => {

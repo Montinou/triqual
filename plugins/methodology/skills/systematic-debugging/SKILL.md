@@ -283,5 +283,3 @@ These techniques are part of systematic debugging and available in this director
 - **`root-cause-tracing.md`** - Trace bugs backward through call stack to find original trigger
 - **`defense-in-depth.md`** - Add validation at multiple layers after finding root cause
 - **`condition-based-waiting.md`** - Replace arbitrary timeouts with condition polling
-
-Forked from superpowers 6.4.2 (skills/systematic-debugging), MIT © Jesse Vincent — see LICENSE-superpowers.

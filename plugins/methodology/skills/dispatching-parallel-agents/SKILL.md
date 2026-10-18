@@ -180,5 +180,3 @@ After agents return:
 2. **Check for conflicts** - Did agents edit same code?
 3. **Run full suite** - Verify all fixes work together
 4. **Spot check** - Agents can make systematic errors
-
-Forked from superpowers 6.4.2 (skills/dispatching-parallel-agents), MIT © Jesse Vincent — see LICENSE-superpowers.

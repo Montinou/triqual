@@ -67,5 +67,3 @@ If your harness appears here, read its reference file for special instructions:
 ## User Instructions
 
 User instructions (CLAUDE.md, AGENTS.md, GEMINI.md, etc, direct requests) take precedence over skills, which in turn override default behavior. Only skip skill workflows or instructions when your human partner has explicitly told you to.
-
-Forked from superpowers 6.4.2 (skills/using-superpowers), MIT © Jesse Vincent — see LICENSE-superpowers.

@@ -84,7 +84,6 @@ export const SHIM_COMMANDS = {
   suggest: ['methodology', 'cli/suggest.mjs'],
   doctor: ['methodology', 'cli/doctor.mjs'],
   sync: ['methodology', 'cli/sync.mjs'],
-  'upstream-diff': ['methodology', 'cli/upstream-diff.mjs'],
   ui: ['progress-tracking', 'cli/ui.mjs'],
   tracking: ['progress-tracking', 'cli/tracking.mjs'],
   hook: ['methodology', 'cli/hook.mjs'],

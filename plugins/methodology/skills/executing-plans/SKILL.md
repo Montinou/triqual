@@ -570,5 +570,3 @@ Deferred minors:
 
 Using methodology:finishing-branch.
 ```
-
-Forked from superpowers 6.4.2 (skills/executing-plans), MIT © Jesse Vincent — see LICENSE-superpowers.

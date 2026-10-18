@@ -827,5 +827,3 @@ Final reviewer: No confirmed findings. Ledger triage: deferred minors accepted, 
 
 Done! Final message lists the Ruling: lines and the plan's After Merge checklist. Using methodology:finishing-branch.
 ```
-
-Forked from superpowers 6.4.2 (skills/subagent-driven-development), MIT © Jesse Vincent — see LICENSE-superpowers.

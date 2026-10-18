@@ -1,8 +1,8 @@
 # methodology
 
-The core plugin of Triqual. It ships the workflow skills (forked from superpowers 6.4.2), the global rules that
+The core plugin of Triqual. It ships the workflow skills, the global rules that
 `triqual sync` writes into `~/.claude/CLAUDE.md`, the `/methodology:setup` command, and the `triqual` commands `doctor`,
-`sync`, `migrate`, `upstream-diff`, `role-eval`, `suggest` and `hook`. A SessionStart hook loads the methodology into a Claude Code
+`sync`, `migrate`, `role-eval`, `suggest` and `hook`. A SessionStart hook loads the methodology into a Claude Code
 session. `triqual hook` and `triqual sync --harness <id>` give the same methodology to Codex and Grok. The plugin
 depends on `progress-tracking`, `workflow-gate` and `roles`, so installing it installs them.
 
@@ -19,7 +19,7 @@ exits 1 for an unknown command (the command list goes to stderr) and when it can
 the plugin or the command is not installed. Otherwise it exits with the command's own status. `suggest` runs from this
 plugin (from version 1.0.0) and calls the separately installed `headjack`.
 
-`doctor`, `sync`, `migrate`, `upstream-diff` and `role-eval` refuse an unknown argument with exit 2. Each of them takes
+`doctor`, `sync`, `migrate` and `role-eval` refuse an unknown argument with exit 2. Each of them takes
 `-h` or `--help` and then writes nothing.
 
 ### `/methodology:setup`
@@ -122,21 +122,6 @@ asks you to merge them by hand.
 The full description is in [Moving from the previous name](../../README.md#moving-from-the-previous-name).
 
 Exit codes: 0 done, 1 a step failed to verify, 2 an unknown argument (nothing ran).
-
-### `triqual upstream-diff`
-
-Usage: `triqual upstream-diff <version> [--from <v>] [--skill <name>] [--full | --patch] [--mark-reviewed "<summary>"]`
-
-For the maintainer. Run from a clone of this repository, it shows what superpowers `<version>` changed in the forked
-skills. Flags are described in the `triqual upstream-diff` row of the [root README](../../README.md#triqual-commands).
-Each valued flag also accepts `--flag=value`. `--full` and `--patch` exclude each other.
-
-It downloads the release tarballs from `codeload.github.com/obra/superpowers`, so it needs network access. It reads
-`plugins/methodology/upstream.json` and `plugins/methodology/FORK.md` in the clone and never touches the installed
-plugin.
-
-Exit codes: 0 ok, 1 a network or tool failure, 2 a usage error, an unknown version or skill, a working directory outside
-a clone, or a refused `--mark-reviewed`.
 
 ### `triqual role-eval`
 
@@ -322,7 +307,6 @@ Environment variables:
   `triqual sync --harness codex` in a terminal for the split.
 - Grok cannot select a named agent, so the role agents and `subagent-driven-development` do not run there.
 - The context that `triqual hook` returns is capped at 9,500 characters.
-- `upstream-diff` needs network access and a clone of this repository.
 - `stack.mjs` refuses a repo in committed tracking mode (exit 3). Switch with `triqual progress-init --store` or
   `--local`.
 - `role-eval record` must run inside a git repository, and linked worktrees of one repository share record keys.
