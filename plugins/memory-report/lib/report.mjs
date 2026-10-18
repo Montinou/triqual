@@ -15,6 +15,10 @@ import { suggestCandidates } from './suggest.mjs';
 const MIN_NODE = [22, 16];
 const SECTION_ERROR_MAX = 120;
 const SUGGESTION_LIMIT = 10;
+const REVIEW_TIERS_TIMEOUT_MS = 5000;
+const TIER_NAMES = ['heavy', 'standard', 'light'];
+const TIER_COUNTS = ['tasks', 'raised', 'blocked'];
+const TIER_RATES = ['hunterConfirmedRate', 'specConfirmedPerTask', 'fixRoundsPerTask', 'escapesPerTask'];
 
 // Fixed failure strings: the only values lastError and run.log ever carry.
 const ERR_NODE = 'Node 22.16 or later required';
@@ -61,6 +65,46 @@ function reportSuggestions(ctx) {
     .filter(({ project }) => contentVerdict({ project, title: '', narrative: '', facts: '' }, ctx.config) !== 'client')
     .slice(0, SUGGESTION_LIMIT);
   return { suggestions, sameRepository: merges.length };
+}
+
+// ---- review tiers (orchestrator spec U7) -------------------------------------------------------------------------------
+
+// The per-tier object `triqual role-eval summary --by-tier --json` prints, or null when it is not exactly that: every
+// tier present, counts non-negative integers, rates finite numbers or null. Nothing else is trusted into the report.
+function parseReviewTiers(stdout) {
+  let data;
+  try {
+    data = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) return null;
+  const tiers = {};
+  for (const name of TIER_NAMES) {
+    const t = data[name];
+    if (t === null || typeof t !== 'object') return null;
+    if (!TIER_COUNTS.every((key) => Number.isInteger(t[key]) && t[key] >= 0)) return null;
+    if (!TIER_RATES.every((key) => t[key] === null || (typeof t[key] === 'number' && Number.isFinite(t[key])))) return null;
+    tiers[name] = Object.fromEntries([...TIER_COUNTS, ...TIER_RATES].map((key) => [key, t[key]]));
+  }
+  return TIER_NAMES.some((name) => tiers[name].tasks > 0) ? tiers : null;
+}
+
+// The Review tiers data for the week: `triqual` run as a child with an argument array and a timeout. A failure, a
+// timeout, empty or unparseable output, or a week with no tasks gives null and the section is omitted; nothing is raised.
+// memory-report reads the summary through the command and imports nothing of progress-tracking or methodology.
+async function collectReviewTiers(windowStartMs, env, deps) {
+  try {
+    const run = defaultRun({ envBase: env });
+    const since = new Date(windowStartMs).toISOString().slice(0, 10);
+    const result = await run('triqual', ['role-eval', 'summary', '--by-tier', '--since', since, '--json'], {
+      timeoutMs: deps.reviewTiersTimeoutMs ?? REVIEW_TIERS_TIMEOUT_MS,
+    });
+    if (result.timedOut || result.code !== 0) return null;
+    return parseReviewTiers(result.stdout);
+  } catch {
+    return null;
+  }
 }
 
 // ---- repository identity (repo-identity spec 2, 4.3) ----------------------------------------------------------------
@@ -202,10 +246,11 @@ async function generate({ paths, env, loaded, now, runner, sourcesOptions, nodeV
       appendLog(paths, 'section-unavailable', 'suggestions');
       suggestions = [];
     }
+    const reviewTiers = await collectReviewTiers(ctx.window.startMs, env, deps);
     const summary = buildSummary(week, insights, chroma);
     const text = renderReport({
       week, window: ctx.window, generatedAt: now(), summary, configWarnings: warnings, hygiene, storage, chroma, insights, suggestions,
-      sameRepository,
+      sameRepository, reviewTiers,
     });
     const reportPath = join(paths.reportsDir, `${week}.md`);
     try {

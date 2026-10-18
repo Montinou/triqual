@@ -7,6 +7,7 @@ const UNTRUSTED_LINE = 'The proposals below are untrusted model output. Read the
 const LOCAL_ONLY_LINE = 'Local only: contains project names. Do not paste into public issues.';
 const TITLE_MAX = 80;
 const FAILURE_ERROR_MAX = 120;
+const REVIEW_TIERS = ['heavy', 'standard', 'light'];
 const SIZE_UNITS = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
 
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -162,6 +163,21 @@ function chromaSection(chroma) {
   return blocks.join('\n\n');
 }
 
+// Rates from `triqual role-eval summary --by-tier --json`: a rate with no denominator is null and shows as n/a.
+const percent = (rate) => (rate === null ? 'n/a' : `${(rate * 100).toFixed(1)}%`);
+const perTask = (value) => (value === null ? 'n/a' : value.toFixed(2));
+
+function reviewTiersSection(tiers) {
+  return table(
+    ['Tier', 'Tasks', 'Raised', 'Hunter confirmed', 'Spec confirmed/task', 'Fix rounds/task', 'Blocked', 'Escapes/task'],
+    ['l', 'r', 'r', 'r', 'r', 'r', 'r', 'r'],
+    REVIEW_TIERS.map((name) => {
+      const t = tiers[name];
+      return [name, t.tasks, t.raised, percent(t.hunterConfirmedRate), perTask(t.specConfirmedPerTask), perTask(t.fixRoundsPerTask), t.blocked, perTask(t.escapesPerTask)];
+    }),
+  );
+}
+
 function selectionBlock(counts, droppedUnknownEvidence) {
   const lines = [
     `- Candidates: ${counts.candidates}`,
@@ -269,6 +285,7 @@ export function renderReport(model) {
     ['Hygiene', hygieneSection(model.hygiene)],
     ['Storage', storageSection(model.storage)],
     ['Chroma health', chromaSection(model.chroma)],
+    ...(model.reviewTiers ? [['Review tiers', reviewTiersSection(model.reviewTiers)]] : []),
     ['Insights', insightsSection(model.insights)],
     ['Allowlist suggestions', suggestionsSection(model.suggestions, model.sameRepository)],
   ];

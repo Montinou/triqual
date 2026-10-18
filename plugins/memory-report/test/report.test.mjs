@@ -1,7 +1,7 @@
 // One generator run (spec 6.1, 6.5, 8): isoWeek, allowlist suggestions and runReport end to end on fixture databases.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { canImportSqlite, openConfig, withTempHome } from './helpers.mjs';
 import { readState } from '../lib/state.mjs';
@@ -469,5 +469,81 @@ test('a report that cannot be written fails with report could not be written', {
     assert.equal(await run(env), 1);
     assert.equal(readState(env.paths).lastError, 'report could not be written');
     assert.ok(!existsSync(env.paths.lockFile));
+  });
+});
+
+// ---- the Review tiers section ---------------------------------------------------------------------------------------
+
+// The per-tier object `triqual role-eval summary --by-tier --json` prints (the role-eval-cli fixture of the methodology plugin).
+const TIERS_FIXTURE = {
+  heavy: { tasks: 1, raised: 1, hunterConfirmedRate: 0.5, specConfirmedPerTask: 2, fixRoundsPerTask: 3, blocked: 0, escapesPerTask: 1 },
+  standard: { tasks: 1, raised: 0, hunterConfirmedRate: 0.5, specConfirmedPerTask: 0, fixRoundsPerTask: 1, blocked: 1, escapesPerTask: 0 },
+  light: { tasks: 0, raised: 0, hunterConfirmedRate: null, specConfirmedPerTask: null, fixRoundsPerTask: null, blocked: 0, escapesPerTask: null },
+};
+
+// A fake `triqual` executable in a directory put first on PATH: it records its arguments, then runs `body` (shell).
+// Returns the env for the run and the file the arguments land in.
+function fakeTriqual(home, body) {
+  const bin = join(home, 'fake-bin');
+  const argsFile = join(home, 'triqual-args.txt');
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, 'triqual'), `#!/bin/sh\nprintf '%s\\n' "$@" > '${argsFile}'\n${body}\n`);
+  chmodSync(join(bin, 'triqual'), 0o755);
+  return { PATH: `${bin}:${process.env.PATH}`, argsFile };
+}
+
+// Runs a report with the fake triqual and returns { code, text, state }.
+async function reportWithTriqual(env, body, deps) {
+  const fake = fakeTriqual(env.home, body);
+  const code = await run(env, { env: { ...env.env, PATH: fake.PATH }, deps });
+  const text = readFileSync(join(env.paths.reportsDir, '2026-W41.md'), 'utf8');
+  return { code, text, state: readState(env.paths), argsFile: fake.argsFile };
+}
+
+const shQuote = (json) => `printf '%s' '${JSON.stringify(json)}'`;
+
+test('a triqual summary renders the Review tiers section, one row per tier, asked for the week window', { skip }, async () => {
+  await withFixture({}, async (env) => {
+    const { code, text, argsFile } = await reportWithTriqual(env, shQuote(TIERS_FIXTURE));
+    assert.equal(code, 0);
+    // The window starts 7 days before NOW (2026-10-07 12:00 UTC).
+    assert.deepEqual(readFileSync(argsFile, 'utf8').trimEnd().split('\n'), ['role-eval', 'summary', '--by-tier', '--since', '2026-09-30', '--json']);
+    const section = text.split('## Review tiers\n\n')[1].split('\n\n## ')[0];
+    const rows = section.split('\n').slice(2);
+    assert.deepEqual(rows, [
+      '| heavy | 1 | 1 | 50.0% | 2.00 | 3.00 | 0 | 1.00 |',
+      '| standard | 1 | 0 | 50.0% | 0.00 | 1.00 | 1 | 0.00 |',
+      '| light | 0 | 0 | n/a | n/a | n/a | 0 | n/a |',
+    ]);
+  });
+});
+
+test('no Review tiers section when triqual prints nothing, prints a failure, hangs, is missing or prints no data', { skip }, async () => {
+  const noData = Object.fromEntries(Object.keys(TIERS_FIXTURE).map((tier) => [tier, { ...TIERS_FIXTURE.light }]));
+  const cases = [
+    ['empty output', ':', undefined],
+    ['unparseable output', "printf 'not json'", undefined],
+    ['a JSON value that is not the tier object', "printf '[1,2]'", undefined],
+    ['a tier object without a tier', `printf '%s' '${JSON.stringify({ heavy: TIERS_FIXTURE.heavy })}'`, undefined],
+    ['a non-zero exit with a valid object on stdout', `${shQuote(TIERS_FIXTURE)}; exit 1`, undefined],
+    ['a hang past the timeout', 'sleep 5', { reviewTiersTimeoutMs: 200 }],
+    ['all three tiers empty', shQuote(noData), undefined],
+  ];
+  for (const [label, body, deps] of cases) {
+    await withFixture({}, async (env) => {
+      const { code, text, state } = await reportWithTriqual(env, body, deps);
+      assert.equal(code, 0, label);
+      assert.ok(!text.includes('Review tiers'), label);
+      assert.equal(state.lastError, undefined, label);
+      assert.ok(!readLog(env.paths).includes('run-failed'), label);
+    });
+  }
+});
+
+test('no Review tiers section and no error when triqual is not on PATH', { skip }, async () => {
+  await withFixture({}, async (env) => {
+    assert.equal(await run(env, { env: { ...env.env, PATH: join(env.home, 'empty-bin') } }), 0);
+    assert.ok(!readFileSync(join(env.paths.reportsDir, '2026-W41.md'), 'utf8').includes('Review tiers'));
+    assert.equal(readState(env.paths).lastError, undefined);
   });
 });

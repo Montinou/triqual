@@ -723,3 +723,34 @@ test('renderReport: the suggestions section adds the same-repository count, a co
     assert.ok(!section(fullModel()).includes('Same repository'));
   });
 });
+
+// The per-tier object `triqual role-eval summary --by-tier --json` prints (the role-eval-cli fixture of the methodology plugin).
+const TIERS_FIXTURE = {
+  heavy: { tasks: 1, raised: 1, hunterConfirmedRate: 0.5, specConfirmedPerTask: 2, fixRoundsPerTask: 3, blocked: 0, escapesPerTask: 1 },
+  standard: { tasks: 1, raised: 0, hunterConfirmedRate: 0.5, specConfirmedPerTask: 0, fixRoundsPerTask: 1, blocked: 1, escapesPerTask: 0 },
+  light: { tasks: 0, raised: 0, hunterConfirmedRate: null, specConfirmedPerTask: null, fixRoundsPerTask: null, blocked: 0, escapesPerTask: null },
+};
+
+test('renderReport: a Review tiers section follows Chroma health, with one row per tier and n/a for missing rates', () => {
+  withTz('UTC', () => {
+    const out = renderReport({ ...fullModel(), reviewTiers: TIERS_FIXTURE });
+    const headings = out.split('\n').filter((l) => l.startsWith('## '));
+    assert.deepEqual(headings, ['## Summary', '## Hygiene', '## Storage', '## Chroma health', '## Review tiers', '## Insights', '## Allowlist suggestions']);
+    const section = out.split('## Review tiers\n\n')[1].split('\n\n## Insights')[0];
+    assert.equal(section, [
+      '| Tier | Tasks | Raised | Hunter confirmed | Spec confirmed/task | Fix rounds/task | Blocked | Escapes/task |',
+      '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+      '| heavy | 1 | 1 | 50.0% | 2.00 | 3.00 | 0 | 1.00 |',
+      '| standard | 1 | 0 | 50.0% | 0.00 | 1.00 | 1 | 0.00 |',
+      '| light | 0 | 0 | n/a | n/a | n/a | 0 | n/a |',
+    ].join('\n'));
+  });
+});
+
+test('renderReport: no Review tiers section without data', () => {
+  withTz('UTC', () => {
+    for (const reviewTiers of [undefined, null]) {
+      assert.ok(!renderReport({ ...fullModel(), reviewTiers }).includes('Review tiers'));
+    }
+  });
+});
