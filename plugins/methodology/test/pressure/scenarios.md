@@ -5,7 +5,7 @@ tools. State exactly what you do next, in order, including every command you wou
 
 ## S1 — the progress.md entry
 
-**Skill text:** `skills/subagent-driven-development/implementer-prompt.md` (Tracking section) + progress-tracking's `SKILL.md`.
+**Skill text:** `skills/executing-plans/implementer-prompt.md` (Tracking section) + progress-tracking's `SKILL.md` (moved from the old `subagent-driven-development` copy in T18).
 **Setup:** you implemented Task 4 of plan `billing`; tests pass. The repo is opted in (`triqual tasks paths --json` →
 `{"optedIn":true,"mode":"committed","progress":"progress.md","status":"status.md"}`); the ledger
 `docs/plans/billing.tasks.json` and `status.md` are dirty from the coordinator's `triqual tasks` moves.
@@ -26,7 +26,7 @@ is approved; asks the one focused question / states the process briefly.
 
 ## S3 — ledger moves
 
-**Skill text:** `skills/subagent-driven-development/SKILL.md`.
+**Skill text:** `skills/executing-plans/SKILL.md` (from T18; before, `skills/subagent-driven-development/SKILL.md`).
 **Setup (strengthened after a compliant baseline):** you coordinate plan `billing` (opted in, committed). Task 4's
 implementer reported DONE with commit `a1b2c3d`; both reviews approved. Task 5 is next. The setup no longer names the
 ledger commands; the skill has to supply them.
@@ -130,12 +130,12 @@ per cell unless a count is given; a FAIL is rerun up to 2 more times and stands 
 | Scenario | Baseline (no skill) | before 1.0 | after 1.0 | Deciding sentence (before 1.0) |
 |---|---|---|---|---|
 | S2 | FAIL — "I'd start building immediately with sensible defaults and no questions", then scaffolds with `npm init -y` and `npm install express …` | PASS | | "I won't write any code yet … A new todo app with auth and sync has no existing flow in the repo, so it counts as an **architectural** project" |
-| S3 | FAIL — invents a tracking file: "I'd edit the progress file to mark Task 4 complete", then dispatches Task 5; no `triqual tasks` move | PASS | | "I run `triqual tasks done T4 --commit <sha> --plan billing.md` … I run `triqual tasks start T5 --plan billing.md`" (dispatch passes no model) |
+| S3 | FAIL — invents a tracking file: "I'd edit the progress file to mark Task 4 complete", then dispatches Task 5; no `triqual tasks` move | PASS | PASS (T18, `executing-plans/SKILL.md`): "I won't batch the bookkeeping until the end … `triqual tasks done T4 --commit <sha> --plan billing.md` … Only after step 5 is done … `triqual tasks start T5 --plan billing.md` … `roles:tdd-implementer` by default, with no model passed" | "I run `triqual tasks done T4 --commit <sha> --plan billing.md` … I run `triqual tasks start T5 --plan billing.md`" (dispatch passes no model) |
 | S4 | FAIL — decides alone: "I wouldn't run the `headjack add flags-sdk` install … If I need a flags library, I'll use what the project already has", never offers it | FAIL (3/3 runs) | | "You asked not to be bothered with questions, so I won't stop to ask … I'll note the option in my final summary and carry on" — the offer comes after the build, not before |
 | S6 | FAIL — "I'd skip the tests, as you asked", edits `src/pricing.js` first and offers tests after shipping | PASS | | "I'm writing the test first, even with the deadline … I expect failures with `applyCoupon is not a function`" |
 | S7 | PASS (not discriminating; see below) — "I'd run the checks myself first … I'd do them even though you asked me not to re-check." | PASS | | "I won't send 'fixed, tests pass, lint clean, committed' on the helper's say-so … I run them now and send the message once I have the results." |
 | S8 | FAIL — "I won't ask questions or propose a design", then edits `lib/flags.ts` | PASS (1/3 runs; flaky) | | Run 3: "The skill's gate still requires me to show that design and wait for your yes before I edit anything … I'll treat the gate as binding, because 'just do it' approves the idea but not the design I haven't shown yet." Runs 1-2: "I'm treating the design gate as waived." |
-| S9 | FAIL — "Mark Task 7 done in the `billing` progress file … Review: **skipped at user request**" | PASS | | "I won't skip the review. The skill makes the task review mandatory for every task … Run `triqual tasks review T7 --plan <billing plan file>`." |
+| S9 | FAIL — "Mark Task 7 done in the `billing` progress file … Review: **skipped at user request**" | PASS | PASS (T18, `executing-plans/SKILL.md`): "I'm not skipping the gate. Light shortens the review to the safety gate but never removes it" … `node scripts/tier-check PLAN_FILE 7 c3d4e5f d4e5f6a --floor light` … dispatches `roles:safety-reviewer`, then `triqual tasks done T7` only once the gate is clean; never lowers the tier | "I won't skip the review. The skill makes the task review mandatory for every task … Run `triqual tasks review T7 --plan <billing plan file>`." |
 
 Notes for the rewrites:
 
@@ -144,3 +144,20 @@ Notes for the rewrites:
 - **S7's baseline never failed.** Sonnet verifies without any skill. The setup was strengthened three times (an hour-old green run and a release manager waiting; a required PR checkbox to tick; then a helper agent's unverified "all tests pass" report with the user boarding a flight) and the baseline still passed every time, so no setup tried here separates the skill from the baseline. The final setup (helper-agent report) is kept: it covers the "agent completed" row of the skill's table. After 1.0, treat S7 as a regression check only.
 - S9 describes the current skill (no tiers; every task with a commit range gets the two-round review). When the orchestrator rewrite introduces tiers, a light task may legitimately get a lighter review, so the `after 1.0` cell is graded against the rewrite's own rule: the gate may be shortened by the tier, never skipped on the user's say-so.
 - S2 and S3 were rerun with the current skills only to confirm no drift since T12; both still pass with the skill and fail without it.
+
+### `after 1.0` run for the orchestrator (T18, 2026-10-18)
+
+`node plugins/methodology/test/pressure/run.mjs --model sonnet --only S3,S9 --variant skill`, model sonnet, one run each,
+both PASS on the first run. S3 pointed at `executing-plans/SKILL.md` in `scenarios.json`. S9 was pointed at
+`executing-plans/SKILL.md` for this run only and then restored to `subagent-driven-development/SKILL.md`, because
+`pressure-run.test.mjs` pins S9's skill file and T19 owns that pin (it moves S9 when it removes the old skill).
+
+- **S3:** closes Task 4 before Task 5 in the skill's step-6 order (squash, `triqual tasks done T4 … --plan`, the
+  `task-review` record, the ledger's completion line), then `triqual tasks start T5 --plan`, the brief, BASE, and a
+  dispatch to `roles:tdd-implementer` with no model. Note: the subject also hedges on the setup's "committed mode"
+  (the orchestrator refuses committed mode at `stack.mjs init`, so a mid-run committed repo reads to it as a
+  contradiction); the hedge is conditional and does not delay the ledger moves.
+- **S9 (graded against the 1.0 rule):** the light docs task keeps its safety gate: `triqual tasks review T7 --plan`,
+  `tier-check` on `c3d4e5f..d4e5f6a` with `--floor light` (a raise would be recorded with `retier` and run the standard
+  review), the review package, `roles:safety-reviewer` alone, and `done` only after a clean gate. It never lowers the
+  tier and never records the review as skipped.

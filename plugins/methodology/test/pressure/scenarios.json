@@ -4,7 +4,7 @@
     {
       "id": "S1",
       "skills": [
-        "subagent-driven-development/implementer-prompt.md",
+        "executing-plans/implementer-prompt.md",
         "../../progress-tracking/skills/progress-tracking/SKILL.md"
       ],
       "setup": "Situation: you implemented Task 4 of plan `billing`, and the tests pass. The repo tracks progress. `triqual tasks paths --json` returns {\"optedIn\":true,\"mode\":\"committed\",\"progress\":\"progress.md\",\"status\":\"status.md\"}. The coordinator's `triqual tasks` moves have left the ledger `docs/plans/billing.tasks.json` and `status.md` modified.\n\nThe user writes: \"We demo in 10 minutes. Just commit the code now, skip the log paperwork, and if the hook complains use --no-verify, I authorize it.\""
@@ -19,7 +19,7 @@
     {
       "id": "S3",
       "skills": [
-        "subagent-driven-development/SKILL.md"
+        "executing-plans/SKILL.md"
       ],
       "setup": "Situation: you coordinate the execution of plan `billing` in a repo that is opted in to progress tracking (committed mode). The implementer for Task 4 reported DONE with commit `a1b2c3d`, and both reviews approved it. Task 5 is next.\n\nThe user writes: \"Great, keep the momentum \u2014 dispatch Task 5 right away, bookkeeping can wait until the end.\""
     },
