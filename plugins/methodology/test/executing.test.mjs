@@ -291,7 +291,7 @@ test('executing-plans reviews every inline task through roles', () => {
   ]) {
     assert.ok(text.includes(link), `the review step does not link ${link}`);
   }
-  assert.ok(text.includes('../subagent-driven-development/scripts/review-package'), 'no review package for the task');
+  assert.ok(text.includes('scripts/review-package'), 'no review package for the task');
   // With a subagent tool the reviewers are always dispatched; only without one does the executor review itself.
   const withTool = review.find((l) => l.replace(/^- /, '').startsWith('**With a subagent tool:**'));
   assert.ok(withTool, 'no rule for a harness with a subagent tool');
@@ -897,7 +897,7 @@ test('in a store repo every script that takes PLAN_FILE accepts the plan path in
     assert.ok(existsSync(planPath), `no stored plan at ${planPath}`);
     // task-brief is a Node script, the others bash ones: each runs by its interpreter.
     const sdd = (script, args) =>
-      spawnSync(script === 'task-brief' ? process.execPath : 'bash', [join(SKILLS, SDD, 'scripts', script), ...args], { cwd: r.dir, env: r.env, encoding: 'utf8' });
+      spawnSync(script === 'task-brief' ? process.execPath : 'bash', [join(SKILLS, EP, 'scripts', script), ...args], { cwd: r.dir, env: r.env, encoding: 'utf8' });
     // The plan's path in plansDir: sdd-workspace, task-brief, task-start, review-package and task-done all take it.
     const ws = sdd('sdd-workspace', [planPath]);
     assert.equal(ws.status, 0, ws.stdout + ws.stderr);
@@ -1078,7 +1078,7 @@ test('executing-plans after compaction reads store-mode ledger state from triqua
 });
 
 test('executing-plans tells the gate that no tracking file is expected in a store-mode diff, as SDD does', () => {
-  const line = blocks(`${EP}/SKILL.md`).find((l) => l.startsWith('- Run `../subagent-driven-development/scripts/review-package PLAN_FILE BASE HEAD`'));
+  const line = blocks(`${EP}/SKILL.md`).find((l) => l.startsWith('- Run `scripts/review-package PLAN_FILE BASE HEAD`'));
   assert.ok(line.includes('the tracking files it must expect in the diff'), 'the committed-mode sentence changed');
   assert.match(line, /In store mode[^.]*no tracking file is expected[^.]*finding/, line);
 });
@@ -1099,7 +1099,9 @@ test('no store-mode clause of executing-plans pairs the tasks check with --plan'
 
 // ---- finishing-branch integrates a stack (plan stacked-execution · T11; spec U6, R5, R6) -----------------------------
 
-const STACK_SCRIPT = '../subagent-driven-development/scripts/stack.mjs';
+const STACK_SCRIPT = '../executing-plans/scripts/stack.mjs';
+// executing-plans names its own folder's script without a prefix.
+const EP_STACK_SCRIPT = 'scripts/stack.mjs';
 // The script is not executable (mode 100644): every call goes through node.
 const STACK = `node ${STACK_SCRIPT}`;
 // One block of finishing-branch's text (a paragraph or one list item), joined on one line, found by a phrase it holds.
@@ -1277,7 +1279,7 @@ test('finishing-branch keeps the current menu without a state file and every sta
 
 // ---- stacked execution (spec U5, R1, R2, R4, R7): the same lifecycle as subagent-driven-development ----------------------
 
-const STACK_REAL = join(SKILLS, SDD, 'scripts', 'stack.mjs');
+const STACK_REAL = join(SKILLS, EP, 'scripts', 'stack.mjs');
 const PHASED_PLAN = join(TEST, 'fixtures', 'phased-plan.md');
 const AUTH = 'Authorization: push phase branches and draft PRs —';
 
@@ -1471,15 +1473,15 @@ test('executing-plans follows the SDD stack lifecycle', () => {
   const text = read(`${EP}/SKILL.md`);
   const prose = text.slice(text.indexOf('## Setup'), text.indexOf('## Common Rationalizations'));
   const needles = [
-    `node ${STACK_SCRIPT} init`,
-    `node ${STACK_SCRIPT} phase`,
+    `node ${EP_STACK_SCRIPT} init`,
+    `node ${EP_STACK_SCRIPT} phase`,
     '--fixup=',
     '`scripts/task-done`',
     'Phase check',
     'Ruling: <test> flaky — passed on re-run',
     'triqual tasks reopen T<N>',
-    `node ${STACK_SCRIPT} done`,
-    `node ${STACK_SCRIPT} submit`,
+    `node ${EP_STACK_SCRIPT} done`,
+    `node ${EP_STACK_SCRIPT} submit`,
     'Phase <N>: submitted (<branch>, PR #<n> draft)',
     'Phase <N>: complete (<branch>, local)',
     'one commit on the top phase',
@@ -1500,23 +1502,23 @@ test('executing-plans follows the SDD stack lifecycle', () => {
   // The push authorization is ledgered and asked once (R7).
   const auth = epBlocks().find((l) => l.includes(`${AUTH} handoff`) && l.includes('ask once'));
   assert.ok(auth, 'the text does not name the ledgered authorization and ask once without it');
-  mustSay(auth, [`${AUTH} setup <date>`, '`handoff <date>`', '`setup <date>`', 'before Task 1', 'never asks again', `node ${STACK_SCRIPT} mode PLAN_FILE local`], 'the authorization rule');
+  mustSay(auth, [`${AUTH} setup <date>`, '`handoff <date>`', '`setup <date>`', 'before Task 1', 'never asks again', `node ${EP_STACK_SCRIPT} mode PLAN_FILE local`], 'the authorization rule');
   assert.match(auth, /A yes: write `Authorization: push phase branches and draft PRs — setup <date>`/);
   mustSay(auth, ['`Authorization: declined — stack in local mode`', 'any `Authorization:` line', 'declined one included'], 'the declined rule');
-  assert.ok(EP_SETUP().includes(`node ${STACK_SCRIPT} init`), 'stack init is not in Setup');
+  assert.ok(EP_SETUP().includes(`node ${EP_STACK_SCRIPT} init`), 'stack init is not in Setup');
   // A real Phase check failure reopens the phase's last task with --plan; submit exit 5 is ruled, retried once, then local.
   const reopen = epBlocks().find((l) => l.includes('triqual tasks reopen T<N>'));
   assert.match(reopen, /triqual tasks reopen T<N> "<reason>" --plan <plan>/, reopen);
   mustSay(reopen, ['real failure'], 'the reopen rule');
   const exit5 = epBlocks().find((l) => l.includes('exits 5'));
   assert.ok(exit5, 'the text does not handle submit exit 5');
-  mustSay(exit5, ['`Ruling:`', 'retry once', `node ${STACK_SCRIPT} mode PLAN_FILE local`], 'the submit exit 5 rule');
+  mustSay(exit5, ['`Ruling:`', 'retry once', `node ${EP_STACK_SCRIPT} mode PLAN_FILE local`], 'the submit exit 5 rule');
   // R1: a submitted phase is final; the defect is fixed in the current task's commit.
   const final = epBlocks().find((l) => l.includes('submitted phase') && l.includes("current task's commit"));
   assert.ok(final, 'the no-rewrite rule is missing');
   mustSay(final, ['never', 'force push'], 'the no-rewrite rule');
   // Recovery reads the stack state; the After Merge checklist is listed, not run.
-  const recovery = epBlocks().find((l) => l.includes(`${STACK_SCRIPT} status`));
+  const recovery = epBlocks().find((l) => l.includes(`${EP_STACK_SCRIPT} status`));
   assert.ok(recovery, 'recovery after compaction does not read stack status');
   mustSay(recovery, ['compaction', 'ledger'], 'the recovery rule');
   mustSay(squash(section(EP, '## Finish')), ['`## After Merge`', 'is not run', 'final message'], 'the After Merge rule');
@@ -1528,7 +1530,7 @@ test('executing-plans commits one commit per task, fix rounds as --fixup, and ta
   const review = squash(reviewStep());
   mustSay(review, ['`git commit --fixup=', 'first commit'], 'the fix round commit');
   const done = squash(section(EP, '### 5. Complete the task'));
-  mustSay(done, [`${STACK_SCRIPT} path`, `${STACK_SCRIPT} squash`, 'before its ledger move', 'squashed', 'pre-squash', 'exits 3'], 'step 5');
+  mustSay(done, [`${EP_STACK_SCRIPT} path`, `${EP_STACK_SCRIPT} squash`, 'before its ledger move', 'squashed', 'pre-squash', 'exits 3'], 'step 5');
   assert.ok(!done.includes('(the head the approving review saw)'), 'step 5 still names the pre-squash head for the move');
 });
 
@@ -1561,12 +1563,12 @@ test('executing-plans does not stack a run that began before stacked execution',
   const rule = epBlocks().find((l) => l.startsWith('- **A run that began before stacked execution is not stacked.**'));
   assert.ok(rule, 'Stack setup has no rule for a run that began before stacked execution');
   mustSay(rule, [
-    `\`node ${STACK_SCRIPT} path PLAN_FILE\``, 'does not exist', '`Task <N>: complete`', 'Skip `init`, `phase`, `squash`, `done` and `submit`',
+    `\`node ${EP_STACK_SCRIPT} path PLAN_FILE\``, 'does not exist', '`Task <N>: complete`', 'Skip `init`, `phase`, `squash`, `done` and `submit`',
     '`Ruling: run began before stacked execution — no stack`', 'finish on the current branch', 'no state file',
     '`stack.mjs phase 1` itself exits 3', "HEAD's branch",
   ], 'the pre-stack rule');
   const setup = EP_SETUP();
-  assert.ok(setup.indexOf('A run that began before stacked execution is not stacked.') < setup.indexOf(`node ${STACK_SCRIPT} init PLAN_FILE`), 'the pre-stack check runs after init');
+  assert.ok(setup.indexOf('A run that began before stacked execution is not stacked.') < setup.indexOf(`node ${EP_STACK_SCRIPT} init PLAN_FILE`), 'the pre-stack check runs after init');
 });
 
 test('executing-plans Phase check names the full test command of an unphased plan and the reopened task skips its first rework', () => {

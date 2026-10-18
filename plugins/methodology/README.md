@@ -204,9 +204,9 @@ It always exits 0, and a failure prints nothing. An unknown input prints one lin
 
 ### `stack.mjs`
 
-Usage: `node skills/subagent-driven-development/scripts/stack.mjs <command> PLAN_FILE ...`
+Usage: `node skills/executing-plans/scripts/stack.mjs <command> PLAN_FILE ...`
 
-Not a `triqual` command. A script of the `subagent-driven-development` skill that owns every git and gh operation of a
+Not a `triqual` command. A script of the `executing-plans` skill that owns every git and gh operation of a
 stacked plan execution: one branch for each plan phase, and in GitHub mode one draft PR. It needs only Node, git and gh.
 Every gh call is non-interactive.
 

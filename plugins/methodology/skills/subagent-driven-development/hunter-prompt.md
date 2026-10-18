@@ -35,13 +35,13 @@ the plan instead, with the package of the whole branch:
 
 **Placeholders:**
 - `[CATEGORY]` — one of `correctness`, `security`, `spec-drift`, `state`
-- `[PACKAGE_PATH]` — the path `bash scripts/review-package PLAN_FILE BASE HEAD`
+- `[PACKAGE_PATH]` — the path `bash ../executing-plans/scripts/review-package PLAN_FILE BASE HEAD`
   printed (the same package the gate and the spec reviewer read); in the final
   review, the package of `MERGE_BASE..HEAD`
 - `[CANDIDATES_PATH]` — the file the hunter writes:
   `<workspace>/task-<N>-candidates-<category>.md`, or
   `<workspace>/final-candidates-<category>.md` in the final review
-- `[BRIEF_FILE]` — a task's brief file (`node scripts/task-brief PLAN N`
+- `[BRIEF_FILE]` — a task's brief file (`node ../executing-plans/scripts/task-brief PLAN N`
   prints the path; the same file the implementer worked from)
 - `[SPEC_PATH]` — final review only, in place of the brief: the spec the plan
   names

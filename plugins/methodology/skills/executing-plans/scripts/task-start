@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Begin one task of an inline plan execution in a single call: extract the
-# task's brief (via subagent-driven-development's task-brief, so both skills
+# task's brief (via the task-brief next to this script, so both skills
 # share one workspace), record BASE, the commit the task's review range is
 # cut from, and — when the repo is opted in to progress tracking — move the
 # plan's task ledger (`triqual tasks start T<N>`). One tool call instead of three,
@@ -31,7 +31,7 @@ fi
 
 plan=$1
 n=$2
-sdd="$(cd "$(dirname "$0")/../../subagent-driven-development/scripts" && pwd)"
+sdd="$(cd "$(dirname "$0")" && pwd)"
 
 # Tracking paths: the same block in task-start and task-done. Sets `tracking`
 # to committed|local|store (opted in), off (not opted in) or missing, and

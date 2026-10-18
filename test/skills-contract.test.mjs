@@ -239,7 +239,7 @@ const staleBuilders = (paths, builders = LOCAL_ADDRESS_BUILDERS) => {
 // `$var/progress.md` or `sdd/.../progress.md`, any `/progress.md` in a script, and the pre-rename `.superpowers/sdd`
 // directory all fail, except the one line of the workspace script that adopts a legacy ledger.
 const LEGACY_ADOPTION = {
-  path: 'subagent-driven-development/scripts/sdd-workspace',
+  path: 'executing-plans/scripts/sdd-workspace',
   line: 'legacy="$root/.superpowers/sdd/$slug/progress.md"',
 };
 const WORKSPACE_LEDGER = /(?:\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|<workspace>|sdd\/\S*?)\/progress\.md/;
@@ -486,14 +486,14 @@ test('the checks fail on a seeded defect', async (t) => {
       'a/SKILL.md': skillMd('a', 'Write sdd-ledger.md. Not <workspace>/progress.md.\nNor $ws/progress.md or sdd/x/progress.md.\nOld: .superpowers/sdd/x'),
       'a/scripts/s.sh': 'cat "$w/progress.md"',
       'subagent-driven-development/SKILL.md': skillMd('subagent-driven-development'),
-      'subagent-driven-development/scripts/sdd-workspace': `${LEGACY_ADOPTION.line}\nlegacy2="$root/.superpowers/sdd/$slug"`,
+      'executing-plans/scripts/sdd-workspace': `${LEGACY_ADOPTION.line}\nlegacy2="$root/.superpowers/sdd/$slug"`,
     });
     assert.deepEqual(ledgerProblems(p), [
       'a/SKILL.md:5: Write sdd-ledger.md. Not <workspace>/progress.md.',
       'a/SKILL.md:6: Nor $ws/progress.md or sdd/x/progress.md.',
       'a/SKILL.md:7: Old: .superpowers/sdd/x',
       'a/scripts/s.sh:1: cat "$w/progress.md"',
-      'subagent-driven-development/scripts/sdd-workspace:2: legacy2="$root/.superpowers/sdd/$slug"',
+      'executing-plans/scripts/sdd-workspace:2: legacy2="$root/.superpowers/sdd/$slug"',
     ]);
   });
   await t.test('curl and a github.com URL in a diagnosing-methodology file, but not in another skill', (t2) => {

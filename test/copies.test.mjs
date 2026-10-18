@@ -11,7 +11,7 @@ const PLUGINS = join(ROOT, 'plugins');
 
 // [source, copy], both relative to plugins/.
 const COPIES = [
-  ['progress-tracking/lib/plan.mjs', 'methodology/skills/subagent-driven-development/scripts/lib/plan.mjs'],
+  ['progress-tracking/lib/plan.mjs', 'methodology/skills/executing-plans/scripts/lib/plan.mjs'],
   ['methodology/cli/lib/lock.mjs', 'workflow-gate/scripts/lock.mjs'],
 ];
 

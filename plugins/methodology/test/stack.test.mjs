@@ -11,10 +11,10 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { parsePhases } from '../skills/subagent-driven-development/scripts/stack.mjs';
+import { parsePhases } from '../skills/executing-plans/scripts/stack.mjs';
 
 const PLUGIN = join(dirname(fileURLToPath(import.meta.url)), '..');
-const STACK = join(PLUGIN, 'skills', 'subagent-driven-development', 'scripts', 'stack.mjs');
+const STACK = join(PLUGIN, 'skills', 'executing-plans', 'scripts', 'stack.mjs');
 const FIXTURES = join(PLUGIN, 'test', 'fixtures');
 const FAKE_GH = join(FIXTURES, 'fake-gh');
 const PHASED = readFileSync(join(FIXTURES, 'phased-plan.md'), 'utf8');

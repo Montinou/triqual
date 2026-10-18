@@ -175,7 +175,7 @@ Subagent (roles:final-adversarial-reviewer):
 ```
 
 **Placeholders:**
-- `[PACKAGE_PATH]` — the path `bash scripts/review-package PLAN_FILE MERGE_BASE HEAD`
+- `[PACKAGE_PATH]` — the path `bash ../executing-plans/scripts/review-package PLAN_FILE MERGE_BASE HEAD`
   printed (MERGE_BASE: the commit the branch started from, e.g. `git merge-base <trunk> HEAD`)
 - `[PLAN_PATH]` — the plan file
 - `[SPEC_PATH]` — the spec the plan names; "none" when the plan has no reachable spec

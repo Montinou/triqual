@@ -15,7 +15,7 @@ const PLUGIN = join(dirname(fileURLToPath(import.meta.url)), '..');
 const FENCES_PLAN = join(PLUGIN, 'test', 'fixtures', 'fences-plan.md');
 const SKILLS = join(PLUGIN, 'skills');
 const SDD = 'subagent-driven-development';
-const SCRIPTS = join(SKILLS, SDD, 'scripts');
+const SCRIPTS = join(SKILLS, 'executing-plans', 'scripts');
 
 const read = (path) => readFileSync(join(SKILLS, path), 'utf8');
 const lines = (path) => read(path).split('\n').map((line) => line.trim());
@@ -27,10 +27,11 @@ const SDD_FILES = [
   're-review-prompt.md',
   'final-review-prompt.md',
   'hunter-prompt.md',
-  'scripts/sdd-workspace',
-  'scripts/review-package',
-  'scripts/task-brief',
-].map((name) => `${SDD}/${name}`);
+].map((name) => `${SDD}/${name}`).concat([
+  'executing-plans/scripts/sdd-workspace',
+  'executing-plans/scripts/review-package',
+  'executing-plans/scripts/task-brief',
+]);
 const sddLines = () =>
   SDD_FILES.filter((path) => existsSync(join(SKILLS, path))).flatMap((path) =>
     read(path)
@@ -1186,7 +1187,7 @@ test('no store-mode clause of the SDD files pairs the tasks check with --plan, a
 });
 
 // Stacked execution (spec U5, R1, R2, R4, R7): one branch and one draft PR per phase, one commit per task.
-const STACK = 'scripts/stack.mjs';
+const STACK = '../executing-plans/scripts/stack.mjs';
 const AUTH = 'Authorization: push phase branches and draft PRs — handoff';
 const AUTH_SETUP = 'Authorization: push phase branches and draft PRs — setup';
 // The text from Setup to the Example Workflow: the process digraph above it names the commands too, and this
@@ -1222,7 +1223,7 @@ test('SDD ledgers the push authorization and asks once without it', () => {
   assert.ok(block, 'the text does not name the ledgered authorization line and ask once without it');
   assert.ok(setup.includes(AUTH), 'the authorization line is not in Setup');
   mustSay(block, ['ask once', 'before Task 1', 'ledger lacks', 'never asks again', `${STACK} mode PLAN_FILE local`], 'the authorization rule');
-  assert.match(block, /A no[^.]*scripts\/stack\.mjs mode PLAN_FILE local/, 'a no does not switch to local mode');
+  assert.match(block, /A no[^.]*\.\.\/executing-plans\/scripts\/stack\.mjs mode PLAN_FILE local/, 'a no does not switch to local mode');
   // The line the yes path writes must be one the push exception and the lookup accept (R7: a resumed run finds it).
   const yes = block.match(/A yes: write `(Authorization: [^`]+)`/);
   assert.ok(yes, 'the yes path does not write an Authorization line');
@@ -1252,7 +1253,7 @@ test('SDD per-phase lifecycle', () => {
       `${STACK} phase`,
       '--fixup=',
       `${STACK} squash`,
-      'with `<sha>` the sha `scripts/stack.mjs squash` printed',
+      'with `<sha>` the sha `../executing-plans/scripts/stack.mjs squash` printed',
       'Phase check',
       'Ruling: <test> flaky — passed on re-run',
       'triqual tasks reopen T<N>',
@@ -1266,7 +1267,7 @@ test('SDD per-phase lifecycle', () => {
   // Step 5 keeps its move verbatim and adds the squashed-sha sentence on the same line.
   const done = section('### 5. Complete the task').find((l) => l.includes('`triqual tasks done T<N> --commit <sha> --plan <plan>`'));
   assert.ok(done, 'step 5 lost its done move');
-  mustSay(done, ['on approval', 'with `<sha>` the sha `scripts/stack.mjs squash` printed'], 'the done move');
+  mustSay(done, ['on approval', 'with `<sha>` the sha `../executing-plans/scripts/stack.mjs squash` printed'], 'the done move');
   assert.ok(!/the task's last commit/.test(done), 'the done move still names the pre-squash head');
   // A real failure reopens the phase's last task with --plan.
   const reopen = blocks(SKILL).find((l) => l.includes('triqual tasks reopen T<N>'));
@@ -1317,7 +1318,7 @@ test('the After Merge checklist is listed, not run', () => {
   mustSay(finish, ['`## After Merge`', 'is not run', 'final message'], 'the After Merge rule in Finish');
 });
 
-test('recovery after compaction reads scripts/stack.mjs status', () => {
+test('recovery after compaction reads stack.mjs status', () => {
   const line = blocks(SKILL).find((l) => l.includes(`${STACK} status`));
   assert.ok(line, 'the text never reads stack status');
   mustSay(line, ['compaction', 'ledger'], 'the stack recovery rule');
@@ -1373,7 +1374,7 @@ test('SDD does not stack a run that began before stacked execution', () => {
   mustSay(rule, [
     `\`node ${STACK} path PLAN_FILE\``, 'does not exist', '`Task <N>: complete`', 'Skip `init`, `phase`, `squash`, `done` and `submit`',
     '`Ruling: run began before stacked execution — no stack`', 'finish on the current branch', 'no state file',
-    '`scripts/stack.mjs phase 1` itself exits 3', "HEAD's branch",
+    '`../executing-plans/scripts/stack.mjs phase 1` itself exits 3', "HEAD's branch",
   ], 'the pre-stack rule');
   assertInOrder(stackProse(), [rule.slice(0, 60), `node ${STACK} init PLAN_FILE`], 'the pre-stack check runs before init');
 });
@@ -1387,7 +1388,7 @@ test('SDD Phase check names the full test command of an unphased plan and the re
 
 test('SDD Example Workflow writes the handoff authorization line at setup instead of finding it in a fresh ledger', () => {
   const example = read(SKILL).slice(read(SKILL).indexOf('## Example Workflow'));
-  const stackLine = example.split('\n').find((l) => l.startsWith('[Stack: node scripts/stack.mjs init'));
+  const stackLine = example.split('\n').find((l) => l.startsWith('[Stack: node ../executing-plans/scripts/stack.mjs init'));
   assert.ok(stackLine, 'the Example Workflow has no stack line');
   mustSay(stackLine, ['chosen at the handoff in this conversation', 'I write', 'to the ledger now'], 'the example stack line');
   assert.ok(!stackLine.includes('the ledger holds'), 'a fresh ledger already holds the authorization line');

@@ -154,7 +154,7 @@ The workspace and ledger are shared with methodology:subagent-driven-development
 and the new one resumes from the same ledger.
 
 - Each plan owns a workspace: at skill start, run
-  `../subagent-driven-development/scripts/sdd-workspace PLAN_FILE` — it
+  `scripts/sdd-workspace PLAN_FILE` — it
   prints the plan's git-ignored directory (under
   `<repo-root>/.methodology/sdd/`, kept out of `git status` by
   `.methodology/.gitignore`), home to every artifact for THIS plan:
@@ -165,7 +165,7 @@ and the new one resumes from the same ledger.
   DONE — do not redo them; resume at the first task without one. Their
   commits exist in git even when your context no longer remembers making
   them: after compaction, trust the ledger and `git log` over your own
-  recollection, and read `node ../subagent-driven-development/scripts/stack.mjs status PLAN_FILE`
+  recollection, and read `node scripts/stack.mjs status PLAN_FILE`
   alongside the ledger: it prints the stack state (each phase's branch and
   state, the mode, the PR numbers), so a phase already submitted is never
   started again. A ledger whose first line names a different plan file is
@@ -195,14 +195,14 @@ skill's recovery map, not a tracking file.
 Stacked execution builds one git branch per plan phase, each on top of the
 previous one, and exactly one commit per task, as in
 methodology:subagent-driven-development, where you are the implementer.
-`../subagent-driven-development/scripts/stack.mjs` (run with `node`; the
+`scripts/stack.mjs` (run with `node`; the
 paths below are relative to this skill's directory) owns the branches and the
 state file: `init`, `mode`, `path`, `status`, `phase`, `squash`, `done` and
 `submit`, each taking PLAN_FILE. Its exit codes: 0 ok, 2 usage or malformed
 plan, 3 a refused precondition (the message names it), 5 `gh` failed.
 
 - **A run that began before stacked execution is not stacked.** First run
-  `node ../subagent-driven-development/scripts/stack.mjs path PLAN_FILE`. When
+  `node scripts/stack.mjs path PLAN_FILE`. When
   the file it prints does not exist and the workspace ledger already holds a
   `Task <N>: complete` line, the run began before stacked execution: its
   completed tasks sit on an old feature branch, and phase 1 would start from
@@ -215,7 +215,7 @@ plan, 3 a refused precondition (the message names it), 5 `gh` failed.
   on a branch other than the trunk that holds commits the trunk lacks. A fresh
   run has no completion line and goes on below.
 - After `sdd-workspace` and the tracking paths, run
-  `node ../subagent-driven-development/scripts/stack.mjs init PLAN_FILE` once,
+  `node scripts/stack.mjs init PLAN_FILE` once,
   before Task 1. It prints the stack state as JSON and writes it to
   `<repo root>/.methodology/stack/<plan file stem>.json` (`stack.mjs path
   PLAN_FILE` prints the path). It picks the mode: `github` (phase branches
@@ -246,7 +246,7 @@ plan, 3 a refused precondition (the message names it), 5 `gh` failed.
   the plan's phase branches, open their draft PRs and mark them ready for
   review after the final review. A yes: write
   `Authorization: push phase branches and draft PRs — setup <date>` to the
-  ledger. A no: run `node ../subagent-driven-development/scripts/stack.mjs
+  ledger. A no: run `node scripts/stack.mjs
   mode PLAN_FILE local` and ledger `Authorization: declined — stack in local
   mode`, and the run goes on with local branches only. Any `Authorization:`
   line, the declined one included, means the question was answered and is
@@ -287,7 +287,7 @@ in the workspace and read its tail; read a brief, not the whole plan.
 ### Start the phase
 
 Before the first task of phase N, run
-`node ../subagent-driven-development/scripts/stack.mjs phase PLAN_FILE N`. It
+`node scripts/stack.mjs phase PLAN_FILE N`. It
 prints the phase branch and leaves HEAD on it: it creates the branch on top of
 phase N−1's (the trunk's, for phase 1) and never leaves HEAD on the trunk. It
 needs a clean tree and phase N−1 submitted (in local mode, done) and exits 3
@@ -364,7 +364,7 @@ made. The reviewers read it; it stands in for an implementer's report.
 
 Implementation and review stay with separate roles, inline too. Send every task through the two-round review that methodology:subagent-driven-development defines, on one review package. Read its [Review the task](../subagent-driven-development/SKILL.md#3-review-the-task) step (sizing, round 1, round 2 and the record) and its [fix loop](../subagent-driven-development/SKILL.md#4-the-fix-loop) before the first review: that text rules, and this step restates only what changes when you are the implementer.
 
-- Run `../subagent-driven-development/scripts/review-package PLAN_FILE BASE HEAD` with the BASE task-start printed, and give each reviewer the path it prints, the brief path, the report path and the plan's Global Constraints verbatim. The gate also gets, when opted in, the tracking files it must expect in the diff, and the spec reviewer also gets every candidates file of round 1. In store mode no tracking file is expected in the diff: the gate is told so, and an added or modified tracking file is a finding. A hunter gets the inputs of [hunter-prompt.md](../subagent-driven-development/hunter-prompt.md).
+- Run `scripts/review-package PLAN_FILE BASE HEAD` with the BASE task-start printed, and give each reviewer the path it prints, the brief path, the report path and the plan's Global Constraints verbatim. The gate also gets, when opted in, the tracking files it must expect in the diff, and the spec reviewer also gets every candidates file of round 1. In store mode no tracking file is expected in the diff: the gate is told so, and an added or modified tracking file is a finding. A hunter gets the inputs of [hunter-prompt.md](../subagent-driven-development/hunter-prompt.md).
 - **Round 1:** dispatch together, in the background, in one message, for every task: the hunters (`roles:hunter`, [hunter-prompt.md](../subagent-driven-development/hunter-prompt.md), one per category, sized from the diff) and the gate (`roles:safety-reviewer`, [safety-review-prompt.md](../subagent-driven-development/safety-review-prompt.md)), each with the printed package path.
 - Round 1 follows the SDD step to the letter: the soft limit is 10 minutes after the gate's report, and a late or failed hunter is `failed` and never blocks the task; a departure from a budget reference writes its `Budget:` line. Ledger `Round 1: T<N> — hunters <done>/<sent>, safety ok`; the gate's findings go to the fix loop after round 2.
 - **Round 2:** dispatch `roles:spec-reviewer` with [task-reviewer-prompt.md](../subagent-driven-development/task-reviewer-prompt.md): its usual inputs plus every candidates file of round 1 (the hunters'), and it returns one verdict per candidate. A missing verdict sends the review back. Ledger `Round 2: T<N> — verdicts <n>/<n>`.
@@ -375,7 +375,7 @@ Implementation and review stay with separate roles, inline too. Send every task 
 - **With a subagent tool:** dispatch the stage above and wait for every report and verdict; never review the task yourself, even when the change is small: you wrote it, and the author's read has the author's blind spots.
 - **Without a subagent tool:** run no hunters, and write `Skipped: hunters — no subagent tool` to the ledger once, before the first review (the check above finds it again after compaction). Read [task-reviewer-prompt.md](../subagent-driven-development/task-reviewer-prompt.md) and [safety-review-prompt.md](../subagent-driven-development/safety-review-prompt.md) and perform both reviews yourself, as a separate pass after the commit, with no candidates and no records. Write `Task <N>: review: self-review (no subagent tool)` to the ledger, and say so in your final message.
 
-Critical and Important findings, a spec ❌, a `confirmed` candidate at `critical` or `important`, and a "Cannot verify from diff" item you confirm as a real gap enter a fix round. A `confirmed` candidate enters it like any spec-review finding, at the severity the verifier gave it. Minor findings, `minor` confirmed candidates included, go to the ledger as `Task <N>: minor (deferred): <one-liner>` and never enter a round. Fix rounds and re-reviews send no hunters: rounds 1 and 2 run once per task, on your commits, and a fix round is checked by the scoped re-review alone. A fix round is yours — you are the implementer here: fix each finding by TDD (a test that reproduces it, watched failing, then passing), commit it with `git commit --fixup=<the task's first commit>` (`git rev-list --reverse BASE..HEAD | head -n 1` names it; never an amend, a rebase or a reset: the review package stays `BASE..HEAD`, and `scripts/task-done` folds the fixups into the task's one commit, which while the task is the top of the stack touches only this task's commit), then run one scoped re-review of the fix range (`../subagent-driven-development/scripts/review-package PLAN_FILE FIX_BASE HEAD`) by the role or roles that raised the findings, with [re-review-prompt.md](../subagent-driven-development/re-review-prompt.md). Ledger each round as `Task <N>: fix round <R>/5 (<X> addressed, <Y> open — <finding one-liners>; commits <a7>..<b7>)`. Five rounds at most; when round 5 still leaves findings open, adjudicate each one as methodology:subagent-driven-development's breaker does (park it with a `Ruling:`, or rule on the smallest change that unblocks dependent work).
+Critical and Important findings, a spec ❌, a `confirmed` candidate at `critical` or `important`, and a "Cannot verify from diff" item you confirm as a real gap enter a fix round. A `confirmed` candidate enters it like any spec-review finding, at the severity the verifier gave it. Minor findings, `minor` confirmed candidates included, go to the ledger as `Task <N>: minor (deferred): <one-liner>` and never enter a round. Fix rounds and re-reviews send no hunters: rounds 1 and 2 run once per task, on your commits, and a fix round is checked by the scoped re-review alone. A fix round is yours — you are the implementer here: fix each finding by TDD (a test that reproduces it, watched failing, then passing), commit it with `git commit --fixup=<the task's first commit>` (`git rev-list --reverse BASE..HEAD | head -n 1` names it; never an amend, a rebase or a reset: the review package stays `BASE..HEAD`, and `scripts/task-done` folds the fixups into the task's one commit, which while the task is the top of the stack touches only this task's commit), then run one scoped re-review of the fix range (`scripts/review-package PLAN_FILE FIX_BASE HEAD`) by the role or roles that raised the findings, with [re-review-prompt.md](../subagent-driven-development/re-review-prompt.md). Ledger each round as `Task <N>: fix round <R>/5 (<X> addressed, <Y> open — <finding one-liners>; commits <a7>..<b7>)`. Five rounds at most; when round 5 still leaves findings open, adjudicate each one as methodology:subagent-driven-development's breaker does (park it with a `Ruling:`, or rule on the smallest change that unblocks dependent work).
 
 ### 5. Complete the task
 
@@ -385,7 +385,7 @@ is clean or every open finding is parked with a ruling. It runs the tests,
 keeps the full output in the workspace, prints the tail, and — only if
 they pass — records the task:
 
-- **Squash first:** when the plan's stack state file exists (the file `node ../subagent-driven-development/scripts/stack.mjs path PLAN_FILE` prints; the script never builds the path itself), it runs `node ../subagent-driven-development/scripts/stack.mjs squash PLAN_FILE BASE` after the tests pass and before its ledger move. The squash folds every commit of `BASE..HEAD` (yours and every fixup) into one, with `git commit-tree`: the tree of HEAD, the message and author of the range's first commit, never a rebase and never a `git commit`, so no hook runs and no gate fires. With no state file nothing is squashed. A squash that `stack.mjs` refuses (exit 3, for example HEAD is off the active phase's branch) fails `task-done`: it reports the refusal, records nothing and exits 3; fix the cause and run it again.
+- **Squash first:** when the plan's stack state file exists (the file `node scripts/stack.mjs path PLAN_FILE` prints; the script never builds the path itself), it runs `node scripts/stack.mjs squash PLAN_FILE BASE` after the tests pass and before its ledger move. The squash folds every commit of `BASE..HEAD` (yours and every fixup) into one, with `git commit-tree`: the tree of HEAD, the message and author of the range's first commit, never a rebase and never a `git commit`, so no hook runs and no gate fires. With no state file nothing is squashed. A squash that `stack.mjs` refuses (exit 3, for example HEAD is off the active phase's branch) fails `task-done`: it reports the refusal, records nothing and exits 3; fix the cause and run it again.
 - **Ledger move:** when opted in, it runs `triqual tasks done T<N> --commit <sha> --plan <plan>`, with `<sha>` the HEAD after the squash (the squashed commit; without a stack, the HEAD the approving review saw).
 - **Completion line:** it appends to the workspace ledger (`sdd-ledger.md`)
   `Task <N>: complete (commits <base7>..<head7>, tests: <command> → <result>)`, with `<head7>` the squashed sha under the stack.
@@ -402,13 +402,13 @@ commit of methodology:finishing-branch carries them. In store mode the moves lea
 When the phase's last task is complete, close the phase before starting the next:
 
 - **Phase check.** Run the phase's `**Phase check:**` command from the plan's phase block, at the tip of the phase branch; a plan with no `## Phase` heading (or no `**Branch prefix:**` line) is one phase whose check is the repository's full test command. A failure that passes on one re-run is flaky: ledger `Ruling: <test> flaky — passed on re-run — <what it costs if wrong>` and go on. A real failure reopens the phase's last task: when opted in, run `triqual tasks reopen T<N> "<reason>" --plan <plan>`, then run the fix loop on it yourself, skipping the first round's `triqual tasks rework` move (`reopen` already moved the task to `in_progress`, and `rework` only leaves `in_review`; its re-review's `review` move runs as usual) (TDD, `--fixup` commits, scoped re-review, then `scripts/task-done` again with BASE the parent of the task's squashed commit, which squashes and moves `done` again), then run the Phase check again.
-- **Done and submit.** Run `node ../subagent-driven-development/scripts/stack.mjs done PLAN_FILE N`, then `node ../subagent-driven-development/scripts/stack.mjs submit PLAN_FILE N`. In GitHub mode `submit` pushes this plan's phase branches only (the ledgered authorization covers it) and opens or updates the draft PR, and prints `Phase <N>: submitted (<branch>, PR #<n> draft)`; ledger that line. In local mode it prints `local mode: nothing to submit`; ledger `Phase <N>: complete (<branch>, local)`.
-- **`submit` exits 5** when `gh` failed, and records nothing: ledger a `Ruling:` that names the `gh` message, retry once, and when it fails again run `node ../subagent-driven-development/scripts/stack.mjs mode PLAN_FILE local`, ledger the `Ruling:`, and continue the plan in local mode.
+- **Done and submit.** Run `node scripts/stack.mjs done PLAN_FILE N`, then `node scripts/stack.mjs submit PLAN_FILE N`. In GitHub mode `submit` pushes this plan's phase branches only (the ledgered authorization covers it) and opens or updates the draft PR, and prints `Phase <N>: submitted (<branch>, PR #<n> draft)`; ledger that line. In local mode it prints `local mode: nothing to submit`; ledger `Phase <N>: complete (<branch>, local)`.
+- **`submit` exits 5** when `gh` failed, and records nothing: ledger a `Ruling:` that names the `gh` message, retry once, and when it fails again run `node scripts/stack.mjs mode PLAN_FILE local`, ledger the `Ruling:`, and continue the plan in local mode.
 - **A submitted phase is final:** never amend it, never rebase it and never force push it. A defect found in the code of an earlier, submitted phase is fixed in the current task's commit; at the final review it is fixed in the final fix commit.
 
 ## Final Review
 
-Run `../subagent-driven-development/scripts/review-package PLAN_FILE MERGE_BASE HEAD`
+Run `scripts/review-package PLAN_FILE MERGE_BASE HEAD`
 (MERGE_BASE = the commit the stack started from, e.g.
 `git merge-base <trunk> HEAD`: the review covers `trunk..top`, every phase) and review from the file it prints. The reviewer names each finding's phase.
 
@@ -457,7 +457,7 @@ fail, make it pass, then run the whole suite. Record each in the ledger as
 without a test that failed first is not verified; a suite that is not
 green after the pass means the pass is not over.
 - The fix pass is one commit on the top phase, whatever phase each finding sits in: `fix: address final review findings`, the only commit of the stack that is not a task, and never a `--fixup`. When opted in it carries its pending `progress.md` entry like every commit (Stage/task `Plan <topic> · final fix`).
-- After the fix pass, run the top Phase check again (the top phase's `**Phase check:**`), then `node ../subagent-driven-development/scripts/stack.mjs submit PLAN_FILE <top N> --open`, which pushes that commit and marks every phase's PR ready for review. A clean final review with no fix pass goes straight to that `submit` with `--open`.
+- After the fix pass, run the top Phase check again (the top phase's `**Phase check:**`), then `node scripts/stack.mjs submit PLAN_FILE <top N> --open`, which pushes that commit and marks every phase's PR ready for review. A clean final review with no fix pass goes straight to that `submit` with `--open`.
 
 Do not dispatch a re-review: it would
 re-read a diff whose covering tests already answer "addressed" and whose
