@@ -133,7 +133,7 @@ no `*.tasks.json` to name or stage.
 `triqual tracking write plan <draft>` under the same file name as a stored plan is the same plan: the document lands in
 the plans directory and the stored ledger is reconciled (same state, no second row). The first landing needs no
 `--replace`; later ones do. From then on name the plan by its bare file name (`triqual tasks start T3 --plan x.md`, or
-`--plan x`): a path such as `task-start docs/plans/x.md` would find the stale copy left in the working tree first.
+`--plan x`): a path such as `--plan docs/plans/x.md` would find the stale copy left in the working tree first.
 
 ## Moving a repository to a new checkout
 

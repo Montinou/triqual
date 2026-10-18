@@ -24,7 +24,7 @@ Turn on strict progress tracking in this repo.
    overwrites an existing `progress.md` or `status.md`. Committed mode replaces only the managed `CLAUDE.md` section
    and chains the gate into the `pre-commit` once, without breaking husky or existing hooks. Local mode chains a
    `pre-commit` and a `post-commit` into `<git-common-dir>/hooks/`, unless `core.hooksPath` is set: then commits are
-   not gated, and the Stop hook checks for a `progress.md` entry newer than the last commit. Exit 1 means "not inside
+   not gated, and the Stop hook checks for a `progress.md` entry newer than the last commit. Exit 1 means a refusal (see `--store` below) or "not inside
    a git repository". Exit 2 means bad arguments, that the repo already uses the other mode, or a
    `PROGRESS.md`/`STATUS.md` that differs only in case (ask the user to rename it): report it, do not switch modes on
    your own. `--local --remove` undoes local mode (and is refused in store mode). Run without `--store` (plain or

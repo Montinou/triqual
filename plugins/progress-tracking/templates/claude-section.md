@@ -28,6 +28,6 @@ Move tasks only with `triqual tasks start|review|rework|done|block|drop|close` (
 never edit the ledger or that section by hand, and run `triqual tasks check` to find drift.
 
 A committed entry is never edited: a correction is a new entry. Results are the real ones.
-Enforced by a git `pre-commit` (rejects commits with changes that lack both files; `--no-verify` is forbidden)
+Enforced by a git `pre-commit` (rejects a commit with changes unless both files are staged; `--no-verify` is forbidden)
 and the plugin hooks (Stop: a turn with changes does not end without `progress.md`; SessionStart: injects the state).
 <!-- progress-tracking:end -->

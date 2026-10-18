@@ -104,11 +104,13 @@ fix; apply them and call Workflow again.
   inherits the session model by omission; the session model is only for coordination.
 - **Declare the budget per model.** `// MAX_AGENTS: fable=0 opus=2 sonnet=4`,
   counting every agent each model launches, including inside
-  `parallel`/`pipeline`/loops. Haiku needs no entry.
+  `parallel`/`pipeline`/loops (the hook only checks one per `agent()` call
+  site, so the true count is yours to get right). Haiku needs no entry.
 - **Bound non-Haiku fan-outs.** `pipeline(x, …)`, `parallel(x)` and `.map(`
   over a dynamic list that launch Fable/Opus/Sonnet agents must be capped
-  with `.slice(0, N)` in the same chain. Literal arrays, `Array.from({length: k})`
-  and Haiku-only fan-outs pass.
+  with `.slice(0, N)` in the same chain. Literal arrays, Haiku-only fan-outs
+  and `Array.from({length: 3})` (a number literal) as the list of
+  `pipeline`/`parallel` pass; `Array.from(…).map(` does not.
 
 Not checked by the hook, but same reason: run one Workflow at a time and read its
 result before launching the next.
