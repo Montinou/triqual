@@ -1,7 +1,7 @@
 // Pure task-ledger model (spec §6.2): plan parsing, ledger creation, reconciliation and task transitions.
 // No I/O and no clock: every timestamp comes in as `now` (an ISO string). Functions never mutate their input.
 import { TASK_ROLES, roleOf } from './roles.mjs';
-import { PlanError, readTasks } from './plan.mjs';
+import { PlanError, TIERS, readTasks } from './plan.mjs';
 
 export class LedgerError extends Error {
   constructor(message) {
@@ -22,13 +22,21 @@ export function parsePlan(text) {
   }
 }
 
-const newTask = ({ id, title, deps, skills, role }, now) => ({
+// Tier order for "higher": heavy > standard > light, null (undeclared) counting as standard. On a tie `a` stays, so an
+// undeclared effective tier is kept rather than replaced by an equal `standard`.
+const TIER_RANK = { heavy: 2, standard: 1, light: 0 };
+const rankOf = (tier) => TIER_RANK[tier ?? 'standard'] ?? TIER_RANK.standard;
+export const higherTier = (a, b) => (rankOf(b) > rankOf(a) ? (b ?? null) : (a ?? null));
+
+const newTask = ({ id, title, deps, skills, role, tier }, now) => ({
   id,
   title,
   status: 'pending',
   deps: [...deps],
   skills: [...skills],
   role: role ?? null,
+  tier: tier ?? null,
+  effectiveTier: tier ?? null,
   commits: [],
   reason: null,
   history: [{ at: now, from: null, to: 'pending', note: null }],
@@ -46,8 +54,9 @@ export function createLedger({ plan, spec, branch, tasks, now }) {
 }
 
 // Reconciles by id and title: new plan tasks are appended as pending, tasks no longer in the plan are reported and
-// kept, a changed title is reported as drift and the task is left untouched. Pending tasks take the plan's deps, skills
-// and role. Adding a task reactivates a closed plan.
+// kept, a changed title is reported as drift and the task is left untouched. Pending tasks take the plan's deps, skills,
+// role and declared tier; their effective tier only ever rises to the declared one (higherTier), never falls. Adding a
+// task reactivates a closed plan.
 export function reconcile(ledger, planTasks, now) {
   const next = structuredClone(ledger);
   const planById = new Map(planTasks.map((t) => [t.id, t]));
@@ -58,7 +67,13 @@ export function reconcile(ledger, planTasks, now) {
     const p = planById.get(task.id);
     if (!p) { missing.push(task.id); continue; }
     if (p.title !== task.title) { retitled.push(task.id); continue; }
-    if (task.status === 'pending') { task.deps = [...p.deps]; task.skills = [...p.skills]; task.role = p.role ?? null; }
+    if (task.status === 'pending') {
+      task.deps = [...p.deps];
+      task.skills = [...p.skills];
+      task.role = p.role ?? null;
+      task.tier = p.tier ?? null;
+      task.effectiveTier = higherTier(task.effectiveTier, p.tier);
+    }
   }
   const known = new Set(next.tasks.map((t) => t.id));
   for (const p of planTasks) {
@@ -207,8 +222,10 @@ export function upsertStatusSection(statusText, body) {
 
 export function statusLine(name, ledger) {
   const { done, total } = counts(ledger);
-  const inProgress = withStatus(ledger, 'in_progress').map((t) => t.id).join(', ') || 'none';
-  const next = nextTask(ledger)?.id ?? 'none';
+  const tagged = (t) => (t.effectiveTier ? `${t.id} [${t.effectiveTier}]` : t.id);
+  const inProgress = withStatus(ledger, 'in_progress').map(tagged).join(', ') || 'none';
+  const nt = nextTask(ledger);
+  const next = nt ? tagged(nt) : 'none';
   return `${name}: ${done}/${total} done · in progress: ${inProgress} · next: ${next}`;
 }
 
@@ -221,6 +238,9 @@ export function checkSchema(ledger) {
   for (const t of Array.isArray(ledger.tasks) ? ledger.tasks : []) {
     if (!STATUSES.has(t.status)) drift.push(`${t.id} has unknown status "${t.status}"`);
     if (!Array.isArray(t.history)) drift.push(`${t.id} history is not an array`);
+    // Absent (a ledger written before tiers) and null (undeclared) are both clean.
+    if (t.tier != null && !TIERS.includes(t.tier)) drift.push(`${t.id} has unknown tier "${t.tier}"`);
+    if (t.effectiveTier != null && !TIERS.includes(t.effectiveTier)) drift.push(`${t.id} has unknown effective tier "${t.effectiveTier}"`);
   }
   return drift;
 }

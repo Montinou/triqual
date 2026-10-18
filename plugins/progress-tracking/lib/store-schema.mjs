@@ -114,8 +114,15 @@ BEGIN
 END;
 `;
 
+// V2 (plan methodology-1.0): a task's declared tier (from the plan) and its effective tier (the one it runs at, never
+// lowered). Rows written before V2 read NULL for both, which counts as standard.
+const V2 = `
+ALTER TABLE tasks ADD COLUMN tier TEXT;
+ALTER TABLE tasks ADD COLUMN effective_tier TEXT;
+`;
+
 // Migration n (1-based) takes user_version n-1 to n. Append only; never edit an applied one.
-export const MIGRATIONS = [V1];
+export const MIGRATIONS = [V1, V2];
 export const SCHEMA_VERSION = MIGRATIONS.length;
 
 export class SchemaTooNew extends Error {

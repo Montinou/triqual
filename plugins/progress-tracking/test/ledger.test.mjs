@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { LedgerError, parsePlan, createLedger, reconcile, transition } from '../lib/ledger.mjs';
+import { LedgerError, parsePlan, createLedger, reconcile, transition, statusLine, checkSchema } from '../lib/ledger.mjs';
 import { TASK_ROLES, DEFAULT_ROLE, TIERS, roleOf } from '../lib/roles.mjs';
 import { TIERS as PLAN_TIERS } from '../lib/plan.mjs';
 
@@ -81,7 +81,7 @@ test('createLedger builds the §6.2 schema', () => {
   assert.equal(l.branch, 'feat/x');
   assert.deepEqual(l.tasks[2], {
     id: 'T3', title: 'Third thing', status: 'pending', deps: ['T1', 'T2'], skills: ['jules-pr-reviews', 'skill-b'],
-    role: null, commits: [], reason: null, history: [{ at: T0, from: null, to: 'pending', note: null }],
+    role: null, tier: null, effectiveTier: null, commits: [], reason: null, history: [{ at: T0, from: null, to: 'pending', note: null }],
   });
 });
 
@@ -285,7 +285,7 @@ test('reconcile adds new tasks, reports missing and retitled, keeps history', ()
   assert.deepEqual(task(r.ledger, 'T3'), task(before, 'T3'));
   assert.deepEqual(task(r.ledger, 'T4'), {
     id: 'T4', title: 'Fourth thing', status: 'pending', deps: ['T1'], skills: ['x'],
-    role: null, commits: [], reason: null, history: [{ at: T1, from: null, to: 'pending', note: null }],
+    role: null, tier: null, effectiveTier: null, commits: [], reason: null, history: [{ at: T1, from: null, to: 'pending', note: null }],
   });
   assert.deepEqual(l, before);
 });
@@ -616,4 +616,60 @@ test('parsePlan maps PlanError to LedgerError', () => {
 test('roles.mjs re-exports TIERS', () => {
   assert.equal(TIERS, PLAN_TIERS);
   assert.deepEqual([...TIERS], ['heavy', 'standard', 'light']);
+});
+
+// Plan methodology-1.0 · T2: the declared tier and the effective tier in the ledger.
+test('newTask copies tier and sets effectiveTier = tier', () => {
+  const l = createLedger({ plan: 'p.md', spec: null, branch: 'b', now: T0,
+    tasks: parsePlan('### Task 1: A\n**Tier:** heavy\n\n### Task 2: B\n**Tier:** light\n\n### Task 3: C\n') });
+  assert.deepEqual(l.tasks.map((t) => [t.id, t.tier, t.effectiveTier]),
+    [['T1', 'heavy', 'heavy'], ['T2', 'light', 'light'], ['T3', null, null]]);
+  // A task given without a tier (an older caller) reads null for both.
+  const old = createLedger({ plan: 'p.md', spec: null, branch: 'b', now: T0,
+    tasks: [{ id: 'T1', title: 'A', deps: [], skills: [], role: null }] });
+  assert.equal(old.tasks[0].tier, null);
+  assert.equal(old.tasks[0].effectiveTier, null);
+});
+
+test('reconcile copies tier into pending tasks and raises effectiveTier to the higher', () => {
+  const plan = (t1, t2, t3) => parsePlan(`### Task 1: A\n**Tier:** ${t1}\n\n### Task 2: B\n**Tier:** ${t2}\n\n### Task 3: C\n**Tier:** ${t3}\n`);
+  let l = createLedger({ plan: 'p.md', spec: null, branch: 'b', now: T0, tasks: plan('light', 'standard', 'light') });
+  l = transition(transition(l, 'start', 'T3', null, T0).ledger, 'done', 'T3', 'abc1234', T0).ledger;
+  const before = structuredClone(l);
+  const r = reconcile(deepFreeze(l), plan('heavy', 'light', 'heavy'), T1);
+  // Pending, effective light, plan now heavy: both rise to heavy.
+  assert.equal(task(r.ledger, 'T1').tier, 'heavy');
+  assert.equal(task(r.ledger, 'T1').effectiveTier, 'heavy');
+  // Pending, effective standard, plan now light: the declared tier follows the plan, the effective one stays.
+  assert.equal(task(r.ledger, 'T2').tier, 'light');
+  assert.equal(task(r.ledger, 'T2').effectiveTier, 'standard');
+  // Done: untouched.
+  assert.deepEqual(task(r.ledger, 'T3'), task(before, 'T3'));
+  assert.equal(task(r.ledger, 'T3').effectiveTier, 'light');
+  // null counts as standard: a light plan never lowers an undeclared task, a heavy one raises it.
+  const undeclared = createLedger({ plan: 'p.md', spec: null, branch: 'b', now: T0, tasks: parsePlan('### Task 1: A\n\n### Task 2: B\n') });
+  const r2 = reconcile(undeclared, parsePlan('### Task 1: A\n**Tier:** light\n\n### Task 2: B\n**Tier:** heavy\n'), T1);
+  assert.deepEqual(r2.ledger.tasks.map((t) => [t.tier, t.effectiveTier]), [['light', null], ['heavy', 'heavy']]);
+});
+
+test('statusLine shows the effective tier', () => {
+  let l = createLedger({ plan: 'p.md', spec: null, branch: 'b', now: T0,
+    tasks: parsePlan('### Task 1: A\n**Tier:** heavy\n\n### Task 2: B\n\n### Task 3: C\n**Tier:** light\n') });
+  assert.equal(statusLine('p', l), 'p: 0/3 done · in progress: none · next: T1 [heavy]');
+  l = transition(l, 'start', 'T1', null, T1).ledger;
+  l = transition(l, 'start', 'T2', null, T1).ledger;
+  assert.equal(statusLine('p', l), 'p: 0/3 done · in progress: T1 [heavy], T2 · next: T3 [light]');
+});
+
+test('checkSchema reports an unknown tier or effective tier; absent and null ones are clean', () => {
+  const l = createLedger({ plan: 'p.md', spec: null, branch: 'b', now: T0,
+    tasks: parsePlan('### Task 1: A\n**Tier:** heavy\n\n### Task 2: B\n\n### Task 3: C\n') });
+  assert.deepEqual(checkSchema(l), []);
+  const old = structuredClone(l);
+  for (const t of old.tasks) { delete t.tier; delete t.effectiveTier; }
+  assert.deepEqual(checkSchema(old), []);
+  const bad = structuredClone(l);
+  bad.tasks[1].tier = 'medium';
+  bad.tasks[2].effectiveTier = 'huge';
+  assert.deepEqual(checkSchema(bad), ['T2 has unknown tier "medium"', 'T3 has unknown effective tier "huge"']);
 });
