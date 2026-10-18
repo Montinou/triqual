@@ -14,6 +14,7 @@
     {"path": "plugins/progress-tracking/lib/snapshot.mjs", "contains": "claude-methodolog"}
   ],
   "allowSecrets": [
+    {"path": "packages/fence/src/log/redact.mjs", "contains": "BEGIN/,"},
     {"path": "plugins/memory-report/lib/insights.mjs", "contains": "selection.secret + dropped.secret"},
     {"path": "plugins/memory-report/lib/policy.mjs", "contains": "BEGIN/,"},
     {"path": "plugins/memory-report/test/insights-runner.test.mjs", "contains": "NOTE-TEXT-' + 'zq'"},
