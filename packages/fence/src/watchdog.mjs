@@ -11,6 +11,8 @@
 //      A valid hatch: the engine runs with --record-only (it logs the call as `hatch` itself), its answer
 //      is ignored, the watchdog appends its own minimal `hatch` line only for a `pre` call whose engine
 //      failed, said nothing usable or could not log, and the host's no-output shape is returned.
+//      The one exception is `session-start`: the engine's {additionalContext} is rendered exactly as outside
+//      a hatch (it carries the "hatch open until ..." line); a failed or empty answer is the no-output shape.
 //   3. (pre only) while <state>/needs-repair exists, every call without a valid hatch is denied
 //      (`fence repair`, T40, clears it after the human confirms; a valid hatch wins, step 2). Then
 //      post-hatch integrity: when <admin>/integrity.json exists and its hatch has expired,
@@ -405,6 +407,13 @@ export async function main(argv, io = {}) {
       const answer = run !== null && engineFailure(run) === null ? oneObjectLine(run.stdout) : null;
       if (args.event === 'pre' && (answer === null || !wellFormedDecision(answer) || answer.logFailed === true)) {
         appendLine(stateDir, { host: args.host, event: args.event, decision: 'hatch', rule: 'hatch' }, { now: clock, fs: fsImpl });
+      }
+      // SessionStart is the one event that still speaks during a hatch: the engine's additionalContext
+      // (keep-list plus status lines, among them "a hatch is open until ...") is rendered as outside a
+      // hatch, so the human and the model are told enforcement is off. An engine that failed, or said
+      // nothing usable, gives the no-output shape (SessionStart fails open).
+      if (args.event === 'session-start' && answer && typeof answer.additionalContext === 'string' && answer.additionalContext !== '') {
+        return renderSessionStart(args.host, answer.additionalContext);
       }
       return { ...SILENT };
     }

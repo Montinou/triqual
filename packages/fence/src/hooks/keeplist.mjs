@@ -2,7 +2,8 @@
 //
 //   renderKeepList(policy, {profile}) -> string
 //   keepFileName(sessionId) -> '<session>.md' | null
-//   writeKeepList(stateDir, sessionId, text, {fs}) -> {ok: boolean, reason?: string}
+//   writeKeepList(stateDir, sessionId, text, {fs, sha}) -> {ok: boolean, reason?: string}
+//   readKeepSnapshot(stateDir, sessionId, {fs}) -> {sha, text} | null
 //
 // The keep-list is the rule text of the policy as the model should still see it after a compaction:
 // the active profile (name capped at 64 characters), the protected branches and `denyFileWrites`, one line
@@ -20,6 +21,13 @@
 // else writes nothing. The write goes to a temp name in the same directory and is renamed into place, so
 // a reader never sees a partial file; keep/ must be a real directory (never a symlink). Nothing in
 // writeKeepList throws.
+//
+// The snapshot file is a header line `fence-policy-sha256: <64 hex>` (the sha256 of the policy file the
+// rendering came from, when the caller gives it) followed by the rendering. SessionStart on `compact` reads
+// it back with readKeepSnapshot(stateDir, sessionId) -> {sha: string | null, text} | null (null: no safe id,
+// no snapshot, or one that is not a small regular file) and compares the sha with the current policy's.
+// KEEP_NAME / KEEP_TMP are the file-name shapes of a snapshot and of the temp file of an unfinished write:
+// the only names the retention prune (log/prune.mjs) removes from keep/.
 
 import nodeFs from 'node:fs';
 import nodePath from 'node:path';
@@ -27,6 +35,12 @@ import { randomBytes } from 'node:crypto';
 
 export const KEEP_CAP = 2000;
 export const KEEP_DIR = 'keep';
+export const SNAPSHOT_SHA_HEADER = 'fence-policy-sha256: ';
+export const KEEP_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/;
+export const KEEP_TMP = /^\.[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md\.\d+\.[0-9a-f]{12}\.tmp$/;
+// A snapshot is at most KEEP_CAP characters of rendering plus the header; a larger file is not one.
+const MAX_SNAPSHOT_BYTES = 16 * 1024;
+const HEX64 = /^[0-9a-f]{64}$/;
 
 const ELLIPSIS = '…';
 const PROFILE_NAME_CAP = 64;
@@ -156,16 +170,57 @@ function isRealDir(fsImpl, dir) {
   return st.isDirectory() && !st.isSymbolicLink();
 }
 
-export function writeKeepList(stateDir, sessionId, text, { fs: fsImpl = nodeFs } = {}) {
+// -> {sha, text} | null. `sha` is null when the file has no header (or an unreadable one).
+export function readKeepSnapshot(stateDir, sessionId, { fs: fsImpl = nodeFs } = {}) {
+  try {
+    const name = keepFileName(sessionId);
+    if (name === null) return null;
+    const dir = nodePath.join(stateDir, KEEP_DIR);
+    if (!isRealDir(fsImpl, dir)) return null;
+    const file = nodePath.join(dir, name);
+    // One open descriptor decides everything: no symlink is followed (O_NOFOLLOW) and a FIFO does not block
+    // the open (O_NONBLOCK); the type and size come from fstat of that descriptor, and at most one byte more
+    // than the bound is read from it, so a file that grows after the check is still refused.
+    const fd = fsImpl.openSync(file, nodeFs.constants.O_RDONLY | (nodeFs.constants.O_NOFOLLOW ?? 0) | (nodeFs.constants.O_NONBLOCK ?? 0));
+    let content;
+    try {
+      const st = fsImpl.fstatSync(fd);
+      if (!st.isFile() || st.size > MAX_SNAPSHOT_BYTES) return null;
+      const buf = Buffer.alloc(MAX_SNAPSHOT_BYTES + 1);
+      let n = 0;
+      while (n < buf.length) {
+        const got = fsImpl.readSync(fd, buf, n, buf.length - n, n);
+        if (got === 0) break;
+        n += got;
+      }
+      if (n > MAX_SNAPSHOT_BYTES) return null;
+      content = buf.subarray(0, n).toString('utf8');
+    } finally {
+      fsImpl.closeSync(fd);
+    }
+    const nl = content.indexOf('\n');
+    const first = nl < 0 ? content : content.slice(0, nl);
+    if (first.startsWith(SNAPSHOT_SHA_HEADER)) {
+      const sha = first.slice(SNAPSHOT_SHA_HEADER.length);
+      if (HEX64.test(sha)) return { sha, text: nl < 0 ? '' : content.slice(nl + 1) };
+    }
+    return { sha: null, text: content };
+  } catch {
+    return null;
+  }
+}
+
+export function writeKeepList(stateDir, sessionId, text, { fs: fsImpl = nodeFs, sha } = {}) {
   const name = keepFileName(sessionId);
   if (name === null) return { ok: false, reason: 'unsafe session id' };
+  const content = typeof sha === 'string' && HEX64.test(sha) ? `${SNAPSHOT_SHA_HEADER}${sha}\n${text}` : text;
   let tmp = null;
   try {
     const dir = nodePath.join(stateDir, KEEP_DIR);
     fsImpl.mkdirSync(dir, { recursive: true, mode: 0o700 });
     if (!isRealDir(fsImpl, dir)) return { ok: false, reason: `${KEEP_DIR} is not a real directory` };
     tmp = nodePath.join(dir, `.${name}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);
-    fsImpl.writeFileSync(tmp, text, { flag: 'wx', mode: 0o600 });
+    fsImpl.writeFileSync(tmp, content, { flag: 'wx', mode: 0o600 });
     fsImpl.renameSync(tmp, nodePath.join(dir, name));
     return { ok: true };
   } catch (err) {

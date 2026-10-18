@@ -40,11 +40,14 @@
 //   returns {}. It fails open: any failure is swallowed (a failed append is recorded in health.json) and
 //   the output is {} with exit 0 whatever the payload, the host or the state directory.
 // `precompact` writes the compaction keep-list snapshot `<state>/keep/<session_id>.md` (hooks/keeplist.mjs: the
-//   policy's rule text under the FENCE_PROFILE profile, at most 2000 characters). It fails open: the output is
+//   policy's rule text under the FENCE_PROFILE profile, at most 2000 characters, under a first line recording the
+//   sha256 of the policy file). It fails open: the output is
 //   {} with exit 0 whatever the arguments, the policy, the payload or the state directory, a session id that is
 //   not a plain identifier writes nothing, and the file is renamed into place so no partial file is left.
-// `session-start` prunes logs and index files older than 30 days (log/prune.mjs, best effort) and returns {}
-//   (its context line comes with Task 42).
+// `session-start` prunes logs, index files and keep-list snapshots older than 30 days (log/prune.mjs, best
+//   effort), then returns {additionalContext: text} for every source and both hosts (hooks/session.mjs: the
+//   current keep-list rendering plus the status lines that apply). It fails open: bad arguments, an unreadable
+//   payload, an unreadable state directory never deny; a policy that does not load gives {}.
 //
 // The git tree check is bound to the git pinned at install (`<home>/.local/share/fence/git.json`);
 // without a usable pin it stays unbound and answers UNKNOWN, which makes a tree update opaque in a
@@ -65,6 +68,7 @@ import { codex } from './hosts/codex.mjs';
 import { recordHealth } from './log/health.mjs';
 import { appendDecision, decisionEntry } from './log/log.mjs';
 import { keepFileName, renderKeepList, writeKeepList } from './hooks/keeplist.mjs';
+import { sessionContext } from './hooks/session.mjs';
 import { prune } from './log/prune.mjs';
 import { appendWritten, readWritten } from './log/written.mjs';
 import { normalize } from './norm/normalize.mjs';
@@ -340,12 +344,39 @@ function snapshotKeepList(args, { stdin, fsImpl, env }) {
     const home = os.homedir();
     const stateDir = nodePath.resolve(args.stateDir ?? nodePath.join(home, '.local', 'state', 'fence'));
     const policyFile = nodePath.resolve(args.policy ?? nodePath.join(home, '.config', 'fence', 'policy.json'));
-    const { policy } = loadPolicy(policyFile, { fs: fsImpl, home });
+    const { policy, sha } = loadPolicy(policyFile, { fs: fsImpl, home });
     const profile = env.FENCE_PROFILE === undefined ? 'default' : env.FENCE_PROFILE;
-    writeKeepList(stateDir, sessionId, renderKeepList(policy, { profile }), { fs: fsImpl });
+    writeKeepList(stateDir, sessionId, renderKeepList(policy, { profile }), { fs: fsImpl, sha });
   } catch {
     // a keep-list is best effort: compaction is never blocked
   }
+}
+
+// SessionStart: prunes old state, then renders the keep-list plus the status lines that apply
+// (hooks/session.mjs). -> {additionalContext} or {} when there is nothing to show (a policy that does not
+// load). Never throws.
+function startSession(args, { stdin, now, fsImpl, env }) {
+  const home = os.homedir();
+  const stateDir = nodePath.resolve(args.stateDir ?? nodePath.join(home, '.local', 'state', 'fence'));
+  prune(stateDir, now, { fs: fsImpl });
+  let payload = {};
+  try {
+    const parsed = JSON.parse(stdinText(stdin));
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) payload = parsed;
+  } catch {
+    payload = {}; // the rules do not depend on the payload
+  }
+  const text = sessionContext({
+    policyFile: nodePath.resolve(args.policy ?? nodePath.join(home, '.config', 'fence', 'policy.json')),
+    stateDir,
+    adminDir: nodePath.resolve(args.adminDir ?? defaultAdminDir()),
+    home,
+    now,
+    env,
+    payload,
+    fs: fsImpl,
+  });
+  return text === '' ? {} : { additionalContext: text };
 }
 
 const round1 = (ms) => Math.round(ms * 10) / 10;
@@ -399,12 +430,17 @@ export function runEngine(argv, { stdin = '', now = Date.now(), isRootOwned = re
       }
       return out({});
     }
-    if (args.error) return out(deny('builtin:engine', `fence could not start: ${args.error}; the call is denied.`));
-    if (args.event === SESSION_START) {
-      const home = os.homedir();
-      prune(nodePath.resolve(args.stateDir ?? nodePath.join(home, '.local', 'state', 'fence')), now, { fs: fsImpl });
-      return out({});
+    if (args.event === SESSION_START || (args.error && argv?.[0] === SESSION_START)) {
+      // SessionStart fails open: it never blocks a session, whatever the arguments, policy or state.
+      let result = {};
+      try {
+        if (!args.error) result = startSession(args, { stdin, now, fsImpl, env: env !== null && typeof env === 'object' ? env : {} });
+      } catch {
+        result = {};
+      }
+      return out(result);
     }
+    if (args.error) return out(deny('builtin:engine', `fence could not start: ${args.error}; the call is denied.`));
     // --record-only computes and returns the same decision; the watchdog ignores it.
     decision = decidePre(args, { stdin, now, isRootOwned, fsImpl, env: env !== null && typeof env === 'object' ? env : {}, trace, written: { maxReadBytes: writtenMaxReadBytes } });
   } catch (err) {

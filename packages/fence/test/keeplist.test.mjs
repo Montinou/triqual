@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { runEngine } from '../src/engine.mjs';
-import { KEEP_CAP, KEEP_DIR, keepFileName, renderKeepList } from '../src/hooks/keeplist.mjs';
+import { KEEP_CAP, KEEP_DIR, keepFileName, readKeepSnapshot, renderKeepList } from '../src/hooks/keeplist.mjs';
 import { loadPolicy } from '../src/policy/load.mjs';
 import { validatePolicy } from '../src/policy/schema.mjs';
 
@@ -199,8 +199,15 @@ test('precompact writes the snapshot file', () => {
   const file = path.join(d.state, KEEP_DIR, 'sess-keep-1.md');
   assert.equal(keepFileName('sess-keep-1'), 'sess-keep-1.md');
   const written = nodeFs.readFileSync(file, 'utf8');
-  // the engine loads the policy with `~/` expanded against the home directory; the rendering is of that
-  assert.equal(written, renderKeepList(loadPolicy(d.policy, { home: os.homedir() }).policy, { profile: 'default' }));
+  // the engine loads the policy with `~/` expanded against the home directory; the rendering is of that.
+  // The first line records the sha256 of the policy file the rendering came from (session start compares it).
+  const loaded = loadPolicy(d.policy, { home: os.homedir() });
+  assert.equal(written, `fence-policy-sha256: ${loaded.sha}\n${renderKeepList(loaded.policy, { profile: 'default' })}`);
+  assert.match(loaded.sha, /^[0-9a-f]{64}$/);
+  assert.equal(readKeepSnapshot(d.state, 'sess-keep-1').sha, loaded.sha);
+  assert.equal(readKeepSnapshot(d.state, 'sess-keep-1').text, renderKeepList(loaded.policy, { profile: 'default' }));
+  assert.equal(readKeepSnapshot(d.state, 'no-such-session'), null);
+  assert.equal(readKeepSnapshot(d.state, '../escape'), null);
   assert.ok(written.includes('credentials'));
   assert.equal(nodeFs.statSync(file).mode & 0o077, 0, 'private file');
   // the temp name is gone after the rename
@@ -208,6 +215,49 @@ test('precompact writes the snapshot file', () => {
   // a second compaction replaces the snapshot
   assert.deepEqual(precompact(d, payloadFor('sess-keep-1')), {});
   assert.deepEqual(nodeFs.readdirSync(path.join(d.state, KEEP_DIR)), ['sess-keep-1.md']);
+});
+
+test('readKeepSnapshot reads through one open descriptor, bounded, and refuses what is not a small regular file', () => {
+  const d = freshDirs();
+  precompact(d, payloadFor('sess-keep-fd'));
+  const keep = path.join(d.state, KEEP_DIR);
+  const file = path.join(keep, 'sess-keep-fd.md');
+  const calls = [];
+  const spy = new Proxy(nodeFs, {
+    get(target, prop) {
+      const v = target[prop];
+      if (typeof v !== 'function') return v;
+      return (...args) => {
+        calls.push({ op: String(prop), args });
+        return v.apply(target, args);
+      };
+    },
+  });
+  const snapshot = readKeepSnapshot(d.state, 'sess-keep-fd', { fs: spy });
+  assert.match(snapshot.sha, /^[0-9a-f]{64}$/);
+  const onFile = calls.filter((c) => c.args[0] === file);
+  assert.ok(onFile.length > 0 && onFile.every((c) => c.op === 'openSync'), `only openSync takes the path: ${onFile.map((c) => c.op)}`);
+  assert.ok(calls.some((c) => c.op === 'fstatSync'), 'the type and size come from the descriptor');
+  assert.ok(!calls.some((c) => c.op === 'readFileSync'), 'no unbounded readFileSync');
+  const reads = calls.filter((c) => c.op === 'readSync');
+  assert.ok(reads.length > 0);
+  for (const r of reads) assert.ok(r.args[3] <= 16 * 1024 + 1, `a read of ${r.args[3]} bytes exceeds the bound`);
+  assert.ok(calls.filter((c) => c.op === 'openSync').length === calls.filter((c) => c.op === 'closeSync').length, 'the descriptor is closed');
+
+  // an oversized file, a symlink and a directory are not snapshots; none of them is read in full
+  nodeFs.writeFileSync(path.join(keep, 'sess-big.md'), 'x'.repeat(64 * 1024));
+  nodeFs.symlinkSync(file, path.join(keep, 'sess-link.md'));
+  nodeFs.mkdirSync(path.join(keep, 'sess-dir.md'));
+  const bigCalls = [];
+  const bigSpy = new Proxy(nodeFs, {
+    get(target, prop) {
+      const v = target[prop];
+      return typeof v === 'function' ? (...args) => (bigCalls.push({ op: String(prop), args }), v.apply(target, args)) : v;
+    },
+  });
+  for (const id of ['sess-big', 'sess-link', 'sess-dir']) assert.equal(readKeepSnapshot(d.state, id, { fs: bigSpy }), null, id);
+  for (const r of bigCalls.filter((c) => c.op === 'readSync')) assert.ok(r.args[3] <= 16 * 1024 + 1, `a read of ${r.args[3]} bytes exceeds the bound`);
+  assert.ok(!bigCalls.some((c) => c.op === 'readFileSync'));
 });
 
 test('precompact renders the profile named by FENCE_PROFILE', () => {
