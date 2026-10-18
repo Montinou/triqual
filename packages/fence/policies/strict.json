@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "profiles": {
+    "default": { "undecided": "host" },
+    "unattended": { "undecided": "deny" }
+  },
+  "branches": { "protected": ["main", "master", "develop"], "denyFileWrites": false },
+  "rules": [
+    {
+      "id": "credentials",
+      "decision": "deny",
+      "match": { "paths": ["**/.env", "**/.env.*", "~/.aws/**", "~/.ssh/**"], "access": "any" },
+      "except": { "paths": ["**/.env.example", "**/.env.sample"] },
+      "why": "Credential files are never read or written by the agent.",
+      "examples": {
+        "deny": [
+          { "tool": "Bash", "command": "cat .env" },
+          { "tool": "Bash", "command": "cat ~/.aws/credentials" },
+          { "tool": "Read", "path": "~/.ssh/config" }
+        ],
+        "allow": [
+          { "tool": "Read", "path": ".env.example" },
+          { "tool": "Bash", "command": "cat .env.sample" }
+        ]
+      }
+    },
+    {
+      "id": "delete-outside-repo",
+      "decision": "deny",
+      "match": { "class": ["delete"] },
+      "except": { "paths": ["${repo}/**"] },
+      "why": "Deleting files is allowed only inside the repository the session works in.",
+      "examples": {
+        "deny": [
+          { "tool": "Bash", "command": "rm ../notes.txt" },
+          { "tool": "Bash", "command": "rmdir ../notes" }
+        ],
+        "allow": [{ "tool": "Bash", "command": "rm notes.txt" }]
+      }
+    },
+    {
+      "id": "overwrite-outside-repo",
+      "decision": "deny",
+      "match": { "class": ["overwrite"] },
+      "except": { "paths": ["${repo}/**"] },
+      "why": "Truncating or overwriting files is allowed only inside the repository the session works in.",
+      "examples": {
+        "deny": [
+          { "tool": "Bash", "command": "truncate -s 0 ../notes.txt" },
+          { "tool": "Bash", "command": "cp /dev/null ../notes.txt" }
+        ],
+        "allow": [{ "tool": "Bash", "command": "truncate -s 0 notes.txt" }]
+      }
+    },
+    {
+      "id": "env-dump",
+      "decision": "deny",
+      "match": { "class": ["env-dump"] },
+      "why": "Dumping the environment exposes tokens and keys held in environment variables.",
+      "examples": {
+        "deny": [
+          { "tool": "Bash", "command": "printenv" },
+          { "tool": "Bash", "command": "env" }
+        ],
+        "allow": [{ "tool": "Bash", "command": "ls" }]
+      }
+    },
+    {
+      "id": "privilege",
+      "decision": "deny",
+      "match": { "class": ["privilege"] },
+      "why": "Raising privileges is denied.",
+      "examples": {
+        "deny": [{ "tool": "Bash", "command": "sudo ls" }],
+        "allow": [{ "tool": "Bash", "command": "ls" }]
+      }
+    },
+    {
+      "id": "perm-change",
+      "decision": "deny",
+      "match": { "class": ["perm-change"] },
+      "why": "Changing file modes or owners is denied; it can open files to other users or lock the person out.",
+      "examples": {
+        "deny": [{ "tool": "Bash", "command": "chmod 644 ../notes.txt" }],
+        "allow": [{ "tool": "Bash", "command": "ls" }]
+      }
+    },
+    {
+      "id": "vcs-write",
+      "decision": "deny",
+      "match": { "class": ["vcs-write"] },
+      "why": "History-changing git commands (commit, push, reset, rebase, forced branch changes) are for the person to run.",
+      "examples": {
+        "deny": [
+          { "tool": "Bash", "command": "git push --force origin main" },
+          { "tool": "Bash", "command": "git reset --hard" }
+        ],
+        "allow": [
+          { "tool": "Bash", "command": "git status" },
+          { "tool": "Bash", "command": "npm test" }
+        ]
+      }
+    },
+    {
+      "id": "network-fetch",
+      "decision": "deny",
+      "match": { "class": ["network-fetch"] },
+      "why": "Reaching the network can send repository contents out; fetching is a decision for the person, not the agent.",
+      "examples": {
+        "deny": [
+          { "tool": "Bash", "command": "curl https://example.com" },
+          { "tool": "Bash", "command": "git fetch origin" }
+        ],
+        "allow": [{ "tool": "Bash", "command": "git status" }]
+      }
+    },
+    {
+      "id": "write-outside-repo",
+      "decision": "deny",
+      "match": { "paths": ["/**"], "access": "write" },
+      "except": { "paths": ["${repo}/**", "/dev/null"] },
+      "why": "Files are written only inside the repository the session works in.",
+      "examples": {
+        "deny": [
+          { "tool": "Bash", "command": "cp a.txt ../b.txt" },
+          { "tool": "Write", "path": "../notes.txt" }
+        ],
+        "allow": [
+          { "tool": "Bash", "command": "cp a.txt b.txt" },
+          { "tool": "Write", "path": "notes.txt" }
+        ]
+      }
+    }
+  ]
+}
