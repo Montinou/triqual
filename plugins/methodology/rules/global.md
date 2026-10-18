@@ -112,6 +112,13 @@ fix; apply them and call Workflow again.
   and `Array.from({length: 3})` (a number literal) as the list of
   `pipeline`/`parallel` pass; `Array.from(…).map(` does not.
 
+The same plugin also checks the `Agent` tool (`PreToolUse` on `Agent|Task`), which
+dispatches the role agents: a start is denied when the session already started that
+many agents of the same model within 120 s (`WORKFLOW_GATE_AGENT_WINDOW_S`), with the
+same caps. A `model` input wins over the role's model, Haiku is never denied, and starts
+whose model cannot be resolved are counted apart, capped at the Opus cap. The denial names the wait:
+start fewer at once, use a cheaper model, or retry.
+
 Not checked by the hook, but same reason: run one Workflow at a time and read its
 result before launching the next.
 

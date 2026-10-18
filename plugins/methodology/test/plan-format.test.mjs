@@ -288,7 +288,9 @@ test('## Task Roles lists the three task roles and keeps review-fixer out', () =
   const text = lines.join(' ');
   assert.ok(lines.some((line) => line.startsWith('Every task gets a `**Role:**` line naming the role that does its work.')), 'the section does not say every task gets a **Role:** line');
   assert.ok(text.includes('A plan without the line reads as `roles:tdd-implementer`, but write it for every task anyway.'), 'the section lost the default-role sentence');
-  assert.match(text, /migrations?\b[^.]*`roles:complex-implementer`[^.]*`heavy`|`roles:complex-implementer`[^.]*migrations?\b[^.]*`heavy`/, 'the section does not send live-state work and migrations to complex-implementer, heavy');
+  // Spec decision 5: live-state work and migrations are heavy; complex-implementer is the usual role for them, not a rule.
+  assert.match(text, /migrations? are never coordinator work: they are `heavy`, `roles:complex-implementer` is the usual role for them/, 'the section does not say live-state work and migrations are heavy, with complex-implementer the usual role');
+  assert.doesNotMatch(text, /migrations?\b[^.]*\btake `roles:complex-implementer`/, 'the section makes complex-implementer mandatory for live-state work and migrations');
   assert.match(text, /`## After Merge`/, 'the section does not send merged-trunk operations to ## After Merge');
   assert.ok(!bullets.some((line) => line.includes('review-fixer')), '`roles:review-fixer` is still listed as a task role');
   assert.match(text, /`roles:review-fixer` is never a task role/, 'the section does not say review-fixer is never a task role');
@@ -296,8 +298,10 @@ test('## Task Roles lists the three task roles and keeps review-fixer out', () =
 });
 
 test('the plan states test-first for behavior changes at any tier, and a verification step otherwise', () => {
-  const para = section(PLANS, '## Task Structure').find((line) => line.startsWith('Test-first applies to every task that changes behavior'));
+  const para = section(PLANS, '## Task Structure').find((line) => line.startsWith('Test-first applies'));
   assert.ok(para, 'the Task Structure notes lost the test-first paragraph');
+  // The whole first sentence, so a rewrite that exempts a tier ("except light") fails.
+  assert.ok(para.startsWith('Test-first applies to every task that changes behavior, at any tier. '), `the test-first paragraph opens differently: ${para.slice(0, 90)}`);
   for (const phrase of ['at any tier', 'no behavior change', 'replaces the test steps with a verification step', 'the command to run and the output that means it passed']) {
     assert.ok(para.includes(phrase), `the test-first paragraph does not say "${phrase}"`);
   }

@@ -1,53 +1,120 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { BRAND } from '../plugins/methodology/cli/lib/brand.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const README = readFileSync(join(ROOT, 'README.md'), 'utf8');
 const version = (name) => JSON.parse(readFileSync(join(ROOT, 'plugins', name, '.claude-plugin', 'plugin.json'), 'utf8')).version;
 
-test('README plugins table carries the current plugin versions', () => {
-  for (const name of ['methodology', 'progress-tracking', 'workflow-gate', 'roles', 'memory-report']) {
-    assert.match(README, new RegExp(`\\| \`${name}\` \\| ${version(name).replace(/\./g, '\\.')} \\|`), name);
+const MARKETPLACE = JSON.parse(readFileSync(join(ROOT, '.claude-plugin', 'marketplace.json'), 'utf8'));
+const AGENTS = readdirSync(join(ROOT, 'plugins', 'roles', 'agents')).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3)).sort();
+const SKILLS = readdirSync(join(ROOT, 'plugins', 'methodology', 'skills'), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
+const { COMMANDS } = await import(pathToFileURL(join(ROOT, 'plugins', 'methodology', 'setup', 'triqual-shim.mjs')).href);
+const rows = (text) => text.split('\n').filter((line) => line.startsWith('|'));
+const commandsSection = () => README.slice(README.indexOf('## `triqual` commands'), README.indexOf('### Status line'));
+const rowStarting = (prefix) => README.split('\n').find((line) => line.startsWith(prefix));
+
+test('the plugins table lists every marketplace plugin with its plugin.json version, and nothing else', () => {
+  const table = rows(README.slice(README.indexOf('| Plugin | Version |'), README.indexOf('## Skills')));
+  const listed = table.map((line) => /^\| `([a-z-]+)` \| ([^|]+) \|/.exec(line)).filter(Boolean).map((m) => [m[1], m[2].trim()]);
+  const expected = MARKETPLACE.plugins.map((plugin) => [plugin.name, typeof plugin.source === 'string' ? version(plugin.name) : 'external']);
+  assert.deepEqual(listed.sort(), expected.sort());
+  for (const plugin of MARKETPLACE.plugins.filter((p) => typeof p.source === 'string')) {
+    assert.equal(plugin.version, version(plugin.name), `${plugin.name}: marketplace.json and plugin.json differ`);
   }
 });
 
-test('README names the eight roles', () => {
-  const row = README.split('\n').find((line) => line.startsWith('| `roles` |'));
+test('the roles row counts the agents in plugins/roles/agents and names each one', () => {
+  const row = rowStarting('| `roles` |');
   assert.ok(row, 'roles row');
-  assert.match(row, /Eight role agents/);
+  assert.ok(row.includes(`${NUMBER_WORDS[AGENTS.length][0].toUpperCase()}${NUMBER_WORDS[AGENTS.length].slice(1)} role agents`), `the row does not count ${AGENTS.length} role agents`);
+  for (const agent of AGENTS) assert.ok(row.includes(`\`${agent}\``), `the roles row lacks ${agent}`);
   assert.doesNotMatch(row, /safety-shadow/);
-  assert.doesNotMatch(row, /Six role agents/);
-  assert.doesNotMatch(row, /\bsix\b/i);
 });
 
-test('README gives the Codex routing of the role tiers, with no safety shadow', () => {
-  const rows = README.split('\n').map((line) => line.trim()).filter((line) => /^\| `[a-z-]+`.*\| `gpt-/.test(line));
-  assert.deepEqual(rows, [
+test('the Codex routing table names every role once, with its model and effort', () => {
+  const routing = README.split('\n').map((line) => line.trim()).filter((line) => /^\| `[a-z-]+`.*\| `gpt-/.test(line));
+  assert.deepEqual(routing, [
     '| `hunter`, `brief-writer`, `safety-reviewer` | `gpt-6-luna` | `medium` |',
     '| `tdd-implementer`, `review-fixer` | `gpt-6.1-sol` | `low` |',
     '| `spec-reviewer`, `complex-implementer` | `gpt-6.1-sol` | `high` |',
     '| `final-adversarial-reviewer` | `gpt-6-astra` | `medium` |',
   ]);
+  const named = routing.flatMap((line) => [...line.split('|')[1].matchAll(/`([a-z-]+)`/g)].map((m) => m[1])).sort();
+  assert.deepEqual(named, AGENTS);
   assert.doesNotMatch(README, /roles:safety-shadow|`safety-shadow`,|the safety shadow\)/);
-  const roleEval = README.split('\n').find((line) => line.startsWith('| `triqual role-eval '));
+  const roleEval = rowStarting('| `triqual role-eval ');
   assert.ok(roleEval, 'triqual role-eval row');
   assert.match(roleEval, /retired `safety-shadow` kind/);
-  assert.match(roleEval, /stored before/);
+});
+
+test('the commands table and the shim COMMANDS name the same commands', () => {
+  const documented = new Set(rows(commandsSection()).map((line) => /^\| `triqual ([a-z-]+)/.exec(line)?.[1]).filter(Boolean));
+  assert.deepEqual([...documented].sort(), Object.keys(COMMANDS).sort());
+});
+
+test('the Skills section lists exactly the skills in plugins/methodology/skills, and every methodology:<skill> resolves', () => {
+  const start = README.indexOf('## Skills');
+  assert.ok(start !== -1, 'a Skills section');
+  const section = README.slice(start, README.indexOf('\n## ', start + 1));
+  const listed = rows(section).map((line) => /^\| `([a-z-]+)` \|/.exec(line)?.[1]).filter(Boolean).sort();
+  assert.deepEqual(listed, SKILLS);
+  for (const [, name] of README.matchAll(/methodology:([a-z][a-z-]*)/g)) {
+    assert.ok(SKILLS.includes(name) || name === 'setup', `methodology:${name} is neither a skill nor the setup command`);
+  }
+});
+
+test('the Skills section states the 1.0 execution model: subagents only, tiers raised and never lowered, TDD, fence, credit', () => {
+  const start = README.indexOf('## Skills');
+  const section = README.slice(start, README.indexOf('\n## ', start + 1)).replace(/\s+/g, ' ');
+  for (const text of ['`heavy`', '`standard`', '`light`', '`tier-check`', '`triqual tasks retier`', '`roles:tdd-implementer`', '`roles:complex-implementer`',
+    '`headjack:writing-skills`', '`headjack:skill-finder`', 'fence']) {
+    assert.ok(section.includes(text), `the Skills section lacks ${text}`);
+  }
+  assert.match(section, /only through subagents/);
+  assert.match(section, /never lowered/);
+  assert.match(section, /every task follows TDD/i);
+  // The retired orchestrator's own name appears in no live file but the CHANGELOG (executing-plans.test), so it is not named here.
+  for (const removed of ['requesting-code-review', 'receiving-code-review', 'using-git-worktrees', 'dispatching-parallel-agents', 'writing-skills']) {
+    assert.ok(section.includes(`\`${removed}\``), `the Skills section does not name the removed ${removed}`);
+  }
+  assert.ok(README.includes('Jesse Vincent') && README.includes('https://github.com/obra/superpowers'), 'the superpowers credit');
+});
+
+test('the commands table documents the 1.0 tier surface', () => {
+  const tasks = rowStarting('| `triqual tasks <subcommand>` |');
+  assert.ok(tasks, 'triqual tasks row');
+  for (const role of ['coordinator', 'roles:tdd-implementer', 'roles:complex-implementer', 'roles:review-fixer']) assert.ok(tasks.includes(`\`${role}\``), `the tasks row lacks ${role}`);
+  for (const text of ['retier T<N> <tier> --reason', 'next [--json]', '`tiers`', 'effectiveTier', '`**Tier:**`']) assert.ok(tasks.includes(text), `the tasks row lacks ${text}`);
+  const roleEval = rowStarting('| `triqual role-eval ');
+  for (const text of ['summary --by-tier', '`task-review`', '`final-escapes`', '`hunters`']) assert.ok(roleEval.includes(text), `the role-eval row lacks ${text}`);
+  const gate = rowStarting('| `workflow-gate` |');
+  for (const text of ['`Agent`', 'WORKFLOW_GATE_AGENT_WINDOW_S', '120 s']) assert.ok(gate.includes(text), `the workflow-gate row lacks ${text}`);
+  assert.ok(rowStarting('| `memory-report` |').includes('review tiers'), 'the memory-report row lacks the review-tier section');
+});
+
+test('CHANGELOG.md has an entry for each plugin 1.0 changes, with what moved, what was removed and the credit', () => {
+  const changelog = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
+  for (const plugin of ['methodology', 'progress-tracking', 'workflow-gate', 'memory-report']) {
+    assert.match(changelog, new RegExp(`^## ${plugin} \\d+\\.\\d+\\.\\d+`, 'm'), `an entry for ${plugin}`);
+  }
+  assert.match(changelog, /^### Removed$/m);
+  const retiredOrchestrator = ['subagent', 'driven', 'development'].join('-');
+  for (const removed of [retiredOrchestrator, 'requesting-code-review', 'receiving-code-review', 'using-git-worktrees', 'dispatching-parallel-agents', 'writing-skills']) {
+    assert.ok(changelog.includes(`\`${removed}\``), `the CHANGELOG does not name the removed ${removed}`);
+  }
+  assert.match(changelog, /^### Credit$/m);
+  assert.ok(changelog.includes('Jesse Vincent') && changelog.includes('github.com/obra/superpowers'));
+  const manifest = JSON.parse(readFileSync(join(ROOT, 'public-export.json'), 'utf8'));
+  assert.ok(manifest.include.includes('CHANGELOG.md'), 'CHANGELOG.md is in the export manifest');
 });
 
 test('README lists triqual memory in the commands table', () => {
   assert.ok(README.split('\n').some((line) => line.startsWith('| `triqual memory ')), 'triqual memory row');
-});
-
-test('README lists every task role in the triqual tasks row, roles:complex-implementer included', () => {
-  const row = README.split('\n').find((line) => line.startsWith('| `triqual tasks <subcommand>` |'));
-  assert.ok(row, 'triqual tasks row');
-  assert.ok(row.includes("A task's role is its plan `**Role:**` line (`coordinator`, `roles:tdd-implementer` by default, "
-    + '`roles:complex-implementer` or `roles:review-fixer`); `check` flags any other.'), row);
 });
 
 test('README documents triqual tasks, triqual ui and the status-line snippet', () => {
@@ -269,11 +336,13 @@ test('README lists headjack as an optional external plugin', () => {
   assert.doesNotMatch(row, /0\.1\.0/);
 });
 
-test('README states that the push consent also covers marking the PRs ready for review after the final review', () => {
+test('README says the push consent covers the phase branches, the draft PRs and marking them ready after the final review, and nothing else', () => {
   const text = README.replace(/\s+/g, ' ');
   const consent = text.slice(text.indexOf('Since 0.6.0 the methodology executes a plan as a stack'), text.indexOf('## Quick start'));
-  assert.match(consent, /open and update draft PRs and mark them ready for review after the final review/);
+  assert.match(consent, /pushes the phase branches, opens and updates draft PRs and marks them ready for review after the final review/);
   assert.match(consent, /authorizes that push of the plan's phase branches and draft PRs, and marking them ready for review after the final review, nothing else/);
+  assert.doesNotMatch(consent, /\bit will\b/);
+  assert.match(consent, /merging stays yours/);
 });
 
 test('README and CONTRIBUTING say development happens in the public repository, name the maintainer hooks and carry no private name', () => {

@@ -67,6 +67,8 @@ What it checks:
 - A scan for leftovers of the previous name.
 - That `headjack` is reachable. A warning only.
 - `progress-tracking` 0.2.4 or newer, when a harness is set up.
+- Codex skill links that point at a skill methodology no longer ships (the six removed in 1.0 among them). A warning,
+  with `triqual sync --harness codex` as the fix.
 - Codex hook trust. A bridge hook that Codex has not trusted is a failure. A bridge that has not run since it was
   installed is a warning.
 
@@ -130,21 +132,29 @@ Usage:
 ```text
 triqual role-eval record --plan <plan file> <json-file>
 triqual role-eval summary [--since YYYY-MM-DD] [--json]
+triqual role-eval summary --by-tier [--since YYYY-MM-DD] [--json]
 ```
 
-The comparison store behind the review hunters.
+The comparison store behind the review hunters and the review tiers. Records hold counts only: no repository, plan,
+path, diff or finding text.
 
-`record` validates one `hunters` record and appends it once. The record has these rules:
+`record` validates one record of kind `hunters`, `task-review` or `final-escapes` and appends it once. The record has
+these rules:
 
 - The JSON file has no `key` field. Any `key` field is rejected, because the command derives the key.
 - `task` is `T<n>` or `final`. `provider` is `claude` or `codex`.
 - Each hunter has a `category`: `correctness`, `security`, `spec-drift` or `state`.
 - `candidates` must equal `confirmed + refuted + duplicateCandidate + duplicateReview`.
 - An optional `budget` holds `reference`, `used` and `overrun`.
+- A `task-review` (`v` 2, written by `executing-plans` when a task completes) has an `attempt` (1, then one more after
+  each reopen of the task), the `tier` the task completed at, its `declaredTier` (`null` for a tierless task), `raised`,
+  its `hunters`, the `gate` findings, the `spec` review, `fixRounds`, `blocked` and `coordinator`. A `tier` below the
+  declared one is refused, and `raised` must say exactly that the tier is above it.
+- A `final-escapes` (`v` 2, task `final`) lists the `tier` and `severity` of each final-review finding traced to a task.
 - The kind `safety-shadow` is retired and refused.
 
-The idempotency key is the sha256 of the git common directory, the plan file's base name, the task and the kind. Because
-linked worktrees share the common directory, they share keys. A second `record` with the same key prints
+The idempotency key is the sha256 of the git common directory, the plan file's base name, the task and the kind, and for
+a `task-review` also its attempt. Because linked worktrees share the common directory, they share keys. A second `record` with the same key prints
 `already recorded` and changes nothing. The command must run inside a git repository. The appends are serialized by
 `comparisons.jsonl.lock`: it waits 2 seconds and treats a lock older than 30 seconds as stale. The file is always mode
 `0600`. The directory is set to `0700` only when it is the default directory or when `record` created it.
@@ -153,6 +163,12 @@ linked worktrees share the common directory, they share keys. A second `record` 
 It also covers the `safety-shadow` records stored before that kind was retired. `--since` takes a valid calendar date,
 and 2026-02-30 is refused. `--json` prints the same numbers as JSON. An empty or missing store prints
 `No records in the window (0 records).` (with `--json`, `{"providers":{},"skipped":{...}}`).
+
+`summary --by-tier` prints one line per review tier, `heavy`, `standard` and `light`, always all three: `tasks` (the
+attempt-1 task reviews, so a reopened task counts once), `raised` (those whose tier was raised above the declared
+one), the hunter confirmed rate, spec confirmed findings per task, fix rounds per task, `blocked`, and final-review
+escapes per task. A figure with no denominator reads `n/a`, or `null` with `--json`, which prints an object keyed by
+tier. [memory-report](../memory-report/README.md) reads the `--json` form for its weekly "Review tiers" section.
 
 Exit codes: 0 written, already recorded, or a summary (a missing file included), 1 a write or lock failure or a store
 that exists but cannot be read, 2 a usage error, a bad or retired record, a bad JSON file or no git repository. The
@@ -219,7 +235,17 @@ phase PLAN_FILE N                                                   check out ph
 squash PLAN_FILE BASE                                               fold BASE..HEAD into one commit, print its sha
 done PLAN_FILE N                                                    mark phase N done
 submit PLAN_FILE N [--open]                                         reconcile gh stack, submit, fill phase N's PR
+push PLAN_FILE N                                                    push a submitted phase, refresh its PR body
 ```
+
+`push` is for the commits a review adds after a phase was submitted. It pushes this plan's whole stack, refreshes phase
+N's PR body and never marks a PR ready. It refuses a phase that was not submitted (exit 3), and in local mode it pushes
+nothing. `submit --open` is the only command that marks a PR ready for review.
+
+`executing-plans` keeps four more scripts next to it in `skills/executing-plans/scripts/`: `sdd-workspace` (the plan's
+git-ignored workspace under `.methodology/sdd/`), `task-brief` (one task's text as a brief file), `review-package` (the
+diff a reviewer reads) and `tier-check`, which prints `ok <tier>` or `raise <from> <to>: <reason>: <paths>` for a task's
+range and never lowers a tier.
 
 Exit codes: 0 ok, 2 usage or a malformed plan, 3 a refused precondition (committed tracking mode is one), 5 a gh
 command failed.
@@ -248,6 +274,11 @@ stamps.
 
 The 10 skills in `skills/`. Claude Code names them `methodology:<name>`.
 
+Plans run only through subagents. `executing-plans` dispatches a role agent for each task, sizes the task's review by
+its tier (`heavy`, `standard` or `light`, declared by `writing-plans` and raised, never lowered, by `tier-check`) and
+follows TDD on every task. It cooperates with fence when fence is installed and never works around a denial. The
+[root README](../../README.md#skills) has the review matrix.
+
 | Skill | Purpose |
 |---|---|
 | `using-methodology` | Start of every conversation: how to find and use skills, and to invoke one before any response. |
@@ -260,6 +291,12 @@ The 10 skills in `skills/`. Claude Code names them `methodology:<name>`.
 | `verification-before-completion` | Run the verification commands and read the output before claiming work is done, fixed or passing. |
 | `finishing-branch` | When implementation is complete and tests pass: close the plan and decide how to integrate the work. |
 | `diagnosing-methodology` | Find why a session that ran these skills went wrong, or build a bug report for this system's repository, on any harness. |
+
+Removed in 1.0: the old orchestrator skill (now `executing-plans`), the old inline `executing-plans`,
+`requesting-code-review` and `receiving-code-review` (merged into `reviewing-code`), `using-git-worktrees` (a section of
+`executing-plans`), `dispatching-parallel-agents` (covered by the global rules) and `writing-skills`. Writing and finding
+skills now belong to Headjack (`headjack:writing-skills`, `headjack:skill-finder`). The
+[CHANGELOG](../../CHANGELOG.md) has the full list.
 
 ## Files and environment variables
 
@@ -278,6 +315,7 @@ Files this plugin reads or writes. `~` is the home directory.
 | `~/.local/state/triqual/hook.log`, `hook.log.1`, `last-run-<harness>` | The launcher's log and stamps. |
 | `${XDG_DATA_HOME:-~/.local/share}/triqual/role-eval/comparisons.jsonl` | The role-eval store (and its `.lock`). |
 | `<repo root>/.methodology/stack/<plan file stem>.json` | The state file of `stack.mjs`. `.methodology/` holds a `.gitignore` with `*`. |
+| `<repo root>/.methodology/sdd/<plan file stem>/` | The workspace of one plan run: its ledger, briefs, reports and review packages. The stem is the plan file name without `.md`; a counter is added when two plans share a stem. |
 
 A machine that still has the previous name reads the directories under that name until `migrate` moves them.
 

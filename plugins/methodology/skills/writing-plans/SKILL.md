@@ -130,7 +130,7 @@ Every task gets a `**Role:**` line naming the role that does its work. Choosing 
 - `roles:complex-implementer` takes a task where a mistake is costly: multi-system changes, migrations of live state, or other work that needs the stronger model. Same test-first discipline; mark only the tasks that need it, and tier them `heavy`.
 - `coordinator` takes work the controller must do itself: probes, rollout steps (deploys, env vars, status updates), user checkpoints, and anything that needs your human partner in the loop. It may also take a small, low-risk fix, within the `light` code allowance; every `coordinator` task is `light`.
 
-Live-state work and migrations are never coordinator work: they take `roles:complex-implementer` and are `heavy`, and a production operation that needs the merged trunk is an `## After Merge` item. `roles:review-fixer` is never a task role: the orchestrator dispatches it for fix rounds, so a plan never plans one. Reviewer roles and the brief writer serve a task and are never its role either. A plan without the line reads as `roles:tdd-implementer`, but write it for every task anyway.
+Live-state work and migrations are never coordinator work: they are `heavy`, `roles:complex-implementer` is the usual role for them, and a production operation that needs the merged trunk is an `## After Merge` item. `roles:review-fixer` is never a task role: the orchestrator dispatches it for fix rounds, so a plan never plans one. Reviewer roles and the brief writer serve a task and are never its role either. A plan without the line reads as `roles:tdd-implementer`, but write it for every task anyway.
 
 ## Task Tiers
 

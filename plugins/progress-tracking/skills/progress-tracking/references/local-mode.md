@@ -12,7 +12,7 @@
 Claude Code treats everything under `.git/` as a sensitive file: an agent's Edit or Write there is refused, and so
 is a shell redirect into it, even in `acceptEdits`. A program that writes the file itself is allowed when its command
 is. Reading there works. So never write or edit under `.git/` with the file tools; write a draft in the OS temp dir
-under a unique name (`draft=$(mktemp)`), then land it:
+under a unique name (run `mktemp` on its own; the path it prints is the draft), then land it:
 
 | Command | What it does |
 |---|---|
