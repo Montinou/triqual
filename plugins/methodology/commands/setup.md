@@ -33,4 +33,4 @@ rule.
   `import --replace`.
 - Backups of each file it edits under `~/.claude/backups/triqual-<stamp>/`.
 
-Codex, Grok and the `language` key need `node bin/bootstrap.mjs` from a clone of the repository.
+Codex, Grok and the `language` key need a terminal: `npx triqual setup`, or `node bin/bootstrap.mjs` from a clone.

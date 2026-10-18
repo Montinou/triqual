@@ -27,8 +27,8 @@ Usage: `/methodology:setup` in Claude Code, then `/reload-plugins`.
 Finishes the machine-level setup after a marketplace install. It runs the installer from the plugin
 (`setup/bootstrap.mjs`) with `--yes --keep-language --no-harness`: the `triqual` command and the hook launcher in
 `~/.local/bin`, the global rules, the system plugins and the `Bash(triqual tracking:*)` allow rule. It does not set up
-Codex or Grok and does not touch the `language` key; both need `node bin/bootstrap.mjs` from a clone (see
-[Install](../../README.md#install)).
+Codex or Grok and does not touch the `language` key; both need a terminal: `npx triqual setup`, or
+`node bin/bootstrap.mjs` from a clone (see [Install](../../README.md#install)).
 
 On a machine that still has the previous marketplace name, it also runs `migrate`. It also removes the legacy copies of
 the role agents in `~/.claude/agents` and the legacy Workflow gate hook. That removal is skipped while the rules step
