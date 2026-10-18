@@ -1308,3 +1308,158 @@ test("the fake gh's stack view has the shape of the real two-PR capture", () => 
     assert.equal(mine.branches.length, real.branches.length);
   });
 });
+
+// --- push -------------------------------------------------------------------------------------------------------
+
+test('push in local mode is a no-op, whatever the phase state', () => {
+  withRig({ withGh: false }, (r) => {
+    r.json(r.run(['init', r.plan]));
+    finishPhase(r, 1);
+    const res = r.run(['push', r.plan, '1']);
+    assert.equal(res.status, 0, res.stderr);
+    assert.equal(res.stdout, 'local mode: nothing pushed\n');
+    assert.equal(r.ghLog().length, 0);
+    assert.deepEqual(states(r), [['done', null], ['pending', null]]);
+  });
+});
+
+test('push refuses a phase that was never submitted, a merged one, a dirty tree and bad arguments', () => {
+  withGithub((r) => {
+    for (const state of ['pending', 'active', 'done']) {
+      mark(r, 1, state);
+      const res = r.run(['push', r.plan, '1']);
+      assert.equal(res.status, 3, `${state}: ${res.stderr}`);
+      assert.match(res.stderr, new RegExp(`phase 1 is ${state}`));
+    }
+    mark(r, 1, 'merged');
+    assert.equal(r.run(['push', r.plan, '1']).status, 3, 'a merged phase is final');
+    assert.equal(r.run(['push', r.plan, 'one']).status, 2);
+    assert.equal(r.run(['push', r.plan, '9']).status, 2);
+    assert.equal(r.run(['push', r.plan, '1', '--open']).status, 2);
+    assert.equal(r.ghLog().length, 0, 'a refusal calls no gh');
+
+    mark(r, 1, 'pending');
+    finishPhase(r, 1);
+    assert.equal(r.run(['submit', r.plan, '1']).status, 0);
+    writeFileSync(join(r.dir, r.plan), `${PHASED}\nedited\n`);
+    clearLog(r);
+    const dirty = r.run(['push', r.plan, '1']);
+    assert.equal(dirty.status, 3, dirty.stderr);
+    assert.match(dirty.stderr, /clean/);
+    assert.equal(r.ghLog().length, 0);
+  });
+});
+
+test('push of a submitted draft phase submits the stack and refreshes the body, never marking it ready', () => {
+  withGithub((r) => {
+    finishPhase(r, 1, 'feat: first subject');
+    assert.equal(r.run(['submit', r.plan, '1']).status, 0);
+    r.commit('review-fix.txt', 'fix\n', 'fix: review feedback');
+    clearLog(r);
+    const res = r.run(['push', r.plan, '1']);
+    assert.equal(res.status, 0, res.stderr);
+    assert.equal(res.stdout, 'Phase 1: pushed (demo/01-core, PR #7)\n');
+    const calls = stackCalls(r);
+    assert.equal(calls.length, 4, JSON.stringify(calls));
+    assert.deepEqual(calls.slice(0, 3), [view, submitArgv, view]);
+    assert.deepEqual(calls[3].slice(0, 6), ['pr', 'edit', '7', '--repo', 'acme/demo', '--body-file']);
+    assert.equal(calls[3].length, 7, 'the title is left as it is');
+    const body = readFileSync(calls[3][6], 'utf8');
+    assert.ok(body.includes('feat: first subject') && body.includes('fix: review feedback'), body);
+    assert.equal(r.ghLog().filter((argv) => argv.includes('ready') || argv.includes('--open') || argv.includes('--draft')).length, 0);
+    assert.deepEqual(states(r), [['submitted', 7], ['pending', null]]);
+    assert.equal(branchNow(r), 'demo/01-core');
+  });
+});
+
+test('push of phase 2 adds nothing to the stack and keeps a ready phase ready', () => {
+  withGithub((r) => {
+    finishPhase(r, 1);
+    assert.equal(r.run(['submit', r.plan, '1']).status, 0);
+    finishPhase(r, 2);
+    assert.equal(r.run(['submit', r.plan, '2']).status, 0);
+    mark(r, 2, 'ready');
+    r.git('switch', '--quiet', 'demo/01-core');
+    clearLog(r);
+    const res = r.run(['push', r.plan, '2']);
+    assert.equal(res.status, 0, res.stderr);
+    assert.equal(res.stdout, 'Phase 2: pushed (demo/02-edge, PR #8)\n');
+    const calls = stackCalls(r);
+    assert.deepEqual(calls.slice(0, 3), [view, submitArgv, view]);
+    assert.deepEqual(calls[3].slice(0, 6), ['pr', 'edit', '8', '--repo', 'acme/demo', '--body-file']);
+    assert.equal(calls.length, 4, JSON.stringify(calls));
+    assert.deepEqual(addedFrom(r), ['demo/02-edge demo/01-core'], 'no second add');
+    assert.deepEqual(states(r), [['submitted', 7], ['ready', 8]]);
+    assert.equal(branchNow(r), 'demo/02-edge');
+    assert.equal(r.ghLog().filter((argv) => argv.includes('ready')).length, 0);
+  });
+});
+
+test('a failing gh during push exits 5, records nothing and puts HEAD back', () => {
+  withGithub((r) => {
+    finishPhase(r, 1);
+    assert.equal(r.run(['submit', r.plan, '1']).status, 0);
+    r.git('switch', '--quiet', 'main');
+    const before = readFileSync(r.statePath, 'utf8');
+    const res = r.run(['push', r.plan, '1'], forcedFailure);
+    assert.equal(res.status, 5, res.stderr);
+    assert.equal(readFileSync(r.statePath, 'utf8'), before);
+    assert.equal(branchNow(r), 'main');
+  });
+});
+
+test('push guards both halves: a merged phase with a PR and a submitted phase without one are refused', () => {
+  withGithub((r) => {
+    finishPhase(r, 1);
+    assert.equal(r.run(['submit', r.plan, '1']).status, 0);
+    const setPhase = (fields) => {
+      const s = r.state();
+      Object.assign(s.phases[0], fields);
+      writeFileSync(r.statePath, `${JSON.stringify(s, null, 2)}\n`);
+    };
+    clearLog(r);
+    setPhase({ state: 'merged', pr: 7 });
+    const merged = r.run(['push', r.plan, '1']);
+    assert.equal(merged.status, 3, merged.stderr);
+    assert.match(merged.stderr, /phase 1 is merged/);
+    setPhase({ state: 'submitted', pr: null });
+    const noPr = r.run(['push', r.plan, '1']);
+    assert.equal(noPr.status, 3, noPr.stderr);
+    assert.match(noPr.stderr, /phase 1 is submitted/);
+    assert.equal(r.ghLog().length, 0, 'a refusal calls no gh');
+  });
+});
+
+test('push exits 5 naming both numbers when the stack shows another PR than the recorded one, editing nothing', () => {
+  withGithub((r) => {
+    finishPhase(r, 1);
+    assert.equal(r.run(['submit', r.plan, '1']).status, 0);
+    const s = r.state();
+    s.phases[0].pr = 99;
+    writeFileSync(r.statePath, `${JSON.stringify(s, null, 2)}\n`);
+    const before = readFileSync(r.statePath, 'utf8');
+    clearLog(r);
+    const res = r.run(['push', r.plan, '1']);
+    assert.equal(res.status, 5, res.stderr);
+    assert.match(res.stderr, /#99/);
+    assert.match(res.stderr, /#7/);
+    assert.equal(r.ghLog().filter((argv) => argv[0] === 'pr' && argv[1] === 'edit').length, 0, 'no PR body is edited');
+    assert.equal(readFileSync(r.statePath, 'utf8'), before);
+  });
+});
+
+test('push keeps submit\'s ; stack link missing suffix', () => {
+  withGithub((r) => {
+    finishPhase(r, 1);
+    assert.equal(r.run(['submit', r.plan, '1']).status, 0);
+    finishPhase(r, 2);
+    assert.equal(r.run(['submit', r.plan, '2']).status, 0);
+    const bare = join(r.work, 'submit-bare.txt');
+    writeFileSync(bare, 'Checking stack state...\nPushing to origin...\n');
+    const res = r.run(['push', r.plan, '2'], { FAKE_GH_SUBMIT_OUT: bare });
+    assert.equal(res.status, 0, res.stderr);
+    assert.equal(res.stdout, 'Phase 2: pushed (demo/02-edge, PR #8); stack link missing\n');
+    // A linked stack (the fake's captured output) prints no suffix.
+    assert.equal(r.run(['push', r.plan, '2']).stdout, 'Phase 2: pushed (demo/02-edge, PR #8)\n');
+  });
+});

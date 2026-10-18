@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Owns every git and gh operation of a stacked plan execution: one branch (and, in GitHub mode, one draft PR) per
-// plan phase: plan parsing, the state file, mode detection and the init, mode, path, status, phase, squash, done and
-// submit commands.
+// plan phase: plan parsing, the state file, mode detection and the init, mode, path, status, phase, squash, done,
+// submit and push commands.
 //
 // Usage: stack.mjs <command> PLAN_FILE ...
 //   init PLAN_FILE [--trunk <b>] [--mode github|local] [--remote <r>]   print the state (JSON), writing it first time
@@ -12,6 +12,7 @@
 //   squash PLAN_FILE BASE                                               fold BASE..HEAD into one commit, print its sha
 //   done PLAN_FILE N                                                    mark phase N done
 //   submit PLAN_FILE N [--open]                                         reconcile gh stack, submit, fill phase N's PR
+//   push PLAN_FILE N                                                    push a submitted phase, refresh its PR body
 //
 // Exit codes: 0 ok, 2 usage or malformed plan, 3 refused precondition, 5 a gh command failed.
 // Node built-ins, git and gh only. Every gh call is non-interactive.
@@ -723,6 +724,35 @@ function currentBranch(cwd) {
   }
 }
 
+// The GitHub-mode preconditions of submit and push, then the PR body written to the plan's workspace: { slug, bodyFile }.
+function prepareGithub(ctx, state, phase) {
+  const { cwd } = ctx;
+  if (!state.remote) fail(EXIT_REFUSED, 'the state records no remote: switch with stack mode local, or run stack mode github');
+  requireCleanTree(cwd);
+  // --repo on pr edit: with several remotes or a default repo set to an upstream, a bare number may name another repo's PR.
+  const slug = githubSlug(state.remote, cwd);
+  if (!slug) fail(EXIT_REFUSED, `remote "${state.remote}" is no longer a GitHub remote: switch with stack mode local`);
+
+  const bodyFile = join(workspaceOf(ctx), `pr-body-${String(phase.n).padStart(2, '0')}.md`);
+  writeFileSync(bodyFile, prBody(ctx, state, phase));
+  return { slug, bodyFile };
+}
+
+// Reconciles the stack, checks phase N's branch out and runs gh stack submit (with --open, the PRs leave draft); then reads
+// the stack back: { submitted (gh's output), prs (branch -> PR number), prOf (phase -> PR number, exit 5 when none) }.
+function submitStack(ctx, state, phase, open) {
+  const { cwd } = ctx;
+  reconcileStack(ctx, state, phase.n);
+  switchTo(cwd, branchOf(phase));
+  // gh-stack v0.1.1 prints every status line to stderr and nothing to stdout: the link test reads both.
+  const result = ghRun(['stack', 'submit', '--auto', ...(open ? ['--open'] : []), '--remote', state.remote], { cwd });
+  const submitted = `${result.stdout}\n${result.stderr}`;
+  const prs = new Map();
+  for (const b of ghStackView({ cwd })?.branches ?? []) if (b.pr?.number) prs.set(b.name, b.pr.number);
+  const prOf = (p) => prs.get(p.branch) ?? fail(EXIT_GH, `gh stack view --json shows no PR for ${p.branch} after the submit`);
+  return { submitted, prs, prOf };
+}
+
 function cmdSubmit(args) {
   const usage = 'usage: stack.mjs submit PLAN_FILE N [--open]';
   const open = args.includes('--open');
@@ -742,26 +772,12 @@ function cmdSubmit(args) {
     fail(EXIT_REFUSED, `phase ${phase.n} is ${phase.state}: only a done phase is submitted`);
   }
   if (state.mode === 'local') return out('local mode: nothing to submit');
-  if (!state.remote) fail(EXIT_REFUSED, 'the state records no remote: switch with stack mode local, or run stack mode github');
-  requireCleanTree(cwd);
-  // --repo on pr edit: with several remotes or a default repo set to an upstream, a bare number may name another repo's PR.
-  const slug = githubSlug(state.remote, cwd);
-  if (!slug) fail(EXIT_REFUSED, `remote "${state.remote}" is no longer a GitHub remote: switch with stack mode local`);
-
-  const bodyFile = join(workspaceOf(ctx), `pr-body-${String(phase.n).padStart(2, '0')}.md`);
-  writeFileSync(bodyFile, prBody(ctx, state, phase));
+  const { slug, bodyFile } = prepareGithub(ctx, state, phase);
 
   const startedOn = currentBranch(cwd);
   let lines;
   try {
-    reconcileStack(ctx, state, phase.n);
-    switchTo(cwd, branchOf(phase));
-    // gh-stack v0.1.1 prints every status line to stderr and nothing to stdout: the link test reads both.
-    const result = ghRun(['stack', 'submit', '--auto', ...(open ? ['--open'] : []), '--remote', state.remote], { cwd });
-    const submitted = `${result.stdout}\n${result.stderr}`;
-    const prs = new Map();
-    for (const b of ghStackView({ cwd })?.branches ?? []) if (b.pr?.number) prs.set(b.name, b.pr.number);
-    const prOf = (p) => prs.get(p.branch) ?? fail(EXIT_GH, `gh stack view --json shows no PR for ${p.branch} after the submit`);
+    const { submitted, prs, prOf } = submitStack(ctx, state, phase, open);
     const touched = open ? state.phases : [phase];
     const numbers = touched.map(prOf);
     gh(['pr', 'edit', String(prOf(phase)), '--repo', slug, '--title', phase.title, '--body-file', bodyFile], { cwd });
@@ -778,6 +794,42 @@ function cmdSubmit(args) {
   return out(lines.join('\n'));
 }
 
+// Pushes a submitted (draft or ready) phase again, after review fixes: the stack is reconciled and submitted without
+// --open, and the PR body is rewritten. The PR's draft state, its title and the state file stay as they were.
+// `gh stack submit --auto` pushes every member of this plan's stack (requireOwnStack limits the members to the plan's
+// phase branches, in order) and never marks a PR ready. A PR number in `gh stack view` that differs from the recorded
+// one exits 5 before any body is edited.
+function cmdPush(args) {
+  const usage = 'usage: stack.mjs push PLAN_FILE N';
+  const unknown = args.find((a) => a.startsWith('--'));
+  if (unknown) fail(EXIT_USAGE, `unknown option ${unknown}`);
+  const ctx = context(args[0]);
+  const { cwd } = ctx;
+  const state = loadState(ctx);
+  const phase = phaseOf(state, args[1], usage);
+  if (state.mode === 'local') return out('local mode: nothing pushed');
+  if (phase.pr === null || !['submitted', 'ready'].includes(phase.state)) {
+    fail(EXIT_REFUSED, `phase ${phase.n} is ${phase.state}: only a submitted or ready phase is pushed (submit it first)`);
+  }
+  const { slug, bodyFile } = prepareGithub(ctx, state, phase);
+
+  const startedOn = currentBranch(cwd);
+  try {
+    const { submitted, prs, prOf } = submitStack(ctx, state, phase, false);
+    const number = prOf(phase);
+    // The recorded PR may have been closed and --auto may have opened a new draft: no body is edited, nothing recorded.
+    if (number !== phase.pr) {
+      fail(EXIT_GH, `phase ${phase.n}: the state records PR #${phase.pr} but gh stack view shows PR #${number} for ${phase.branch}`);
+    }
+    gh(['pr', 'edit', String(number), '--repo', slug, '--body-file', bodyFile], { cwd });
+    const linkMissing = prs.size >= 2 && !STACK_LINKED.test(submitted) ? LINK_MISSING : '';
+    return out(`Phase ${phase.n}: pushed (${phase.branch}, PR #${number})${linkMissing}`);
+  } catch (e) {
+    if (startedOn && currentBranch(cwd) !== startedOn) gitOk(['switch', '--quiet', startedOn], { cwd });
+    throw e;
+  }
+}
+
 const COMMANDS = {
   init: cmdInit,
   mode: cmdMode,
@@ -787,6 +839,7 @@ const COMMANDS = {
   squash: cmdSquash,
   done: cmdDone,
   submit: cmdSubmit,
+  push: cmdPush,
 };
 
 export function main(argv) {
