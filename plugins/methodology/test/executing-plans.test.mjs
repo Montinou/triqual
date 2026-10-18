@@ -278,6 +278,13 @@ test('tier-check runs before the review and again on every fix round, and a rais
   assert.ok(text.includes('`node scripts/tier-check PLAN_FILE N BASE HEAD --floor <tier>`'));
   assert.ok(text.includes('a raise is recorded with `triqual tasks retier` before the review'));
   assert.ok(text.includes("`tier-check` runs again on each round's `FIX_BASE..HEAD` and on the cumulative `BASE..HEAD`"));
+});
+
+test('a fix round passes --fix-round on its FIX_BASE..HEAD check, so code added by a fix raises a light task', () => {
+  const text = flat(skill());
+  assert.ok(text.includes("`node scripts/tier-check PLAN_FILE N FIX_BASE HEAD --floor <tier> --fix-round`"));
+  assert.ok(text.includes('`--fix-round`: with a light floor, any change outside the light classes raises to standard'));
+  assert.ok(text.includes('the cumulative `BASE..HEAD` check never carries it'));
   assert.ok(text.includes('the re-review follows the higher tier'));
 });
 
@@ -480,10 +487,13 @@ test('a refusal that matches the rule is a denial even when the ledger says Fenc
   assert.ok(flat(section(skill(), '## Ledger vocabulary')).includes('the last `Fence:` line counts'));
 });
 
-test('the fallback printout prints a mode only when it is plain letters and a slug only when it matches the slug rule', () => {
+test('the fallback printout maps the document mode to a HEADJACK_MODE value and a slug only when it matches the slug rule', () => {
   const text = flat(section(skill(), '### Fence'));
   for (const phrase of [
-    'only when the mode is plain letters',
+    "the `mode` of the `--json` document (it is on the document, never on a suggestion)",
+    '`hosted` prints `HEADJACK_MODE=remote`',
+    '`local` prints `HEADJACK_MODE=local`',
+    'any other value prints no prefix',
     '`^[A-Za-z0-9][A-Za-z0-9._@:-]{0,127}$`',
     'skip any other slug and say so',
   ]) {

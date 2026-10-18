@@ -165,6 +165,32 @@ test('a 15-line .mjs fix plus its cases in an existing test file stays light; 25
   });
 });
 
+test('--fix-round: code added in a fix round raises a light task, whatever its size; without the flag it stays light', () => {
+  const base = { 'src/a.mjs': lines(30), 'docs/a.md': lines(5) };
+  scenario(base, { 'src/a.mjs': lines(30) + lines(4, 'fn') }, [], (repo, head) => {
+    const flagged = run(repo, 1, head, '--fix-round');
+    assert.match(flagged.out, /^raise light standard: fix round adds code: src\/a\.mjs$/);
+    assert.equal(flagged.status, 0);
+    assert.equal(run(repo, 1, head).out, 'ok light');
+  });
+  scenario(base, { 'docs/a.md': lines(5) + lines(6, 'doc') }, [], (repo, head) => {
+    assert.equal(run(repo, 1, head, '--fix-round').out, 'ok light');
+  });
+});
+
+test('--fix-round leaves other floors and heavy triggers alone, and rides along with --floor', () => {
+  const base = { 'src/a.mjs': lines(30) };
+  scenario(base, { 'src/a.mjs': lines(30) + lines(4, 'fn') }, [], (repo, head) => {
+    assert.equal(run(repo, 4, head, '--fix-round').out, 'ok standard');
+    assert.equal(run(repo, 3, head, '--fix-round').out, 'ok standard'); // tierless, no --floor: floors at standard
+    assert.match(run(repo, 3, head, '--fix-round', '--floor', 'light').out, RAISE('light', 'standard', 'src/a.mjs'));
+    assert.equal(run(repo, 2, head, '--fix-round').out, 'ok heavy');
+  });
+  scenario(base, { 'src/hooks/x.mjs': lines(2) }, [], (repo, head) => {
+    assert.match(run(repo, 1, head, '--fix-round').out, RAISE('light', 'heavy', 'src/hooks/x.mjs'));
+  });
+});
+
 test('the light code allowance counts added plus removed lines, up to 20 inclusive', () => {
   scenario({ 'src/a.mjs': lines(30) }, { 'src/a.mjs': lines(30).replace(/^line 1\n/, '').replace(/^line 2\n/m, '') + lines(8, 'new') }, [], (repo, head) => {
     // 2 removed + 8 added = 10

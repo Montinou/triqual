@@ -2,10 +2,10 @@
 // tier-check (design U4): raise a task's review tier from its actual diff. A task declared light cannot dodge review by
 // touching more than it said, and no path through this script lowers a tier.
 //
-// Usage: tier-check PLAN_FILE N BASE HEAD [--floor <tier>]
+// Usage: tier-check PLAN_FILE N BASE HEAD [--floor <tier>] [--fix-round]
 // Prints `ok <tier>` or `raise <from> <to>: <reason>: <paths>`; exit 0. Exit 2 on bad input (unknown task, bad range,
 // bad floor, unreadable plan, usage). The orchestrator passes the task's effective tier as --floor and records a raise
-// with `triqual tasks retier`.
+// with `triqual tasks retier`. --fix-round marks the range as a fix round's (FIX_BASE..HEAD): see the last rule.
 //
 // Rules, in order (never lowering):
 //   floor    the higher of --floor and the plan's declared tier; a tierless task with no --floor floors at standard.
@@ -13,6 +13,8 @@
 //   standard (from light) the diff touches anything outside the light classes: Markdown outside the excluded classes
 //            and JSON whose only changed top-level key is `version`. Lockfiles are never light. Other files stay light
 //            while, together, they add + remove at most 20 lines, create no file and are not binary.
+//   fix round (--fix-round, floor light) any change outside the light classes raises to standard, whatever its size: the
+//            light code allowance covers a task's first build, never code added by a fix.
 // A rename touches both its old and new path; a pure rename adds 0 lines and is not a create.
 //
 // Plain Node, node: built-ins only. Written so that it runs as ESM or CommonJS (dynamic imports only, no `require`, no
@@ -100,10 +102,13 @@ async function main(argv) {
   // ---- arguments ----
   const args = [];
   let floorArg = null;
+  let fixRound = false;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--floor') {
       if (i + 1 >= argv.length) throw new BadInput('--floor needs a tier');
       floorArg = argv[++i];
+    } else if (argv[i] === '--fix-round') {
+      fixRound = true;
     } else if (argv[i].startsWith('--floor=')) {
       floorArg = argv[i].slice('--floor='.length);
     } else if (argv[i].startsWith('--')) {
@@ -112,7 +117,7 @@ async function main(argv) {
       args.push(argv[i]);
     }
   }
-  if (args.length !== 4) throw new BadInput('usage: tier-check PLAN_FILE N BASE HEAD [--floor <tier>]');
+  if (args.length !== 4) throw new BadInput('usage: tier-check PLAN_FILE N BASE HEAD [--floor <tier>] [--fix-round]');
   const [planFile, taskArg, base, head] = args;
   if (floorArg !== null && !TIERS.includes(floorArg)) {
     throw new BadInput(`bad --floor "${floorArg}" (expected ${TIERS.join(', ')})`);
@@ -231,7 +236,7 @@ async function main(argv) {
     }
   };
 
-  const verdict = decide({ floor, changes, sensitive, excluded, versionOnly });
+  const verdict = decide({ floor, fixRound, changes, sensitive, excluded, versionOnly });
   if (verdict.to === floor) return `ok ${floor}`;
   return `raise ${floor} ${verdict.to}: ${verdict.reason}: ${verdict.paths.join(', ')}`;
 }
@@ -282,7 +287,7 @@ const touched = (c) => (c.oldPath ? [c.oldPath, c.path] : [c.path]);
 const uniq = (list) => [...new Set(list)];
 
 // The pure decision: { to, reason, paths } with `to` the resulting tier (the floor when nothing raises it).
-function decide({ floor, changes, sensitive, excluded, versionOnly }) {
+function decide({ floor, fixRound, changes, sensitive, excluded, versionOnly }) {
   // heavy
   const sensitivePaths = changes.flatMap(touched).filter((p) => matchAny(sensitive, p));
   const total = changes.reduce((n, c) => n + c.added + c.removed, 0);
@@ -317,6 +322,10 @@ function decide({ floor, changes, sensitive, excluded, versionOnly }) {
     if (paths.every(isMarkdown)) continue; // a light class
     if (versionOnly(c)) continue; // a light class
     code.push(c);
+  }
+  if (fixRound && code.length > 0) {
+    flag('fix round adds code', code.flatMap(touched));
+    return { to: 'standard', reason: reasons.join(', '), paths: uniq(offenders) };
   }
   const codeLines = code.reduce((n, c) => n + c.added + c.removed, 0);
   const created = code.filter((c) => c.status === 'A');

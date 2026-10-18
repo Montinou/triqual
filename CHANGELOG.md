@@ -3,6 +3,15 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## roles 0.3.3
+
+### Changed
+
+- Every role agent carries the fence denial rule (a "Denied by Policy" section): a call fence refuses is reported, never
+  retried another way. The plugin cache is keyed by version, so machines on 0.3.2 keep the agents without it until they
+  update.
+- The `tdd-implementer` description changed.
+
 ## methodology 1.0.0
 
 methodology is now triqual's own orchestrator. It started as a fork of superpowers, and it no longer follows it.
@@ -53,6 +62,8 @@ methodology is now triqual's own orchestrator. It started as a fork of superpowe
   it.
 - To roll back, roll back methodology only. Do not downgrade progress-tracking below 0.5.0 once its store has migrated:
   an older version refuses the newer store.
+- After updating the plugins, run one writing `triqual` command (for example `triqual tracking status set --section …`
+  or any `tasks` move) before any read-only view. A read-only open refuses a version 1 store until a write migrates it.
 
 ### Credit
 

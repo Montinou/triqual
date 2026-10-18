@@ -155,7 +155,7 @@ test('plugin versions are the ones this release ships', () => {
   assert.deepEqual(versions, {
     'progress-tracking': '0.5.0',
     'workflow-gate': '0.3.0',
-    roles: '0.3.2',
+    roles: '0.3.3',
     methodology: '1.0.0',
     'memory-report': '0.5.0',
   });
@@ -195,6 +195,16 @@ test('the marketplace, the package and the plugin repositories carry the triqual
 
 test('npm test runs every plugin test, the root test dir and the per-skill pins', () => {
   assert.equal(readJson('package.json').scripts.test, 'node --test "plugins/*/test/*.test.mjs" "packages/*/test/*.test.mjs" "test/*.test.mjs" "test/skill-pins/*.test.mjs"');
+});
+
+test('workflow-gate\'s descriptions name the Workflow cap and the Agent and Task start cap', () => {
+  const entry = readJson('.claude-plugin/marketplace.json').plugins.find((p) => p.name === 'workflow-gate');
+  const manifest = readJson('plugins/workflow-gate/.claude-plugin/plugin.json');
+  for (const description of [entry.description, manifest.description]) {
+    for (const word of [/Workflow script/, /fable 3, opus 8, sonnet 12, haiku unlimited/, /Agent/, /Task/, /120 s/]) {
+      assert.match(description, word, description);
+    }
+  }
 });
 
 test('roles\' plugin.json description lists the eight shipped role agents', () => {
