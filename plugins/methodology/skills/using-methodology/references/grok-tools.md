@@ -8,9 +8,9 @@ nor a `roles:<name>` role can be selected by name.
 
 So a skill's role dispatch (`roles:<name>`) has no Grok form:
 
-- **SDD is unavailable in Grok: stop and ask your human partner.**
-  `subagent-driven-development` dispatches only roles and never
-  substitutes another agent.
+- **Plan execution is unavailable in Grok: stop and ask your human partner.**
+  `executing-plans` dispatches only roles and never substitutes another
+  agent.
 - The same holds for every other role dispatch (the task reviews, the
   final review, the spec and plan audit, `requesting-code-review`):
   stop and ask your human partner before going on.

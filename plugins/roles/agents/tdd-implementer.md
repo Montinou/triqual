@@ -1,6 +1,6 @@
 ---
 name: tdd-implementer
-description: "Implements one plan task from a brief with strict TDD (write the failing test, run it, implement, run it green), verifies with the project's typecheck/lint/test commands, commits, self-reviews and writes a report. Use for every implementation task in subagent-driven development except those a plan marks `roles:complex-implementer`."
+description: "Implements one plan task from a brief with strict TDD (write the failing test, run it, implement, run it green), verifies with the project's typecheck/lint/test commands, commits, self-reviews and writes a report. Use for every implementation task in plan execution except those a plan marks `roles:complex-implementer`."
 model: sonnet
 effort: high
 disallowedTools: Agent

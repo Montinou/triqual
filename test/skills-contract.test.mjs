@@ -331,7 +331,7 @@ const PINS = [
     why: 'the Iron Law: TDD first',
   },
   {
-    skill: 'subagent-driven-development',
+    skill: 'executing-plans',
     text: 'Never skip the task review (the one exception is a task with no commit range: see When the stage does not run)',
     why: 'the gate and the review run on every task with commits',
   },
@@ -434,8 +434,8 @@ test('test-driven-development keeps TDD first (the Iron Law)', () => {
   assert.deepEqual(pinProblems(REAL, PINS.filter((p) => p.skill === 'test-driven-development')), []);
 });
 
-test('subagent-driven-development keeps the gate on every task with commits', () => {
-  assert.deepEqual(pinProblems(REAL, PINS.filter((p) => p.skill === 'subagent-driven-development')), []);
+test('executing-plans keeps the gate on every task with commits', () => {
+  assert.deepEqual(pinProblems(REAL, PINS.filter((p) => p.skill === 'executing-plans')), []);
 });
 
 test('NOTICE names superpowers and its author', () => {
@@ -572,7 +572,7 @@ test('the checks fail on a seeded defect', async (t) => {
     const p = fixture(t2, {
       'a/SKILL.md': skillMd('a', 'Write sdd-ledger.md. Not <workspace>/progress.md.\nNor $ws/progress.md or sdd/x/progress.md.\nOld: .superpowers/sdd/x'),
       'a/scripts/s.sh': 'cat "$w/progress.md"',
-      'subagent-driven-development/SKILL.md': skillMd('subagent-driven-development'),
+      'executing-plans/SKILL.md': skillMd('executing-plans'),
       'executing-plans/scripts/sdd-workspace': `${LEGACY_ADOPTION.line}\nlegacy2="$root/.superpowers/sdd/$slug"`,
     });
     assert.deepEqual(ledgerProblems(p), [

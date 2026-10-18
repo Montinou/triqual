@@ -8,7 +8,7 @@ multi_agent = true
 ```
 
 This enables the multi-agent tools that skills like
-`dispatching-parallel-agents` and `subagent-driven-development` use.
+`dispatching-parallel-agents` and `executing-plans` use.
 Which tools you get depends on the multi-agent version your model
 preset selects (current presets run V2; older ones run V1). Trust your
 actual tool list over any table — including this one — when they
@@ -19,7 +19,7 @@ disagree.
   entire transcript into the child. On Codex 0.145+, role files under
   `~/.codex/agents/` attach to isolated forks via `agent_type`.
   Full-history forks accept `model` and `reasoning_effort` overrides
-  (only `agent_type` is refused there) — isolated forks are the SDD
+  (only `agent_type` is refused there) — isolated forks are the plan-execution
   default for context hygiene, not because overrides require them.
 - **Fix rounds:** resume the implementer with `followup_task` — it
   delivers your message, triggers a turn, and transparently reloads a

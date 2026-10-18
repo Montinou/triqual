@@ -160,29 +160,33 @@ test('the audit prompt flags phase defects in plans', () => {
   }
 });
 
-// Execution Handoff (spec U2, R7): both branches say the stack, the push and who merges.
-test('both handoff branches state the stack and the push authorization', () => {
+// Execution Handoff (spec U2, R7): one message says the stack, the push and who merges; there is no method to choose.
+test('the handoff states the stack and the push authorization, and offers one execution skill', () => {
   const text = section(PLANS, '## Execution Handoff').join(' ').replace(/\s+/g, ' ');
-  const none = '**When no execution method has already been supplied:**';
-  const supplied = '**When an execution method has already been supplied:**';
-  const chosen = '**If Subagent-driven chosen:**';
-  for (const marker of [none, supplied, chosen]) assert.ok(text.includes(marker), `the handoff lost "${marker}"`);
-  const branches = {
-    'no method supplied': text.slice(text.indexOf(none), text.indexOf(supplied)),
-    'method supplied': text.slice(text.indexOf(supplied), text.indexOf(chosen)),
-  };
-  for (const [name, message] of Object.entries(branches)) {
-    for (const phrase of ['stack', 'phase branches', 'draft PR', 'authorizes', 'ready for review after the final review', 'merging stays yours']) {
-      assert.ok(message.includes(phrase), `the "${name}" handoff message does not say "${phrase}"`);
-    }
+  const message = '**"Plan complete and saved to `<plan path>`.';
+  const required = '**REQUIRED SUB-SKILL:** Use methodology:executing-plans';
+  for (const marker of [message, required]) assert.ok(text.includes(marker), `the handoff lost "${marker}"`);
+  const body = text.slice(text.indexOf(message), text.indexOf(required));
+  for (const phrase of ['stack', 'phase branches', 'draft PR', 'authorizes', 'ready for review after the final review', 'merging stays yours', 'Confirming']) {
+    assert.ok(body.includes(phrase), `the handoff message does not say "${phrase}"`);
   }
-  assert.ok(branches['no method supplied'].includes('Choosing'), 'the first message does not say that choosing authorizes');
-  assert.ok(branches['method supplied'].includes('Confirming'), 'the second message does not say that confirming authorizes');
-  // The text above the branches names who records the authorization.
-  const intro = text.slice(0, text.indexOf(none));
+  // Plans run through subagents only: no second method, no approach to choose, no Native or inline option.
+  for (const gone of ['Subagent-driven', 'Native', 'execution method', 'execution approach', 'Choosing', 'inline', 'If Subagent', 'If Native']) {
+    assert.ok(!text.includes(gone), `the handoff still offers a choice ("${gone}")`);
+  }
+  // The text above the message names who records the authorization.
+  const intro = text.slice(0, text.indexOf(message));
   for (const phrase of ['stack', 'authorizes', 'phase branches', 'draft PRs', 'ready for review after the final review', 'the execution skill records it', 'merging stays your human partner']) {
     assert.ok(intro.includes(phrase), `the handoff introduction does not say "${phrase}"`);
   }
+});
+
+test('the plan header names only executing-plans', () => {
+  const header = section(PLANS, '## Plan Document Header').join('\n');
+  const line = header.split('\n').find((l) => l.startsWith('> **For agentic workers:**'));
+  assert.ok(line, 'the header lost its agentic-workers line');
+  assert.ok(line.includes('REQUIRED SUB-SKILL: Use methodology:executing-plans to implement this plan task-by-task.'), line);
+  assert.doesNotMatch(line, /recommended|\bor methodology:/, 'the header still offers a second skill');
 });
 
 // Task tiers (spec: orchestrator): every task carries a `**Tier:**`, all-or-none per plan, and the audit checks them.

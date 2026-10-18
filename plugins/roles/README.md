@@ -37,18 +37,18 @@ dispatch any of them. The other skills:
 
 | Agent | Dispatched by |
 |---|---|
-| `brief-writer` | `subagent-driven-development`, only when a task's plan text lacks interfaces that must come from the current code |
-| `tdd-implementer` | `subagent-driven-development`: the default task role |
-| `complex-implementer` | `subagent-driven-development`: a task whose `**Role:**` is `roles:complex-implementer`, and its fix rounds |
-| `safety-reviewer` | `subagent-driven-development`, `executing-plans` |
-| `spec-reviewer` | `subagent-driven-development`, `executing-plans`, `requesting-code-review` |
-| `review-fixer` | `subagent-driven-development` (fix rounds) |
-| `final-adversarial-reviewer` | `subagent-driven-development`, `executing-plans`, `brainstorming` (spec audit), `writing-plans` (plan audit) |
-| `hunter` | `subagent-driven-development`, `executing-plans` |
+| `brief-writer` | `executing-plans`, only when a task's plan text lacks interfaces that must come from the current code |
+| `tdd-implementer` | `executing-plans`: the default task role |
+| `complex-implementer` | `executing-plans`: a task whose `**Role:**` is `roles:complex-implementer`, and its fix rounds |
+| `safety-reviewer` | `executing-plans` |
+| `spec-reviewer` | `executing-plans`, `requesting-code-review` |
+| `review-fixer` | `executing-plans` (fix rounds) |
+| `final-adversarial-reviewer` | `executing-plans`, `brainstorming` (spec audit), `writing-plans` (plan audit) |
+| `hunter` | `executing-plans` |
 
 A plan's task `**Role:**` line may be `roles:tdd-implementer` (the default when the line is
 missing), `roles:complex-implementer` or `roles:review-fixer`, or `coordinator`.
-`subagent-driven-development` stops and asks if a task names any other role: the reviewers, the
+`executing-plans` stops and asks if a task names any other role: the reviewers, the
 hunter and the brief writer serve a task and are never its role.
 
 ## Codex and Grok

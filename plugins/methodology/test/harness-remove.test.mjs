@@ -36,10 +36,10 @@ const SPLIT_PROMPT = 'Split ~/.codex/AGENTS.md as shown?';
 
 const METHODOLOGY_SKILLS = readdirSync(join(PLUGIN_ROOT, 'skills'), { withFileTypes: true })
   .filter((d) => d.isDirectory()).map((d) => d.name).sort();
-// The 14 skills of the removed superpowers 6.0.3 cache.
+// 13 of the 14 skills of the removed superpowers 6.0.3 cache (the 14th has no counterpart in ours since 1.0).
 const SUPERPOWERS_SKILLS = [
   'brainstorming', 'dispatching-parallel-agents', 'executing-plans', 'finishing-a-development-branch',
-  'receiving-code-review', 'requesting-code-review', 'subagent-driven-development', 'systematic-debugging',
+  'receiving-code-review', 'requesting-code-review', 'systematic-debugging',
   'test-driven-development', 'using-git-worktrees', 'using-superpowers', 'verification-before-completion',
   'writing-plans', 'writing-skills',
 ];

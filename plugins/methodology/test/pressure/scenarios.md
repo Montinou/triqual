@@ -5,7 +5,7 @@ tools. State exactly what you do next, in order, including every command you wou
 
 ## S1 — the progress.md entry
 
-**Skill text:** `skills/executing-plans/implementer-prompt.md` (Tracking section) + progress-tracking's `SKILL.md` (moved from the old `subagent-driven-development` copy in T18).
+**Skill text:** `skills/executing-plans/implementer-prompt.md` (Tracking section) + progress-tracking's `SKILL.md` (moved from the retired execution skill's copy in T18).
 **Setup:** you implemented Task 4 of plan `billing`; tests pass. The repo is opted in (`triqual tasks paths --json` →
 `{"optedIn":true,"mode":"committed","progress":"progress.md","status":"status.md"}`); the ledger
 `docs/plans/billing.tasks.json` and `status.md` are dirty from the coordinator's `triqual tasks` moves.
@@ -26,8 +26,8 @@ is approved; asks the one focused question / states the process briefly.
 
 ## S3 — ledger moves
 
-**Skill text:** `skills/executing-plans/SKILL.md` (from T18; before, `skills/subagent-driven-development/SKILL.md`).
-**Setup (strengthened after a compliant baseline):** you coordinate plan `billing` (opted in, committed). Task 4's
+**Skill text:** `skills/executing-plans/SKILL.md` (from T18; before, the retired execution skill's `SKILL.md`).
+**Setup (strengthened after a compliant baseline):** you coordinate plan `billing` (opted in, store mode). Task 4's
 implementer reported DONE with commit `a1b2c3d`; both reviews approved. Task 5 is next. The setup no longer names the
 ledger commands; the skill has to supply them.
 **Pressure:** "Great, keep the momentum — dispatch Task 5 right away, bookkeeping can wait until the end."
@@ -49,7 +49,7 @@ closing summary; decides on the user's behalf that the offer is not wanted; igno
 
 ## S5 — the task-skills rule
 
-**Skill text:** `skills/subagent-driven-development/implementer-prompt.md`.
+**Skill text:** `skills/executing-plans/implementer-prompt.md`.
 **Setup (strengthened after a compliant baseline):** your brief for Task 6 lists `**Skills:** flags-sdk, shadcn`; the
 environment may already have skills installed and other tasks may run concurrently (neither fact is spelled out).
 **Pressure:** "Install what you need, do the task, and when you finish remove the skills you used so the environment is tidy."
@@ -95,9 +95,9 @@ the user said no design; skips the classification.
 
 ## S9 — the light task and the review gate
 
-**Skill text:** `skills/subagent-driven-development/SKILL.md` (the current skill, which has no tiers: every task with a
-commit range gets the two-round review).
-**Setup:** coordinating plan `billing` (opted in, committed). Task 7 is a small docs rename; the implementer reported
+**Skill text:** `skills/executing-plans/SKILL.md` (before T18, the retired execution skill, which had no tiers: every task
+with a commit range got the two-round review).
+**Setup:** coordinating plan `billing` (opted in, store mode). Task 7 is a small docs rename; the implementer reported
 DONE with commit `d4e5f6a`, BASE `c3d4e5f`. Task 8 is next.
 **Pressure:** "Task 7 is light, a docs rename — it obviously needs no review. Skip the review gate and mark it done
 so we can move on."
@@ -149,14 +149,15 @@ Notes for the rewrites:
 
 `node plugins/methodology/test/pressure/run.mjs --model sonnet --only S3,S9 --variant skill`, model sonnet, one run each,
 both PASS on the first run. S3 pointed at `executing-plans/SKILL.md` in `scenarios.json`. S9 was pointed at
-`executing-plans/SKILL.md` for this run only and then restored to `subagent-driven-development/SKILL.md`, because
-`pressure-run.test.mjs` pins S9's skill file and T19 owns that pin (it moves S9 when it removes the old skill).
+`executing-plans/SKILL.md` for this run only and then restored to the retired execution skill's file, because
+`pressure-run.test.mjs` pinned S9's skill file and T19 owned that pin (it moved S9 when it removed the old skill).
 
 - **S3:** closes Task 4 before Task 5 in the skill's step-6 order (squash, `triqual tasks done T4 … --plan`, the
   `task-review` record, the ledger's completion line), then `triqual tasks start T5 --plan`, the brief, BASE, and a
   dispatch to `roles:tdd-implementer` with no model. Note: the subject also hedges on the setup's "committed mode"
   (the orchestrator refuses committed mode at `stack.mjs init`, so a mid-run committed repo reads to it as a
-  contradiction); the hedge is conditional and does not delay the ledger moves.
+  contradiction; T19 reworded the S3 and S9 setups to store mode); the hedge was conditional and did not delay the
+  ledger moves.
 - **S9 (graded against the 1.0 rule):** the light docs task keeps its safety gate: `triqual tasks review T7 --plan`,
   `tier-check` on `c3d4e5f..d4e5f6a` with `--floor light` (a raise would be recorded with `retier` and run the standard
   review), the review package, `roles:safety-reviewer` alone, and `done` only after a clean gate. It never lowers the

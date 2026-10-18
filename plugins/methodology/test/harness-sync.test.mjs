@@ -40,10 +40,10 @@ const LATER = new Date(2026, 8, 29, 11, 0, 0);
 const METHODOLOGY_SKILLS = readdirSync(join(PLUGIN_ROOT, 'skills'), { withFileTypes: true })
   .filter((d) => d.isDirectory()).map((d) => d.name).sort();
 const OURS = [...METHODOLOGY_SKILLS, 'progress-tracking'];
-// The 14 skills of the removed superpowers 6.0.3 cache; 12 share a name with ours.
+// 13 of the 14 skills of the removed superpowers 6.0.3 cache (the 14th has no counterpart in ours since 1.0); 11 share a name with ours.
 const SUPERPOWERS_SKILLS = [
   'brainstorming', 'dispatching-parallel-agents', 'executing-plans', 'finishing-a-development-branch',
-  'receiving-code-review', 'requesting-code-review', 'subagent-driven-development', 'systematic-debugging',
+  'receiving-code-review', 'requesting-code-review', 'systematic-debugging',
   'test-driven-development', 'using-git-worktrees', 'using-superpowers', 'verification-before-completion',
   'writing-plans', 'writing-skills',
 ];
@@ -120,7 +120,7 @@ function grokEntry(home, name, version, dir = join(home, '.grok', 'installed-plu
   };
 }
 
-// A temp home laid out like the real one: user-scope installs, 14 dangling superpowers links, Spark/Terra agents and
+// A temp home laid out like the real one: user-scope installs, 13 dangling superpowers links, Spark/Terra agents and
 // a hand-written tdd-implementer.toml, the synthetic config.toml and an AGENTS.md without legacy headings, and Grok's
 // stale plugins under ~/.grok/installed-plugins.
 function makeHome({ codex = true, grok = true, enabled = {}, config } = {}) {

@@ -1,18 +1,25 @@
 // Contract pins for the orchestrator, `executing-plans` (design U3, U4, Decision 9): the tier matrix equals spec U4,
 // the invariants (a tier is never lowered, the gate on every task with commits, the final review always runs, a
 // behavior change starts with a failing test), the role-eval record examples validate, every template placeholder is
-// defined, batched light dispatch, the tierless setup rubric, and the dispatch-line pins restored from the retired
-// fork.test. They pin rules, not prose: each check names the sentence or table that carries a rule.
+// defined, batched light dispatch, the tierless setup rubric, the dispatch-line pins restored from the retired
+// fork.test, the retirement of the old execution skill and its per-task scripts, the harness references, and the
+// behavior of the live scripts (review-package, task-brief, sdd-workspace) in a temp repo. They pin rules, not
+// prose: each check names the sentence or table that carries a rule.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { parsePlan } from '../../progress-tracking/lib/ledger.mjs';
 import { validateRecord } from '../cli/lib/role-eval.mjs';
 
 const PLUGIN = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SKILLS = join(PLUGIN, 'skills');
+const SCRIPTS = join(SKILLS, 'executing-plans', 'scripts');
+const FENCES_PLAN = join(PLUGIN, 'test', 'fixtures', 'fences-plan.md');
 const AGENTS = join(PLUGIN, '..', 'roles', 'agents');
 const EP = 'executing-plans';
 const TEMPLATES = [
@@ -23,9 +30,8 @@ const TEMPLATES = [
   're-review-prompt.md',
   'final-review-prompt.md',
 ];
-// The implementer's `<task role>` placeholder is a valid dispatch type in its own template only (the old skill's copy
-// stays until it is removed).
-const TASK_ROLE_TEMPLATES = new Set([`${EP}/implementer-prompt.md`, 'subagent-driven-development/implementer-prompt.md']);
+// The implementer's `<task role>` placeholder is a valid dispatch type in its own template only.
+const TASK_ROLE_TEMPLATES = new Set([`${EP}/implementer-prompt.md`]);
 // The one skill that may dispatch a generic agent, which must then name its model (removed by a later task).
 const GENERIC_AGENT_SKILL = 'dispatching-parallel-agents';
 
@@ -399,10 +405,603 @@ test('the skill credits superpowers without a fork footer', () => {
   assert.doesNotMatch(text, /Forked from/);
 });
 
-test('the pressure scenarios S1 and S3 point at the new files', () => {
+test('the pressure scenarios S1, S3, S5 and S9 point at the orchestrator, and S3 and S9 set up store mode', () => {
   const spec = JSON.parse(readFileSync(join(PLUGIN, 'test', 'pressure', 'scenarios.json'), 'utf8'));
-  const of = (id) => spec.scenarios.find((s) => s.id === id).skills;
-  assert.ok(of('S1').includes(`${EP}/implementer-prompt.md`));
-  assert.deepEqual(of('S3'), [`${EP}/SKILL.md`]);
+  const find = (id) => spec.scenarios.find((s) => s.id === id);
+  assert.ok(find('S1').skills.includes(`${EP}/implementer-prompt.md`));
+  assert.deepEqual(find('S3').skills, [`${EP}/SKILL.md`]);
+  assert.deepEqual(find('S5').skills, [`${EP}/implementer-prompt.md`]);
+  assert.deepEqual(find('S9').skills, [`${EP}/SKILL.md`]);
+  // The orchestrator refuses committed tracking mode at `stack.mjs init`, so no setup may put the run there.
+  for (const id of ['S3', 'S9']) {
+    assert.match(find(id).setup, /\(store mode\)/, `${id}: the setup is not in store mode`);
+    assert.doesNotMatch(find(id).setup, /committed mode/, `${id}: the setup is in committed mode`);
+  }
   for (const s of spec.scenarios) for (const p of s.skills) assert.ok(existsSync(join(SKILLS, p)), `${s.id}: ${p}`);
+});
+
+// ---- the retired skill and scripts --------------------------------------------------------------------------------------
+// The names are assembled here so that this file does not name what it checks for.
+const RETIRED_SKILL = ['subagent', 'driven', 'development'].join('-');
+const RETIRED_SCRIPTS = ['task', 'start'].join('-') + ' ' + ['task', 'done'].join('-');
+const ROOT = join(PLUGIN, '..', '..');
+
+// Every file under `dir` as an absolute path, node_modules and .git left out.
+const filesUnder = (dir) =>
+  readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    if (e.name === 'node_modules' || e.name === '.git') return [];
+    const p = join(dir, e.name);
+    return e.isDirectory() ? filesUnder(p) : [p];
+  });
+// The files a text search covers: plugins/, test/ and the root README. CHANGELOG files keep their history lines.
+const searched = () =>
+  [...filesUnder(join(ROOT, 'plugins')), ...filesUnder(join(ROOT, 'test')), join(ROOT, 'README.md')].filter(
+    (p) => !/CHANGELOG/i.test(p),
+  );
+const mentions = (needle) => searched().filter((p) => readFileSync(p, 'utf8').includes(needle)).map((p) => p.slice(ROOT.length + 1));
+
+test('the retired skill is gone: no directory, and no live file names it', () => {
+  assert.equal(existsSync(join(SKILLS, RETIRED_SKILL)), false, 'the retired skill directory is still there');
+  assert.deepEqual(mentions(RETIRED_SKILL), []);
+});
+
+test('the per-task scripts are deleted, nothing live calls them, and the scripts left are the live ones', () => {
+  for (const name of RETIRED_SCRIPTS.split(' ')) {
+    assert.equal(existsSync(join(SCRIPTS, name)), false, `${name} is still there`);
+    assert.deepEqual(mentions(name), [], `a live file names ${name}`);
+  }
+  assert.deepEqual(readdirSync(SCRIPTS).sort(), ['lib', 'review-package', 'sdd-workspace', 'stack.mjs', 'task-brief', 'tier-check']);
+});
+
+// ---- the harness references -----------------------------------------------------------------------------------------------
+
+test('the harness references name the one orchestrator and keep their routing statements', () => {
+  const claude = flat(read('using-methodology/references/claude-code-tools.md'));
+  assert.ok(claude.includes('The controller of a methodology:executing-plans run reads every result'), 'claude-code-tools.md does not name the controller of executing-plans');
+  assert.doesNotMatch(claude, /mid-tier/i, 'claude-code-tools.md still advises an orchestrator on a mid-tier model');
+  assert.match(claude, /`roles:<name>`/, 'claude-code-tools.md does not describe role dispatch');
+  const codex = flat(read('using-methodology/references/codex-tools.md'));
+  assert.ok(codex.includes('`dispatching-parallel-agents` and `executing-plans` use.'), 'codex-tools.md does not name executing-plans for multi-agent support');
+  assert.doesNotMatch(codex, /Model Selection/, 'codex-tools.md still points at Model Selection');
+  // Codex: a role dispatch is spawn_agent with agent_type, and a methodology skill name drops its prefix.
+  assert.match(codex, /a role dispatch `roles:<name>` is `spawn_agent` with `agent_type: "<name>"`/);
+  assert.match(codex, /`methodology:<x>` is the skill `<x>`/);
+  // Grok cannot select a named agent: plan execution and every role dispatch stop and ask.
+  const grok = flat(read('using-methodology/references/grok-tools.md'));
+  assert.match(grok, /Grok cannot select a named agent/);
+  assert.match(grok, /\*\*Plan execution is unavailable in Grok: stop and ask your human partner\.\*\* `executing-plans` dispatches only roles and never substitutes another agent/);
+  assert.match(grok, /stop and ask your human partner before going on/);
+  assert.match(grok, /Never spawn a general-purpose subagent in place of a role/);
+  assert.match(grok, /`methodology:<x>` is the skill `<x>`/);
+});
+
+test('the Codex missing-role stop exempts hunter', () => {
+  const codex = flat(read('using-methodology/references/codex-tools.md'));
+  const exception = "except `hunter`, whose absence is the review stage's skip rule (one `Skipped:` ledger line, never a stop)";
+  const missing = /\*\*Missing role:\*\* if `agent_type` does not resolve[^]*?(?= - \*\*Skills)/.exec(codex);
+  assert.ok(missing, 'codex-tools.md lost its missing-role rule');
+  assert.ok(missing[0].includes('stop and ask'), 'the Codex rule no longer stops and asks');
+  assert.ok(missing[0].includes(exception), 'the Codex stop does not exempt hunter');
+  // The skip rule the exception points at is in the orchestrator.
+  assert.ok(skill().includes('`Skipped: hunters and Haiku gate — <cause>; safety checklist runs in the spec review`'), 'the skill lost the skip rule');
+});
+
+test('no harness reference offers inline work: a harness that cannot dispatch a role stops and asks', () => {
+  for (const name of ['claude-code', 'codex', 'grok', 'hermes']) {
+    const text = flat(read(`using-methodology/references/${name}-tools.md`));
+    assert.doesNotMatch(text, /inline/i, `${name}-tools.md offers inline work`);
+  }
+  const hermes = flat(read('using-methodology/references/hermes-tools.md'));
+  assert.ok(
+    hermes.includes('If `delegate_task` is unavailable, stop and ask your human partner; never do the task yourself in place of a role agent, and never invent tool calls.'),
+    'hermes-tools.md does not stop and ask when delegate_task is unavailable',
+  );
+});
+
+// ---- the stack rules of the skill, each pinned in the section that carries it ------------------------------------------------
+
+test('Stack setup guards a run that began before stacked execution, before init', () => {
+  const setup = flat(section(skill(), '### Stack setup'));
+  const guard = setup.indexOf('A run that began before stacked execution is not stacked.');
+  assert.ok(guard >= 0, 'Stack setup lost the pre-stack guard');
+  for (const line of [
+    '`node scripts/stack.mjs path PLAN_FILE`',
+    'does not exist',
+    '`Task <N>: complete`',
+    'Skip `init`, `phase`, `squash`, `done`, `submit` and `push` for the whole run',
+    '`Ruling: run began before stacked execution — no stack`',
+    "finish on the current branch",
+    '`node scripts/stack.mjs phase PLAN_FILE 1` itself exits 3',
+    "HEAD's branch",
+  ]) {
+    assert.ok(setup.includes(line), `the pre-stack guard lacks: ${line}`);
+  }
+  assert.ok(guard < setup.indexOf('run `node scripts/stack.mjs init PLAN_FILE` once, before Task 1') , 'the guard is not checked before init');
+});
+
+test('fix rounds commit with --fixup of the first commit, never an amend, a rebase or a reset', () => {
+  const fix = flat(section(skill(), '### 5. The fix loop'));
+  for (const line of [
+    "`git commit --fixup=<the task's first commit>`",
+    'never an amend, a rebase or a reset',
+    '`git rev-list --reverse BASE..HEAD`',
+  ]) {
+    assert.ok(fix.includes(line), `the fix loop lacks: ${line}`);
+  }
+});
+
+test('completing a task squashes before the ledger move, with commit-tree and no hook', () => {
+  const done = flat(section(skill(), '### 6. Complete the task'));
+  const squash = done.indexOf('1. **Squash:** run `node scripts/stack.mjs squash PLAN_FILE BASE`');
+  const move = done.indexOf('`triqual tasks done T<N> --commit <sha> --plan <plan>`');
+  const line = done.indexOf('`Task <N>: complete (commits <base7>..<head7>, review clean)`');
+  assert.ok(squash >= 0 && move > squash && line > move, 'the order is not squash, then tasks done, then the complete line');
+  for (const text of ['with `git commit-tree`', 'never a rebase and never a `git commit`', 'so no hook runs and no gate fires', 'with the sha the squash printed']) {
+    assert.ok(done.includes(text), `step 6 lacks: ${text}`);
+  }
+});
+
+test('the final review pushes without marking ready when residual findings remain; only submit --open marks ready', () => {
+  const final = flat(section(skill(), '## Final Review'));
+  const submit = final.indexOf('**Submit.**');
+  assert.ok(submit >= 0, 'the final review lost its Submit step');
+  const text = final.slice(submit);
+  const push = text.indexOf('push the fix commit without marking anything ready');
+  assert.ok(push >= 0, 'no push-without-ready rule');
+  for (const line of [
+    'When residual Critical or Important findings remain open after the re-review',
+    '`node scripts/stack.mjs push PLAN_FILE <top N>`',
+    'never changes the draft state',
+    'leave the ready decision to your human partner',
+  ]) {
+    assert.ok(text.includes(line), `the Submit step lacks: ${line}`);
+  }
+  // `--open` is the submit option that marks ready: it comes with submit, before the push rule, never with push.
+  assert.ok(text.indexOf('`node scripts/stack.mjs submit PLAN_FILE <top N> --open`') >= 0 && text.indexOf('--open') < push, 'submit --open is not the step before the push rule');
+  assert.ok(!text.slice(push).includes('--open'), 'the push rule mentions --open');
+  assert.doesNotMatch(skill(), /stack\.mjs push[^`]*--open/, 'a push is run with --open');
+});
+
+// ---- plan paths and store mode in the skill ---------------------------------------------------------------------------------
+
+test('no store-mode clause of the orchestrator pairs the tasks check with --plan', () => {
+  const paragraphs = skill().split(/\n\s*\n/).map((p) => p.replace(/\s+/g, ' ').trim());
+  for (const line of paragraphs.filter((l) => l.includes('`"mode": "store"`') || /\bstore mode\b/i.test(l))) {
+    for (const clause of line.split(/[.;:]\s/)) {
+      assert.ok(!(/\bcheck\b/.test(clause) && clause.includes('--plan')), `a store-mode clause pairs the check with --plan: ${clause}`);
+    }
+  }
+});
+
+test('the orchestrator never tells the executor to pass a bare plan name to the scripts that need a file', () => {
+  // sdd-workspace, task-brief and review-package exit 2 on a name that is not a file.
+  assert.doesNotMatch(skill(), /PLAN_FILE`? (?:is|becomes|means) the bare/);
+  assert.match(skill(), /sdd-workspace PLAN_FILE/);
+  assert.match(skill(), /review-package PLAN_FILE BASE HEAD/);
+});
+
+// ---- the scripts, run in a temp git repo (moved from the retired skill's tests) -------------------------------------------
+
+// Temp git repo: no GIT_* from a calling hook, no XDG_CONFIG_HOME, a temp HOME.
+const gitEnv = (home) => {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
+  delete env.XDG_CONFIG_HOME;
+  return { ...env, HOME: home, GIT_CONFIG_NOSYSTEM: '1' };
+};
+const PLAN = `# Demo plan
+
+## Global Constraints
+
+- Nothing.
+
+### Task 1: First
+
+**Role:** roles:tdd-implementer
+
+- [ ] **Step 1:** do one.
+
+### Task 2: Second
+
+**Depends on:** T1
+**Skills:** demo-skill
+**Role:** roles:review-fixer
+
+- [ ] **Step 1:** do two.
+
+\`\`\`
+### Task 9: inside a fence, not a heading
+\`\`\`
+
+### Task 3: Third
+
+**Depends on:** T2
+**Role:** coordinator
+
+- [ ] **Step 1:** do three.
+`;
+// A script runs by its interpreter, as its shebang names it: node for a Node script, bash otherwise (as the skills
+// invoke them, since some extractors drop the exec bits).
+const interpreter = (path) => (/^#!.*\bnode\b/.test(readFileSync(path, 'utf8').split('\n', 1)[0]) ? process.execPath : 'bash');
+const repo = () => {
+  const home = mkdtempSync(join(tmpdir(), 'sdd-home-'));
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'sdd-repo-')));
+  const env = gitEnv(home);
+  const git = (...args) => execFileSync('git', args, { cwd: dir, env, encoding: 'utf8' });
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.name', 'Test');
+  git('config', 'user.email', 'test@example.invalid');
+  git('config', 'commit.gpgsign', 'false');
+  mkdirSync(join(dir, 'docs', 'plans'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'plans', 'demo-plan.md'), PLAN);
+  git('add', '-A');
+  git('commit', '-q', '-m', 'plan');
+  const run = (script, ...args) =>
+    spawnSync(interpreter(join(SCRIPTS, script)), [join(SCRIPTS, script), ...args], { cwd: dir, env, encoding: 'utf8' });
+  const cleanup = () => {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  };
+  return { dir, git, run, cleanup, plan: 'docs/plans/demo-plan.md' };
+};
+const commit = (r, file, text, message) => {
+  writeFileSync(join(r.dir, file), text);
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', message);
+  return r.git('rev-parse', 'HEAD').trim();
+};
+
+// --- Characterization (upstream behavior kept) --------------------------------------------------------------------
+
+test('review-package writes the commit list, stat and diff for BASE..HEAD', () => {
+  const r = repo();
+  try {
+    const base = r.git('rev-parse', 'HEAD').trim();
+    commit(r, 'a.txt', 'alpha\n', 'add alpha');
+    const head = commit(r, 'b.txt', 'beta\n', 'add beta');
+    const out = join(r.dir, 'package.diff');
+    const res = r.run('review-package', r.plan, base, head, out);
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, /^wrote .*package\.diff: 2 commit\(s\), \d+ bytes$/m);
+    const text = readFileSync(out, 'utf8');
+    assert.ok(text.startsWith(`# Review package: ${base}..${head}\n`), text.slice(0, 200));
+    const commits = text.slice(text.indexOf('## Commits'), text.indexOf('## Files changed'));
+    assert.match(commits, /add alpha/);
+    assert.match(commits, /add beta/);
+    const stat = text.slice(text.indexOf('## Files changed'), text.indexOf('## Diff'));
+    assert.match(stat, /a\.txt/);
+    assert.match(stat, /2 files changed/);
+    const diff = text.slice(text.indexOf('## Diff'));
+    assert.match(diff, /^\+alpha$/m);
+    assert.match(diff, /^\+beta$/m);
+    const empty = r.run('review-package', r.plan, head, head, join(r.dir, 'empty.diff'));
+    assert.equal(empty.status, 3, 'an empty range must exit 3');
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('task-brief extracts ### Task N with its Depends on, Role and Skills lines', () => {
+  const r = repo();
+  try {
+    const out = join(r.dir, 'brief.md');
+    const res = r.run('task-brief', r.plan, '2', out);
+    assert.equal(res.status, 0, res.stderr);
+    const brief = readFileSync(out, 'utf8');
+    assert.equal(
+      brief,
+      [
+        '### Task 2: Second',
+        '',
+        '**Depends on:** T1',
+        '**Skills:** demo-skill',
+        '**Role:** roles:review-fixer',
+        '',
+        '- [ ] **Step 1:** do two.',
+        '',
+        '```',
+        '### Task 9: inside a fence, not a heading',
+        '```',
+        '',
+        '',
+      ].join('\n'),
+    );
+    assert.equal(r.run('task-brief', r.plan, '7', join(r.dir, 'none.md')).status, 3, 'a missing task must exit 3');
+  } finally {
+    r.cleanup();
+  }
+});
+
+// --- Workspace ----------------------------------------------------------------------------------------------------
+
+test('sdd-workspace creates .methodology/sdd/<plan>/ and the gitignore', () => {
+  const r = repo();
+  try {
+    const res = r.run('sdd-workspace', r.plan);
+    assert.equal(res.status, 0, res.stderr);
+    const dir = join(r.dir, '.methodology', 'sdd', 'demo-plan');
+    assert.equal(res.stdout.trim(), dir);
+    assert.ok(existsSync(dir), 'the workspace directory was not created');
+    assert.equal(readFileSync(join(r.dir, '.methodology', '.gitignore'), 'utf8'), '*\n');
+    writeFileSync(join(dir, 'sdd-ledger.md'), `# SDD ledger — plan: ${r.plan}\n`);
+    assert.equal(r.git('status', '--porcelain'), '', 'the workspace shows in git status');
+    assert.equal(existsSync(join(r.dir, '.superpowers')), false, 'the old workspace root was created');
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('sdd-workspace adopts a legacy .superpowers/sdd/<plan>/progress.md once', () => {
+  const r = repo();
+  try {
+    const legacy = join(r.dir, '.superpowers', 'sdd', 'demo-plan');
+    mkdirSync(legacy, { recursive: true });
+    writeFileSync(join(legacy, 'plan-path'), `${r.plan}\n`);
+    const old = `# SDD ledger — plan: ${r.plan}\nTask 1: complete (commits a..b, review clean)\n`;
+    writeFileSync(join(legacy, 'progress.md'), old);
+    const res = r.run('sdd-workspace', r.plan);
+    assert.equal(res.status, 0, res.stderr);
+    const ledger = join(res.stdout.trim(), 'sdd-ledger.md');
+    assert.equal(readFileSync(ledger, 'utf8'), old, 'the legacy ledger was not copied');
+    assert.equal(readFileSync(join(legacy, 'progress.md'), 'utf8'), old, 'the legacy ledger was changed');
+    // Once: a later run never overwrites the adopted ledger.
+    writeFileSync(ledger, `${old}Task 2: complete (commits b..c, review clean)\n`);
+    writeFileSync(join(legacy, 'progress.md'), `${old}stale\n`);
+    assert.equal(r.run('sdd-workspace', r.plan).status, 0);
+    assert.match(readFileSync(ledger, 'utf8'), /Task 2: complete/);
+    assert.doesNotMatch(readFileSync(ledger, 'utf8'), /stale/);
+    // The adoption leaves an `adopted` marker in the legacy dir.
+    assert.ok(existsSync(join(legacy, 'adopted')), 'no adopted marker in the legacy dir');
+    // Finish deletes the new workspace; a rerun never adopts the legacy ledger again.
+    rmSync(dirname(ledger), { recursive: true, force: true });
+    const again = r.run('sdd-workspace', r.plan);
+    assert.equal(again.status, 0, again.stderr);
+    assert.equal(existsSync(join(again.stdout.trim(), 'sdd-ledger.md')), false, 'the legacy ledger was adopted again after Finish');
+  } finally {
+    r.cleanup();
+  }
+  // Only a legacy workspace whose plan-path names this plan exactly is adopted: no marker, no adoption.
+  const m = repo();
+  try {
+    const legacy = join(m.dir, '.superpowers', 'sdd', 'demo-plan');
+    mkdirSync(legacy, { recursive: true });
+    writeFileSync(join(legacy, 'progress.md'), `# SDD ledger — plan: ${m.plan}\n`);
+    const res = m.run('sdd-workspace', m.plan);
+    assert.equal(res.status, 0, res.stderr);
+    assert.equal(existsSync(join(res.stdout.trim(), 'sdd-ledger.md')), false, 'a marker-less legacy ledger was adopted');
+  } finally {
+    m.cleanup();
+  }
+  // An existing sdd-ledger.md is never overwritten, even on the first run that sees a legacy ledger.
+  const s = repo();
+  try {
+    const dir = join(s.dir, '.methodology', 'sdd', 'demo-plan');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'sdd-ledger.md'), 'current\n');
+    const legacy = join(s.dir, '.superpowers', 'sdd', 'demo-plan');
+    mkdirSync(legacy, { recursive: true });
+    writeFileSync(join(legacy, 'progress.md'), 'legacy\n');
+    assert.equal(s.run('sdd-workspace', s.plan).status, 0);
+    assert.equal(readFileSync(join(dir, 'sdd-ledger.md'), 'utf8'), 'current\n');
+  } finally {
+    s.cleanup();
+  }
+  // A legacy workspace whose plan-path marker names another plan is that plan's: it is not adopted.
+  const o = repo();
+  try {
+    const legacy = join(o.dir, '.superpowers', 'sdd', 'demo-plan');
+    mkdirSync(legacy, { recursive: true });
+    writeFileSync(join(legacy, 'plan-path'), 'docs/other/demo-plan.md\n');
+    writeFileSync(join(legacy, 'progress.md'), '# SDD ledger — plan: docs/other/demo-plan.md\n');
+    const res = o.run('sdd-workspace', o.plan);
+    assert.equal(res.status, 0, res.stderr);
+    assert.equal(existsSync(join(res.stdout.trim(), 'sdd-ledger.md')), false, "another plan's ledger was adopted");
+  } finally {
+    o.cleanup();
+  }
+});
+
+test('review-package writes its default output under .methodology/sdd/<plan>/', () => {
+  const r = repo();
+  try {
+    const base = r.git('rev-parse', 'HEAD').trim();
+    const head = commit(r, 'a.txt', 'alpha\n', 'add alpha');
+    const res = r.run('review-package', r.plan, base, head);
+    assert.equal(res.status, 0, res.stderr);
+    const short = (sha) => r.git('rev-parse', '--short', sha).trim();
+    const expected = join(r.dir, '.methodology', 'sdd', 'demo-plan', `review-${short(base)}..${short(head)}.diff`);
+    assert.match(res.stdout, new RegExp(`^wrote ${expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}: `));
+    assert.ok(existsSync(expected), `no package at ${expected}`);
+    assert.equal(r.git('status', '--porcelain'), '');
+  } finally {
+    r.cleanup();
+  }
+});
+
+// --- Node scripts: same CLI, exit codes and messages as the bash versions they replaced -----------------------------
+
+test('review-package and sdd-workspace are executable Node scripts', () => {
+  for (const script of ['review-package', 'sdd-workspace']) {
+    const path = join(SCRIPTS, script);
+    assert.equal(readFileSync(path, 'utf8').split('\n', 1)[0], '#!/usr/bin/env node', `${script} is not a Node script`);
+    assert.equal(statSync(path).mode & 0o111, 0o111, `${script} lost its exec bits`);
+  }
+});
+
+test('sdd-workspace and review-package keep their usage, argument and range exit codes', () => {
+  const r = repo();
+  try {
+    const base = r.git('rev-parse', 'HEAD').trim();
+    const head = commit(r, 'a.txt', 'alpha\n', 'add alpha');
+    const out = join(r.dir, 'x.diff');
+    for (const [args, script] of [[[], 'sdd-workspace'], [[r.plan, 'extra'], 'sdd-workspace'], [[r.plan, base], 'review-package'], [[r.plan, base, head, out, 'x'], 'review-package']]) {
+      const res = r.run(script, ...args);
+      assert.equal(res.status, 2, `${script} ${args.join(' ')}`);
+      assert.match(res.stderr, new RegExp(`^usage: ${script} PLAN_FILE`));
+    }
+    const noPlan = r.run('sdd-workspace', 'docs/plans/none.md');
+    assert.equal(noPlan.status, 2);
+    assert.equal(noPlan.stderr, 'no such plan file: docs/plans/none.md\n');
+    const noPlanPackage = r.run('review-package', 'docs/plans/none.md', base, head, out);
+    assert.equal(noPlanPackage.status, 2);
+    assert.equal(noPlanPackage.stderr, 'no such plan file: docs/plans/none.md\n');
+    const badBase = r.run('review-package', r.plan, 'nosuchref', head, out);
+    assert.equal(badBase.status, 2);
+    assert.equal(badBase.stderr, 'bad BASE: nosuchref\n');
+    const badHead = r.run('review-package', r.plan, base, 'nosuchref', out);
+    assert.equal(badHead.status, 2);
+    assert.equal(badHead.stderr, 'bad HEAD: nosuchref\n');
+    const reversed = r.run('review-package', r.plan, head, base, out);
+    assert.equal(reversed.status, 3);
+    assert.equal(reversed.stderr, `HEAD is not a descendant of BASE: ${head}..${base}\n`);
+    const empty = r.run('review-package', r.plan, head, head, out);
+    assert.equal(empty.status, 3);
+    assert.equal(empty.stderr, `empty commit range: ${head}..${head}\n`);
+    assert.equal(existsSync(out), false, 'a refused range wrote a package');
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('sdd-workspace gives two plans with one file name two workspaces, each recorded by its plan-path marker', () => {
+  const r = repo();
+  try {
+    mkdirSync(join(r.dir, 'docs', 'other'), { recursive: true });
+    writeFileSync(join(r.dir, 'docs', 'other', 'demo-plan.md'), PLAN);
+    mkdirSync(join(r.dir, 'elsewhere', 'other'), { recursive: true });
+    writeFileSync(join(r.dir, 'elsewhere', 'other', 'demo-plan.md'), PLAN);
+    const sdd = join(r.dir, '.methodology', 'sdd');
+    const first = r.run('sdd-workspace', r.plan);
+    const second = r.run('sdd-workspace', 'docs/other/demo-plan.md');
+    const third = r.run('sdd-workspace', 'elsewhere/other/demo-plan.md');
+    assert.equal(first.stdout.trim(), join(sdd, 'demo-plan'));
+    assert.equal(second.stdout.trim(), join(sdd, 'demo-plan-other'));
+    assert.equal(third.stdout.trim(), join(sdd, 'demo-plan-other-2'));
+    assert.equal(readFileSync(join(sdd, 'demo-plan', 'plan-path'), 'utf8'), `${r.plan}\n`);
+    assert.equal(readFileSync(join(sdd, 'demo-plan-other-2', 'plan-path'), 'utf8'), 'elsewhere/other/demo-plan.md\n');
+    // Another spelling of the same plan resolves to the same workspace.
+    assert.equal(r.run('sdd-workspace', './docs/../docs/plans/demo-plan.md').stdout.trim(), join(sdd, 'demo-plan'));
+    // A plan outside the repo is recorded by its absolute path.
+    const outside = mkdtempSync(join(tmpdir(), 'sdd-outside-'));
+    try {
+      const plan = join(realpathSync(outside), 'demo-plan.md');
+      writeFileSync(plan, PLAN);
+      const res = r.run('sdd-workspace', plan);
+      assert.equal(res.status, 0, res.stderr);
+      assert.equal(readFileSync(join(res.stdout.trim(), 'plan-path'), 'utf8'), `${plan}\n`);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  } finally {
+    r.cleanup();
+  }
+});
+
+// --- The fence rule shared with progress-tracking's parsePlan (Plan sp3-orchestration · T11, spec Addendum E.8) ----
+
+test('task-brief and parsePlan agree on the fence fixture', () => {
+  const text = readFileSync(FENCES_PLAN, 'utf8');
+  assert.ok(text.endsWith('\n'));
+  const all = text.slice(0, -1).split('\n');
+  // The fixture holds backtick and tilde fences, a longer closing run, four-space and tab-indented fence lines and
+  // `### Task` lines inside fences.
+  for (const re of [/^```/m, /^~~~/m, /^~~~~~$/m, /^ {4}```/m, /^\t```/m, /^### Task 9\d: /m]) {
+    assert.match(text, re, `the fixture lost ${re}`);
+  }
+  const tasks = parsePlan(text);
+  assert.deepEqual(tasks.map((t) => t.id), ['T1', 'T2', 'T3', 'T4', 'T5', 'T6']);
+  const r = repo();
+  try {
+    const headings = tasks.map((t) => all.indexOf(`### Task ${t.id.slice(1)}: ${t.title}`));
+    assert.ok(headings.every((i) => i >= 0), 'every parsed heading is a line of the fixture');
+    tasks.forEach((t, k) => {
+      const out = join(r.dir, `brief-${t.id}.md`);
+      const res = r.run('task-brief', FENCES_PLAN, t.id.slice(1), out);
+      assert.equal(res.status, 0, `${t.id}: ${res.stderr}`);
+      // task-brief's extent of a task ends where parsePlan's next task starts.
+      const end = k + 1 < headings.length ? headings[k + 1] : all.length;
+      assert.equal(readFileSync(out, 'utf8'), `${all.slice(headings[k], end).join('\n')}\n`, t.id);
+    });
+    // A heading inside a fence is a task for neither.
+    for (const n of ['90', '91', '92', '93', '94', '95']) {
+      assert.equal(r.run('task-brief', FENCES_PLAN, n, join(r.dir, `none-${n}.md`)).status, 3, `Task ${n} is inside a fence`);
+    }
+  } finally {
+    r.cleanup();
+  }
+});
+
+const PHASED_PLAN = join(PLUGIN, 'test', 'fixtures', 'phased-plan.md');
+
+test('parsePlan reads the tasks of a phased plan and ignores phase blocks', () => {
+  assert.deepEqual(parsePlan(readFileSync(PHASED_PLAN, 'utf8')).map((t) => t.id), ['T1', 'T2', 'T3']);
+});
+
+test('task-brief ends a task at the next level 1-3 heading outside a fence', () => {
+  const r = repo();
+  try {
+    const brief = (n) => {
+      const out = join(r.dir, `phased-${n}.md`);
+      const res = r.run('task-brief', PHASED_PLAN, n, out);
+      assert.equal(res.status, 0, res.stderr);
+      return readFileSync(out, 'utf8').split('\n');
+    };
+    const two = brief('2');
+    assert.equal(two[0], '### Task 2: Two');
+    assert.ok(!two.some((l) => l.startsWith('## Phase 2')), 'Task 2 runs into the next phase heading');
+    assert.ok(two.includes('## Phase 9: inside a fence'), 'the fenced block is cut from Task 2');
+    assert.ok(two.includes('### Task 9: fake'), 'the fenced block is cut from Task 2');
+    const three = brief('3');
+    assert.equal(three[0], '### Task 3: Three');
+    assert.ok(three.includes('**Depends on:** T2'));
+    assert.ok(!three.some((l) => l.startsWith('## After Merge')), 'Task 3 runs into the After Merge section');
+    assert.equal(r.run('task-brief', PHASED_PLAN, '9', join(r.dir, 'none-9.md')).status, 3, 'Task 9 is inside a fence');
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('task-brief stops at ## After Merge', () => {
+  const r = repo();
+  try {
+    const plan = join(r.dir, 'docs', 'plans', 'after-merge-plan.md');
+    writeFileSync(plan, `${PLAN}\n## After Merge\n\n- [ ] Tag the release.\n`);
+    const out = join(r.dir, 'last.md');
+    const res = r.run('task-brief', plan, '3', out);
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, /^wrote .*last\.md: 7 lines$/m);
+    assert.equal(
+      readFileSync(out, 'utf8'),
+      ['### Task 3: Third', '', '**Depends on:** T2', '**Role:** coordinator', '', '- [ ] **Step 1:** do three.', '', ''].join('\n'),
+    );
+  } finally {
+    r.cleanup();
+  }
+});
+
+// A store-mode plan lives outside the working tree (in the store's plansDir): every script that takes PLAN_FILE accepts
+// that path, and none accepts a bare plan name.
+test('every script that takes PLAN_FILE accepts a plan path outside the repo, and refuses a bare name', () => {
+  const r = repo();
+  const outside = realpathSync(mkdtempSync(join(tmpdir(), 'sdd-plans-')));
+  try {
+    const planPath = join(outside, 'demo-plan.md');
+    writeFileSync(planPath, PLAN);
+    const base = r.git('rev-parse', 'HEAD').trim();
+    const head = commit(r, 'one.txt', 'one\n', 'add one');
+    const ws = r.run('sdd-workspace', planPath);
+    assert.equal(ws.status, 0, ws.stdout + ws.stderr);
+    const brief = r.run('task-brief', planPath, '1', join(r.dir, 'brief.md'));
+    assert.equal(brief.status, 0, brief.stdout + brief.stderr);
+    assert.match(readFileSync(join(r.dir, 'brief.md'), 'utf8'), /^### Task 1: First/);
+    const pkg = r.run('review-package', planPath, base, head, join(r.dir, 'package.diff'));
+    assert.equal(pkg.status, 0, pkg.stdout + pkg.stderr);
+    for (const [script, args] of [['sdd-workspace', ['demo-plan.md']], ['task-brief', ['demo-plan.md', '1']], ['review-package', ['demo-plan.md', base, head]]]) {
+      const res = r.run(script, ...args);
+      assert.equal(res.status, 2, `${script} accepted a bare plan name: ${res.stdout}${res.stderr}`);
+      assert.match(res.stderr, /no such plan file/);
+    }
+  } finally {
+    r.cleanup();
+    rmSync(outside, { recursive: true, force: true });
+  }
 });

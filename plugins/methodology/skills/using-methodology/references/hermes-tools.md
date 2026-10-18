@@ -49,7 +49,7 @@ Use `delegate_task` to spawn isolated subagents for parallel or sequential works
 delegate_task(goal="...", context="...", toolsets=[...], role="leaf")
 ```
 
-If `delegate_task` is unavailable, do the work inline rather than inventing tool calls.
+If `delegate_task` is unavailable, stop and ask your human partner; never do the task yourself in place of a role agent, and never invent tool calls.
 
 ## Task tracking
 

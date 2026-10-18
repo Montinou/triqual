@@ -9,7 +9,7 @@ description: Use when your human partner explicitly asks for a git worktree or a
 
 A worktree is opt-in. Create one only when your human partner explicitly asks for it, in this conversation or in their instruction files. Prefer your platform's native worktree tools; fall back to manual git worktrees only when no native tool is available.
 
-**The default is the current checkout.** Plan execution (methodology:subagent-driven-development, methodology:executing-plans) runs on stacked phase branches: `stack.mjs phase` moves HEAD off the trunk before any code changes, so the trunk is already protected and a worktree adds nothing. Executing a plan is not a request for a worktree, and neither is "work autonomously".
+**The default is the current checkout.** Plan execution (methodology:executing-plans) runs on stacked phase branches: `stack.mjs phase` moves HEAD off the trunk before any code changes, so the trunk is already protected and a worktree adds nothing. Executing a plan is not a request for a worktree, and neither is "work autonomously".
 
 **Core principle:** No request, no worktree. Detect existing isolation first. Then use native tools. Then fall back to git. Whoever creates a worktree removes it (methodology:finishing-branch, Step 7). Never fight the harness.
 

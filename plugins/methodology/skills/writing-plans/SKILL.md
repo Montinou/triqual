@@ -86,7 +86,7 @@ ends with an independently testable deliverable and exactly one commit.
 ```markdown
 # [Feature Name] Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use methodology:subagent-driven-development (recommended) or methodology:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use methodology:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** [One sentence describing what this builds]
 
@@ -263,35 +263,20 @@ When opted in, the plan ends in the task ledger and the tracking files; when not
 ## Execution Handoff
 
 After saving and self-reviewing the plan, link it for your human partner
-to read. If they have already explicitly supplied an execution method, ask
-them to review the plan and confirm it captures what they want; wait for that
-review before implementation, then use the preserved method. Otherwise, ask
-them to review the plan and choose an execution method before implementation.
+to read. Ask them to review the plan and confirm it captures what they want;
+wait for that review before implementation. Every plan runs through
+`methodology:executing-plans`, which dispatches each task to a role agent, so
+there is nothing else to pick.
 
 Execution builds a stack: one branch and one draft PR per phase, one commit
 per task. In GitHub mode (a GitHub remote and `gh stack`) it pushes this
 plan's phase branches, opens and updates their draft PRs, and marks them
-ready for review after the final review; otherwise the stack stays local. Your human partner's choice of the method (or their
-confirmation of the plan, when the method was already supplied) authorizes
+ready for review after the final review; otherwise the stack stays local. Your human partner's
+confirmation of the plan authorizes
 that push of this plan's phase branches and draft PRs, and marking them ready for review after the final review, and nothing else; the
 execution skill records it in its ledger as `Authorization: push phase
 branches and draft PRs — handoff <date>`, and merging stays your human partner's.
 
-**When no execution method has already been supplied:**
-
-**"Plan complete and saved to `<plan path>`. Please review the plan. Which execution approach would you prefer?**
-
-- **Subagent-driven** - A fresh subagent implements each task and a fresh reviewer checks it before the next one starts, then a whole-branch review at the end. Most thorough; costs a fresh context per task and per review.
-- **Native** - I implement every task myself in this session, the way this harness runs work; each task still gets its reviews, and the whole branch a final review. Cheapest and fastest; no fresh implementer context per task. Runs well with a mid-tier session model, since the plan carries the design.
-
-**For this plan I recommend <one of the two>, because <one sentence from the plan: how much the tasks depend on each other's interfaces, how many there are, what a shipped mistake would cost>. Either approach builds a stack: one branch and one draft PR per phase. Choosing one authorizes the execution skill to push this plan's phase branches, to open and update their draft PRs, and to mark them ready for review after the final review (it records that in its ledger; without `gh stack` or a GitHub remote the stack stays local); merging stays yours. Does the plan capture what you want, and which approach should we use?"**
-
-**When an execution method has already been supplied:**
-
 **"Plan complete and saved to `<plan path>`. Please review the plan. Execution builds a stack: one branch and one draft PR per phase. Confirming the plan authorizes the execution skill to push this plan's phase branches, to open and update their draft PRs, and to mark them ready for review after the final review (it records that in its ledger; without `gh stack` or a GitHub remote the stack stays local); merging stays yours. Does it capture what you want?"**
 
-**If Subagent-driven chosen:**
-- **REQUIRED SUB-SKILL:** Use methodology:subagent-driven-development
-
-**If Native chosen:**
 - **REQUIRED SUB-SKILL:** Use methodology:executing-plans

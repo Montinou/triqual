@@ -51,5 +51,5 @@ test('scenarios.json carries S1-S9, each with a setup and skill files that exist
   assert.match(s4.setup, /<headjack-suggestions>/);
   assert.doesNotMatch(s4.setup, /skill-suggest hint/);
   const s9 = spec.scenarios.find((s) => s.id === 'S9');
-  assert.deepEqual(s9.skills, ['subagent-driven-development/SKILL.md']);
+  assert.deepEqual(s9.skills, ['executing-plans/SKILL.md']);
 });

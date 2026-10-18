@@ -246,15 +246,14 @@ stamps.
 
 ## Skills
 
-The 15 skills in `skills/`. Claude Code names them `methodology:<name>`.
+The 14 skills in `skills/`. Claude Code names them `methodology:<name>`.
 
 | Skill | Purpose |
 |---|---|
 | `using-methodology` | Start of every conversation: how to find and use skills, and to invoke one before any response. |
 | `brainstorming` | Before any creative work: explore intent, requirements and design before implementation. |
 | `writing-plans` | Turn a spec or requirements for a multi-step task into a plan, before touching code. |
-| `subagent-driven-development` | Execute a plan with independent tasks in the current session, one stacked branch and draft PR per plan phase. |
-| `executing-plans` | Execute a plan in the current session as the implementer yourself, when inline execution was chosen or no subagent tool exists. |
+| `executing-plans` | Execute a plan: every task is done by a role agent, reviewed by its tier, one stacked branch and draft PR per plan phase. |
 | `dispatching-parallel-agents` | Handle two or more independent tasks that share no state or order. |
 | `test-driven-development` | Write the failing test first, for any feature or bugfix. |
 | `systematic-debugging` | Find the cause of any bug, test failure or unexpected behavior before proposing a fix. |
@@ -305,7 +304,7 @@ Environment variables:
   Triqual never writes Codex trust entries.
 - `sync --yes` never accepts the one-time split of `~/.codex/AGENTS.md` or a reinstall of Grok plugins. Run
   `triqual sync --harness codex` in a terminal for the split.
-- Grok cannot select a named agent, so the role agents and `subagent-driven-development` do not run there.
+- Grok cannot select a named agent, so the role agents and `executing-plans` do not run there.
 - The context that `triqual hook` returns is capped at 9,500 characters.
 - `stack.mjs` refuses a repo in committed tracking mode (exit 3). Switch with `triqual progress-init --store` or
   `--local`.

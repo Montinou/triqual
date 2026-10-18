@@ -1,6 +1,6 @@
 # Fences plan
 
-A fixture for the fence rule shared by progress-tracking's parsePlan and subagent-driven-development's task-brief:
+A fixture for the fence rule shared by progress-tracking's parsePlan and executing-plans' task-brief:
 a line indented four or more columns (a tab counts as four) never opens or closes a fence.
 
 ### Task 1: Backtick fence

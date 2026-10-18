@@ -44,7 +44,7 @@ const UNPHASED_CHECK = "the repository's full test command";
 // not hold a backtick (such a line is inline code). Groups: 1 the run, 2 the info string.
 const FENCE = /^(`{3,}(?=[^`]*$)|~{3,})(.*)$/;
 // The leading spaces and tabs of a line. Indented four or more columns (a tab counts as four) a line never opens or
-// closes a fence, as in CommonMark; subagent-driven-development's task-brief applies the same rule.
+// closes a fence, as in CommonMark; executing-plans' task-brief applies the same rule.
 const INDENT = /^[ \t]*/;
 const FENCE_INDENT_LIMIT = 4;
 const TAB_COLUMNS = 4;
