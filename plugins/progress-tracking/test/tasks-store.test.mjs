@@ -172,6 +172,7 @@ test('status --json, next --plan and close work on the store; close of a finishe
     assert.equal(j[0].name, NAME);
     assert.deepEqual({ ...j[0], ledgerPath: undefined }, {
       name: NAME, ledgerPath: undefined, done: 0, total: 1, inProgress: [], next: 'T1',
+      tiers: { T1: { tier: null, effectiveTier: null } },
     });
     assert.equal(ok(s.run(['next', '--plan', NAME])).stdout, 'T1 Only [roles:tdd-implementer]\n');
     refused(s.run(['close']), /plan has unfinished tasks: T1/);
@@ -691,4 +692,92 @@ test('tasks outside any repository still says not opted in, without node:sqlite'
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ---- tiers: registration rule, retier, views (plan methodology-1.0 T3) ----
+
+const tiered = (...tiers) => `# Tiered plan\n\n${tiers.map((tier, i) => `### Task ${i + 1}: Task ${i + 1}\n${tier ? `**Tier:** ${tier}\n` : ''}`).join('\n')}`;
+const PARTLY = tiered('heavy', null, 'light');
+const FULL = tiered('heavy', 'standard', 'light');
+const ledgerOf = (s) => s.inStore((store) => store.ledgerOf(store.plans(store.get('SELECT id FROM repos').id)[0].id));
+
+test('store init rejects a partly tiered plan and stores no plan', () => {
+  withRepo('store', (s) => {
+    const file = s.plan(PARTLY);
+    const r = s.run(['init', file]);
+    refused(r, /the plan declares tiers but T2 has none/);
+    s.inStore((store) => assert.equal(store.get('SELECT count(*) AS n FROM plans').n, 0));
+  });
+});
+
+test('store init accepts a tierless plan and a fully tiered plan', () => {
+  withRepo('store', (s) => {
+    ok(s.run(['init', s.plan()]));
+    assert.deepEqual(ledgerOf(s).tasks.map((t) => [t.tier, t.effectiveTier]), [[null, null], [null, null], [null, null]]);
+  });
+  withRepo('store', (s) => {
+    ok(s.run(['init', s.plan(FULL)]));
+    assert.deepEqual(ledgerOf(s).tasks.map((t) => [t.tier, t.effectiveTier]),
+      [['heavy', 'heavy'], ['standard', 'standard'], ['light', 'light']]);
+  });
+});
+
+test('store init on an existing ledger does not validate, and write plan --replace reconciles a partly tiered plan', () => {
+  withRepo('store', (s) => {
+    const file = s.plan(tiered(null, null, null));
+    ok(s.run(['init', file]));
+    writeFileSync(file, PARTLY);
+    assert.match(ok(s.run(['init', file])).stdout, /^reconciled /);
+    assert.deepEqual(ledgerOf(s).tasks.map((t) => t.tier), ['heavy', null, 'light']);
+    const draft = join(s.dir, `${NAME}.md`);
+    writeFileSync(draft, `${PARTLY}\n### Task 4: Task 4\n`);
+    assert.match(ok(s.run(['write', 'plan', draft, '--replace'], { bin: TRACKING })).stdout, /reconciled .*: added T4;/);
+  });
+});
+
+test('write plan rejects a partly tiered draft and lands nothing in the documents directory', () => {
+  withRepo('store', (s) => {
+    const draft = join(s.dir, 'partly.md');
+    writeFileSync(draft, PARTLY);
+    refused(s.run(['write', 'plan', draft], { bin: TRACKING }), /the plan declares tiers but T2 has none/);
+    assert.deepEqual(readdirSync(s.plansDir), []);
+    s.inStore((store) => assert.equal(store.get('SELECT count(*) AS n FROM plans').n, 0));
+  });
+});
+
+test('store retier behaves like committed retier: raise, same tier, lower, bad arguments', () => {
+  withRepo('store', (s) => withRepo('committed', (c) => {
+    ok(s.run(['init', s.plan(FULL)]));
+    c.plan(FULL);
+    ok(c.run(['init', `docs/plans/${NAME}.md`]));
+    const reason = ['--reason', 'touches the gate'];
+    sameOutputs(s, c, [
+      ['retier', 'T3', 'heavy', ...reason], ['retier', 'T3', 'heavy', ...reason], ['retier', 'T1', 'light', ...reason],
+      ['retier', 'T1', 'huge', ...reason], ['retier', 'T9', 'heavy', ...reason], ['retier', 'T2', 'heavy'],
+      ['status'],
+    ]);
+    const t = ledgerOf(s).tasks.find((x) => x.id === 'T3');
+    assert.equal(t.tier, 'light');
+    assert.equal(t.effectiveTier, 'heavy');
+    assert.equal(t.history.at(-1).note, 'touches the gate');
+    assert.equal(t.history.length, 2);
+    assert.equal(s.run(['retier', 'T3', 'heavy', ...reason]).stdout, 'T3: already heavy\n');
+    assert.equal(ledgerOf(s).tasks.find((x) => x.id === 'T3').history.length, 2, 'a no-op records nothing');
+  }));
+});
+
+test('store status --json, next --json and export --json carry tier and effectiveTier', () => {
+  withRepo('store', (s) => {
+    ok(s.run(['init', s.plan(FULL)]));
+    ok(s.run(['start', 'T1']));
+    ok(s.run(['retier', 'T2', 'heavy', '--reason', 'risky']));
+    const [st] = JSON.parse(ok(s.run(['status', '--json'])).stdout);
+    assert.deepEqual(st.tiers, { T1: { tier: 'heavy', effectiveTier: 'heavy' }, T2: { tier: 'standard', effectiveTier: 'heavy' } });
+    assert.deepEqual(JSON.parse(ok(s.run(['next', '--json'])).stdout), {
+      id: 'T2', title: 'Task 2', role: 'roles:tdd-implementer', tier: 'standard', effectiveTier: 'heavy',
+    });
+    const snap = JSON.parse(ok(s.run(['export', '--json'])).stdout);
+    assert.deepEqual(snap.plans[0].tasks.map((t) => [t.id, t.tier, t.effectiveTier]),
+      [['T1', 'heavy', 'heavy'], ['T2', 'standard', 'heavy'], ['T3', 'light', 'light']]);
+  });
 });

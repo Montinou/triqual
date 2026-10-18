@@ -272,7 +272,10 @@ test('status prints one line per active ledger and --json the summary', () => wi
   ok(run(['drop', 'T2', 'later']));
   assert.equal(ok(run(['status'])).stdout, `${NAME}: 0/2 done · in progress: T1 · next: none\n`);
   assert.deepEqual(JSON.parse(ok(run(['status', '--json'])).stdout), [
-    { name: NAME, ledgerPath: join(repo, LEDGER_REL), done: 0, total: 2, inProgress: ['T1'], next: null },
+    {
+      name: NAME, ledgerPath: join(repo, LEDGER_REL), done: 0, total: 2, inProgress: ['T1'], next: null,
+      tiers: { T1: { tier: null, effectiveTier: null } },
+    },
   ]);
 }));
 
@@ -1008,4 +1011,146 @@ test('init treats the existing ledger\'s ids as known dependencies', () => withR
   const bad = run(['init', PLAN_REL]);
   assert.equal(bad.status, 2);
   assert.equal(bad.stderr, 'T3 depends on T8 (unknown task)\n');
+}));
+
+// ---- tiers: registration rule, retier, views (plan methodology-1.0 T3) ----
+
+const tiered = (...tiers) => `# Tiered plan\n\n${tiers.map((tier, i) => `### Task ${i + 1}: Task ${i + 1}\n${tier ? `**Tier:** ${tier}\n` : ''}`).join('\n')}`;
+const PARTLY = tiered('heavy', null, 'light');
+const FULL = tiered('heavy', 'standard', 'light');
+
+test('init rejects a partly tiered plan, names the tasks without a tier and creates no ledger', () => withRepo(({ repo, run }) => {
+  committed(repo, PARTLY);
+  const statusBefore = read(join(repo, 'status.md'));
+  const r = run(['init', PLAN_REL]);
+  assert.equal(r.status, 2, r.stdout);
+  assert.match(r.stderr, /the plan declares tiers but T2 has none/);
+  assert.equal(existsSync(join(repo, LEDGER_REL)), false, 'no ledger');
+  assert.equal(read(join(repo, 'status.md')), statusBefore, 'status.md untouched');
+}));
+
+test('init rejects a coordinator that is not light in a tiered plan', () => withRepo(({ repo, run }) => {
+  committed(repo, '# p\n\n### Task 1: A\n**Role:** coordinator\n**Tier:** heavy\n');
+  const r = run(['init', PLAN_REL]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /T1: role coordinator requires tier light, not heavy/);
+  assert.equal(existsSync(join(repo, LEDGER_REL)), false);
+}));
+
+test('init accepts a tierless plan and a fully tiered plan', () => withRepo(({ repo, run }) => {
+  committed(repo);
+  ok(run(['init', PLAN_REL]));
+  assert.deepEqual(readJson(join(repo, LEDGER_REL)).tasks.map((t) => [t.tier, t.effectiveTier]), [[null, null], [null, null], [null, null]]);
+  rmSync(join(repo, LEDGER_REL));
+  writeFileSync(join(repo, PLAN_REL), FULL);
+  ok(run(['init', PLAN_REL]));
+  assert.deepEqual(readJson(join(repo, LEDGER_REL)).tasks.map((t) => [t.tier, t.effectiveTier]),
+    [['heavy', 'heavy'], ['standard', 'standard'], ['light', 'light']]);
+}));
+
+test('init on an existing ledger does not validate: a partly tiered plan reconciles', () => withRepo(({ repo, run }) => {
+  committed(repo, tiered(null, null, null));
+  ok(run(['init', PLAN_REL]));
+  writeFileSync(join(repo, PLAN_REL), PARTLY);
+  const r = ok(run(['init', PLAN_REL]));
+  assert.match(r.stdout, /^reconciled /);
+  assert.deepEqual(readJson(join(repo, LEDGER_REL)).tasks.map((t) => t.tier), ['heavy', null, 'light']);
+}));
+
+test('init --adopt rejects a partly tiered draft and leaves no copy and no ledger', () => withRepo(({ dir, repo, run }) => {
+  const root = localMode(repo);
+  const draft = join(dir, `${NAME}.md`);
+  writeFileSync(draft, PARTLY);
+  const r = run(['init', '--adopt', draft]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /the plan declares tiers but T2 has none/);
+  assert.deepEqual(readdirSync(join(root, 'plans')), []);
+}));
+
+const retierRun = (run, ...args) => run(['retier', ...args]);
+
+test('retier raises the effective tier, keeps the declared one and records the reason in the history', () => withRepo(({ repo, run }) => {
+  committed(repo, FULL);
+  ok(run(['init', PLAN_REL]));
+  const r = ok(retierRun(run, 'T3', 'heavy', '--reason', 'touches the gate'));
+  assert.equal(r.stdout, 'T3: light -> heavy\n');
+  const t = readJson(join(repo, LEDGER_REL)).tasks.find((x) => x.id === 'T3');
+  assert.equal(t.tier, 'light', 'declared tier is kept');
+  assert.equal(t.effectiveTier, 'heavy');
+  assert.equal(t.history.at(-1).note, 'touches the gate');
+  assert.equal(t.history.at(-1).from, 'pending');
+  assert.equal(t.history.at(-1).to, 'pending');
+  assert.equal(t.reason, null, 'the task reason is not a retier reason');
+  assert.equal(ok(run(['status'])).stdout, `${NAME}: 0/3 done · in progress: none · next: T1 [heavy]\n`);
+  // A task with no tier counts as standard, so standard is a no-op and heavy raises it.
+  committed(repo, '# p\n\n### Task 1: A\n');
+  rmSync(join(repo, LEDGER_REL));
+  ok(run(['init', PLAN_REL]));
+  assert.equal(ok(retierRun(run, 'T1', 'standard', '--reason', 'x')).stdout, 'T1: already standard\n');
+  assert.equal(ok(retierRun(run, 'T1', 'heavy', '--reason', 'x')).stdout, 'T1: standard -> heavy\n');
+}));
+
+test('retier to the same tier is a no-op that leaves the ledger byte-identical', () => withRepo(({ repo, run }) => {
+  committed(repo, FULL);
+  ok(run(['init', PLAN_REL]));
+  const before = readFileSync(join(repo, LEDGER_REL));
+  const status = readFileSync(join(repo, 'status.md'));
+  const r = ok(retierRun(run, 'T1', 'heavy', '--reason', 'again'));
+  assert.equal(r.stdout, 'T1: already heavy\n');
+  assert.deepEqual(readFileSync(join(repo, LEDGER_REL)), before);
+  assert.deepEqual(readFileSync(join(repo, 'status.md')), status);
+}));
+
+test('retier refuses a lower tier, an unknown tier or task and a missing reason, and changes nothing', () => withRepo(({ repo, run }) => {
+  committed(repo, FULL);
+  ok(run(['init', PLAN_REL]));
+  const before = readFileSync(join(repo, LEDGER_REL));
+  const lower = retierRun(run, 'T1', 'light', '--reason', 'cheaper');
+  assert.equal(lower.status, 2);
+  assert.match(lower.stderr, /T1: cannot lower the tier from heavy to light/);
+  const unknownTier = retierRun(run, 'T1', 'huge', '--reason', 'x');
+  assert.equal(unknownTier.status, 2);
+  assert.match(unknownTier.stderr, /unknown tier "huge" \(expected heavy, standard, light\)/);
+  const unknownTask = retierRun(run, 'T9', 'heavy', '--reason', 'x');
+  assert.equal(unknownTask.status, 2);
+  assert.match(unknownTask.stderr, /unknown task T9/);
+  for (const args of [['T3', 'heavy'], ['T3', 'heavy', '--reason', '  ']]) {
+    const r = retierRun(run, ...args);
+    assert.equal(r.status, 2, args.join(' '));
+    assert.match(r.stderr, /T3: retier requires a reason/);
+  }
+  assert.deepEqual(readFileSync(join(repo, LEDGER_REL)), before);
+}));
+
+test('status --json and next --json carry tier and effectiveTier', () => withRepo(({ repo, run }) => {
+  committed(repo, FULL);
+  ok(run(['init', PLAN_REL]));
+  ok(run(['start', 'T1']));
+  ok(retierRun(run, 'T2', 'heavy', '--reason', 'risky'));
+  const [s] = JSON.parse(ok(run(['status', '--json'])).stdout);
+  assert.deepEqual(s.inProgress, ['T1']);
+  assert.equal(s.next, 'T2');
+  assert.deepEqual(s.tiers, { T1: { tier: 'heavy', effectiveTier: 'heavy' }, T2: { tier: 'standard', effectiveTier: 'heavy' } });
+  assert.deepEqual(JSON.parse(ok(run(['next', '--json'])).stdout), {
+    id: 'T2', title: 'Task 2', role: 'roles:tdd-implementer', tier: 'standard', effectiveTier: 'heavy',
+  });
+  ok(run(['start', 'T2']));
+  ok(run(['start', 'T3']));
+  assert.equal(ok(run(['next', '--json'])).stdout, 'null\n');
+}));
+
+test('export --json includes tier and effectiveTier per task', () => withRepo(({ repo, run }) => {
+  committed(repo, FULL);
+  ok(run(['init', PLAN_REL]));
+  ok(retierRun(run, 'T3', 'heavy', '--reason', 'risky'));
+  const snap = JSON.parse(ok(run(['export', '--json'])).stdout);
+  assert.deepEqual(snap.plans[0].tasks.map((t) => [t.id, t.tier, t.effectiveTier]),
+    [['T1', 'heavy', 'heavy'], ['T2', 'standard', 'standard'], ['T3', 'light', 'heavy']]);
+}));
+
+test('retier and next --json are listed in the usage', () => withRepo(({ repo, run }) => {
+  committed(repo);
+  const r = ok(run(['--help']));
+  assert.match(r.stdout, /retier T<N> <tier> --reason "<text>" \[--plan <plan\.md\|ledger>\]/);
+  assert.match(r.stdout, /next \[--plan <plan\.md\|ledger>\] \[--json\]/);
 }));

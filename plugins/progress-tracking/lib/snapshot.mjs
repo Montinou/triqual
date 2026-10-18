@@ -83,6 +83,8 @@ export function planView(name, ledger) {
       title: t.title,
       status: t.status,
       reason: t.reason ?? null,
+      tier: t.tier ?? null,
+      effectiveTier: t.effectiveTier ?? null,
       commits: Array.isArray(t.commits) ? [...t.commits] : [],
       skills: Array.isArray(t.skills) ? [...t.skills] : [],
     })),

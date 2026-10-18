@@ -26,12 +26,13 @@ import { roleOf } from '../lib/roles.mjs';
 import { resolveTracking, storeTracking } from '../lib/tracking.mjs';
 import { docsDirs, loadSqlite, maybeDailySnapshot, repoKey, storePaths } from '../lib/store.mjs';
 import { writeAtomic } from '../lib/fsx.mjs';
+import { PlanError, validatePlanForRegistration } from '../lib/plan.mjs';
 import { withLock, tasksLockPath } from '../lib/lock.mjs';
 import { buildSnapshot, byNameDesc, planName } from '../lib/snapshot.mjs';
 import { readRegistry, listResolved } from '../lib/registry.mjs';
 import { LEDGER_EXT, entry, readEntry, ledgerPaths } from '../lib/ledger-files.mjs';
 import {
-  LedgerError, parsePlan, createLedger, reconcile, transition,
+  LedgerError, parsePlan, createLedger, reconcile, transition, retier,
   renderSection, upsertStatusSection, nextTask, statusLine, checkLedger, checkSchema, checkSection, counts,
 } from '../lib/ledger.mjs';
 
@@ -51,9 +52,10 @@ const USAGE = `usage: triqual tasks <subcommand> [args]
   done T<N> --commit <sha> [--plan <plan.md|ledger>]
   block|drop|reopen T<N> "<reason>" [--plan <plan.md|ledger>]
   retitle T<N> "<title>" [--plan <plan.md|ledger>]
+  retier T<N> <tier> --reason "<text>" [--plan <plan.md|ledger>]
   close [--plan <plan.md|ledger>]
   status [--json]
-  next [--plan <plan.md|ledger>]
+  next [--plan <plan.md|ledger>] [--json]
   check [--staged]
   render
   paths --json
@@ -69,6 +71,8 @@ const serialize = (ledger) => `${JSON.stringify(ledger, null, 2)}\n`;
 const ids = (list) => list.join(', ') || 'none';
 const posix = (p) => p.split(sep).join('/');
 const isActive = (l) => l.ledger.state === 'active';
+// A task's declared and effective tier, null for a ledger written before tiers.
+const tiersOf = (task) => ({ tier: task.tier ?? null, effectiveTier: task.effectiveTier ?? null });
 
 // ---- git ----
 
@@ -193,6 +197,17 @@ function planTasks(text, known = []) {
   return tasks;
 }
 
+// The registration rules (lib/plan.mjs) for a ledger about to be created, a PlanError reported as a LedgerError. Called
+// only where no ledger exists yet: an existing ledger reconciles with whatever its plan now says.
+function checkRegistration(tasks) {
+  try {
+    validatePlanForRegistration(tasks);
+  } catch (err) {
+    if (err instanceof PlanError) throw new LedgerError(err.message);
+    throw err;
+  }
+}
+
 // Writes `text` to `dest` only when `dest` does not exist: a complete temp file in dest's directory, then a hard link,
 // which fails with EEXIST instead of replacing a file created meanwhile.
 function writeNew(dest, text) {
@@ -227,7 +242,8 @@ function adopt(t, planArg) {
 
 // Adopts the plan drafted at `planArg` and inits it; returns { plan: <copy in plansDir>, message }. The caller holds the
 // tracking root's lock. `replace` (`triqual tracking write plan --replace`): an existing plan of that name is overwritten
-// atomically and its ledger reconciled; when a later step fails the previous plan text is put back.
+// atomically and its ledger reconciled; when a later step fails the previous plan text is put back. A new plan is checked
+// by the registration rules when its ledger is created (initFor), and its copy is removed when they refuse it.
 export function adoptPlan(t, planArg, { replace = false, spec, branch } = {}) {
   const abs = resolve(process.cwd(), planArg);
   const dest = join(t.plansDir, basename(abs));
@@ -291,6 +307,7 @@ function initPlan(t, { spec, branch }, abs, planArg) {
     changed = serialize(ledger) !== serialize(current);
     message = `reconciled ${ledgerPath}: added ${ids(r.added)}; missing ${ids(r.missing)}; retitled ${ids(r.retitled)}`;
   } else {
+    checkRegistration(tasks);
     ledger = createLedger({
       plan: posix(relative(base, planPath)),
       spec: spec === undefined ? null : posix(relative(base, resolve(process.cwd(), spec))),
@@ -361,6 +378,7 @@ function storeInit(st, { spec, branch }, abs, planArg) {
       if (serialize(r.ledger) !== serialize(current)) st.store.saveLedger(existing.planId, r.ledger);
       return `reconciled ${planPath}: added ${ids(r.added)}; missing ${ids(r.missing)}; retitled ${ids(r.retitled)}`;
     }
+    checkRegistration(tasks);
     const ledger = createLedger({ plan: `plans/${file}`, spec: specPath, branch: branchName, tasks, now: at });
     const planId = st.store.upsertPlan(st.repoId, { path: ledger.plan, spec: ledger.spec, branch: ledger.branch, state: ledger.state });
     st.store.saveLedger(planId, ledger);
@@ -406,12 +424,25 @@ function storeTransition(cmd) {
   };
 }
 
+// `retier T<N> <tier> --reason <text>` on the store: read again inside the transaction, like a transition.
+function storeRetier(st, values, [id, tier]) {
+  const selected = selectStoreLedger(st, values.plan);
+  const done = st.store.tx(() => {
+    const fresh = st.store.ledgerOf(selected.planId);
+    const result = retier(fresh, id, tier, values.reason, now());
+    if (result.changed) st.store.saveLedger(selected.planId, result.ledger);
+    return { before: fresh.tasks.find((x) => x.id === id), ...result };
+  });
+  out(retierMessage(id, tier, done.before, done.changed));
+  return 0;
+}
+
 function storeStatus(st, { json }) {
   return cmdStatusOf(storeLedgers(st).filter(isActive).sort(byNameDesc), json);
 }
 
-function storeNext(st, { plan }) {
-  return cmdNextOf(selectStoreLedger(st, plan).ledger);
+function storeNext(st, { plan, json }) {
+  return cmdNextOf(selectStoreLedger(st, plan).ledger, json);
 }
 
 // `render` prints the Active plan section: a store repository has no status.md to write it into.
@@ -515,6 +546,26 @@ function cmdTransition(cmd) {
   };
 }
 
+const retierMessage = (id, tier, before, changed) => (changed ? `${id}: ${before.effectiveTier ?? 'standard'} -> ${tier}` : `${id}: already ${tier}`);
+
+// `retier T<N> <tier> --reason <text>`: raises the task's effective tier (see ledger.retier); a repeat is a no-op that
+// still re-renders status.md, like a repeated transition.
+function cmdRetier(t, values, [id, tier]) {
+  const selected = selectLedger(t, values.plan);
+  const before = Array.isArray(selected.ledger.tasks) ? selected.ledger.tasks.find((x) => x.id === id) : undefined;
+  let result;
+  try {
+    result = retier(selected.ledger, id, tier, values.reason, now());
+  } catch (err) {
+    if (err instanceof LedgerError) throw err;
+    throw new LedgerError(`${selected.path} cannot be updated: ${err.message}`);
+  }
+  if (result.changed) save(t, selected.path, result.ledger);
+  else writeStatus(t, renderedStatus(t, loadLedgers(t)));
+  out(retierMessage(id, tier, before, result.changed));
+  return 0;
+}
+
 function cmdStatus(t, { json }) {
   return cmdStatusOf(loadLedgers(t, { skip: true }).filter(isActive).sort(byNameDesc), json);
 }
@@ -522,26 +573,33 @@ function cmdStatus(t, { json }) {
 // `status` over the active ledgers `active` (newest name first).
 function cmdStatusOf(active, json) {
   if (json) {
-    out(JSON.stringify(active.map(({ path, name, ledger }) => ({
-      name,
-      ledgerPath: path,
-      ...counts(ledger),
-      inProgress: ledger.tasks.filter((x) => x.status === 'in_progress').map((x) => x.id),
-      next: nextTask(ledger)?.id ?? null,
-    })), null, 2));
+    out(JSON.stringify(active.map(({ path, name, ledger }) => {
+      const inProgress = ledger.tasks.filter((x) => x.status === 'in_progress');
+      const next = nextTask(ledger);
+      return {
+        name,
+        ledgerPath: path,
+        ...counts(ledger),
+        inProgress: inProgress.map((x) => x.id),
+        next: next?.id ?? null,
+        // The declared and effective tier of each task printed above (the in-progress ones and the next one).
+        tiers: Object.fromEntries([...inProgress, ...(next ? [next] : [])].map((x) => [x.id, tiersOf(x)])),
+      };
+    }), null, 2));
   } else {
     for (const { name, ledger } of active) out(statusLine(name, ledger));
   }
   return 0;
 }
 
-function cmdNext(t, { plan }) {
-  return cmdNextOf(selectLedger(t, plan, { skip: true }).ledger);
+function cmdNext(t, { plan, json }) {
+  return cmdNextOf(selectLedger(t, plan, { skip: true }).ledger, json);
 }
 
-function cmdNextOf(ledger) {
+function cmdNextOf(ledger, json) {
   const task = nextTask(ledger);
-  out(task ? `${task.id} ${task.title} [${roleOf(task)}]` : 'none');
+  if (json) out(JSON.stringify(task ? { id: task.id, title: task.title, role: roleOf(task), ...tiersOf(task) } : null, null, 2));
+  else out(task ? `${task.id} ${task.title} [${roleOf(task)}]` : 'none');
   return 0;
 }
 
@@ -671,8 +729,10 @@ async function cmdExport(t, { all }) {
   return 0;
 }
 
-// A task as the status-line segment names it: `<id> (<role short name>)`, e.g. `T4 (tdd-implementer)`.
-const withRole = (task) => task && `${task.id} (${String(roleOf(task)).replace(/^roles:/, '')})`;
+// A task as the status-line segment names it: `<id> [<effective tier>] (<role short name>)`, e.g.
+// `T4 [heavy] (tdd-implementer)`; the tier is left out when the task has none.
+const withRole = (task) => task
+  && `${task.id}${task.effectiveTier ? ` [${task.effectiveTier}]` : ''} (${String(roleOf(task)).replace(/^roles:/, '')})`;
 
 // The `<current>` of the status-line segment (spec D.3, E.5): the first in_progress task, else the first in_review
 // task + ` review`, else the next task, else the first blocked task + ` blocked` (each task with its role), else `done`
@@ -756,11 +816,14 @@ const COMMANDS = {
   drop: move('drop', 2),
   reopen: move('reopen', 2),
   retitle: move('retitle', 2),
+  retier: {
+    positionals: [2, 2], options: { ...PLAN, reason: { type: 'string' } }, writes: true, run: cmdRetier, access: 'write', store: storeRetier,
+  },
   close: {
     positionals: [0, 0], options: PLAN, writes: true, run: cmdTransition('close'), access: 'write', store: storeTransition('close'),
   },
   status: { positionals: [0, 0], options: { json: { type: 'boolean' } }, run: cmdStatus, access: 'read', store: storeStatus },
-  next: { positionals: [0, 0], options: PLAN, run: cmdNext, access: 'read', store: storeNext },
+  next: { positionals: [0, 0], options: { ...PLAN, json: { type: 'boolean' } }, run: cmdNext, access: 'read', store: storeNext },
   check: { positionals: [0, 0], options: { staged: { type: 'boolean' } }, run: cmdCheck, access: 'read', store: storeCheck },
   render: { positionals: [0, 0], options: {}, writes: true, run: cmdRender, access: 'read', store: storeRender },
   paths: { positionals: [0, 0], options: { json: { type: 'boolean' } }, required: ['json'], untracked: () => true, run: cmdPaths },

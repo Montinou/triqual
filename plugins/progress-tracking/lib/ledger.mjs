@@ -149,6 +149,25 @@ export function transition(ledger, cmd, id, arg, now) {
   return { ledger: next, changed: true };
 }
 
+// `retier`: raises a task's effective tier to `tier` and records `reason` as the task's history note (the status stays).
+// The same tier (null counting as standard) changes nothing; a lower one, an unknown task or tier and a missing reason
+// throw. The declared tier is never touched, and no path lowers the effective one.
+export function retier(ledger, id, tier, reason, now) {
+  const next = structuredClone(ledger);
+  const task = next.tasks.find((t) => t.id === id);
+  if (!task) throw new LedgerError(`unknown task ${id}`);
+  if (!TIERS.includes(tier)) throw new LedgerError(`unknown tier "${tier}" (expected ${TIERS.join(', ')})`);
+  const text = typeof reason === 'string' ? reason.trim() : '';
+  if (!text) throw new LedgerError(`${id}: retier requires a reason`);
+  const current = task.effectiveTier ?? null;
+  if (rankOf(tier) === rankOf(current)) return { ledger: next, changed: false };
+  if (rankOf(tier) < rankOf(current)) {
+    throw new LedgerError(`${id}: cannot lower the tier from ${current ?? 'standard'} to ${tier}`);
+  }
+  task.effectiveTier = tier;
+  task.history.push({ at: now, from: task.status, to: task.status, note: text });
+  return { ledger: next, changed: true };
+}
 
 // ---- Views (spec §6.2 `render`, `status`, `next`, `check`) ----
 

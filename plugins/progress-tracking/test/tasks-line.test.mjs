@@ -217,3 +217,19 @@ test('line shows the current task\'s role', () => withRepo(({ repo, line }) => {
   writeLedger(plansDir, NAME, [['start', 'T2']], { plan, edit: (ledger) => { for (const x of ledger.tasks) delete x.role; } });
   segment(line(), `▸ ${NAME} 0/4 · T2 (tdd-implementer)\n`);
 }));
+
+test('line shows the current task\'s effective tier after its id, and nothing when it has none', () => withRepo(({ repo, line }) => {
+  const plansDir = optIn(repo);
+  const tier = (id, effectiveTier) => (ledger) => { ledger.tasks.find((x) => x.id === id).effectiveTier = effectiveTier; };
+  writeLedger(plansDir, NAME, [['start', 'T1']], { edit: tier('T1', 'heavy') });
+  segment(line(), `▸ ${NAME} 0/4 · T1 [heavy] (tdd-implementer)\n`);
+  writeLedger(plansDir, NAME, [['start', 'T1'], ['review', 'T1']], { edit: tier('T1', 'light') });
+  segment(line(), `▸ ${NAME} 0/4 · T1 [light] (tdd-implementer) review\n`);
+  writeLedger(plansDir, NAME, [['start', 'T1'], ['done', 'T1', SHA]], { edit: tier('T2', 'standard') });
+  segment(line(), `▸ ${NAME} 1/4 · T2 [standard] (tdd-implementer)\n`); // the next task
+  // A ledger written before tiers, and an undeclared tier, show no tag.
+  writeLedger(plansDir, NAME, [['start', 'T1']], { edit: (ledger) => { for (const x of ledger.tasks) delete x.effectiveTier; } });
+  segment(line(), `▸ ${NAME} 0/4 · T1 (tdd-implementer)\n`);
+  writeLedger(plansDir, NAME, [['start', 'T1']], { edit: tier('T1', null) });
+  segment(line(), `▸ ${NAME} 0/4 · T1 (tdd-implementer)\n`);
+}));
