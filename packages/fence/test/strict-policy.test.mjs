@@ -113,7 +113,8 @@ test('every example in both policies passes fence test', () => {
     const s = sink();
     const code = withTempHome(() => runTest(['--policy', file], s.io, { home }));
     assert.equal(code, 0, `${name}: ${s.text()}`);
-    const summary = s.out.at(-1);
+    // the policy examples' summary; the built-in table's own summary follows it
+    const summary = s.out.find((l) => /^\d+ passed, \d+ failed, \d+ skipped$/.test(l));
     assert.match(summary, /^\d+ passed, 0 failed, 0 skipped$/, `${name}: ${summary}`);
     assert.ok(Number.parseInt(summary, 10) > 0, name);
   }

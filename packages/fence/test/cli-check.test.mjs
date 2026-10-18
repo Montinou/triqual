@@ -114,7 +114,9 @@ test('fence test runs examples with non-shell tools and shell examples through t
   const ok = setup(SPEC_EXAMPLE);
   const r = fence(['test', '--policy', ok.policy], ok.home);
   assert.equal(r.code, 0, r.stdout + r.stderr);
-  assert.ok(!/skip/i.test(r.stdout.replace(/\d+ skipped/, '')), r.stdout);
+  // no policy example is skipped (the built-in table that follows reports its own skips)
+  const examples = r.stdout.slice(0, r.stdout.indexOf('0 skipped'));
+  assert.ok(!/skip/i.test(examples), r.stdout);
   assert.match(r.stdout, /PASS credentials deny\[0\] Bash cat \.env/);
   assert.match(r.stdout, /2 passed, 0 failed, 0 skipped/);
 
