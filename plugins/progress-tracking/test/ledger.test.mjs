@@ -4,7 +4,8 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LedgerError, parsePlan, createLedger, reconcile, transition } from '../lib/ledger.mjs';
-import { TASK_ROLES, DEFAULT_ROLE, roleOf } from '../lib/roles.mjs';
+import { TASK_ROLES, DEFAULT_ROLE, TIERS, roleOf } from '../lib/roles.mjs';
+import { TIERS as PLAN_TIERS } from '../lib/plan.mjs';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 // docs/plans/ exists only in the private checkout (its root carries .githooks/pre-commit).
@@ -60,9 +61,9 @@ const throwsLedger = (fn, re) => assert.throws(fn, (e) => {
 
 test('parsePlan reads headings, deps and skills', () => {
   assert.deepEqual(parsePlan(PLAN), [
-    { id: 'T1', title: 'First thing', deps: [], skills: [], role: null },
-    { id: 'T2', title: 'Second: with a colon', deps: [], skills: [], role: null },
-    { id: 'T3', title: 'Third thing', deps: ['T1', 'T2'], skills: ['jules-pr-reviews', 'skill-b'], role: null },
+    { id: 'T1', title: 'First thing', deps: [], skills: [], role: null, tier: null },
+    { id: 'T2', title: 'Second: with a colon', deps: [], skills: [], role: null, tier: null },
+    { id: 'T3', title: 'Third thing', deps: ['T1', 'T2'], skills: ['jules-pr-reviews', 'skill-b'], role: null, tier: null },
   ]);
 });
 
@@ -428,9 +429,9 @@ test('parsePlan ignores headings, deps and skills inside fenced code blocks', ()
     '### Task 3: Real three', '**Depends on:** T2',
   ].join('\n');
   assert.deepEqual(parsePlan(plan), [
-    { id: 'T1', title: 'Real one', deps: [], skills: ['a'], role: null },
-    { id: 'T2', title: 'Real two', deps: ['T1'], skills: [], role: null },
-    { id: 'T3', title: 'Real three', deps: ['T2'], skills: [], role: null },
+    { id: 'T1', title: 'Real one', deps: [], skills: ['a'], role: null, tier: null },
+    { id: 'T2', title: 'Real two', deps: ['T1'], skills: [], role: null, tier: null },
+    { id: 'T3', title: 'Real three', deps: ['T2'], skills: [], role: null, tier: null },
   ]);
 });
 
@@ -439,8 +440,8 @@ test('parsePlan: a shorter fence inside a longer one does not close it', () => {
   const plan = ['### Task 1: A', '````md', '```js', '### Task 9: phantom', '**Depends on:** T7', '```', '````',
     '### Task 2: B'].join('\n');
   assert.deepEqual(parsePlan(plan), [
-    { id: 'T1', title: 'A', deps: [], skills: [], role: null },
-    { id: 'T2', title: 'B', deps: [], skills: [], role: null },
+    { id: 'T1', title: 'A', deps: [], skills: [], role: null, tier: null },
+    { id: 'T2', title: 'B', deps: [], skills: [], role: null, tier: null },
   ]);
 });
 
@@ -448,8 +449,8 @@ test('parsePlan: a fence line with an info string does not close the fence', () 
   const plan = ['### Task 1: A', '```js', '```js', '### Task 9: phantom', '**Depends on:** T7', '```  ',
     '### Task 2: B', '**Depends on:** T1'].join('\n');
   assert.deepEqual(parsePlan(plan), [
-    { id: 'T1', title: 'A', deps: [], skills: [], role: null },
-    { id: 'T2', title: 'B', deps: ['T1'], skills: [], role: null },
+    { id: 'T1', title: 'A', deps: [], skills: [], role: null, tier: null },
+    { id: 'T2', title: 'B', deps: ['T1'], skills: [], role: null, tier: null },
   ]);
 });
 
@@ -543,9 +544,9 @@ test('parsePlan reads a **Role:** line', () => {
     '**Role:**   roles:review-fixer  ', '**Skills:** s', '', '### Task 3: C', '  **Role:** coordinator',
     '```', '**Role:** coordinator', '```'].join('\n');
   assert.deepEqual(parsePlan(plan), [
-    { id: 'T1', title: 'A', deps: [], skills: [], role: 'coordinator' },
-    { id: 'T2', title: 'B', deps: ['T1'], skills: ['s'], role: 'roles:review-fixer' },
-    { id: 'T3', title: 'C', deps: [], skills: [], role: null }, // an indented or fenced Role line is not read
+    { id: 'T1', title: 'A', deps: [], skills: [], role: 'coordinator', tier: null },
+    { id: 'T2', title: 'B', deps: ['T1'], skills: ['s'], role: 'roles:review-fixer', tier: null },
+    { id: 'T3', title: 'C', deps: [], skills: [], role: null, tier: null }, // an indented or fenced Role line is not read
   ]);
 });
 
@@ -596,4 +597,23 @@ test('this plan parses with its roles', { skip: !isPrivateCheckout && 'needs doc
   for (const t of tasks) {
     assert.equal(t.role, coordinator.has(t.id) ? 'coordinator' : 'roles:tdd-implementer', t.id);
   }
+});
+
+// Plan methodology-1.0 · T1: parsePlan is a thin wrapper over lib/plan.mjs's readTasks.
+test('parsePlan carries tier', () => {
+  const plan = '### Task 1: A\n**Tier:** heavy\n**Role:** roles:complex-implementer\n\n### Task 2: B\n';
+  assert.deepEqual(parsePlan(plan), [
+    { id: 'T1', title: 'A', deps: [], skills: [], role: 'roles:complex-implementer', tier: 'heavy' },
+    { id: 'T2', title: 'B', deps: [], skills: [], role: null, tier: null },
+  ]);
+});
+
+test('parsePlan maps PlanError to LedgerError', () => {
+  throwsLedger(() => parsePlan('### Task 1: A\n**Tier:** medium\n'), /T1.*medium/);
+  throwsLedger(() => parsePlan('### Task 1: A\n```\n'), /^unclosed code fence opened at line 2$/);
+});
+
+test('roles.mjs re-exports TIERS', () => {
+  assert.equal(TIERS, PLAN_TIERS);
+  assert.deepEqual([...TIERS], ['heavy', 'standard', 'light']);
 });
