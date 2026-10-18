@@ -18,7 +18,12 @@ Build the per-human-turn record of skill and plugin use, then look for gaps.
 4. For each human turn, compare the request text against the trigger
    descriptions of the methodology skills installed (read
    `<install root>/skills/*/SKILL.md` frontmatter `description` lines; the
-   install root is in the case file). Report as findings:
+   install root is in the case file). The ten skills of this system are
+   `using-methodology`, `brainstorming`, `writing-plans`, `executing-plans`,
+   `test-driven-development`, `verification-before-completion`,
+   `systematic-debugging`, `finishing-branch`, `diagnosing-methodology` and
+   `reviewing-code`. A skill name outside that list (a session on an older
+   install) is reported as it appears. Report as findings:
    - a skill invoked, with the request that preceded it (one finding per
      invocation is fine when there are few; group by skill when many);
    - a turn whose request matches a skill's trigger description with no
@@ -26,6 +31,14 @@ Build the per-human-turn record of skill and plugin use, then look for gaps.
      the request);
    - a skill invoked one or more turns after the matching request (late);
    - each non-methodology plugin/skill/tool used, with where.
+
+5. When the session ran a plan, the orchestrator's ledger `sdd-ledger.md`
+   (or the transcript's tool calls that wrote it, once the workspace is
+   deleted) holds `Tier: T<N> <tier>` and
+   `Tier raised: T<N> <from> → <to> — <reason>` lines. List them with their
+   line numbers beside the skill events of the same turns: they show which
+   task ran at which tier, and a `Tier raised:` line is the controller's
+   record, not a skill firing.
 
 Do not say whether a missed or late trigger was wrong. Report the match
 and the absence; the reader decides.

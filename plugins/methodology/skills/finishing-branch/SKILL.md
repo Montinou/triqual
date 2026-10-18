@@ -13,6 +13,8 @@ description: Use when implementation is complete, all tests pass, and you need t
 
 ## Step 1: Verify Tests
 
+**Scripts:** every stack command in this skill is `node ../executing-plans/scripts/stack.mjs <command> PLAN_FILE` (the commands are `path`, `status`, `mode` and `submit`), with PLAN_FILE the path of the plan just executed. The path is relative to this skill's folder: run it by its absolute path under the plugin's `skills/executing-plans/scripts/`. The script is not executable, so every call goes through `node`.
+
 **Stacked plan:** first find out whether the plan ran as a stack. Run `node ../executing-plans/scripts/stack.mjs path PLAN_FILE`, with PLAN_FILE the plan just executed: it prints the path of the stack's state file, `<repo root>/.methodology/stack/<plan file stem>.json`. When that file exists, the plan is a stack of phase branches: read the phases from `node ../executing-plans/scripts/stack.mjs status PLAN_FILE`, take the phase with the highest `n` (the top phase), check out the top branch (that phase's `branch`) on a clean tree, then run the suite there; the top branch holds every phase's commits, so a suite run on a lower phase proves less than the whole. With no state file, the current menu below applies unchanged (a plan run before stacked execution) and the suite runs on the current branch.
 
 Run the project's full test suite (`npm test` / `cargo test` / `pytest` / `go test ./...`).
@@ -37,7 +39,7 @@ closing commit. Run `triqual tasks paths --json` first:
 
 1. **Check (opted in):** run `triqual tasks check`. Exit 1 means the task ledger drifted from the plan or from `status.md`: report the drift it prints and stop here, before the close; fix it (or rule on it with your human partner) and rerun.
 2. **Close (opted in):** run `triqual tasks close` (with `--plan <plansDir>/<plan>.md` when more than one plan is active). It refuses while a task is unfinished: report the tasks it names and stop.
-3. **Closing entry (opted in):** write a new top entry in `progress` (`progress.md`), in the entry format the repo's CLAUDE.md gives, with Stage/task `Plan <topic> · close`: what the plan delivered, its commits, the final verification and what comes next.
+3. **Closing entry (opted in):** write a new top entry in `progress` (`progress.md`), in the entry format the repo's CLAUDE.md gives, with Stage/task `Plan <topic> · close`: what the plan delivered, its commits, the final verification and what comes next, plus the review totals executing-plans computed in its Finish before it deleted the workspace (hunters sent against the matrix's reference; tasks per effective tier and how many were raised) and a pointer to the "Rulings I made" it listed. A session that no longer has the totals reads each task's `tier` against its `effectiveTier` in `triqual tasks export --json` and leaves the hunter count out rather than guess.
 4. **Roadmap (opted in):** update the roadmap in `status` (`status.md`): mark the plan's roadmap row or line done (with the date) and name the next step, editing around the tasks markers, never inside them, and never rewriting the file.
 5. **Closing commit (opted in, `"mode": "committed"`):** one commit that stages `progress.md`, `status.md` and the dirty task ledger (the plan's `*.tasks.json`, which carries the pending ledger bookkeeping from the last task's moves and the close); the repo's pre-commit rejects a commit without them. Never `--no-verify`.
 
@@ -58,7 +60,7 @@ git rev-parse --path-format=absolute --git-dir --git-common-dir --show-toplevel
 node ../executing-plans/scripts/stack.mjs path PLAN_FILE
 ```
 
-Each is a plain command on its own: run it, then note what it prints. The first prints three lines, in order: `GIT_DIR`, `GIT_COMMON` and `WORKTREE_PATH`. The second (a stacked plan: the state file lives in this checkout, where `stack.mjs init` ran) prints `STACK_STATE`, the state file's path. Note all four now, while you are inside the workspace: Step 6 and Step 7 use them as plain values, and nothing here changes the session's directory (git reaches the main checkout with `git -C <MAIN_ROOT>`). The script path is relative to the skill folders: run it by its absolute path under the plugin's `skills/executing-plans/scripts/`.
+Each is a plain command on its own: run it, then note what it prints. The first prints three lines, in order: `GIT_DIR`, `GIT_COMMON` and `WORKTREE_PATH`. The second (a stacked plan: the state file lives in this checkout, where `stack.mjs init` ran) prints `STACK_STATE`, the state file's path. Note all four now, while you are inside the workspace: Step 6 and Step 7 use them as plain values. The session stays in this checkout until Step 7 moves it to `<MAIN_ROOT>`, just before a worktree is removed, so `stack.mjs` keeps finding the state file; until then git reaches the main checkout with `git -C <MAIN_ROOT>`.
 
 This determines which menu to show and how cleanup works:
 
@@ -104,15 +106,17 @@ Which option?
 
 **Stack menus:** when the state file exists, present one of the two menus below, chosen by the `mode` in `node ../executing-plans/scripts/stack.mjs status PLAN_FILE`, in place of the 3 or 2 options above; with no state file, the current menu above stays.
 
-**Stack link check (GitHub mode):** when the workspace ledger's `Phase <N>: submitted` or `ready` lines, or the latest `submit` output, end `; stack link missing`, the PRs are not linked as a stack on GitHub: say so when you present the menu and before offering `gh stack merge`, because an unlinked stack cannot be merged atomically (the owner links it, or merges the PRs one at a time, bottom first).
+**Stack link check (GitHub mode):** when the workspace ledger's `Phase <N>: submitted` or `ready` lines (the workspace is deleted at executing-plans' Finish, so then the final message's copy of them), or the latest `submit` output, end `; stack link missing`, the PRs are not linked as a stack on GitHub: say so when you present the menu and before offering `gh stack merge`, because an unlinked stack cannot be merged atomically (the owner links it, or merges the PRs one at a time, bottom first).
+
+**Draft stack:** when `node ../executing-plans/scripts/stack.mjs status PLAN_FILE` shows a GitHub-mode phase still `submitted`, its PR is a draft, and `gh stack merge` refuses draft PRs. Two things leave a phase `submitted`: the final review left residual Critical or Important findings (executing-plans then pushed the fix commit without marking anything ready), or a `submit … --open` that failed (exit 5) after a clean review. Say which when you present the menu: list the findings from the closing entry or the final message, or name the failed `--open`. You never mark the PRs ready or merge on your own: marking them ready is `node ../executing-plans/scripts/stack.mjs submit PLAN_FILE <top N> --open`, and only your human partner's answer authorizes it; "Merge now" needs that answer first.
 
 **Stacked plan, GitHub mode — present exactly these 2 options:**
 
 ```
-Implementation complete. The stack's PRs are ready for review. What would you like to do?
+Implementation complete. The stack's PRs are up for review. What would you like to do?
 
-1. Leave the stack open for review (the PRs are ready)
-2. Merge now (you name the top PR to merge up to, and the method)
+1. Leave the stack open for review (the PRs stay as they are)
+2. Merge now (the whole stack; you name the method)
 
 Which option?
 ```
@@ -145,7 +149,7 @@ First get the main repo root: `GIT_COMMON` (Step 3) is the git dir shared by eve
 git -C <GIT_COMMON>/.. rev-parse --show-toplevel
 ```
 
-Note what it prints as `MAIN_ROOT`. Every later command reaches the main checkout with `git -C <MAIN_ROOT>`; the session's directory never changes, so the worktree stays where `stack.mjs` finds the state file.
+Note what it prints as `MAIN_ROOT`. Every later command reaches the main checkout with `git -C <MAIN_ROOT>`. The session stays where it is until Step 7, which moves it only when a worktree is removed, so `stack.mjs` still finds the state file while you work.
 
 ```bash
 # Merge first — verify success before removing anything
@@ -188,9 +192,9 @@ Report: "Keeping branch <name>. Worktree preserved at <path>."
 
 ### Stacked plan: GitHub mode
 
-**Option 1, leave the stack open:** report "Leaving the stack open: its PRs are ready for review. Worktree preserved at <path>." The state file stays; the After Merge checklist stays in the closing entry and status `Next` (Step 2).
+**Option 1, leave the stack open:** report "Leaving the stack open: its PRs stay as they are. Worktree preserved at <path>." The state file stays; the After Merge checklist stays in the closing entry and status `Next` (Step 2).
 
-**Option 2, merge now:** ask the owner to name the top PR to merge up to and the method (the `<m>` below); never pick the PR or the method for them. Then run `gh stack merge <pr> --yes --merge-method <m>`, and go to "After a stack merge" below.
+**Option 2, merge now:** this merges the whole stack. Ask the owner for the method (the `<m>` below) and never pick it for them. Read `node ../executing-plans/scripts/stack.mjs status PLAN_FILE` first. A phase still `submitted` is a draft and `gh stack merge` refuses draft PRs: with the owner's OK run `node ../executing-plans/scripts/stack.mjs submit PLAN_FILE <top N> --open` before the merge, and when they do not OK it, stop. Then check out the top branch with `git switch <top branch>` and run `gh stack view --json`: the list must include the top phase's `pr`, and every PR in it must be one of the `pr` values `status` printed for this plan's phases; when the list is empty, lacks the top phase's PR, or holds any other PR, stop and ask. Then run `gh stack merge --yes --merge-method <m>` with no argument, which merges the stack of the current branch. `gh stack merge --help` takes no argument, a stack number or a PR number, and reads a bare number first as a stack number, so with `--yes` a bare PR number can merge another stack without a prompt. Never pass a bare number. To merge only up to a lower PR, the owner runs `gh stack merge` themselves (its wizard asks how far); you do not. Then go to "After a stack merge" below.
 
 ### Stacked plan: local mode
 
@@ -202,11 +206,11 @@ Report: "Keeping branch <name>. Worktree preserved at <path>."
 
 ### After a stack merge
 
-Read the status first, from the checkout where the stack lives, never from `MAIN_ROOT` (the state file is in the checkout where `stack.mjs init` ran, so `status` there is the only one that finds it): run `node ../executing-plans/scripts/stack.mjs status PLAN_FILE` in the session's own directory, which no step above changed. GitHub mode refreshes each phase's PR state from the forge, and a phase whose PR merged is `merged`. A merge with `gh stack merge <pr>` may stop short of the top, so what happens next depends on the top phase.
+Read the status first, from the checkout where the stack lives, never from `MAIN_ROOT` (the state file is in the checkout where `stack.mjs init` ran, so `status` there is the only one that finds it): run `node ../executing-plans/scripts/stack.mjs status PLAN_FILE` in the session's own directory (Step 7 has not moved it yet). GitHub mode refreshes each phase's PR state from the forge, and a phase whose PR merged is `merged`. A merge with `gh stack merge` (or one the owner ran by number) may stop short of the top, so what happens next depends on the top phase.
 
-**Full merge** (the top phase is `merged`; a local fast-forward merge is always full): work on the main repo root with `git -C <MAIN_ROOT>` (the `MAIN_ROOT` of Option 1 above; a local merge already merged there, a GitHub merge did not). In GitHub mode that checkout holds whatever was left in it (a phase branch, an old trunk), so bring it to the merged trunk before anything runs: require a clean tree (`git -C <MAIN_ROOT> status --porcelain --untracked-files=no` prints nothing), then `git -C <MAIN_ROOT> fetch <remote>`, `git -C <MAIN_ROOT> checkout <trunk>` and `git -C <MAIN_ROOT> merge --ff-only <remote>/<trunk>`, with the `remote` and `trunk` of the status output above; if any of these is refused, stop and report it, and nothing after it runs (the checklist would run on stale code). Then run the plan's `## After Merge` checklist in order, each operation with its command (run in `<MAIN_ROOT>` the way Option 1 runs the test command), and report each result (a failing operation stops the list: it and every operation after it stay pending, and the status refresh below names only them; an operation that needs the trunk pushed waits for your human partner, pushing stays theirs). Then clean up the worktree (Step 7: it moves the session to `<MAIN_ROOT>` before removing the worktree, and every command from here on runs from `<MAIN_ROOT>`), then `gh stack sync --prune` (GitHub mode; `gh` acts on the repository of the session's directory) or delete the merged phase branches with `git -C <MAIN_ROOT> branch -d <branch>` for every phase (local mode). The phases count as `merged`: `status` reports it in GitHub mode and the fast-forward made it so in local mode. Last, delete the state file at the path captured in Step 3: `rm -f <STACK_STATE>` (an absolute path; never resolve it again from here: the cleanup may have removed the worktree that held it). Then write a second progress entry (opted in; land it the way step 3 does for the repo's mode, with no commit after it) naming the merge and the checklist's results. Last, refresh the status section that named the checklist (status `Next`, step 4), so it no longer tells the owner or the next session to run what already ran: it names only the operations still pending (the failed one and the rest, when one failed) or says the checklist ran. In store mode read `triqual tracking status`, write the section's body as a draft and land it with `triqual tracking status set --section <heading> <draft>`; in local mode copy `status` to a draft in a private `mktemp -d` dir and land it with `triqual tracking write status <draft>` (a stack never runs in committed mode). Not opted in: say which operations are still pending, or that the checklist ran, in the final message.
+**Full merge** (GitHub mode: the top phase is `merged`; a local fast-forward merge is always full, and the state file records `merged` only in GitHub mode): work on the main repo root with `git -C <MAIN_ROOT>` (the `MAIN_ROOT` of Option 1 above; a local merge already merged there, a GitHub merge did not). In GitHub mode that checkout holds whatever was left in it (a phase branch, an old trunk), so bring it to the merged trunk before anything runs: require a clean tree (`git -C <MAIN_ROOT> status --porcelain --untracked-files=no` prints nothing), then `git -C <MAIN_ROOT> fetch <remote>`, `git -C <MAIN_ROOT> checkout <trunk>` and `git -C <MAIN_ROOT> merge --ff-only <remote>/<trunk>`, with the `remote` and `trunk` of the status output above; if any of these is refused, stop and report it, and nothing after it runs (the checklist would run on stale code). Then run the plan's `## After Merge` checklist in order, each operation with its command (run in `<MAIN_ROOT>` the way Option 1 runs the test command), and report each result (a failing operation stops the list: it and every operation after it stay pending, and the status refresh below names only them; an operation that needs the trunk pushed waits for your human partner, pushing stays theirs). Then clean up the worktree (Step 7: it moves the session to `<MAIN_ROOT>` before removing the worktree, and every command from here on runs from `<MAIN_ROOT>`), then `gh stack sync --prune` (GitHub mode; `gh` acts on the repository of the session's directory) or delete the merged phase branches with `git -C <MAIN_ROOT> branch -d <branch>` for every phase (local mode). The phases count as `merged`: `status` reports it in GitHub mode, and in local mode the fast-forward made it so without the state file saying so. Last, delete the state file at the path captured in Step 3: `rm -f <STACK_STATE>` (an absolute path; never resolve it again from here: the cleanup may have removed the worktree that held it). Then write a second progress entry (opted in; land it the way step 3 does for the repo's mode, with no commit after it) naming the merge and the checklist's results. Last, refresh the status section that named the checklist (status `Next`, step 4), so it no longer tells the owner or the next session to run what already ran: it names only the operations still pending (the failed one and the rest, when one failed) or says the checklist ran. In store mode read `triqual tracking status`, write the section's body as a draft and land it with `triqual tracking status set --section <heading> <draft>`; in local mode copy `status` to a draft in a private `mktemp -d` dir and land it with `triqual tracking write status <draft>` (a stack never runs in committed mode). Not opted in: say which operations are still pending, or that the checklist ran, in the final message.
 
-**Partial merge** (the top phase is not `merged`: the merge stopped below the top phase): run `node ../executing-plans/scripts/stack.mjs status PLAN_FILE` to refresh the state; this runs nothing else: no After Merge operation, no prune, no branch deleted, and the state file stays. The checklist stays in the closing entry and status `Next` (Step 2); name the remaining phases in your final message.
+**Partial merge** (GitHub mode only: the top phase is not `merged`, the merge stopped below the top phase; the state file records `merged` only in GitHub mode, so a local fast-forward is never a partial merge, whatever `status` shows): run `node ../executing-plans/scripts/stack.mjs status PLAN_FILE` to refresh the state; this runs nothing else: no After Merge operation, no prune, no branch deleted, and the state file stays. The checklist stays in the closing entry and status `Next` (Step 2); name the remaining phases in your final message.
 
 ### If your human partner asks to discard the work
 
@@ -305,7 +309,7 @@ the worktree.
 | Stack option | Merge | Push | Keep Worktree | Cleanup |
 |--------------|-------|------|---------------|---------|
 | GitHub 1. Leave open | - | - | yes | - |
-| GitHub 2. Merge now | `gh stack merge` | - | only if partial | full: `gh stack sync --prune`, state file |
+| GitHub 2. Merge now | `gh stack merge` (whole stack) | - | no | `gh stack sync --prune`, state file |
 | Local 1. Merge locally | `--ff-only` | - | no | phase branches, state file |
 | Local 2. Open as PRs | - | yes | yes | - |
 | Local 3. Keep as is | - | - | yes | - |
@@ -325,6 +329,7 @@ the worktree.
 | "The base branch is obviously main" | Confirm the fork point or ask. Merging into the wrong base is expensive to undo. |
 | "The push was rejected — force-push will fix it" | A rejected push means the remote moved. Investigate; force-push only on your human partner's explicit request. |
 | "`triqual tasks check` found drift (the repo is opted in), but the tests pass — close anyway" | Drift means the ledger, the plan and `status.md` disagree. Report it and fix it before the close; a closed ledger records the drift for good. |
-| "The stack's PRs merged, so the After Merge checklist can run" | Only when the top phase is `merged`. A partial merge runs nothing: the owner merges the rest and runs the checklist from the entry and `Next`. |
+| "The stack's PRs merged, so the After Merge checklist can run" | Only when the top phase is `merged` in GitHub mode; a partial merge runs nothing: the owner merges the rest and runs the checklist from the entry and `Next`. A local fast-forward is always a full merge, though the state file never says `merged` in local mode. |
+| "The stack's PRs are open, so they are ready for review" | A phase still `submitted` is a draft, and `gh stack merge` refuses drafts. Either the final review left residual findings or a failed `--open` (exit 5): name which, and let your human partner decide before anything is marked ready or merged. |
 | "A stack needs a closing commit like any plan" | Stacked execution is store or local mode: no tracking file exists to stage, so there is no closing commit. |
 | "The ledger bookkeeping can ride on the merge" | The closing commit carries it, with the closing entry, before any option runs. The pre-commit rejects a commit without the tracking files. |

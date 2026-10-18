@@ -25,5 +25,18 @@ happened. "Plan" here means any agreed course of action, not git commits.
    - steps invented (work done that no plan step covers);
    - drift immediately after a structural event (cite the event line and
      the first divergent action).
-4. If there is no recoverable plan, say so as the only finding, with
+4. Read the orchestrator's ledger, `sdd-ledger.md` in
+   `.methodology/sdd/<plan>/`. The workspace is deleted when a plan
+   finishes, so when the file is gone take the lines from the transcript's
+   tool calls that wrote them. It holds one `Tier: T<N> <tier>` line per
+   task, written at setup, and a `Tier raised: T<N> <from> → <to> — <reason>`
+   line whenever a task's tier went up. A tier is never lowered. For each
+   task report the `Tier:` line, every `Tier raised:` line with its reason
+   quoted, and the review lines that follow (`Round 1:`, `Round 2:`,
+   `Review:`), so the reader sees whether a raise came before the review of
+   the new tier. Also report: a task with a `Tier raised:` line and no review
+   line after it; a task with no `Tier:` line; any line that puts a task at
+   a lower tier than an earlier line did. Do not say whether a raise was
+   right or wrong; quote the lines.
+5. If there is no recoverable plan, say so as the only finding, with
    the lines you checked.
