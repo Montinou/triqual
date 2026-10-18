@@ -217,6 +217,74 @@ test('record: a ROLE_EVAL_FILE in an existing directory leaves that directory\'s
   assert.equal(mode(dir), 0o755);
 }));
 
+// A task review (v 2) as the orchestrator records it, and the final review's escapes.
+const taskReviewRecord = (over = {}) => ({
+  v: 2, at: '2026-09-01T10:00:00Z', provider: 'claude', task: 'T3', kind: 'task-review', attempt: 1, tier: 'heavy',
+  declaredTier: 'standard', raised: true,
+  hunters: [{
+    category: 'correctness', model: 'claude-haiku-5-5', candidates: 4, confirmed: { critical: 1, important: 1, minor: 0 },
+    refuted: 2, duplicateCandidate: 0, duplicateReview: 0, failed: false,
+  }],
+  gate: { findings: 2 }, spec: { ran: true, confirmed: { critical: 0, important: 1, minor: 0 } },
+  fixRounds: 2, blocked: false, coordinator: false, ...over,
+});
+const escapesRecord = (over = {}) => ({
+  v: 2, at: '2026-09-06T10:00:00Z', provider: 'claude', task: 'final', kind: 'final-escapes',
+  escapes: [{ tier: 'light', severity: 'important' }, { tier: 'light', severity: 'minor' }, { tier: 'heavy', severity: 'critical' }],
+  ...over,
+});
+
+test('record: a task-review is stored; the same attempt is a no-op, the next attempt of the same task is a second line', () => withWorld((w) => {
+  const opts = { env: envFor(w), cwd: w.repo };
+  const one = writeInput(w, taskReviewRecord(), 'a1.json');
+  const two = writeInput(w, taskReviewRecord({ attempt: 2 }), 'a2.json');
+  const first = run(['record', '--plan', w.plan, one], opts);
+  assert.equal(first.code, 0, first.err);
+  assert.match(first.out, /recorded/);
+  assert.match(run(['record', '--plan', w.plan, one], opts).out, /already recorded/);
+  assert.equal(lines(w.file).length, 1);
+  const second = run(['record', '--plan', w.plan, two], opts);
+  assert.equal(second.code, 0, second.err);
+  assert.match(second.out, /^recorded/);
+  const stored = lines(w.file).map((l) => JSON.parse(l));
+  assert.deepEqual(stored.map((r) => r.attempt), [1, 2]);
+  assert.notEqual(stored[0].key, stored[1].key);
+  const commonDir = realpathSync(execFileSync('git', ['-C', w.repo, 'rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8' }).trim());
+  assert.equal(stored[1].key, recordKey({ commonDir, plan: 'p.md', task: 'T3', kind: 'task-review', attempt: 2 }));
+}));
+
+test('record: a final-escapes record is stored once per plan', () => withWorld((w) => {
+  const opts = { env: envFor(w), cwd: w.repo };
+  const input = writeInput(w, escapesRecord());
+  assert.equal(run(['record', '--plan', w.plan, input], opts).code, 0);
+  assert.match(run(['record', '--plan', w.plan, input], opts).out, /already recorded/);
+  assert.equal(lines(w.file).length, 1);
+  assert.equal(JSON.parse(lines(w.file)[0]).kind, 'final-escapes');
+}));
+
+test('record: a task-review with an unknown key or a tier outside heavy, standard and light exits 2 naming the field', () => withWorld((w) => {
+  const opts = { env: envFor(w), cwd: w.repo };
+  const extra = run(['record', '--plan', w.plan, writeInput(w, taskReviewRecord({ extraKey: 1 }))], opts);
+  assert.equal(extra.code, 2);
+  assert.match(extra.err, /field extraKey/);
+  const medium = run(['record', '--plan', w.plan, writeInput(w, taskReviewRecord({ tier: 'medium' }))], opts);
+  assert.equal(medium.code, 2);
+  assert.match(medium.err, /field tier/);
+  assert.equal(medium.err.includes('medium'), false, 'the value is never echoed');
+  assert.equal(existsSync(dirname(w.file)), false);
+}));
+
+test('record: a task-review whose tier is below the declared one, or whose raised flag disagrees, exits 2 naming the field', () => withWorld((w) => {
+  const opts = { env: envFor(w), cwd: w.repo };
+  const lowered = run(['record', '--plan', w.plan, writeInput(w, taskReviewRecord({ tier: 'light', declaredTier: 'standard', raised: false }))], opts);
+  assert.equal(lowered.code, 2);
+  assert.match(lowered.err, /field tier/);
+  const flag = run(['record', '--plan', w.plan, writeInput(w, taskReviewRecord({ tier: 'heavy', declaredTier: 'standard', raised: false }), 'b.json')], opts);
+  assert.equal(flag.code, 2);
+  assert.match(flag.err, /field raised/);
+  assert.equal(existsSync(dirname(w.file)), false);
+}));
+
 // ---- summary ----------------------------------------------------------------------------------------------------
 
 // A safety-shadow line stored before that kind was retired (record refuses new ones, so it is written directly), then
@@ -304,6 +372,83 @@ test('summary works outside a git repository (it only reads the store)', () => w
   assert.equal(r.code, 0, r.err);
 }));
 
+// ---- summary --by-tier ------------------------------------------------------------------------------------------
+
+// Two heavy task reviews (attempts 1 and 2 of the one task T3, raised), one standard (blocked) and the final review's
+// three escapes (two light, one heavy), written straight into the store with their keys.
+function seedTiers(w) {
+  const heavy = taskReviewRecord();
+  const records = [
+    // heavy: 4 candidates, 2 confirmed; spec 1; fix rounds 2
+    heavy,
+    // heavy, second attempt: no hunters; spec 1; fix rounds 1
+    taskReviewRecord({ task: 'T3', attempt: 2, at: '2026-09-02T10:00:00Z', hunters: [], spec: { ran: true, confirmed: { critical: 0, important: 1, minor: 0 } }, fixRounds: 1 }),
+    // standard: 2 candidates, 1 confirmed; spec 0; fix rounds 1; blocked
+    taskReviewRecord({
+      task: 'T4', at: '2026-09-03T10:00:00Z', tier: 'standard', declaredTier: 'standard', raised: false, blocked: true, fixRounds: 1,
+      hunters: [{ ...heavy.hunters[0], candidates: 2, confirmed: { critical: 0, important: 0, minor: 1 }, refuted: 1 }],
+      spec: { ran: true, confirmed: { critical: 0, important: 0, minor: 0 } },
+    }),
+    escapesRecord(),
+  ];
+  mkdirSync(dirname(w.file), { recursive: true });
+  writeFileSync(w.file, `${records.map((r, i) => JSON.stringify({ ...r, key: `k${i}` })).join('\n')}\n`);
+}
+
+const EMPTY_TIER = {
+  tasks: 0, raised: 0, hunterConfirmedRate: null, specConfirmedPerTask: null, fixRoundsPerTask: null, blocked: 0, escapesPerTask: null,
+};
+
+test('summary --by-tier --json prints the per-tier object of the store', () => withWorld((w) => {
+  seedTiers(w);
+  const r = run(['summary', '--by-tier', '--json'], { env: envFor(w), cwd: w.repo });
+  assert.equal(r.code, 0, r.err);
+  // heavy: the two attempts are 1 task, raised once (tasks and raised count attempt 1 only); 2 confirmed of 4 -> 0.5;
+  // spec 1 + 1 = 2 over 1 task; fix rounds 2 + 1 = 3 over 1 task; one heavy escape over 1 task.
+  // standard: 1 task, blocked; 1 of 2 -> 0.5; spec 0; fix rounds 1; no escape. light: no task, two escapes without a task.
+  assert.deepEqual(JSON.parse(r.out), {
+    heavy: { tasks: 1, raised: 1, hunterConfirmedRate: 0.5, specConfirmedPerTask: 2, fixRoundsPerTask: 3, blocked: 0, escapesPerTask: 1 },
+    standard: { tasks: 1, raised: 0, hunterConfirmedRate: 0.5, specConfirmedPerTask: 0, fixRoundsPerTask: 1, blocked: 1, escapesPerTask: 0 },
+    light: EMPTY_TIER,
+  });
+}));
+
+test('summary --by-tier prints one line per tier; --since narrows the window; flags work in either order', () => withWorld((w) => {
+  seedTiers(w);
+  const opts = { env: envFor(w), cwd: w.repo };
+  const text = run(['summary', '--by-tier'], opts);
+  assert.equal(text.code, 0, text.err);
+  assert.match(text.out, /^heavy: tasks 1, raised 1, hunter confirmed 50\.0%, spec confirmed\/task 2\.00, fix rounds\/task 3\.00, blocked 0, escapes\/task 1\.00$/m);
+  assert.match(text.out, /^standard: tasks 1,/m);
+  assert.match(text.out, /^light: tasks 0, raised 0, hunter confirmed n\/a/m);
+  // Since 2026-09-03 only the standard review and the escapes stay.
+  const later = run(['summary', '--json', '--since', '2026-09-03', '--by-tier'], opts);
+  assert.equal(later.code, 0, later.err);
+  const parsed = JSON.parse(later.out);
+  assert.equal(parsed.heavy.tasks, 0);
+  assert.equal(parsed.standard.tasks, 1);
+  assert.deepEqual(parsed.light, EMPTY_TIER);
+  assert.equal(run(['summary', '--by-tier', '--since', '2026-9-3'], opts).code, 2);
+}));
+
+test('summary --by-tier on a missing store exits 0 with the three empty tiers and never creates the store', () => withWorld((w) => {
+  const r = run(['summary', '--by-tier', '--json'], { env: envFor(w), cwd: w.repo });
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(JSON.parse(r.out), { heavy: EMPTY_TIER, standard: EMPTY_TIER, light: EMPTY_TIER });
+  assert.equal(existsSync(dirname(w.file)), false);
+}));
+
+test('plain summary counts the hunters of task-review records', () => withWorld((w) => {
+  seedTiers(w);
+  const r = run(['summary', '--json'], { env: envFor(w), cwd: w.repo });
+  assert.equal(r.code, 0, r.err);
+  const parsed = JSON.parse(r.out);
+  // correctness: the heavy review (4 candidates) and the standard one (2) -> 6 candidates, 3 confirmed.
+  assert.equal(parsed.providers.claude.hunters.correctness.candidates, 6);
+  assert.deepEqual(parsed.providers.claude.hunters.correctness.confirmed, { critical: 1, important: 1, minor: 1 });
+  assert.deepEqual(parsed.skipped, { malformed: [], otherVersion: 0, duplicateKey: 0 });
+}));
+
 // ---- help -------------------------------------------------------------------------------------------------------
 
 test('--help (and -h) lists both subcommands and exits 0', () => withWorld((w) => {
@@ -312,6 +457,9 @@ test('--help (and -h) lists both subcommands and exits 0', () => withWorld((w) =
     assert.equal(r.code, 0);
     assert.match(r.out, /triqual role-eval record --plan <plan file> <json-file>/);
     assert.match(r.out, /triqual role-eval summary \[--since YYYY-MM-DD\] \[--json\]/);
+    assert.match(r.out, /triqual role-eval summary --by-tier \[--since YYYY-MM-DD\] \[--json\]/);
+    assert.match(r.out, /task-review/);
+    assert.match(r.out, /final-escapes/);
     assert.match(r.out, /safety-shadow kind is retired/);
     assert.match(r.out, /stored before/);
   }
