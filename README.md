@@ -7,6 +7,8 @@ installs it and keeps it in sync across Claude Code, Codex and Grok.
 It is for developers who run an agent on multi-step work and want the result to stay verifiable: what was planned,
 what was done, who reviewed it and what was run.
 
+triqual's methodology began as a fork of [superpowers](https://github.com/obra/superpowers) by Jesse Vincent (MIT). It has since been rewritten as triqual's own orchestrator; thanks to Jesse for the foundation.
+
 - **Workflow skills** (`methodology`): brainstorm, plan, execute with subagents or in one session, review and finish,
   plus the global rules that `triqual sync` writes into `~/.claude/CLAUDE.md`.
 - **Strict progress tracking** (`progress-tracking`): one log entry per task and a task ledger per plan, enforced by

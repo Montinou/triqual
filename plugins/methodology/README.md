@@ -6,6 +6,8 @@ The core plugin of Triqual. It ships the workflow skills (forked from superpower
 session. `triqual hook` and `triqual sync --harness <id>` give the same methodology to Codex and Grok. The plugin
 depends on `progress-tracking`, `workflow-gate` and `roles`, so installing it installs them.
 
+triqual's methodology began as a fork of [superpowers](https://github.com/obra/superpowers) by Jesse Vincent (MIT). It has since been rewritten as triqual's own orchestrator; thanks to Jesse for the foundation. See [NOTICE](NOTICE) and [LICENSE-superpowers](LICENSE-superpowers).
+
 This page is the reference for this plugin. For the install steps, the plugin table, the tracking modes and the long
 Codex and Grok explanation, see the [root README](../../README.md). Commands that belong to other plugins (`tasks`,
 `progress-init`, `ui`, `tracking`, `memory`) are in their own sections of the root README.
