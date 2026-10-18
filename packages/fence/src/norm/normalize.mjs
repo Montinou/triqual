@@ -2916,6 +2916,29 @@ function deviceFile(word, real, g) {
   return isAbs(real) && specialFile(real, g);
 }
 
+// Does any step of the symlink chain of `word` (read from the shell's cwd, link by link with lstat
+// and readlink, at most MAX_LINK_STEPS) name stdin or a descriptor (/dev/stdin, /dev/fd/…,
+// /proc/<pid|self>/fd/…)? A step that cannot be read ends the walk (the realpath check judges it).
+const MAX_LINK_STEPS = 40;
+function stdinLinkChain(word, sh, g) {
+  if (typeof word !== 'string' || word === '' || word.includes('\0') || word.startsWith('~')) return false;
+  if (!word.startsWith('/') && !isAbs(sh.cwd)) return false;
+  let p = word.startsWith('/') ? word : `${sh.cwd}/${word}`;
+  for (let i = 0; i < MAX_LINK_STEPS; i++) {
+    if (stdinPath(p.toLowerCase()) !== null) return true;
+    let target;
+    try {
+      if (!g.fs.lstatSync(p).isSymbolicLink()) return false;
+      target = g.fs.readlinkSync(p);
+    } catch {
+      return false;
+    }
+    if (typeof target !== 'string' || target === '') return false;
+    p = target.startsWith('/') ? target : `${dirOf(p)}/${target}`;
+  }
+  return false;
+}
+
 // A FIFO, socket or device (stat follows symlinks): never a script file.
 function specialFile(real, g) {
   try {
@@ -2938,6 +2961,11 @@ function shellRoute(route, S) {
   let real = UNKNOWN;
   if (typeof route.file === 'string') {
     real = pathAt(sh, g, route.file);
+    // The file resolves to stdin, a descriptor, a FIFO, a socket or a device: what it holds is not a
+    // file. Judged before the PATH-lookup downgrade below: on Linux /dev/stdin -> /proc/self/fd/0 reads as
+    // a pseudo name (`socket:[N]`, `pipe:[N]`) that does not exist as a path, so `exists` is false
+    // and the route would otherwise fall to unknownFile instead of the stdin rule.
+    if (deviceFile(route.file, real, g) || stdinLinkChain(route.file, sh, g)) throw new Opaque('unsupported', 'stdin-interpreter', S.off);
     // a shell given `x` reads ./x when it exists (PATH only otherwise); `. x` and bash's `source x`
     // search PATH first; zsh's `source x` looks in the cwd first
     const here = isAbs(real) && exists(real, g);
@@ -2945,8 +2973,6 @@ function shellRoute(route, S) {
     if (!certain) real = UNKNOWN;
   }
   if (!isAbs(real)) return unknownFile(S);
-  // the file resolves to stdin, a descriptor, a FIFO, a socket or a device: what it holds is not a file
-  if (deviceFile(route.file, real, g)) throw new Opaque('unsupported', 'stdin-interpreter', S.off);
   const prov = judgeFile(real, S);
   const agent = prov === 'agent';
   // a program in a system directory run by its absolute path (/bin/ls, /usr/local/bin/x) is not

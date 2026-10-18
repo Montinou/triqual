@@ -9,14 +9,15 @@
 //   2. strict hatch: <admin>/hatch.json root-owned, not group/world-writable, a regular file, parses,
 //      ISO `created` and `expires` with created <= now + 60 s, expires > now, expires - created <= 8 h.
 //      A valid hatch: the engine runs with --record-only (it logs the call as `hatch` itself), its answer
-//      is ignored, the watchdog appends its own minimal `hatch` line only when the engine failed, said
-//      nothing usable or could not log, and the host's no-output shape is returned.
+//      is ignored, the watchdog appends its own minimal `hatch` line only for a `pre` call whose engine
+//      failed, said nothing usable or could not log, and the host's no-output shape is returned.
 //   3. (pre only) while <state>/needs-repair exists, every call without a valid hatch is denied
 //      (`fence repair`, T40, clears it after the human confirms; a valid hatch wins, step 2). Then
 //      post-hatch integrity: when <admin>/integrity.json exists and its hatch has expired,
 //      a valid <state>/verified/<sha256 of the raw bytes of integrity.json> stamp (a regular file
 //      whose ctime is after the manifest's `expires`) skips the check; otherwise the manifest is
-//      compared within the deadline: equal writes the stamp; a difference or a deadline overrun
+//      compared within the deadline (with the project-settings rule over <state>/log, see
+//      watchdog/integrity.mjs): equal writes the stamp; a difference or a deadline overrun
 //      writes <state>/needs-repair (exclusive create, best effort: the integrity sha and a short
 //      diff summary) and denies, so the deny is sticky until `fence repair`. A manifest that is not
 //      root-owned or does not parse also denies.
@@ -44,7 +45,7 @@ import nodeFs from 'node:fs';
 import nodePath from 'node:path';
 
 import { renderDecision, renderSessionStart } from './hosts/render.mjs';
-import { compareManifest, parseIso, parseManifest } from './watchdog/integrity.mjs';
+import { compareManifest, MAX_MANIFEST_BYTES, parseIso, parseManifest } from './watchdog/integrity.mjs';
 import { appendLine } from './watchdog/line.mjs';
 
 export const DEADLINE_MS = 3000;
@@ -54,7 +55,6 @@ export const HATCH_MAX_LIFETIME_MS = 8 * 60 * 60 * 1000;
 const EVENTS = Object.freeze(['pre', 'post', 'precompact', 'session-start']);
 const DECISIONS = Object.freeze(['deny', 'allow', 'undecided']);
 const MAX_HATCH_BYTES = 64 * 1024;
-const MAX_MANIFEST_BYTES = 4 * 1024 * 1024;
 const MAX_ENGINE_STDOUT = 1024 * 1024;
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const VALUE_FLAGS = new Map([
@@ -205,7 +205,8 @@ function checkIntegrity(adminDir, stateDir, { clock, deadlineAt, lstat, fsImpl }
     markNeedsRepair(stateDir, sha, ['comparison not started: deadline reached'], fsImpl);
     return { ok: false, what: overrun };
   }
-  const result = compareManifest(manifest, { now: clock, deadlineAt, fs: fsImpl });
+  // the project-settings rule reads the repo roots of the hatch window's log lines
+  const result = compareManifest(manifest, { now: clock, deadlineAt, fs: fsImpl, logDir: nodePath.join(stateDir, 'log') });
   if (result.timedOut) {
     markNeedsRepair(stateDir, sha, ['comparison stopped at the deadline', ...result.diffs.map(describeDiff)], fsImpl);
     return { ok: false, what: overrun };
@@ -399,9 +400,10 @@ export async function main(argv, io = {}) {
       const located = locateEngine(shareDir, fsImpl);
       const run = located.engine ? await runEngine(execPath, [located.engine, ...engineArgs(true)], input.bytes, { env, deadlineAt, clock }) : null;
       // The engine logs the call itself (decision "hatch"); this minimal line is for a hatch call it
-      // could not log: no engine, a failure, no decision, or a log write that failed.
+      // could not log: no engine, a failure, no decision, or a log write that failed. Only a `pre`
+      // call is a decision: post/precompact/session-start answers carry none (post returns {}).
       const answer = run !== null && engineFailure(run) === null ? oneObjectLine(run.stdout) : null;
-      if (answer === null || !wellFormedDecision(answer) || answer.logFailed === true) {
+      if (args.event === 'pre' && (answer === null || !wellFormedDecision(answer) || answer.logFailed === true)) {
         appendLine(stateDir, { host: args.host, event: args.event, decision: 'hatch', rule: 'hatch' }, { now: clock, fs: fsImpl });
       }
       return { ...SILENT };

@@ -9,13 +9,15 @@
 //   sudo chmod 0644 <target>.tmp
 //   sudo chown root:0 <target>.tmp
 //   sudo mv -f <target>.tmp <target>                 a rename inside the same directory
-// A failure after the temp file may exist removes it (sudo rm -f) and throws.
+// A failure after the temp file may exist removes it (sudo rm -f) and throws. A target that is a
+// directory or a symlink is refused before any sudo call (mv would move the file into it).
 //
 // `relPath` must stay inside the admin directory: no absolute path, no `..`, `.` or empty segment, no
 // segment starting with `-`, no NUL, newline or backslash. `adminDir` and `run` are required: the
 // CLI wiring passes adminDir(process.platform) and realRun (sudo.mjs); tests pass a temp directory and
 // a fake runner. `sudoPath` is for unit tests only (the CLI never passes it, so SUDO is used).
 
+import nodeFs from 'node:fs';
 import nodePath from 'node:path';
 
 import { COMMANDS, SUDO } from './humanonly.mjs';
@@ -47,6 +49,18 @@ function segments(relPath) {
   return segs;
 }
 
+// Is the target a directory, or a symlink (to anything: a dangling one may become a directory)?
+// The admin directory is world-readable, so lstat works without sudo; a missing target is fine.
+function isDirectoryTarget(target) {
+  let st;
+  try {
+    st = nodeFs.lstatSync(target);
+  } catch {
+    return false;
+  }
+  return st.isDirectory() || st.isSymbolicLink();
+}
+
 function check(r, what) {
   if (r && !r.error && r.status === 0) return;
   const detail = r?.error ? r.error.message : `exit ${r?.status}${r?.stderr ? `: ${String(r.stderr).trim()}` : ''}`;
@@ -63,6 +77,8 @@ export function adminWrite(relPath, data, { adminDir: base, run, sudoPath = SUDO
   const target = nodePath.join(root, ...segs);
   if (!target.startsWith(root + nodePath.sep)) throw new Error(`invalid admin path: ${JSON.stringify(relPath)} leaves the admin directory`);
   const tmp = `${target}.tmp`;
+  // `mv -f tmp target` would move the file INTO a directory (or a link to one) at the target
+  if (isDirectoryTarget(target)) throw new Error(`invalid admin path: ${JSON.stringify(relPath)} is a directory or a symlink; nothing was written`);
 
   const dirs = [root];
   for (const s of segs.slice(0, -1)) dirs.push(nodePath.join(dirs.at(-1), s));

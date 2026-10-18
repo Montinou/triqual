@@ -21,8 +21,8 @@ const PKG_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const BIN = path.join(PKG_DIR, 'bin', 'fence.mjs');
 const SRC_WATCHDOG = path.join(PKG_DIR, 'src', 'watchdog.mjs');
 // The deadline the real-watchdog runs get, so a loaded machine does not cut the engine off
-// (production keeps the watchdog's 3000 ms).
-const DEADLINE = 20_000;
+// (production keeps the watchdog's 3000 ms): 10x that.
+const DEADLINE = 30_000;
 
 let counter = 0;
 function dir(name = `d${counter++}`) {

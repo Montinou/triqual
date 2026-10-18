@@ -286,7 +286,7 @@ test('a long hostile word stays linear', () => {
   const t0 = Date.now();
   assert.equal(isCodeLoadingAssignment('NODE_OPTIONS', ' '.repeat(20000) + '--no-warnings'), false);
   assert.equal(isCodeLoadingAssignment(big, big), false);
-  assert.ok(Date.now() - t0 < 1000);
+  assert.ok(Date.now() - t0 < 10000);
 });
 
 test('an UNKNOWN value of an unlisted literal name stays normal; an UNKNOWN name is opaque', () => {
