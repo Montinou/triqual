@@ -259,7 +259,7 @@ Config keys (an invalid key falls back to its default with a warning that names 
 | `clientTerms` | `[]` | Terms that keep a note out. |
 | `neverSend` | `[]` | Entries never sent. An invalid array keeps its valid entries, so it can only block more. |
 | `suggestRoots` | `[]` | Folders (`~/…` allowed). When set, `setup --suggest` lists only projects whose recorded folder is under one of them. |
-| `model` | `claude-haiku-4-5` | Model for the insights call. |
+| `model` | `claude-haiku-5-5` | Model for the insights call. |
 | `claudeBin` | `claude` | The `claude` executable. |
 | `maxObservations` | `600` | Notes sent per run. |
 | `maxCharsPerObservation` | `600` | Characters of narrative and facts per note. |

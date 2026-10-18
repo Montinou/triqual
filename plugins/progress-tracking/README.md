@@ -404,8 +404,9 @@ current schema version and pass an integrity check, or the command exits 2 and k
 - Before it replaces anything it saves the current database as `backups/pre-restore-<UTC stamp>.db`.
 - When the database file is missing, it copies the snapshot into place with mode 0600. A write-ahead log left beside
   the missing database is first moved to `backups/orphan-wal-<stamp>.db-wal` and `.db-shm`.
-- When the database file exists but is not SQLite, the store cannot be opened and the command exits 2. Move that file
-  away first, then run `restore` against the missing database.
+- When the database file exists but does not open (unreadable, not SQLite), it checks the snapshot, moves the file and
+  any `-wal` / `-shm` beside it to `backups/broken-<UTC stamp>.db`, prints that path, and restores as for a missing
+  database. A bad snapshot is refused first, and the file stays where it was.
 - The store gates name this command when the database fails.
 
 #### `relocate`
@@ -556,8 +557,8 @@ follows the same rule under `~/.config`.
 #### Store backups
 
 - `backups/tracking-<YYYY-MM-DD>.db` is written at the first store write of each UTC day. The 7 newest are kept.
-- `backups/tracking-relocate-<timestamp>.db`, `backups/pre-restore-<stamp>.db` and `backups/orphan-wal-<stamp>.db-wal`
-  (and `.db-shm`) are never pruned.
+- `backups/tracking-relocate-<timestamp>.db`, `backups/pre-restore-<stamp>.db`, `backups/broken-<stamp>.db` and
+  `backups/orphan-wal-<stamp>.db-wal` (and `.db-shm`) are never pruned.
 - A failure to take the daily snapshot is reported as a warning and never fails the write.
 
 ### Environment variables

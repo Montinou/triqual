@@ -28,8 +28,8 @@ const goodResult = () => ({
 });
 
 test('buildArgv is exactly the spec 7.3 argv', () => {
-  assert.deepEqual(buildArgv({ model: 'claude-haiku-4-5' }), [
-    '-p', '--safe-mode', '--model', 'claude-haiku-4-5', '--tools', '', '--strict-mcp-config', '--disable-slash-commands',
+  assert.deepEqual(buildArgv({ model: 'claude-haiku-5-5' }), [
+    '-p', '--safe-mode', '--model', 'claude-haiku-5-5', '--tools', '', '--strict-mcp-config', '--disable-slash-commands',
     '--no-session-persistence', '--permission-prompts', 'none', '--settings', '{"disableAllHooks":true}',
     '--output-format', 'json', '--json-schema', JSON.stringify(SCHEMA),
   ]);

@@ -125,7 +125,17 @@ export async function restoreSnapshot({ home, env }, file) {
   if (!paths) throw new StoreError('disabled', 'the tracking store is disabled: nothing to restore into');
   const snapshot = snapshotPath(file, paths.db);
   if (!existsSync(paths.db)) return restoreByCopy({ home, env }, paths, snapshot);
-  const store = openStore({ home, env });
+  let store;
+  try {
+    store = openStore({ home, env });
+  } catch (err) {
+    if (!(err instanceof StoreError) || err.code !== 'open') throw err;
+    // The database exists but does not open (not SQLite, unreadable): check the snapshot first, then move the file and
+    // its sidecars aside and restore as if it were missing.
+    await probeSnapshot(snapshot);
+    const broken = moveBrokenAside(paths);
+    return { ...await restoreByCopy({ home, env }, paths, snapshot), broken };
+  }
   try {
     attachChecked(store.db, snapshot);
     try {
@@ -170,11 +180,8 @@ function moveOrphanSidecars(paths) {
   });
 }
 
-// No database file: the snapshot is checked on an in-memory handle (opening it as the store would migrate a foreign
-// database into an empty tracking one), then written to a 0600 temp file beside the target and linked into place,
-// so the database is never readable by others, whatever the snapshot's own mode, and a file created meanwhile is never
-// replaced.
-async function restoreByCopy({ home, env }, paths, snapshot) {
+// Checks the snapshot on an in-memory handle; throws RestoreError when it is not a tracking snapshot.
+async function probeSnapshot(snapshot) {
   const { DatabaseSync } = await import('node:sqlite'); // already loaded, behind its warning filter, by loadSqlite
   const probe = new DatabaseSync(':memory:');
   try {
@@ -183,6 +190,29 @@ async function restoreByCopy({ home, env }, paths, snapshot) {
   } finally {
     probe.close();
   }
+}
+
+// Moves a database that does not open, and its -wal / -shm, into backups/ as broken-<UTC stamp>.db* (0600, in a 0700
+// dir, a name the daily pruning never matches); returns the database's new path.
+function moveBrokenAside(paths) {
+  const dir = join(paths.dataDir, BACKUPS);
+  mkdirSync(dir, { recursive: true, mode: DIR_MODE });
+  chmodSync(dir, DIR_MODE);
+  const dest = join(dir, `broken-${new Date().toISOString().replace(/[:.]/g, '-')}.db`);
+  for (const suffix of ['', '-wal', '-shm']) {
+    if (!existsSync(`${paths.db}${suffix}`)) continue;
+    renameSync(`${paths.db}${suffix}`, `${dest}${suffix}`);
+    try { chmodSync(`${dest}${suffix}`, FILE_MODE); } catch { /* kept even when its mode cannot be changed */ }
+  }
+  return dest;
+}
+
+// No database file: the snapshot is checked on an in-memory handle (opening it as the store would migrate a foreign
+// database into an empty tracking one), then written to a 0600 temp file beside the target and linked into place,
+// so the database is never readable by others, whatever the snapshot's own mode, and a file created meanwhile is never
+// replaced.
+async function restoreByCopy({ home, env }, paths, snapshot) {
+  await probeSnapshot(snapshot);
   const made = mkdirSync(paths.dataDir, { recursive: true, mode: DIR_MODE });
   if (made) chmodSync(made, DIR_MODE);
   const tmp = join(dirname(paths.db), `.restore.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);

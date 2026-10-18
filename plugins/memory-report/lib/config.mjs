@@ -43,7 +43,7 @@ export const DEFAULTS = {
   clientTerms: [],
   neverSend: [],
   suggestRoots: [],
-  model: 'claude-haiku-4-5',
+  model: 'claude-haiku-5-5',
   claudeBin: 'claude',
   maxObservations: 600,
   maxCharsPerObservation: 600,
