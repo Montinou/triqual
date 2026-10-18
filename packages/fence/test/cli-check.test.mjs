@@ -196,9 +196,11 @@ test('fence help, unknown commands and not-yet-built commands', () => {
   const u = fence(['bogus'], home);
   assert.equal(u.code, 1);
   assert.match(u.stderr, /bogus/);
+  // replay is read-only: run from a pipe it reaches its own argument check, not the human-only refusal
   const l = fence(['replay'], home);
   assert.equal(l.code, 1);
-  assert.match(l.stderr, /not yet implemented/);
+  assert.match(l.stderr, /usage: fence replay/);
+  assert.doesNotMatch(l.stderr, /not yet implemented|interactive terminal/);
   // a human-only command run from a pipe (this spawn has no terminal) is refused by the wiring
   const hatch = fence(['hatch'], home);
   assert.equal(hatch.code, 1);
