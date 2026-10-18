@@ -39,8 +39,12 @@
 //   agent ids, the response size and its error flag, never the tool input or output) to the same log and
 //   returns {}. It fails open: any failure is swallowed (a failed append is recorded in health.json) and
 //   the output is {} with exit 0 whatever the payload, the host or the state directory.
-// `precompact` is a stub returning {} (Task 41); `session-start` prunes logs and index
-// files older than 30 days (log/prune.mjs, best effort) and returns {} (its context line comes with Task 42).
+// `precompact` writes the compaction keep-list snapshot `<state>/keep/<session_id>.md` (hooks/keeplist.mjs: the
+//   policy's rule text under the FENCE_PROFILE profile, at most 2000 characters). It fails open: the output is
+//   {} with exit 0 whatever the arguments, the policy, the payload or the state directory, a session id that is
+//   not a plain identifier writes nothing, and the file is renamed into place so no partial file is left.
+// `session-start` prunes logs and index files older than 30 days (log/prune.mjs, best effort) and returns {}
+//   (its context line comes with Task 42).
 //
 // The git tree check is bound to the git pinned at install (`<home>/.local/share/fence/git.json`);
 // without a usable pin it stays unbound and answers UNKNOWN, which makes a tree update opaque in a
@@ -60,6 +64,7 @@ import { claude } from './hosts/claude.mjs';
 import { codex } from './hosts/codex.mjs';
 import { recordHealth } from './log/health.mjs';
 import { appendDecision, decisionEntry } from './log/log.mjs';
+import { keepFileName, renderKeepList, writeKeepList } from './hooks/keeplist.mjs';
 import { prune } from './log/prune.mjs';
 import { appendWritten, readWritten } from './log/written.mjs';
 import { normalize } from './norm/normalize.mjs';
@@ -71,8 +76,8 @@ import { isCaseInsensitive, resolvePath } from './resolve/paths.mjs';
 import { repoOf } from './resolve/repo.mjs';
 
 export const EVENTS = Object.freeze(['pre', 'post', 'precompact', 'session-start']);
-const STUB_EVENTS = new Set(['precompact', 'session-start']);
 const POST = 'post';
+const PRECOMPACT = 'precompact';
 const SESSION_START = 'session-start';
 const ADAPTERS = Object.freeze({ claude, codex });
 const PRE_HOOK_EVENT = 'PreToolUse';
@@ -320,6 +325,29 @@ function recordCompletion(args, { stdin, now, fsImpl }) {
   if (typeof stateDir === 'string') recordHealth(stateDir, { logFailure: { at: new Date(now).toISOString() } }, { fs: fsImpl });
 }
 
+// PreCompact: renders the keep-list for the session and writes the snapshot. Never throws; the caller prints
+// {} whatever happens here.
+function snapshotKeepList(args, { stdin, fsImpl, env }) {
+  try {
+    let payload;
+    try {
+      payload = JSON.parse(stdinText(stdin));
+    } catch {
+      return;
+    }
+    const sessionId = payload !== null && typeof payload === 'object' ? payload.session_id : undefined;
+    if (keepFileName(sessionId) === null) return;
+    const home = os.homedir();
+    const stateDir = nodePath.resolve(args.stateDir ?? nodePath.join(home, '.local', 'state', 'fence'));
+    const policyFile = nodePath.resolve(args.policy ?? nodePath.join(home, '.config', 'fence', 'policy.json'));
+    const { policy } = loadPolicy(policyFile, { fs: fsImpl, home });
+    const profile = env.FENCE_PROFILE === undefined ? 'default' : env.FENCE_PROFILE;
+    writeKeepList(stateDir, sessionId, renderKeepList(policy, { profile }), { fs: fsImpl });
+  } catch {
+    // a keep-list is best effort: compaction is never blocked
+  }
+}
+
 const round1 = (ms) => Math.round(ms * 10) / 10;
 
 // Logs the decision (one redacted line) and returns what the caller prints: the same decision, plus
@@ -362,12 +390,19 @@ export function runEngine(argv, { stdin = '', now = Date.now(), isRootOwned = re
       }
       return out({});
     }
-    if (args.error) return out(deny('builtin:engine', `fence could not start: ${args.error}; the call is denied.`));
-    if (STUB_EVENTS.has(args.event)) {
-      if (args.event === SESSION_START) {
-        const home = os.homedir();
-        prune(nodePath.resolve(args.stateDir ?? nodePath.join(home, '.local', 'state', 'fence')), now, { fs: fsImpl });
+    if (args.event === PRECOMPACT || (args.error && argv?.[0] === PRECOMPACT)) {
+      // PreCompact fails open: nothing here can deny, and nothing here may throw.
+      try {
+        if (!args.error) snapshotKeepList(args, { stdin, fsImpl, env: env !== null && typeof env === 'object' ? env : {} });
+      } catch {
+        // a snapshot is best effort
       }
+      return out({});
+    }
+    if (args.error) return out(deny('builtin:engine', `fence could not start: ${args.error}; the call is denied.`));
+    if (args.event === SESSION_START) {
+      const home = os.homedir();
+      prune(nodePath.resolve(args.stateDir ?? nodePath.join(home, '.local', 'state', 'fence')), now, { fs: fsImpl });
       return out({});
     }
     // --record-only computes and returns the same decision; the watchdog ignores it.
