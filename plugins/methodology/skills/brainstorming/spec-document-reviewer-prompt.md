@@ -38,6 +38,7 @@ Subagent (roles:final-adversarial-reviewer):
     | Task format | Each task has `### Task N:`, a `**Role:**` line with a task role, and `**Depends on:**` only when it has dependencies |
     | Tests | A task whose tests would pass without the behavior it promises |
     | Phases | A phase with no slice; a task depending on a later phase; a phase without a branch, PR title, Phase check or committing task; a merge-dependent operation written as a task instead of under `## After Merge` |
+    | Tiers | A task tiered lower than its content justifies by the rubric; a plan with tiers on some tasks only; a coordinator task not light; a complex-implementer task not heavy |
 
     ## Calibration
 

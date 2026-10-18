@@ -184,3 +184,84 @@ test('both handoff branches state the stack and the push authorization', () => {
     assert.ok(intro.includes(phrase), `the handoff introduction does not say "${phrase}"`);
   }
 });
+
+// Task tiers (spec: orchestrator): every task carries a `**Tier:**`, all-or-none per plan, and the audit checks them.
+test('the Task Structure template opens with the tier line', () => {
+  const lines = section(PLANS, '## Task Structure');
+  const heading = lines.indexOf('### Task N: [Component Name]');
+  assert.ok(heading >= 0, 'the Task Structure template has no `### Task N:` heading');
+  const first = lines.slice(heading + 1).find((line) => line !== '');
+  assert.equal(first, '**Tier:** heavy', 'the first line under the task heading is not `**Tier:** heavy`');
+  assert.ok(lines.indexOf('**Tier:** heavy') < lines.indexOf('**Depends on:** T1, T3'), '`**Tier:**` does not come before `**Depends on:**`');
+});
+
+test('## Task Tiers carries the three-tier rubric and its rules', () => {
+  const lines = section(PLANS, '## Task Tiers');
+  const text = lines.join('\n');
+  const bullet = (tier) => lines.find((line) => line.startsWith(`- **${tier}** —`)) ?? '';
+  for (const phrase of [
+    'security-relevant code (auth, permissions, secrets, sandboxing, policy, parsing untrusted input)',
+    'live state or migrations',
+    'changes spanning more than one plugin or system',
+    'a public interface others depend on (CLI flags and exit codes, file formats, hook contracts, the plan format)',
+    '`roles:complex-implementer`',
+  ]) {
+    assert.ok(bullet('heavy').includes(phrase), `the heavy bullet lacks "${phrase}"`);
+  }
+  assert.match(bullet('heavy'), /any of:/);
+  for (const phrase of [
+    'only: docs, comments, config values, version bumps, renames with no behavior change',
+    'within the light code allowance (at most 20 added+removed lines in total, test lines included, no new file, no prompt-like Markdown, no sensitive path)',
+  ]) {
+    assert.ok(bullet('light').includes(phrase), `the light bullet lacks "${phrase}"`);
+  }
+  assert.ok(bullet('standard').includes('everything else'), 'the standard bullet lacks "everything else"');
+  for (const phrase of [
+    'all-or-none per plan',
+    '`coordinator` tasks must be `light`',
+    '`roles:complex-implementer` tasks `heavy`',
+    '**Sensitive paths:** <glob>, <glob>',
+    'raise a tier at run time, never lower it',
+  ]) {
+    assert.ok(text.includes(phrase), `## Task Tiers does not state "${phrase}"`);
+  }
+});
+
+test('the plan self-review and audit check tiers', () => {
+  const item = section(PLANS, '## Self-Review').find((line) => line.startsWith('**7. Tiers:**'));
+  assert.ok(item, 'the plan Self-Review has no **7. Tiers:** item');
+  assert.match(section(PLANS, '## Plan Audit').join(' '), /tier/i, 'the Plan Audit does not mention tiers');
+});
+
+test('the audit prompt flags tier defects in plans', () => {
+  const lines = read(AUDIT).split('\n');
+  const raw = lines.find((line) => line.trim().startsWith('| Tiers |'));
+  assert.ok(raw, 'the audit prompt has no | Tiers | row');
+  const neighbour = lines.find((line) => line.trim().startsWith('| Task format |'));
+  assert.ok(neighbour, 'the audit prompt has no | Task format | row to compare indentation with');
+  const indent = (line) => line.match(/^ */)[0];
+  assert.equal(indent(raw), indent(neighbour), 'the | Tiers | row is not indented like the other rows of the prompt block');
+  assert.equal(
+    raw.trim(),
+    '| Tiers | A task tiered lower than its content justifies by the rubric; a plan with tiers on some tasks only; a coordinator task not light; a complex-implementer task not heavy |',
+  );
+});
+
+// A sensitive path makes a task heavy (spec U4): the header field is the only place a plan author learns that.
+test('sensitive paths make a task heavy, on top of the default set, and a big diff does too', () => {
+  const defaults = ['**/hooks/**', '**/setup/**', '**/*schema*', '**/migrations/**', '**/drizzle/**', '.github/**', 'plugins/workflow-gate/**'];
+  const header = block(section(PLANS, '## Plan Document Header'), '**Sensitive paths:**');
+  assert.match(header, /makes a task `heavy`/, 'the header field does not say the paths make a task heavy');
+  assert.match(header, /added to the default set/, 'the header field does not say the paths are added to the default set');
+  assert.doesNotMatch(header, /no `light` task may touch/, 'the header field still gives the old light-exclusion meaning');
+  const tiers = section(PLANS, '## Task Tiers');
+  assert.doesNotMatch(tiers.join(' '), /the paths no light task may touch/, '## Task Tiers still gives the old light-exclusion meaning');
+  const rule = tiers.find((line) => line.includes('touches a sensitive path'));
+  assert.ok(rule, '## Task Tiers does not say that touching a sensitive path makes a task heavy');
+  assert.match(rule, /heavy/);
+  assert.match(rule, /300 changed lines/, 'the sensitive-path sentence does not state the 300 changed lines rule');
+  for (const glob of defaults) assert.ok(rule.includes(`\`${glob}\``), `the sensitive-path sentence lacks the default glob ${glob}`);
+  const item = section(PLANS, '## Self-Review').find((line) => line.startsWith('**7. Tiers:**'));
+  assert.match(item, /touches a sensitive path/, 'Self-Review item 7 does not check a sensitive path for heavy');
+  assert.doesNotMatch(item, /stay clear of the plan's/, 'Self-Review item 7 still checks light tasks against the old rule');
+});

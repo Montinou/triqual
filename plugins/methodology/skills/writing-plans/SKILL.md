@@ -99,6 +99,8 @@ argues from the spec, so the spec travels with it; executors read both]
 
 **Branch prefix:** [<topic>: the prefix of every phase branch, `<topic>/<NN>-<phase-slug>`]
 
+**Sensitive paths:** [optional: `<glob>, <glob>`, paths whose change makes a task `heavy`, added to the default set (see Task Tiers); omit the line when none]
+
 ## Global Constraints
 
 [The spec's project-wide requirements — version floors, dependency limits,
@@ -131,11 +133,23 @@ Every task gets a `**Role:**` line naming the role that does its work. Choosing 
 
 Reviewer roles and the brief writer serve a task and are never its role; the execution skills dispatch them. A plan without the line reads as `roles:tdd-implementer`, but write it for every task anyway.
 
+## Task Tiers
+
+Every task gets a `**Tier:**` line, `heavy`, `standard` or `light`, set by what the task's work touches:
+- **heavy** — any of: security-relevant code (auth, permissions, secrets, sandboxing, policy, parsing untrusted input), live state or migrations, changes spanning more than one plugin or system, a public interface others depend on (CLI flags and exit codes, file formats, hook contracts, the plan format), `roles:complex-implementer`.
+- **light** — only: docs, comments, config values, version bumps, renames with no behavior change, and small code fixes within the light code allowance (at most 20 added+removed lines in total, test lines included, no new file, no prompt-like Markdown, no sensitive path).
+- **standard** — everything else.
+
+A task that touches a sensitive path is `heavy`, as is a task whose diff will have more than 300 changed lines. The default sensitive paths are `**/hooks/**`, `**/setup/**`, `**/*schema*`, `**/migrations/**`, `**/drizzle/**`, `.github/**` and `plugins/workflow-gate/**`; the plan header's `**Sensitive paths:** <glob>, <glob>` adds its globs to that set.
+
+Tiers are all-or-none per plan: every task carries one, or none does. `coordinator` tasks must be `light` and `roles:complex-implementer` tasks `heavy`. The orchestrator may raise a tier at run time, never lower it.
+
 ## Task Structure
 
 ````markdown
 ### Task N: [Component Name]
 
+**Tier:** heavy
 **Depends on:** T1, T3
 **Skills:** slug-a, slug-b
 **Role:** roles:tdd-implementer
@@ -184,6 +198,7 @@ git commit -m "feat: add specific feature"
 ````
 
 The lines under the heading follow the task ledger's plan format:
+- `**Tier:**` names the task's tier (see Task Tiers); it is the first line.
 - `**Depends on:**` lists the tasks that must be done first, as `T1, T3`; omit the line when a task has none.
 - `**Skills:**` lists the vault skills the task needs: run `triqual suggest` on the task's text and keep the fitting slugs. On exit 3 from `triqual suggest` (skill-suggest is not installed yet), or when `triqual` is not on `PATH` (`command -v triqual` fails, or exit 127), omit the line silently.
 - `**Role:**` names the task's role (see Task Roles).
@@ -227,11 +242,13 @@ After writing the complete plan, look at the spec with fresh eyes and check the 
 
 **6. Phases:** Does each phase map to a slice of the spec? Does any task depend on a later phase? Does every phase have a branch, a PR title, a Phase check and a task that commits? Is anything that needs the merged trunk a task instead of an `## After Merge` item?
 
+**7. Tiers:** Does every task carry a `**Tier:**` (all or none)? Is each tier the one the rubric gives for what the task touches, with no task tiered lower than its content justifies? Is every `coordinator` task `light` and every `roles:complex-implementer` task `heavy`? Is every task that touches a sensitive path (the default set plus the header's `**Sensitive paths:**`) or whose diff will have more than 300 changed lines `heavy`?
+
 If you find issues, fix them inline. No need to re-review — just fix and move on. If you find a spec requirement with no task, add the task.
 
 ## Plan Audit
 
-After the self-review, dispatch `roles:final-adversarial-reviewer` with `../brainstorming/spec-document-reviewer-prompt.md` on the plan and its spec: the adversarial audit runs on every plan, and no other reviewer takes its place.
+After the self-review, dispatch `roles:final-adversarial-reviewer` with `../brainstorming/spec-document-reviewer-prompt.md` on the plan and its spec: the adversarial audit runs on every plan, and no other reviewer takes its place. The audit checks the tiers too: a task tiered lower than its content justifies by the Task Tiers rubric is a finding.
 
 Fix the findings in the plan. Name, in your message to your human partner, each finding you did not fix and why.
 
