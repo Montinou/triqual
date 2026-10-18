@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import {
-  mkdtempSync, realpathSync, writeFileSync, readFileSync, existsSync, mkdirSync, rmSync, copyFileSync, symlinkSync, readdirSync,
+  mkdtempSync, realpathSync, writeFileSync, readFileSync, existsSync, mkdirSync, rmSync, copyFileSync, symlinkSync, readdirSync, renameSync,
 } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -1153,4 +1153,146 @@ test('retier and next --json are listed in the usage', () => withRepo(({ repo, r
   const r = ok(run(['--help']));
   assert.match(r.stdout, /retier T<N> <tier> --reason "<text>" \[--plan <plan\.md\|ledger>\]/);
   assert.match(r.stdout, /next \[--plan <plan\.md\|ledger>\] \[--json\]/);
+}));
+
+// ---- done --repo: a commit from another repository ----
+
+// A second git repo at <dir>/other with one commit; returns its path, a git runner and the commit's full sha.
+function otherRepo(dir, name = 'other') {
+  const path = join(dir, name);
+  mkdirSync(path);
+  const env = cleanEnv(join(dir, 'home'));
+  const g = (...args) => execFileSync('git', [...ID, ...args], { cwd: path, env, encoding: 'utf8' }).trim();
+  g('init', '-q');
+  writeFileSync(join(path, 'file.txt'), 'other\n');
+  g('add', 'file.txt');
+  g('commit', '-qm', 'other initial');
+  return { path, g, sha: g('rev-parse', 'HEAD') };
+}
+
+test('done --repo records a commit of another repository as ext:<relative path>@<full sha>, and a repeat is a no-op', () => withRepo(({ dir, repo, run }) => {
+  committed(repo);
+  const other = otherRepo(dir);
+  ok(run(['init', PLAN_REL]));
+  ok(run(['start', 'T1']));
+  ok(run(['review', 'T1']));
+  // A short sha and the absolute path: both are normalized.
+  const r = ok(run(['done', 'T1', '--commit', other.sha.slice(0, 8), '--repo', other.path]));
+  assert.equal(r.stdout, 'T1: in_review -> done\n');
+  const ledgerPath = join(repo, LEDGER_REL);
+  assert.deepEqual(readJson(ledgerPath).tasks[0].commits, [`ext:../other@${other.sha}`]);
+  assert.equal(other.sha.length, 40);
+  assert.equal(read(ledgerPath).includes(dir), false, 'no absolute path enters the ledger');
+
+  const before = readFileSync(ledgerPath);
+  const again = ok(run(['done', 'T1', '--commit', other.sha, '--repo', '../other']));
+  assert.equal(again.stdout, 'T1: already done\n');
+  assert.deepEqual(readFileSync(ledgerPath), before);
+  assert.equal(readJson(ledgerPath).tasks[0].history.length, 4);
+}));
+
+test('done --repo exits 2 for a sha absent from that repo, a missing path or --repo without --commit, and changes nothing', () => withRepo(({ dir, repo, git, run }) => {
+  committed(repo);
+  const other = otherRepo(dir);
+  ok(run(['init', PLAN_REL]));
+  ok(run(['start', 'T1']));
+  const ledgerPath = join(repo, LEDGER_REL);
+  const before = readFileSync(ledgerPath);
+  // HEAD of this repo is not a commit of the other one.
+  const absent = run(['done', 'T1', '--commit', git('rev-parse', 'HEAD'), '--repo', other.path]);
+  assert.equal(absent.status, 2);
+  assert.match(absent.stderr, /does not resolve/);
+  const missing = run(['done', 'T1', '--commit', other.sha, '--repo', join(dir, 'nowhere')]);
+  assert.equal(missing.status, 2);
+  assert.match(missing.stderr, /--repo/);
+  const alone = run(['done', 'T1', '--repo', other.path]);
+  assert.equal(alone.status, 2);
+  assert.match(alone.stderr, /--repo requires --commit/);
+  assert.deepEqual(readFileSync(ledgerPath), before);
+}));
+
+test('done T1 --commit with a different external commit after done is refused like a different local one', () => withRepo(({ dir, repo, run }) => {
+  committed(repo);
+  const other = otherRepo(dir);
+  const second = otherRepo(dir, 'second');
+  ok(run(['init', PLAN_REL]));
+  ok(run(['start', 'T1']));
+  ok(run(['done', 'T1', '--commit', other.sha, '--repo', other.path]));
+  const r = run(['done', 'T1', '--commit', second.sha, '--repo', second.path]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /T1 is done; cannot done/);
+}));
+
+test('check verifies an external commit in its path, warns when the path is missing and flags a sha it does not have', () => withRepo(({ dir, repo, run }) => {
+  committed(repo);
+  const other = otherRepo(dir);
+  ok(run(['init', PLAN_REL]));
+  ok(run(['start', 'T1']));
+  ok(run(['done', 'T1', '--commit', other.sha, '--repo', other.path]));
+  const clean = ok(run(['check']));
+  assert.equal(clean.stdout, '');
+  assert.equal(clean.stderr, '');
+
+  // The other repository is gone (another machine): a warning on stderr, no drift, exit 0.
+  renameSync(other.path, join(dir, 'moved'));
+  const gone = ok(run(['check']));
+  assert.equal(gone.stdout, '');
+  assert.match(gone.stderr, new RegExp(`external commit not checkable: \\.\\./other@${other.sha}\\n`));
+  renameSync(join(dir, 'moved'), other.path);
+
+  // The path exists but the ledger names a sha it lacks: drift.
+  const ledgerPath = join(repo, LEDGER_REL);
+  const ledger = readJson(ledgerPath);
+  ledger.tasks[0].commits = [`ext:../other@${'0'.repeat(40)}`];
+  writeFileSync(ledgerPath, JSON.stringify(ledger, null, 2));
+  const bad = run(['check']);
+  assert.equal(bad.status, 1);
+  assert.equal(bad.stdout, 'T1 commit 0000000 does not resolve in ../other\n');
+  assert.equal(bad.stderr, '');
+}));
+
+test('plain done --commit still stores the bare sha and check still flags a local one that does not resolve', () => withRepo(({ repo, git, run }) => {
+  committed(repo);
+  ok(run(['init', PLAN_REL]));
+  ok(run(['start', 'T1']));
+  ok(run(['done', 'T1', '--commit', 'HEAD']));
+  assert.deepEqual(readJson(join(repo, LEDGER_REL)).tasks[0].commits, [git('rev-parse', 'HEAD')]);
+  assert.equal(ok(run(['check'])).stdout, '');
+}));
+
+test('done is listed with --repo in the usage', () => withRepo(({ repo, run }) => {
+  committed(repo);
+  assert.match(ok(run(['--help'])).stdout, /done T<N> --commit <sha> \[--repo <path>\]/);
+}));
+
+// ---- done --repo across linked worktrees: the path is anchored to the main worktree root ----
+
+test('done --repo from a deeper linked worktree records the same string as from the main checkout; check and a repeat agree', () => withRepo(({ dir, repo, git, run }) => {
+  committed(repo);
+  git(...ID, 'add', '.');
+  git(...ID, 'commit', '-qm', 'track');
+  const other = otherRepo(dir);
+  // A linked worktree two levels deeper than the main checkout.
+  const wt = join(dir, 'wts', 'deep', 'wt');
+  mkdirSync(dirname(wt), { recursive: true });
+  git('worktree', 'add', '-q', '-b', 'linked', wt);
+  const fromWt = (args) => run(args, { cwd: wt });
+  ok(fromWt(['init', PLAN_REL]));
+  ok(fromWt(['start', 'T1']));
+  ok(fromWt(['done', 'T1', '--commit', other.sha, '--repo', other.path]));
+  const wtLedger = join(wt, LEDGER_REL);
+  // Anchored to the main worktree root, not to the linked worktree: not ../../../../other.
+  assert.deepEqual(readJson(wtLedger).tasks[0].commits, [`ext:../other@${other.sha}`]);
+  assert.equal(ok(fromWt(['check'])).stderr, '');
+
+  // The ledger and the rendered status.md reach the main checkout (a merge); there it verifies the commit and a repeat
+  // is a no-op.
+  writeFileSync(join(repo, LEDGER_REL), readFileSync(wtLedger));
+  writeFileSync(join(repo, 'status.md'), readFileSync(join(wt, 'status.md')));
+  const clean = ok(run(['check']));
+  assert.equal(clean.stdout, '');
+  assert.equal(clean.stderr, '');
+  const before = readFileSync(join(repo, LEDGER_REL));
+  assert.equal(ok(run(['done', 'T1', '--commit', other.sha, '--repo', other.path])).stdout, 'T1: already done\n');
+  assert.deepEqual(readFileSync(join(repo, LEDGER_REL)), before);
 }));

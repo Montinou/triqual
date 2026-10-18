@@ -32,7 +32,7 @@ import { buildSnapshot, byNameDesc, planName } from '../lib/snapshot.mjs';
 import { readRegistry, listResolved } from '../lib/registry.mjs';
 import { LEDGER_EXT, entry, readEntry, ledgerPaths } from '../lib/ledger-files.mjs';
 import {
-  LedgerError, parsePlan, createLedger, reconcile, transition, retier,
+  LedgerError, EXTERNAL_PREFIX, parsePlan, createLedger, reconcile, transition, retier,
   renderSection, upsertStatusSection, nextTask, statusLine, checkLedger, checkSchema, checkSection, counts,
 } from '../lib/ledger.mjs';
 
@@ -49,7 +49,7 @@ export { LOCAL_HOOK_LINES, NOT_OPTED_IN };
 const USAGE = `usage: triqual tasks <subcommand> [args]
   init <plan.md> [--adopt] [--spec <path>] [--branch <b>]
   start|review|rework|restore T<N> [--plan <plan.md|ledger>]
-  done T<N> --commit <sha> [--plan <plan.md|ledger>]
+  done T<N> --commit <sha> [--repo <path>] [--plan <plan.md|ledger>]
   block|drop|reopen T<N> "<reason>" [--plan <plan.md|ledger>]
   retitle T<N> "<title>" [--plan <plan.md|ledger>]
   retier T<N> <tier> --reason "<text>" [--plan <plan.md|ledger>]
@@ -93,6 +93,65 @@ function resolveCommit(repoRoot, rev) {
   } catch {
     return null;
   }
+}
+
+// The directory external-commit paths are relative to: the main worktree root (the parent of the git common dir), so
+// every worktree of a clone, which shares one ledger, builds and resolves the same string. This worktree's own root when
+// the common dir is not named `.git` (a bare clone or a separate git dir).
+function anchorRoot(repoRoot) {
+  try {
+    const common = realpathSync(git(repoRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir']).trim());
+    if (basename(common) === '.git') return dirname(common);
+  } catch { /* fall back on this worktree's root */ }
+  return realpathSync(repoRoot);
+}
+
+// What `done` records for --commit: the full sha of a commit of this repo, or with --repo (a commit of another
+// repository) the string `ext:<that repo's path relative to the main worktree root>@<full sha>`, so no home-directory path
+// enters a ledger. Undefined when --commit is absent (the transition then refuses). Runs before any transaction opens.
+function doneArg(repoRoot, values) {
+  if (values.commit === undefined) {
+    if (values.repo !== undefined) throw new UsageError('done: --repo requires --commit');
+    return undefined;
+  }
+  const local = () => {
+    const sha = resolveCommit(repoRoot, values.commit);
+    if (sha === null) throw new LedgerError(`commit ${values.commit} does not resolve`);
+    return sha;
+  };
+  if (values.repo === undefined) return local();
+  let dir;
+  try {
+    dir = realpathSync(resolve(values.repo));
+  } catch {
+    throw new LedgerError(`--repo ${values.repo} does not exist`);
+  }
+  const path = posix(relative(anchorRoot(repoRoot), dir));
+  if (path === '' || dir === realpathSync(repoRoot)) return local(); // --repo names this very repository
+  const sha = resolveCommit(dir, values.commit);
+  if (sha === null) throw new LedgerError(`commit ${values.commit} does not resolve in ${values.repo}`);
+  return `${EXTERNAL_PREFIX}${path}@${sha}`;
+}
+
+// The `commitExists` checkLedger calls: (sha) for a commit of this repo; (sha, path) for an external one, resolved from
+// the main worktree root: true or false, or null when that path does not exist here (another machine): a warning, not drift.
+function commitChecker(repoRoot) {
+  const anchor = anchorRoot(repoRoot);
+  return (sha, path) => {
+    if (path === undefined) return resolveCommit(repoRoot, sha) !== null;
+    const dir = resolve(anchor, path);
+    return existsSync(dir) ? resolveCommit(dir, sha) !== null : null;
+  };
+}
+
+// Prints each warning once on stderr.
+function warner() {
+  const seen = new Set();
+  return (message) => {
+    if (seen.has(message)) return;
+    seen.add(message);
+    process.stderr.write(`warning: ${message}\n`);
+  };
 }
 
 function currentBranch(repoRoot) {
@@ -398,10 +457,7 @@ function storeTransition(cmd) {
     }
     const selected = selectStoreLedger(st, values.plan);
     let arg = text;
-    if (cmd === 'done' && values.commit !== undefined) {
-      arg = resolveCommit(st.repoRoot, values.commit); // git runs before the transaction opens
-      if (arg === null) throw new LedgerError(`commit ${values.commit} does not resolve`);
-    }
+    if (cmd === 'done') arg = doneArg(st.repoRoot, values) ?? arg; // git runs before the transaction opens
     // The ledger is read again inside the transaction, so a concurrent writer's change is never overwritten.
     const done = st.store.tx(() => {
       const fresh = st.store.ledgerOf(selected.planId);
@@ -454,7 +510,8 @@ function storeRender(st) {
 // `check` in store mode: each plan whose document is in the documents directory is compared against the store (titles,
 // roles, deps, commits). There is no rendered section to drift, and a plan without its document is not compared.
 function storeCheck(st) {
-  const commitExists = (sha) => resolveCommit(st.repoRoot, sha) !== null;
+  const commitExists = commitChecker(st.repoRoot);
+  const warn = warner();
   const drift = [];
   const compared = [];
   for (const l of storeLedgers(st).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
@@ -463,7 +520,7 @@ function storeCheck(st) {
     compared.push(l);
     const add = (message) => drift.push({ name: l.name, message });
     if (!isActive(l)) checkSchema(l.ledger).forEach(add);
-    else checkLedger({ ledger: l.ledger, planText, statusText: '', renderedBody: '', commitExists }).filter((m) => m !== STALE).forEach(add);
+    else checkLedger({ ledger: l.ledger, planText, statusText: '', renderedBody: '', commitExists, warn }).filter((m) => m !== STALE).forEach(add);
   }
   const messages = [...new Set(drift.map(({ name, message }) => (compared.length > 1 ? `${name}: ${message}` : message)))];
   for (const m of messages) out(m);
@@ -522,10 +579,7 @@ function cmdTransition(cmd) {
     }
     const selected = selectLedger(t, values.plan);
     let arg = text;
-    if (cmd === 'done' && values.commit !== undefined) {
-      arg = resolveCommit(t.repoRoot, values.commit);
-      if (arg === null) throw new LedgerError(`commit ${values.commit} does not resolve`);
-    }
+    if (cmd === 'done') arg = doneArg(t.repoRoot, values) ?? arg;
     const before = Array.isArray(selected.ledger.tasks) ? selected.ledger.tasks.find((x) => x.id === id) : undefined;
     let result;
     try {
@@ -657,7 +711,8 @@ function cmdCheck(t, { staged }) {
   }
   const renderedBody = renderSection(ledgers);
   const statusText = source.status();
-  const commitExists = (sha) => resolveCommit(t.repoRoot, sha) !== null;
+  const commitExists = commitChecker(t.repoRoot);
+  const warn = warner();
   const active = ledgers.filter(isActive);
   for (const { name, ledger } of active) {
     const add = (message) => drift.push({ name, message });
@@ -668,7 +723,7 @@ function cmdCheck(t, { staged }) {
       if (plan.text === null) add(plan.missing);
       else planText = plan.text;
     }
-    checkLedger({ ledger, planText, statusText, renderedBody, commitExists }).forEach(add);
+    checkLedger({ ledger, planText, statusText, renderedBody, commitExists, warn }).forEach(add);
   }
   // Ledgers that are not active (done, or an unknown state) still get their schema checked; with none active the
   // section is compared once, since checkLedger (which compares it) ran for no ledger.
@@ -809,7 +864,7 @@ const COMMANDS = {
   rework: move('rework'),
   restore: move('restore'),
   done: {
-    positionals: [1, 1], options: { ...PLAN, commit: { type: 'string' } }, writes: true, run: cmdTransition('done'),
+    positionals: [1, 1], options: { ...PLAN, commit: { type: 'string' }, repo: { type: 'string' } }, writes: true, run: cmdTransition('done'),
     access: 'write', store: storeTransition('done'),
   },
   block: move('block', 2),

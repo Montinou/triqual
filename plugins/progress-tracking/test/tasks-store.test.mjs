@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
-  existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync,
+  existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -779,5 +779,91 @@ test('store status --json, next --json and export --json carry tier and effectiv
     const snap = JSON.parse(ok(s.run(['export', '--json'])).stdout);
     assert.deepEqual(snap.plans[0].tasks.map((t) => [t.id, t.tier, t.effectiveTier]),
       [['T1', 'heavy', 'heavy'], ['T2', 'standard', 'heavy'], ['T3', 'light', 'light']]);
+  });
+});
+
+// ---- done --repo: a commit from another repository (plan methodology-1.0 T6) ----
+
+// A second repo at <dir>/other with one commit: its path, a runner and the commit's full sha.
+function otherRepo(dir) {
+  const path = join(dir, 'other');
+  mkdirSync(path);
+  const g = (...args) => execFileSync('git', [...ID, ...args], { cwd: path, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  g('init', '-q');
+  writeFileSync(join(path, 'file.txt'), 'other\n');
+  g('add', 'file.txt');
+  g('commit', '-qm', 'other initial');
+  return { path, sha: g('rev-parse', 'HEAD') };
+}
+
+test('store done --repo records ext:<relative path>@<full sha>, repeats as a no-op and refuses a sha the repo lacks', () => {
+  withRepo('store', (s) => {
+    const other = otherRepo(s.dir);
+    ok(s.run(['init', s.plan()]));
+    ok(s.run(['start', 'T1']));
+    const refusedRun = s.run(['done', 'T1', '--commit', s.git('rev-parse', 'HEAD'), '--repo', other.path]);
+    refused(refusedRun, /does not resolve/);
+    assert.deepEqual(ledgerOf(s).tasks[0].commits, []);
+    refused(s.run(['done', 'T1', '--repo', other.path]), /--repo requires --commit/);
+
+    assert.equal(ok(s.run(['done', 'T1', '--commit', other.sha.slice(0, 8), '--repo', other.path])).stdout, 'T1: in_progress -> done\n');
+    const commits = ledgerOf(s).tasks[0].commits;
+    assert.deepEqual(commits, [`ext:../other@${other.sha}`]);
+    assert.equal(JSON.stringify(commits).includes(s.dir), false, 'no absolute path enters the store');
+    assert.equal(ok(s.run(['done', 'T1', '--commit', other.sha, '--repo', '../other'])).stdout, 'T1: already done\n');
+    assert.deepEqual(ledgerOf(s).tasks[0].commits, [`ext:../other@${other.sha}`]);
+    assert.equal(ledgerOf(s).tasks[0].history.length, 3, 'the repeat records nothing');
+  });
+});
+
+test('store check verifies an external commit in its path and warns, without drift, when the path is missing', () => {
+  withRepo('store', (s) => {
+    const other = otherRepo(s.dir);
+    s.plan();
+    ok(s.run(['init', join(s.plansDir, `${NAME}.md`)]));
+    ok(s.run(['start', 'T1']));
+    ok(s.run(['done', 'T1', '--commit', other.sha, '--repo', other.path]));
+    const clean = ok(s.run(['check']));
+    assert.equal(clean.stdout, '');
+    assert.equal(clean.stderr, '');
+
+    renameSync(other.path, join(s.dir, 'moved'));
+    const gone = ok(s.run(['check']));
+    assert.equal(gone.stdout, '');
+    assert.match(gone.stderr, new RegExp(`external commit not checkable: \\.\\./other@${other.sha}\\n`));
+    renameSync(join(s.dir, 'moved'), other.path);
+
+    s.inStore((store) => {
+      const p = store.plans(store.get('SELECT id FROM repos').id)[0];
+      const ledger = store.ledgerOf(p.id);
+      ledger.tasks[0].commits = [`ext:../other@${'0'.repeat(40)}`];
+      store.saveLedger(p.id, ledger);
+    });
+    const bad = s.run(['check']);
+    assert.equal(bad.status, 1);
+    assert.equal(bad.stdout, 'T1 commit 0000000 does not resolve in ../other\n');
+  });
+});
+
+test('store done --repo is anchored to the main worktree root: a linked worktree and the main checkout share one ledger', () => {
+  withRepo('store', (s) => {
+    const other = otherRepo(s.dir);
+    ok(s.run(['init', s.plan()]));
+    ok(s.run(['start', 'T1']));
+    // A linked worktree two levels deeper than the main checkout.
+    const wt = join(s.dir, 'wts', 'deep', 'wt');
+    mkdirSync(dirname(wt), { recursive: true });
+    s.git('worktree', 'add', '-q', '-b', 'linked', wt);
+    const fromWt = (args) => s.run(args, { cwd: wt });
+    assert.equal(ok(fromWt(['done', 'T1', '--commit', other.sha, '--repo', other.path])).stdout, 'T1: in_progress -> done\n');
+    assert.deepEqual(ledgerOf(s).tasks[0].commits, [`ext:../other@${other.sha}`]);
+    assert.equal(ok(fromWt(['check'])).stderr, '');
+
+    const clean = ok(s.run(['check']));
+    assert.equal(clean.stdout, '');
+    assert.equal(clean.stderr, '');
+    assert.equal(ok(s.run(['done', 'T1', '--commit', other.sha, '--repo', other.path])).stdout, 'T1: already done\n');
+    assert.equal(ok(fromWt(['done', 'T1', '--commit', other.sha, '--repo', other.path])).stdout, 'T1: already done\n');
+    assert.deepEqual(ledgerOf(s).tasks[0].commits, [`ext:../other@${other.sha}`]);
   });
 });

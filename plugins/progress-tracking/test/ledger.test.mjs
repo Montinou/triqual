@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { LedgerError, parsePlan, createLedger, reconcile, transition, statusLine, checkSchema } from '../lib/ledger.mjs';
+import {
+  LedgerError, parsePlan, createLedger, reconcile, transition, statusLine, checkSchema, checkLedger, renderSection, upsertStatusSection,
+  parseExternalCommit,
+} from '../lib/ledger.mjs';
 import { TASK_ROLES, DEFAULT_ROLE, TIERS, roleOf } from '../lib/roles.mjs';
 import { TIERS as PLAN_TIERS } from '../lib/plan.mjs';
 
@@ -672,4 +675,63 @@ test('checkSchema reports an unknown tier or effective tier; absent and null one
   bad.tasks[1].tier = 'medium';
   bad.tasks[2].effectiveTier = 'huge';
   assert.deepEqual(checkSchema(bad), ['T2 has unknown tier "medium"', 'T3 has unknown effective tier "huge"']);
+});
+
+const SHA40 = 'a'.repeat(40);
+
+test('parseExternalCommit splits ext:<path>@<sha> at the last @ and ignores every other form', () => {
+  assert.deepEqual(parseExternalCommit(`ext:../other@${SHA40}`), { path: '../other', sha: SHA40 });
+  assert.deepEqual(parseExternalCommit(`ext:../we@ird/repo@${SHA40}`), { path: '../we@ird/repo', sha: SHA40 });
+  for (const bad of [SHA40, 'ext:', 'ext:@abc', 'ext:../other@', 'ext:no-at-sign', 'xext:a@b', null, undefined, 7]) {
+    assert.equal(parseExternalCommit(bad), null, String(bad));
+  }
+});
+
+// A done task whose only commit is `commit`, in an otherwise clean active ledger.
+const withCommit = (commit) => {
+  const planText = '### Task 1: Alpha\n';
+  const ledger = createLedger({ plan: 'plans/p.md', spec: null, branch: null, tasks: parsePlan(planText), now: T0 });
+  ledger.tasks[0].status = 'done';
+  ledger.tasks[0].commits = [commit];
+  const renderedBody = renderSection([{ name: 'p', ledger }]);
+  return { ledger, planText, statusText: upsertStatusSection('# Status\n', renderedBody), renderedBody };
+};
+
+test('checkLedger checks an external commit in its path: a hit is clean, a miss is drift, an unreachable path warns', () => {
+  const commit = `ext:../other@${SHA40}`;
+  const calls = [];
+  const exists = (answer) => (sha, path) => { calls.push([sha, path]); return answer; };
+  const warnings = [];
+  const warn = (m) => warnings.push(m);
+
+  assert.deepEqual(checkLedger({ ...withCommit(commit), commitExists: exists(true), warn }), []);
+  assert.deepEqual(calls, [[SHA40, '../other']]);
+
+  assert.deepEqual(checkLedger({ ...withCommit(commit), commitExists: exists(false), warn }),
+    ['T1 commit aaaaaaa does not resolve in ../other']);
+  assert.deepEqual(warnings, []);
+
+  assert.deepEqual(checkLedger({ ...withCommit(commit), commitExists: exists(null), warn }), []);
+  assert.deepEqual(warnings, [`external commit not checkable: ../other@${SHA40}`]);
+
+  // Without a warn callback an unreachable path is still not drift.
+  assert.deepEqual(checkLedger({ ...withCommit(commit), commitExists: exists(null) }), []);
+});
+
+test('checkLedger still checks a plain commit with the sha alone, and a malformed ext: form as a plain commit', () => {
+  const seen = [];
+  const commitExists = (...args) => { seen.push(args); return false; };
+  assert.deepEqual(checkLedger({ ...withCommit(SHA40), commitExists }), ['T1 commit aaaaaaa does not resolve']);
+  assert.deepEqual(checkLedger({ ...withCommit('ext:nope'), commitExists }), ['T1 commit ext:nop does not resolve']);
+  assert.deepEqual(seen, [[SHA40], ['ext:nope']]);
+});
+
+test('transition done stores an external commit string as given; a repeat of the same string is a no-op', () => {
+  const commit = `ext:../other@${SHA40}`;
+  const l0 = createLedger({ plan: 'plans/p.md', spec: null, branch: null, tasks: parsePlan('### Task 1: Alpha\n'), now: T0 });
+  const l1 = transition(l0, 'start', 'T1', null, T0).ledger;
+  const l2 = transition(l1, 'done', 'T1', commit, T1);
+  assert.deepEqual(l2.ledger.tasks[0].commits, [commit]);
+  assert.equal(transition(l2.ledger, 'done', 'T1', commit, T1).changed, false);
+  assert.throws(() => transition(l2.ledger, 'done', 'T1', `ext:../other@${'b'.repeat(40)}`, T1), /is done; cannot done/);
 });

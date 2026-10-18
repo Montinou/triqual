@@ -278,7 +278,20 @@ export function checkSection(statusText, renderedBody) {
 }
 
 // Drift messages for one ledger, empty when clean. Never throws on a malformed plan, ledger or status text.
-export function checkLedger({ ledger, planText, statusText, renderedBody, commitExists }) {
+// A commit recorded from another repository is the string `ext:<path relative to this repo's root>@<sha>`, so no
+// home-directory path enters a ledger. Parsed at the last `@`; null for any other string (a plain sha, a malformed form).
+export const EXTERNAL_PREFIX = 'ext:';
+export function parseExternalCommit(commit) {
+  if (typeof commit !== 'string' || !commit.startsWith(EXTERNAL_PREFIX)) return null;
+  const at = commit.lastIndexOf('@');
+  const path = commit.slice(EXTERNAL_PREFIX.length, at);
+  const sha = commit.slice(at + 1);
+  return at === -1 || !path || !sha ? null : { path, sha };
+}
+
+// `commitExists(sha)` answers for a commit of this repo; for an external one it is called as `commitExists(sha, path)`
+// and answers true, false, or null when the path cannot be checked (it is then a `warn` message, never drift).
+export function checkLedger({ ledger, planText, statusText, renderedBody, commitExists, warn }) {
   const drift = checkSchema(ledger);
   const tasks = Array.isArray(ledger.tasks) ? ledger.tasks : [];
 
@@ -317,8 +330,15 @@ export function checkLedger({ ledger, planText, statusText, renderedBody, commit
 
   if (ledger.state === 'active') {
     for (const t of tasks) {
-      for (const sha of Array.isArray(t.commits) ? t.commits : []) {
-        if (!commitExists(sha)) drift.push(`${t.id} commit ${String(sha).slice(0, 7)} does not resolve`);
+      for (const commit of Array.isArray(t.commits) ? t.commits : []) {
+        const ext = parseExternalCommit(commit);
+        if (!ext) {
+          if (!commitExists(commit)) drift.push(`${t.id} commit ${String(commit).slice(0, 7)} does not resolve`);
+          continue;
+        }
+        const found = commitExists(ext.sha, ext.path);
+        if (found === null) warn?.(`external commit not checkable: ${ext.path}@${ext.sha}`);
+        else if (!found) drift.push(`${t.id} commit ${ext.sha.slice(0, 7)} does not resolve in ${ext.path}`);
       }
     }
   }
