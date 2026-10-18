@@ -1,5 +1,9 @@
 [
   {
+    "path": "packages/fence/src/log/redact.mjs",
+    "contains": "BEGIN/,"
+  },
+  {
     "path": "plugins/memory-report/lib/insights.mjs",
     "contains": "selection.secret + dropped.secret"
   },

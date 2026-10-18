@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "profiles": {
+    "default": { "undecided": "host" },
+    "unattended": { "undecided": "deny" }
+  },
+  "rules": [
+    {
+      "id": "credentials",
+      "decision": "deny",
+      "match": { "paths": ["**/.env", "**/.env.*", "~/.aws/**", "~/.ssh/**"], "access": "any" },
+      "except": { "paths": ["**/.env.example", "**/.env.sample"] },
+      "why": "Credential files are never read or written by the agent."
+    },
+    {
+      "id": "privilege",
+      "decision": "deny",
+      "match": { "class": ["privilege"] },
+      "why": "Raising privileges is denied."
+    }
+  ]
+}
