@@ -20,10 +20,11 @@ A worktree is opt-in. Create one only when your human partner explicitly asks fo
 **Before creating anything, check if you are already in an isolated workspace.**
 
 ```bash
-GIT_DIR=$(cd "$(git rev-parse --git-dir)" 2>/dev/null && pwd -P)
-GIT_COMMON=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P)
-BRANCH=$(git branch --show-current)
+git rev-parse --path-format=absolute --git-dir --git-common-dir
+git branch --show-current
 ```
+
+The first prints two lines, in order: `GIT_DIR` and `GIT_COMMON` (absolute paths). The second prints `BRANCH`, empty on a detached HEAD. Note all three: the steps below compare them.
 
 **Submodule guard:** `GIT_DIR != GIT_COMMON` is also true inside git submodules. Before concluding "already in a worktree," verify you are not in a submodule:
 
@@ -81,8 +82,11 @@ Follow this priority order. Explicit user preference always beats observed files
 **MUST verify directory is ignored before creating worktree:**
 
 ```bash
-git check-ignore -q .worktrees 2>/dev/null || git check-ignore -q worktrees 2>/dev/null
+git check-ignore -q .worktrees
+git check-ignore -q worktrees
 ```
+
+Run the line for the directory you chose; exit status 0 means it is ignored.
 
 **If NOT ignored:** Add to .gitignore, commit the change, then proceed.
 
@@ -90,34 +94,27 @@ git check-ignore -q .worktrees 2>/dev/null || git check-ignore -q worktrees 2>/d
 
 #### Create the Worktree
 
-```bash
-# Determine path based on chosen location
-path="$LOCATION/$BRANCH_NAME"
+The worktree's path is the chosen location plus the branch name: `<location>/<branch-name>`.
 
-git worktree add "$path" -b "$BRANCH_NAME"
-cd "$path"
+```bash
+git worktree add <location>/<branch-name> -b <branch-name>
 ```
+
+Then work in the new worktree: change the session's directory to `<location>/<branch-name>` with your harness's own directory tool, as a step of its own, never chained to another command.
 
 **Sandbox fallback:** If `git worktree add` fails with a permission error (sandbox denial), tell the user the sandbox blocked worktree creation and you're working in the current directory instead. Then run setup and baseline tests in place.
 
 ## Step 2: Project Setup
 
-Auto-detect and run appropriate setup:
+Auto-detect from the files at the project root and run each matching setup command, each as a plain command of its own:
 
-```bash
-# Node.js
-if [ -f package.json ]; then npm install; fi
-
-# Rust
-if [ -f Cargo.toml ]; then cargo build; fi
-
-# Python
-if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-if [ -f pyproject.toml ]; then poetry install; fi
-
-# Go
-if [ -f go.mod ]; then go mod download; fi
-```
+| File at the root | Setup command |
+|------------------|---------------|
+| `package.json` | `npm install` |
+| `Cargo.toml` | `cargo build` |
+| `requirements.txt` | `pip install -r requirements.txt` |
+| `pyproject.toml` | `poetry install` |
+| `go.mod` | `go mod download` |
 
 ## Step 3: Verify Clean Baseline
 

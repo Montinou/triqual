@@ -125,7 +125,7 @@ task_status() {
   ' "$ledger_path" "T$n"
 }
 
-dir=$("$sdd/sdd-workspace" "$plan")
+dir=$(node "$sdd/sdd-workspace" "$plan")
 log="$dir/task-${n}-tests.log"
 ledger="$dir/sdd-ledger.md"
 

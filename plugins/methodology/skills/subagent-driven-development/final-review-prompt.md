@@ -113,8 +113,9 @@ Subagent (roles:final-adversarial-reviewer):
     tree, the index, HEAD, or branch state in any way. If you need a file
     from a different revision, read it with `git show <sha>:<path>`. If you
     need a whole copy of that revision, export it without registering a
-    worktree: `d=$(mktemp -d) && git archive <sha> | tar -x -C "$d"`, and
-    `rm -rf "$d"` before you report. Never run `git worktree add`, and never
+    worktree, as three separate commands: `mktemp -d` (the directory it prints is
+    `<d>`), `git archive --output=<d>/rev.tar <sha>`, `tar -x -f <d>/rev.tar -C <d>`;
+    then `rm -rf <d>` before you report. Never run `git worktree add`, and never
     move HEAD on this checkout.
 
     ## You Do Not Dispatch Subagents
@@ -175,7 +176,7 @@ Subagent (roles:final-adversarial-reviewer):
 ```
 
 **Placeholders:**
-- `[PACKAGE_PATH]` — the path `bash ../executing-plans/scripts/review-package PLAN_FILE MERGE_BASE HEAD`
+- `[PACKAGE_PATH]` — the path `node ../executing-plans/scripts/review-package PLAN_FILE MERGE_BASE HEAD`
   printed (MERGE_BASE: the commit the branch started from, e.g. `git merge-base <trunk> HEAD`)
 - `[PLAN_PATH]` — the plan file
 - `[SPEC_PATH]` — the spec the plan names; "none" when the plan has no reachable spec

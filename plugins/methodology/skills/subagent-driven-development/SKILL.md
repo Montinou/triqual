@@ -162,7 +162,7 @@ sequences — the single most expensive failure observed. Track progress in
 a ledger file, not only in todos.
 
 - Each plan owns a workspace: at skill start, run this skill's
-  `bash ../executing-plans/scripts/sdd-workspace PLAN_FILE` — it prints the plan's git-ignored
+  `node ../executing-plans/scripts/sdd-workspace PLAN_FILE` — it prints the plan's git-ignored
   directory (under `<repo-root>/.methodology/sdd/`, kept out of `git status`
   by `.methodology/.gitignore`), home to every artifact for THIS plan:
   ledger, briefs, reports, review packages. Another plan's directory is
@@ -197,9 +197,9 @@ Run `triqual tasks paths --json` once, before the first dispatch:
 - **Not opted in** (`"optedIn": false`, or exit 2 from an older progress-tracking): no ledger moves (run no `triqual tasks` command) and no `progress.md` rules: drop the Tracking section from every dispatch, and never create `progress.md`: creating it opts the repo in and commits a personal log into a shared repo.
 - **`triqual` missing** (exit 3, or `triqual` not on `PATH`): handle it as not opted in, and say so once.
 
-Opted in with `"mode": "local"`, the tracking files live under the git dir, which Claude Code protects from agent file writes: your own entries (reviews, rulings, the plan's close) and `status` edits are drafts in the OS temp dir, each under a unique name from `mktemp` (`draft=$(mktemp)`: parallel subagents and sessions share that dir), landed with `triqual tracking write entry <draft>` and `triqual tracking write status <draft>`, and the Tracking section tells implementers and fixers the same. Never write or edit under `.git/` with the file tools.
+Opted in with `"mode": "local"`, the tracking files live under the git dir, which Claude Code protects from agent file writes: your own entries (reviews, rulings, the plan's close) and `status` edits are drafts in the OS temp dir, each under a unique name from `mktemp` (run `mktemp`; the path it prints is the draft: parallel subagents and sessions share that dir), landed with `triqual tracking write entry <draft>` and `triqual tracking write status <draft>`, and the Tracking section tells implementers and fixers the same. Never write or edit under `.git/` with the file tools.
 
-Opted in with `"mode": "store"` (details: `store-mode.md` under `references` in skill `progress-tracking:progress-tracking`), the tracking lives in the store: `triqual tasks paths --json` has no `progress` or `status` path and there is no `*.tasks.json`, so no tracking file is written, staged or committed (an added or modified `progress.md`, `status.md` or `*.tasks.json` is a defect; the switch's deletions are expected). `<plan>` in every `--plan` is the bare plan file name (for example `2026-10-11-feature.md`), never the `plansDir` path, for the ledger moves and the close only: the check takes no plan option. Fill the implementer template's Tracking section with `"store"` as the mode and drop the three paths. Your own entries (reviews, rulings, the plan's close) are drafts in a private `mktemp -d` dir (`d=$(mktemp -d)`). A task review runs after the implementer's commit already exists, and a ruling, a status-only step or the plan's close ends with no commit of its own, so each of these lands with `triqual tracking add <draft> --no-commit` (or `--commit <reviewed sha>` to record a review against the commit it reviewed), because a pending entry left behind would be stamped onto the next, unrelated commit and would let that commit past the pre-commit gate; only an entry for a commit you are about to make yourself lands with plain `triqual tracking add <draft>` before the commit it describes. Read `status` with `triqual tracking status` and change one section with `triqual tracking status set --section <heading> <draft>`; the whole-file `status set` is only for a full rewrite. Read history with `triqual tracking log`, and ledger state with `triqual tasks status --json` or `triqual tasks export --json`.
+Opted in with `"mode": "store"` (details: `store-mode.md` under `references` in skill `progress-tracking:progress-tracking`), the tracking lives in the store: `triqual tasks paths --json` has no `progress` or `status` path and there is no `*.tasks.json`, so no tracking file is written, staged or committed (an added or modified `progress.md`, `status.md` or `*.tasks.json` is a defect; the switch's deletions are expected). `<plan>` in every `--plan` is the bare plan file name (for example `2026-10-11-feature.md`), never the `plansDir` path, for the ledger moves and the close only: the check takes no plan option. Fill the implementer template's Tracking section with `"store"` as the mode and drop the three paths. Your own entries (reviews, rulings, the plan's close) are drafts in a private `mktemp -d` dir (run `mktemp -d`; the directory it prints is `$d` below). A task review runs after the implementer's commit already exists, and a ruling, a status-only step or the plan's close ends with no commit of its own, so each of these lands with `triqual tracking add <draft> --no-commit` (or `--commit <reviewed sha>` to record a review against the commit it reviewed), because a pending entry left behind would be stamped onto the next, unrelated commit and would let that commit past the pre-commit gate; only an entry for a commit you are about to make yourself lands with plain `triqual tracking add <draft>` before the commit it describes. Read `status` with `triqual tracking status` and change one section with `triqual tracking status set --section <heading> <draft>`; the whole-file `status set` is only for a full rewrite. Read history with `triqual tracking log`, and ledger state with `triqual tasks status --json` or `triqual tasks export --json`.
 
 The workspace ledger (`sdd-ledger.md`) is kept either way: it is this
 skill's recovery map, not a tracking file.
@@ -394,7 +394,7 @@ Template: [implementer-prompt.md](implementer-prompt.md)
 
 Implementer subagents report one of four statuses. Handle each appropriately:
 
-**DONE:** When opted in, run `triqual tasks review T<N> --plan <plan>` when the implementer reports DONE (DONE_WITH_CONCERNS too, once you send it to review). Generate the review package (`bash ../executing-plans/scripts/review-package PLAN_FILE BASE HEAD`, from this skill's directory — it prints the unique file path it wrote; BASE is the commit you recorded before dispatching the implementer — never `HEAD~1`, which silently drops all but the last commit of a multi-commit task), then run the two-round task review (see Review the task) with the printed path.
+**DONE:** When opted in, run `triqual tasks review T<N> --plan <plan>` when the implementer reports DONE (DONE_WITH_CONCERNS too, once you send it to review). Generate the review package (`node ../executing-plans/scripts/review-package PLAN_FILE BASE HEAD`, from this skill's directory — it prints the unique file path it wrote; BASE is the commit you recorded before dispatching the implementer — never `HEAD~1`, which silently drops all but the last commit of a multi-commit task), then run the two-round task review (see Review the task) with the printed path.
 
 **DONE_WITH_CONCERNS:** The implementer completed the work but flagged doubts. Read the concerns before proceeding. If the concerns are about correctness or scope, address them before review. If they're observations (e.g., "this file is getting large"), note them and proceed to review.
 
@@ -427,7 +427,7 @@ required. Implementer self-review never replaces the task review; both are
 needed.
 
 - Hand every reviewer its diff as a file: run this skill's
-  `bash ../executing-plans/scripts/review-package PLAN_FILE BASE HEAD` and pass the reviewer the file path
+  `node ../executing-plans/scripts/review-package PLAN_FILE BASE HEAD` and pass the reviewer the file path
   it prints (or, without bash: `git log --oneline`, `git diff --stat`,
   and `git diff -U10` for the range, redirected to one uniquely named
   file). The output never enters your own context, and the reviewer sees
@@ -560,7 +560,7 @@ below), which fixes what is real and refutes with evidence what is not:
 
 - **Ledger move:** when opted in, run `triqual tasks rework T<N> --plan <plan>` at the start of each fix round, before the fix dispatch, and `triqual tasks review T<N> --plan <plan>` when the fixer reports back and the re-review starts.
 - Every fix dispatch to `roles:review-fixer` (or to `roles:complex-implementer`, for its own task) carries the implementer template's Tracking section when opted in, and its Task Skills section when the brief has a `**Skills:**` line.
-- **Fix commits fold into the task's own commit.** A fix round commits with `git commit --fixup=<the task's first commit>`, never an amend, a rebase or a reset: name that commit (`git rev-list --reverse BASE..HEAD | head -n 1`) in the fix dispatch. The review package stays `BASE..HEAD`, and step 5 folds the fixups into the one commit when the review is clean. While the task is the top of the stack that fold touches only this task's commit.
+- **Fix commits fold into the task's own commit.** A fix round commits with `git commit --fixup=<the task's first commit>`, never an amend, a rebase or a reset: name that commit (the first line of `git rev-list --reverse BASE..HEAD`) in the fix dispatch. The review package stays `BASE..HEAD`, and step 5 folds the fixups into the one commit when the review is clean. While the task is the top of the stack that fold touches only this task's commit.
 
 **Rounds 1-3 — resume the same `roles:review-fixer`.** Round 1 dispatches
 a `roles:review-fixer` with the open findings verbatim, the brief path and
@@ -595,7 +595,7 @@ output; dispatch the re-review once all three are present. Name the
 covering test files in the fix message — a one-line fix does not need the
 whole suite.
 
-**The re-review is scoped** and goes to the role or roles that raised the findings the round addressed. Run `bash ../executing-plans/scripts/review-package PLAN_FILE FIX_BASE HEAD`
+**The re-review is scoped** and goes to the role or roles that raised the findings the round addressed. Run `node ../executing-plans/scripts/review-package PLAN_FILE FIX_BASE HEAD`
 where FIX_BASE is the head the previous review saw, and dispatch
 [re-review-prompt.md](re-review-prompt.md) to each raising role, with its
 own findings, the brief, the report file, and the printed diff path. The re-reviewer verdicts
@@ -662,7 +662,7 @@ When the phase's last task is complete, close the phase before starting the next
 ## Final Review
 
 The final whole-branch review gets a package too: run
-`bash ../executing-plans/scripts/review-package PLAN_FILE MERGE_BASE HEAD` (MERGE_BASE = the commit the
+`node ../executing-plans/scripts/review-package PLAN_FILE MERGE_BASE HEAD` (MERGE_BASE = the commit the
 stack started from, e.g. `git merge-base <trunk> HEAD`: the review covers `trunk..top`, every phase) and include the
 printed path in the final review dispatch, so the final reviewer reads
 one file instead of re-deriving the branch diff with git commands.
@@ -683,7 +683,7 @@ session's final-review fix wave cost more than all its tasks combined.
 - The fix dispatch carries the implementer template's Tracking section when opted in, like every fixer brief: its `progress.md` entry rule (Stage/task `Plan <topic> · final fix`) and its staging rule.
 
 Then run exactly one scoped re-review of the fix wave by the role that raised the findings, `roles:final-adversarial-reviewer`, with [re-review-prompt.md](re-review-prompt.md)'s prompt
-(`bash ../executing-plans/scripts/review-package PLAN_FILE FIX_BASE HEAD` over the fix range).
+(`node ../executing-plans/scripts/review-package PLAN_FILE FIX_BASE HEAD` over the fix range).
 Adjudicate any residual findings as in the task loop's breaker: park with
 rulings, or rule on the load-bearing ones and ledger what you decided. Only
 the five classes above stop you here. There is no second fix wave —
@@ -749,7 +749,7 @@ You: I'm using Subagent-Driven Development to execute this plan.
 [Setup: no worktree asked for, working in the current checkout]
 [Tracking: triqual tasks paths --json → opted in, "mode": "store"]
 [Read plan file once: <plansDir>/feature-plan.md]
-[Resolve workspace: bash ../executing-plans/scripts/sdd-workspace <plansDir>/feature-plan.md — no sdd-ledger.md inside, fresh start]
+[Resolve workspace: node ../executing-plans/scripts/sdd-workspace <plansDir>/feature-plan.md — no sdd-ledger.md inside, fresh start]
 [Stack: node ../executing-plans/scripts/stack.mjs init <plansDir>/feature-plan.md → github mode, 1 phase; the method was chosen at the handoff in this conversation, so I write "Authorization: push phase branches and draft PRs — handoff 2026-10-14" to the ledger now, and ask nothing]
 [Create todos for all tasks]
 

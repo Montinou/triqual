@@ -25,9 +25,11 @@ Dispatch a code reviewer subagent to catch issues before they cascade. The revie
 
 **1. Get git SHAs:**
 ```bash
-BASE_SHA=$(git rev-parse HEAD~1)  # or: git merge-base origin/main HEAD
-HEAD_SHA=$(git rev-parse HEAD)
+git rev-parse HEAD~1
+git rev-parse HEAD
 ```
+
+The first prints `BASE_SHA`, the starting commit (to review a whole branch, run `git merge-base origin/main HEAD` instead and note its output as `BASE_SHA`); the second prints `HEAD_SHA`, the ending commit. Note both: the placeholders below take them as values.
 
 **2. Dispatch code reviewer subagent:**
 
@@ -52,8 +54,7 @@ Dispatch a `roles:spec-reviewer` subagent, filling the template at [code-reviewe
 
 You: Let me request code review before proceeding.
 
-BASE_SHA=$(git log --oneline | grep "Task 1" | head -1 | awk '{print $1}')
-HEAD_SHA=$(git rev-parse HEAD)
+[BASE_SHA is the commit of Task 1 in `git log --oneline`; HEAD_SHA is the output of `git rev-parse HEAD`]
 
 [Dispatch code reviewer subagent]
   DESCRIPTION: Added verifyIndex() and repairIndex() with 4 issue types

@@ -113,7 +113,7 @@ Subagent (roles:safety-reviewer):
 - `[REPORT_FILE]` — the implementer's report file
 - `[BASE_SHA]` — commit before this task
 - `[HEAD_SHA]` — current commit
-- `[DIFF_FILE]` — the path `bash ../executing-plans/scripts/review-package PLAN_FILE BASE HEAD`
+- `[DIFF_FILE]` — the path `node ../executing-plans/scripts/review-package PLAN_FILE BASE HEAD`
   printed (the same package the hunters and the spec reviewer read)
 - `[TRACKING_FILES]` — when opted in, the `progress` and `status` paths from
   `triqual tasks paths --json` and the plan's `*.tasks.json`; in store mode

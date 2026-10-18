@@ -647,7 +647,7 @@ function switchTo(cwd, branch) {
 
 // The plan's workspace directory, as `sdd-workspace PLAN_FILE` prints it.
 function workspaceOf(ctx) {
-  const res = spawnSync('bash', [join(SCRIPT_DIR, 'sdd-workspace'), ctx.planFile], {
+  const res = spawnSync(process.execPath, [join(SCRIPT_DIR, 'sdd-workspace'), ctx.planFile], {
     cwd: ctx.cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
   });
   if (res.error || res.status !== 0) {

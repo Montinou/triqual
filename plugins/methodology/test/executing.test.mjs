@@ -895,9 +895,9 @@ test('in a store repo every script that takes PLAN_FILE accepts the plan path in
     const plansDir = JSON.parse(r.triqual('tasks', 'paths', '--json')).plansDir;
     const planPath = join(plansDir, STORE_PLAN_NAME);
     assert.ok(existsSync(planPath), `no stored plan at ${planPath}`);
-    // task-brief is a Node script, the others bash ones: each runs by its interpreter.
+    // sdd-workspace, task-brief and review-package are Node scripts: each runs by node.
     const sdd = (script, args) =>
-      spawnSync(script === 'task-brief' ? process.execPath : 'bash', [join(SKILLS, EP, 'scripts', script), ...args], { cwd: r.dir, env: r.env, encoding: 'utf8' });
+      spawnSync(process.execPath,[join(SKILLS, EP, 'scripts', script), ...args], { cwd: r.dir, env: r.env, encoding: 'utf8' });
     // The plan's path in plansDir: sdd-workspace, task-brief, task-start, review-package and task-done all take it.
     const ws = sdd('sdd-workspace', [planPath]);
     assert.equal(ws.status, 0, ws.stdout + ws.stderr);
@@ -1150,7 +1150,7 @@ test('finishing-branch offers the local stack menu', () => {
   assert.match(options[1], /^2\. Push and open it as stacked PRs/i);
   assert.match(options[2], /^3\. Keep as is/i);
   const exec = section(FB, '### Stacked plan: local mode').join(' ');
-  mustHave(exec, ['`git merge --ff-only <top branch>`', 'the suite'], 'the local merge');
+  mustHave(exec, ['`git -C <MAIN_ROOT> merge --ff-only <top branch>`', 'the suite'], 'the local merge');
   const push = fbBlock(`\`${STACK} mode PLAN_FILE github\``);
   mustHave(push, [`\`${STACK} submit PLAN_FILE <N>\``, 'each phase still `done`, in order', 'already `submitted`', '`--open`'], 'the push option');
   assert.ok(!push.includes('each phase in order'), 'the push option still submits every phase, whatever its state');
@@ -1218,22 +1218,48 @@ test('the state file path is captured in Step 3 and read and deleted from there,
   // Not section(): the bash comments inside the block start with "# " and would end it.
   const text = read(`${FB}/SKILL.md`);
   const step3 = text.slice(text.indexOf('## Step 3: Detect Environment'), text.indexOf('## Step 4: Determine Base Branch'));
-  assert.ok(step3.includes(`STACK_STATE=$(${STACK} path PLAN_FILE)`), 'Step 3 does not capture the state path in STACK_STATE');
-  assert.ok(step3.indexOf('STACK_STATE') < step3.indexOf('```', step3.indexOf('```') + 3), 'STACK_STATE is not captured inside the Step 3 block');
+  assert.ok(step3.includes(`${STACK} path PLAN_FILE`), 'Step 3 does not run stack.mjs path');
+  assert.ok(step3.indexOf('STACK_STATE') > step3.indexOf(`${STACK} path PLAN_FILE`), 'Step 3 does not name that output STACK_STATE');
   const after = fbBlock('A merge with `gh stack merge <pr>` may stop short');
-  mustHave(after, ['cd "$WORKTREE_PATH"', 'status PLAN_FILE', 'never from `MAIN_ROOT`'], 'the status read');
+  mustHave(after, [`\`${STACK} status PLAN_FILE\``, 'never from `MAIN_ROOT`'], 'the status read');
   const full = fbBlock('**Full merge**');
-  mustHave(full, ['rm -f "$STACK_STATE"'], 'the state deletion');
-  assert.ok(!/rm -f "\$\(/.test(read(`${FB}/SKILL.md`)), 'the state file is still resolved again after the directory change');
+  mustHave(full, ['`rm -f <STACK_STATE>`'], 'the state deletion');
+  assert.ok(!/rm -f "\$/.test(read(`${FB}/SKILL.md`)), 'the state file is still resolved again after the cleanup');
   const partial = fbBlock('**Partial merge**');
-  mustHave(partial, ['cd "$WORKTREE_PATH"'], 'the partial-merge refresh');
+  mustHave(partial, [`\`${STACK} status PLAN_FILE\``], 'the partial-merge refresh');
 });
 
-test('a GitHub merge changes to the main repo root before cleanup, like the local merge', () => {
+test('finishing-branch uses no cd: git reaches the main checkout with -C and values are named, not shell variables', () => {
+  const text = read(`${FB}/SKILL.md`);
+  assert.ok(!/\bcd\b/.test(text), 'a cd is still in the skill');
+  assert.ok(!text.includes('$WORKTREE_PATH') && !text.includes('$MAIN_ROOT') && !text.includes('$STACK_STATE'), 'a shell variable still stands for a captured value');
   const full = fbBlock('**Full merge**');
-  mustHave(full, ['cd "$MAIN_ROOT"', 'Step 7'], 'the full-merge rule');
-  assert.ok(full.indexOf('cd "$MAIN_ROOT"') < full.indexOf('Step 7'), 'the directory change comes after the cleanup');
-  assert.ok(full.indexOf('cd "$MAIN_ROOT"') < full.indexOf('`gh stack sync --prune`'), 'the directory change comes after the prune');
+  mustHave(full, ['git -C <MAIN_ROOT>', 'Step 7'], 'the full-merge rule');
+  assert.ok(full.indexOf('git -C <MAIN_ROOT>') < full.indexOf('Step 7'), 'the main checkout is reached after the cleanup');
+  assert.ok(full.indexOf('git -C <MAIN_ROOT>') < full.indexOf('`gh stack sync --prune`'), 'the main checkout is reached after the prune');
+});
+
+test('finishing-branch moves the session to MAIN_ROOT before it removes the worktree, and nothing after relies on the removed directory', () => {
+  const text = read(`${FB}/SKILL.md`);
+  const step7 = text.slice(text.indexOf('## Step 7: Cleanup Workspace'), text.indexOf('## Quick Reference'));
+  const move = step7.indexOf('move the session to `<MAIN_ROOT>`');
+  const remove = step7.indexOf('git -C <MAIN_ROOT> worktree remove <WORKTREE_PATH>');
+  assert.ok(move >= 0, 'Step 7 does not move the session to MAIN_ROOT');
+  assert.ok(remove > move, 'the worktree is removed before the session moves to MAIN_ROOT');
+  const moveBlock = fbBlock('**Before any removal, move the session to `<MAIN_ROOT>`**');
+  mustHave(moveBlock, ['directory tool', 'as a step of its own', 'never chained to a command', 'run every command after the removal from `<MAIN_ROOT>`'], 'the move step');
+  assert.ok(!/removal must run from outside the worktree/.test(text), 'the old rationale (removal only from outside) is still stated');
+  // Everything the callers run after the cleanup is from MAIN_ROOT: no bare `git` command, no relative script path.
+  const full = fbBlock('**Full merge**');
+  const afterClean = full.slice(full.indexOf('Then clean up the worktree (Step 7'));
+  mustHave(afterClean, ['every command from here on runs from `<MAIN_ROOT>`', '`rm -f <STACK_STATE>`'], 'the full-merge cleanup tail');
+  assert.ok(!/node \.\.\/|<WORKTREE_PATH>/.test(afterClean), 'a command after the cleanup uses the removed worktree or a path relative to it');
+  assert.ok(!/`git (?!-C <MAIN_ROOT>)[a-z]/.test(afterClean), 'a git command after the cleanup runs without -C <MAIN_ROOT>');
+  const option1 = text.slice(text.indexOf('### Option 1: Merge Locally'), text.indexOf('### Option 2: Push and Create PR'));
+  const afterOption1 = option1.slice(option1.indexOf('clean up the worktree (Step 7)'));
+  mustHave(afterOption1, ['git -C <MAIN_ROOT> branch -d <feature-branch>'], 'the Option 1 branch delete');
+  assert.ok(!/^git (?!-C)/m.test(afterOption1), 'the Option 1 branch delete runs without -C <MAIN_ROOT>');
+  mustHave(option1, ['go test -C <MAIN_ROOT> ./...'], 'the Go test command');
 });
 
 test('a GitHub full merge brings the main checkout to the merged trunk before the After Merge checklist', () => {
@@ -1243,7 +1269,14 @@ test('a GitHub full merge brings the main checkout to the merged trunk before th
     assert.ok(i >= 0, `the full-merge rule does not say ${needle}: ${full}`);
     return i;
   };
-  const order = ['cd "$MAIN_ROOT"', '--untracked-files=no', 'git fetch <remote>', 'git checkout <trunk>', 'git merge --ff-only <remote>/<trunk>', '`## After Merge`', '`gh stack sync --prune`'];
+  const order = [
+    'git -C <MAIN_ROOT> status --porcelain --untracked-files=no',
+    'git -C <MAIN_ROOT> fetch <remote>',
+    'git -C <MAIN_ROOT> checkout <trunk>',
+    'git -C <MAIN_ROOT> merge --ff-only <remote>/<trunk>',
+    '`## After Merge`',
+    '`gh stack sync --prune`',
+  ];
   order.reduce((prev, needle) => {
     assert.ok(at(needle) > prev, `${needle} is out of order in the full-merge rule: ${full}`);
     return at(needle);

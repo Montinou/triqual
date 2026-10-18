@@ -240,7 +240,7 @@ const staleBuilders = (paths, builders = LOCAL_ADDRESS_BUILDERS) => {
 // directory all fail, except the one line of the workspace script that adopts a legacy ledger.
 const LEGACY_ADOPTION = {
   path: 'executing-plans/scripts/sdd-workspace',
-  line: 'legacy="$root/.superpowers/sdd/$slug/progress.md"',
+  line: '  const legacy = join(root, `.superpowers/sdd/${slug}/progress.md`);',
 };
 const WORKSPACE_LEDGER = /(?:\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|<workspace>|sdd\/\S*?)\/progress\.md/;
 const ledgerProblems = ({ skills }) => {
@@ -250,6 +250,51 @@ const ledgerProblems = ({ skills }) => {
       if (path === LEGACY_ADOPTION.path && line === LEGACY_ADOPTION.line) return;
       const named = WORKSPACE_LEDGER.test(line) || (isScript(path) && /\/progress\.md/.test(line));
       if (named || /\.superpowers\/sdd/.test(line)) bad.push(`${path}:${i + 1}: ${line.trim()}`);
+    });
+  }
+  return bad;
+};
+
+// Every command a skill tells an agent to run is one plain command: the worktree guard of a Claude Code session
+// refuses a compound shell command it cannot verify. In a fenced bash/sh block every line is a command; outside one, an
+// inline `code` span is a command when it starts with triqual, node, git, gh, bash, scripts/, `cd`, `mktemp`, `rm` or a
+// variable assignment (an optional opening parenthesis aside). An unlabelled fence holds a prompt template or an
+// example: there a line that starts like a command, and every inline span inside the line, is held to the same rule
+// (a labelled non-shell fence, such as `text`, is output and exempt). None may chain (`&&`, `;`), substitute (`$(…)`, backticks)
+// or change directory first. A value that needs a command's output is a separate step that
+// runs the command and names its output.
+const COMMAND_START = /^\(?(?:triqual|node|git|gh|bash|cd|mktemp|rm)(?:\s|$)|^scripts\/|^[A-Za-z_]\w*=\S/;
+const COMPOUND = /&&|;|\$\(|`|^\(?cd(?:\s|$)/;
+const SHELL_FENCE = /^(?:bash|sh)$/;
+const plainCommandProblems = ({ skills }) => {
+  const bad = [];
+  for (const path of skillFiles(skills).filter((p) => p.endsWith('.md'))) {
+    let fence = null;
+    let shell = false;
+    let bare = false;
+    read(skills, path).split('\n').forEach((line, i) => {
+      const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+      if (!fence && m) {
+        fence = m[1];
+        shell = SHELL_FENCE.test(m[2].trim().split(/\s/)[0]);
+        bare = !m[2].trim();
+        return;
+      }
+      if (fence && m && m[1][0] === fence[0] && m[1].length >= fence.length && !m[2].trim()) {
+        fence = null;
+        return;
+      }
+      const flag = (text) => bad.push(`${path}:${i + 1}: ${text}`);
+      if (fence) {
+        const command = line.replace(/\s+#.*$/, '').trim();
+        if (shell && command && !command.startsWith('#') && COMPOUND.test(command)) flag(command);
+        if (!bare) return;
+        if (COMMAND_START.test(command) && COMPOUND.test(command)) flag(command);
+      }
+      for (const span of line.matchAll(/(?<!`)`([^`\n]+)`(?!`)/g)) {
+        const command = span[1].trim();
+        if (COMMAND_START.test(command) && COMPOUND.test(command)) flag(command);
+      }
     });
   }
   return bad;
@@ -361,6 +406,10 @@ test('every local-address exemption still names a line', () => {
 
 test('the workspace ledger is sdd-ledger.md everywhere', () => {
   assert.deepEqual(ledgerProblems(REAL), []);
+});
+
+test('skill commands are plain', () => {
+  assert.deepEqual(plainCommandProblems(REAL), []);
 });
 
 test('diagnosing-methodology files and searches issues with authenticated gh only', (t) => {
@@ -480,6 +529,44 @@ test('the checks fail on a seeded defect', async (t) => {
       'a/scripts/s.js:4: const sh = "https://$HOST/x";',
     ]);
     assert.deepEqual(staleBuilders(p, builders), ["a/scripts/gone.js: return 'http://' + gone;"]);
+  });
+  await t.test('a compound command in a bash block or an inline span, but not a plain one, a comment or a non-shell block', (t2) => {
+    const p = fixture(t2, {
+      'a/SKILL.md': skillMd(
+        'a',
+        [
+          'Run `git status`, `node a.mjs x`, `(cd "$W" && node a.mjs y)`, `d=$(mktemp -d)` and `a; b`.',
+          'Prose with && and ; and $(x) is not a command.',
+          '```bash',
+          '# a comment; with a semicolon',
+          'git rev-parse HEAD  # trailing; comment',
+          'BASE=$(git rev-parse HEAD~1)',
+          'cd "$path"',
+          'if [ -f go.mod ]; then go mod download; fi',
+          'git add a && git commit -m x',
+          'node a.mjs',
+          '```',
+          '```text',
+          'git add a && git commit -m x',
+          '```',
+          '```',
+          'Template prose with a; b and a plain `git status`.',
+          '    BASE_SHA=$(git log | head -1)',
+          'Export it: `d=$(mktemp -d) && git archive <sha> | tar -x -C "$d"`.',
+          '```',
+        ].join('\n'),
+      ),
+    });
+    assert.deepEqual(plainCommandProblems(p), [
+      'a/SKILL.md:5: (cd "$W" && node a.mjs y)',
+      'a/SKILL.md:5: d=$(mktemp -d)',
+      'a/SKILL.md:10: BASE=$(git rev-parse HEAD~1)',
+      'a/SKILL.md:11: cd "$path"',
+      'a/SKILL.md:12: if [ -f go.mod ]; then go mod download; fi',
+      'a/SKILL.md:13: git add a && git commit -m x',
+      'a/SKILL.md:21: BASE_SHA=$(git log | head -1)',
+      'a/SKILL.md:22: d=$(mktemp -d) && git archive <sha> | tar -x -C "$d"',
+    ]);
   });
   await t.test('a workspace ledger that is not sdd-ledger.md, and .superpowers/sdd outside the legacy line', (t2) => {
     const p = fixture(t2, {

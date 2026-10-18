@@ -1,102 +1,122 @@
-#!/usr/bin/env bash
-# Resolve and ensure the working-tree directory SDD uses for one plan's
-# short-lived artifacts: task briefs, implementer reports, review packages,
-# and the workspace ledger (sdd-ledger.md). Print the plan directory's
-# absolute path.
-#
-# One directory per plan (.methodology/sdd/<plan-basename>/) so a follow-up
-# plan in the same working tree can never read or overwrite another plan's
-# artifacts. A stale ledger misread as current progress makes controllers
-# skip whole task sequences — plan-scoping removes that failure structurally.
-#
-# Basename slugs collide when two plans share a filename (docs/alpha/plan.md
-# vs docs/beta/plan.md), so each workspace records its owning plan's path in
-# a plan-path marker (repo-relative in-repo, absolute outside). A workspace
-# owned by a different plan is skipped and the slug disambiguated with the
-# plan's parent-directory name, then a counter. A workspace with no marker
-# predates the marker scheme and is adopted for the current plan so in-flight
-# workspaces keep resolving — which means the first collision on such a
-# legacy workspace adopts instead of detecting; acceptable, marker-less
-# workspaces age out as plans finish.
-#
-# The workspace lives in the working tree (not under .git/) because Claude Code
-# treats .git/ as a protected path and denies agent writes there — which blocks
-# an implementer subagent from writing its report file. A self-ignoring
-# .gitignore at .methodology/ (containing `*`) keeps every plan's workspace
-# out of `git status`, the Stop hook and accidental commits without modifying
-# any tracked file.
-#
-# A workspace from before the fork kept its ledger under another name and
-# root. When this plan has no sdd-ledger.md yet, that old ledger exists and
-# the old workspace's plan-path marker names exactly this plan, the ledger
-# is copied to sdd-ledger.md and an `adopted` marker is left in the old
-# directory (which otherwise stays in place). A directory with that marker
-# is never adopted again, so deleting the finished workspace does not bring
-# the old ledger back.
-#
-# Single source of truth for the workspace location, so task-brief and
-# review-package cannot drift to different directories.
-#
-# Usage: sdd-workspace PLAN_FILE
-set -euo pipefail
+#!/usr/bin/env node
+// Resolve and ensure the working-tree directory SDD uses for one plan's
+// short-lived artifacts: task briefs, implementer reports, review packages,
+// and the workspace ledger (sdd-ledger.md). Print the plan directory's
+// absolute path.
+//
+// One directory per plan (.methodology/sdd/<plan-basename>/) so a follow-up
+// plan in the same working tree can never read or overwrite another plan's
+// artifacts. A stale ledger misread as current progress makes controllers
+// skip whole task sequences — plan-scoping removes that failure structurally.
+//
+// Basename slugs collide when two plans share a filename (docs/alpha/plan.md
+// vs docs/beta/plan.md), so each workspace records its owning plan's path in
+// a plan-path marker (repo-relative in-repo, absolute outside). A workspace
+// owned by a different plan is skipped and the slug disambiguated with the
+// plan's parent-directory name, then a counter. A workspace with no marker
+// predates the marker scheme and is adopted for the current plan so in-flight
+// workspaces keep resolving — which means the first collision on such a
+// legacy workspace adopts instead of detecting; acceptable, marker-less
+// workspaces age out as plans finish.
+//
+// The workspace lives in the working tree (not under .git/) because Claude Code
+// treats .git/ as a protected path and denies agent writes there — which blocks
+// an implementer subagent from writing its report file. A self-ignoring
+// .gitignore at .methodology/ (containing `*`) keeps every plan's workspace
+// out of `git status`, the Stop hook and accidental commits without modifying
+// any tracked file.
+//
+// A workspace from before the fork kept its ledger under another name and
+// root. When this plan has no sdd-ledger.md yet, that old ledger exists and
+// the old workspace's plan-path marker names exactly this plan, the ledger
+// is copied to sdd-ledger.md and an `adopted` marker is left in the old
+// directory (which otherwise stays in place). A directory with that marker
+// is never adopted again, so deleting the finished workspace does not bring
+// the old ledger back.
+//
+// Single source of truth for the workspace location, so task-brief and
+// review-package cannot drift to different directories.
+//
+// Usage: sdd-workspace PLAN_FILE
+// Exit codes: 0 printed, 2 usage or no such plan file; a failing git passes its own status through.
+//
+// Dynamic imports only: the file has no extension, so Node may load it as
+// CommonJS or as an ES module depending on the nearest package.json.
+(async () => {
+  const { spawnSync } = await import('node:child_process');
+  const fs = await import('node:fs');
+  const { basename, dirname, join } = await import('node:path');
 
-if [ $# -ne 1 ]; then
-  echo "usage: sdd-workspace PLAN_FILE" >&2
-  exit 2
-fi
+  const stop = (code, message) => {
+    process.stderr.write(`${message}\n`);
+    process.exit(code);
+  };
 
-plan=$1
-[ -f "$plan" ] || { echo "no such plan file: $plan" >&2; exit 2; }
+  const args = process.argv.slice(2);
+  if (args.length !== 1) stop(2, 'usage: sdd-workspace PLAN_FILE');
+  const plan = args[0];
+  const isFile = (path) => {
+    try {
+      return fs.statSync(path).isFile();
+    } catch {
+      return false;
+    }
+  };
+  if (!isFile(plan)) stop(2, `no such plan file: ${plan}`);
 
-slug=$(basename "$plan" .md)
-[ -n "$slug" ] && [ "$slug" != "." ] && [ "$slug" != ".." ] \
-  || { echo "cannot derive a workspace name from: $plan" >&2; exit 2; }
+  const slug = basename(plan, '.md');
+  if (slug === '' || slug === '.' || slug === '..') stop(2, `cannot derive a workspace name from: ${plan}`);
 
-root=$(git rev-parse --show-toplevel)
-base="$root/.methodology/sdd"
+  const top = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
+  if (top.error) stop(1, `sdd-workspace: git failed: ${top.error.message}`);
+  if (top.status !== 0) process.exit(top.status ?? 1);
+  const root = top.stdout.replace(/\n+$/, '');
+  const base = join(root, '.methodology', 'sdd');
 
-# Normalize the plan path (physical directory, so relative/absolute/../
-# spellings of one plan compare equal) and express it as the marker value:
-# repo-relative when the plan lives under the repo root, absolute otherwise.
-plan_dir=$(CDPATH= cd -- "$(dirname "$plan")" && pwd -P)
-plan_abs="$plan_dir/$(basename "$plan")"
-case "$plan_abs" in
-  "$root"/*) plan_id=${plan_abs#"$root"/} ;;
-  *)         plan_id=$plan_abs ;;
-esac
+  // Normalize the plan path (physical directory, so relative/absolute/../
+  // spellings of one plan compare equal) and express it as the marker value:
+  // repo-relative when the plan lives under the repo root, absolute otherwise.
+  const planDir = fs.realpathSync(dirname(plan));
+  const planAbs = join(planDir, basename(plan));
+  const planId = planAbs.startsWith(`${root}/`) ? planAbs.slice(root.length + 1) : planAbs;
 
-# True when the workspace at $1 is (or becomes) this plan's: an existing
-# marker must name this plan; a missing marker means a new workspace or a
-# pre-marker legacy one, and either way the plan claims it by writing one.
-owns() {
-  if [ -e "$1/plan-path" ]; then
-    [ "$(cat "$1/plan-path")" = "$plan_id" ]
-  else
-    mkdir -p "$1"
-    printf '%s\n' "$plan_id" > "$1/plan-path"
-  fi
-}
+  // The text of a small file without its trailing newlines, as a shell substitution reads it.
+  const text = (path) => fs.readFileSync(path, 'utf8').replace(/\n+$/, '');
 
-dir="$base/$slug"
-if ! owns "$dir"; then
-  parent=$(basename "$plan_dir")
-  dir="$base/$slug-$parent"
-  if ! owns "$dir"; then
-    n=2
-    while ! owns "$base/$slug-$parent-$n"; do n=$((n + 1)); done
-    dir="$base/$slug-$parent-$n"
-  fi
-fi
+  // True when the workspace at `dir` is (or becomes) this plan's: an existing
+  // marker must name this plan; a missing marker means a new workspace or a
+  // pre-marker legacy one, and either way the plan claims it by writing one.
+  const owns = (dir) => {
+    if (fs.existsSync(join(dir, 'plan-path'))) return text(join(dir, 'plan-path')) === planId;
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(join(dir, 'plan-path'), `${planId}\n`);
+    return true;
+  };
 
-printf '*\n' > "$root/.methodology/.gitignore"
+  let dir = join(base, slug);
+  if (!owns(dir)) {
+    const parent = basename(planDir);
+    dir = join(base, `${slug}-${parent}`);
+    if (!owns(dir)) {
+      let n = 2;
+      while (!owns(join(base, `${slug}-${parent}-${n}`))) n += 1;
+      dir = join(base, `${slug}-${parent}-${n}`);
+    }
+  }
 
-legacy="$root/.superpowers/sdd/$slug/progress.md"
-old_dir=$(dirname "$legacy")
-if [ ! -e "$dir/sdd-ledger.md" ] && [ -f "$legacy" ] && [ ! -e "$old_dir/adopted" ]; then
-  if [ -f "$old_dir/plan-path" ] && [ "$(cat "$old_dir/plan-path")" = "$plan_id" ]; then
-    cp "$legacy" "$dir/sdd-ledger.md"
-    printf '%s\n' "$plan_id" > "$old_dir/adopted"
-  fi
-fi
+  fs.writeFileSync(join(root, '.methodology', '.gitignore'), '*\n');
 
-CDPATH= cd -- "$dir" && pwd
+  const legacy = join(root, `.superpowers/sdd/${slug}/progress.md`);
+  const oldDir = dirname(legacy);
+  if (!fs.existsSync(join(dir, 'sdd-ledger.md')) && isFile(legacy) && !fs.existsSync(join(oldDir, 'adopted'))) {
+    if (isFile(join(oldDir, 'plan-path')) && text(join(oldDir, 'plan-path')) === planId) {
+      fs.copyFileSync(legacy, join(dir, 'sdd-ledger.md'));
+      fs.writeFileSync(join(oldDir, 'adopted'), `${planId}\n`);
+    }
+  }
+
+  process.stdout.write(`${dir}\n`);
+})().catch((e) => {
+  process.stderr.write(`sdd-workspace: ${e.stack ?? e}\n`);
+  process.exit(1);
+});

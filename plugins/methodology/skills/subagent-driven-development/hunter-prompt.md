@@ -35,7 +35,7 @@ the plan instead, with the package of the whole branch:
 
 **Placeholders:**
 - `[CATEGORY]` — one of `correctness`, `security`, `spec-drift`, `state`
-- `[PACKAGE_PATH]` — the path `bash ../executing-plans/scripts/review-package PLAN_FILE BASE HEAD`
+- `[PACKAGE_PATH]` — the path `node ../executing-plans/scripts/review-package PLAN_FILE BASE HEAD`
   printed (the same package the gate and the spec reviewer read); in the final
   review, the package of `MERGE_BASE..HEAD`
 - `[CANDIDATES_PATH]` — the file the hunter writes:

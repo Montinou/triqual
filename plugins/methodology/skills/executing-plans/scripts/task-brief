@@ -43,9 +43,9 @@
 
   let out = args[2];
   if (out === undefined) {
-    // Invoke via bash rather than direct exec: some extractors (Python zipfile)
+    // Invoke via node rather than direct exec: some extractors (Python zipfile)
     // strip Unix exec bits when unpacking marketplace packages (#2040).
-    const ws = spawnSync('bash', [join(scriptDir, 'sdd-workspace'), plan], {
+    const ws = spawnSync(process.execPath, [join(scriptDir, 'sdd-workspace'), plan], {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'],
     });
     if (ws.error) stop(1, `sdd-workspace failed: ${ws.error.message}`);

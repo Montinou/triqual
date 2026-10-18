@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -279,6 +279,85 @@ test('review-package writes its default output under .methodology/sdd/<plan>/', 
     assert.match(res.stdout, new RegExp(`^wrote ${expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}: `));
     assert.ok(existsSync(expected), `no package at ${expected}`);
     assert.equal(r.git('status', '--porcelain'), '');
+  } finally {
+    r.cleanup();
+  }
+});
+
+// --- Node scripts: same CLI, exit codes and messages as the bash versions they replaced -----------------------------
+
+test('review-package and sdd-workspace are executable Node scripts', () => {
+  for (const script of ['review-package', 'sdd-workspace']) {
+    const path = join(SCRIPTS, script);
+    assert.equal(readFileSync(path, 'utf8').split('\n', 1)[0], '#!/usr/bin/env node', `${script} is not a Node script`);
+    assert.equal(statSync(path).mode & 0o111, 0o111, `${script} lost its exec bits`);
+  }
+});
+
+test('sdd-workspace and review-package keep their usage, argument and range exit codes', () => {
+  const r = repo();
+  try {
+    const base = r.git('rev-parse', 'HEAD').trim();
+    const head = commit(r, 'a.txt', 'alpha\n', 'add alpha');
+    const out = join(r.dir, 'x.diff');
+    for (const [args, script] of [[[], 'sdd-workspace'], [[r.plan, 'extra'], 'sdd-workspace'], [[r.plan, base], 'review-package'], [[r.plan, base, head, out, 'x'], 'review-package']]) {
+      const res = r.run(script, ...args);
+      assert.equal(res.status, 2, `${script} ${args.join(' ')}`);
+      assert.match(res.stderr, new RegExp(`^usage: ${script} PLAN_FILE`));
+    }
+    const noPlan = r.run('sdd-workspace', 'docs/plans/none.md');
+    assert.equal(noPlan.status, 2);
+    assert.equal(noPlan.stderr, 'no such plan file: docs/plans/none.md\n');
+    const noPlanPackage = r.run('review-package', 'docs/plans/none.md', base, head, out);
+    assert.equal(noPlanPackage.status, 2);
+    assert.equal(noPlanPackage.stderr, 'no such plan file: docs/plans/none.md\n');
+    const badBase = r.run('review-package', r.plan, 'nosuchref', head, out);
+    assert.equal(badBase.status, 2);
+    assert.equal(badBase.stderr, 'bad BASE: nosuchref\n');
+    const badHead = r.run('review-package', r.plan, base, 'nosuchref', out);
+    assert.equal(badHead.status, 2);
+    assert.equal(badHead.stderr, 'bad HEAD: nosuchref\n');
+    const reversed = r.run('review-package', r.plan, head, base, out);
+    assert.equal(reversed.status, 3);
+    assert.equal(reversed.stderr, `HEAD is not a descendant of BASE: ${head}..${base}\n`);
+    const empty = r.run('review-package', r.plan, head, head, out);
+    assert.equal(empty.status, 3);
+    assert.equal(empty.stderr, `empty commit range: ${head}..${head}\n`);
+    assert.equal(existsSync(out), false, 'a refused range wrote a package');
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('sdd-workspace gives two plans with one file name two workspaces, each recorded by its plan-path marker', () => {
+  const r = repo();
+  try {
+    mkdirSync(join(r.dir, 'docs', 'other'), { recursive: true });
+    writeFileSync(join(r.dir, 'docs', 'other', 'demo-plan.md'), PLAN);
+    mkdirSync(join(r.dir, 'elsewhere', 'other'), { recursive: true });
+    writeFileSync(join(r.dir, 'elsewhere', 'other', 'demo-plan.md'), PLAN);
+    const sdd = join(r.dir, '.methodology', 'sdd');
+    const first = r.run('sdd-workspace', r.plan);
+    const second = r.run('sdd-workspace', 'docs/other/demo-plan.md');
+    const third = r.run('sdd-workspace', 'elsewhere/other/demo-plan.md');
+    assert.equal(first.stdout.trim(), join(sdd, 'demo-plan'));
+    assert.equal(second.stdout.trim(), join(sdd, 'demo-plan-other'));
+    assert.equal(third.stdout.trim(), join(sdd, 'demo-plan-other-2'));
+    assert.equal(readFileSync(join(sdd, 'demo-plan', 'plan-path'), 'utf8'), `${r.plan}\n`);
+    assert.equal(readFileSync(join(sdd, 'demo-plan-other-2', 'plan-path'), 'utf8'), 'elsewhere/other/demo-plan.md\n');
+    // Another spelling of the same plan resolves to the same workspace.
+    assert.equal(r.run('sdd-workspace', './docs/../docs/plans/demo-plan.md').stdout.trim(), join(sdd, 'demo-plan'));
+    // A plan outside the repo is recorded by its absolute path.
+    const outside = mkdtempSync(join(tmpdir(), 'sdd-outside-'));
+    try {
+      const plan = join(realpathSync(outside), 'demo-plan.md');
+      writeFileSync(plan, PLAN);
+      const res = r.run('sdd-workspace', plan);
+      assert.equal(res.status, 0, res.stderr);
+      assert.equal(readFileSync(join(res.stdout.trim(), 'plan-path'), 'utf8'), `${plan}\n`);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   } finally {
     r.cleanup();
   }

@@ -272,7 +272,7 @@ Subagent (roles:spec-reviewer):
 - `[BASE_SHA]` — commit before this task
 - `[HEAD_SHA]` — current commit
 - `[DIFF_FILE]` — REQUIRED: the path the controller wrote the review
-  package to (`bash ../executing-plans/scripts/review-package PLAN_FILE BASE HEAD` prints the unique
+  package to (`node ../executing-plans/scripts/review-package PLAN_FILE BASE HEAD` prints the unique
   path it wrote; the package never enters the controller's context)
 
 **Reviewer returns:** Spec Compliance verdict (✅/❌/⚠️), Strengths, Issues
