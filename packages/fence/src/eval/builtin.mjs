@@ -5,6 +5,7 @@
 //   checkPathWrite(absPath, opts)                       a write, delete, move, chmod or link of a path
 //   checkAncestorOp(absPath, op, opts)                  delete|move|chmod|link|bulk (a bulk writer: T18) of a path that may hold protected ones
 //   checkCommandArgv(argv)                              denied fence, claude and codex command lines
+//   programName(word)                                   the program a command word names (basename, lower case)
 // Each returns null (not denied) or {rule, reason}. A value the normalizer could not
 // determine (UNKNOWN) always denies: these checks fail closed.
 //
@@ -323,7 +324,8 @@ export function checkAncestorOp(absPath, op, opts) {
 
 const isFlag = (w) => typeof w === 'string' && w.startsWith('-') && w !== '-';
 
-function programName(word) {
+// The program a command word names: its basename, lower-cased (`/usr/bin/Claude` -> `claude`).
+export function programName(word) {
   return path.posix.basename(word).toLowerCase();
 }
 

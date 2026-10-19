@@ -1,31 +1,55 @@
-// Evaluator: applies the spec's fixed precedence to one canonical call (trusted path).
+// Evaluator: applies the spec's precedence, under the active mode, to one canonical call (trusted path).
 //
-// evaluate(policy, call, normalized, {profile, grants, ctx}) -> {decision, rule, reason, scope, lifted?}
+// evaluate(policy, call, normalized, {profile, grants, ctx, modeOf, raw})
+//   -> {decision, rule, reason, scope, lifted?, wouldDeny?, category?, floor?, marker?}
 //   lifted      only on a non-deny decision that a grant made possible: [{path, grant}], each
 //               distinct path whose built-in self-protection deny a grant lifted, with the grant
+//   wouldDeny   the audited denies met (at most 8): [{rule, category, construct?, certain?, reason}];
+//               `category` is opaque | selfProtection | rules; `certain: true` on a rule or
+//               protected-branch match that needed no Unknown (audited by `certain` or the rule's action)
+//   floor       true on a floor deny (no mode relaxes it); `marker` the switch-off marker matched
+//   category    on a returned uncertain deny: opaque | selfProtection | rules
 //   policy      a validated policy (loadPolicy or validatePolicy output)
 //   call        the canonical call; file tools give `paths: [{path, access, repo?}]` (absolute
 //               realpaths; `repo` per path, else `call.repo`), MCP calls `mcp` (the tool name),
 //               fetches `url`
 //   normalized  {commands: EffectiveCommand[]} | {opaque: {reason, construct}} | null (no shell)
-//   profile     the active profile name (default "default"); an unknown name denies every call
+//   profile     the active profile (mode) name (default "default"); an unknown name denies every call
 //   grants      allow-once grants already loaded and checked by the caller: [{path, ...}]
-//   ctx         {home, platform, caseInsensitive, realpath?}
+//   ctx         {home, platform, caseInsensitive, realpath?, envProfileSet?}; envProfileSet is true
+//               when FENCE_PROFILE is set in the hook environment
+//   modeOf      dir -> mode name | null (null: the dir's mode can not be resolved, counts as
+//               different); omitted, every dir is in the active mode
+//   raw         the call's command text (the switch-off marker and host-config tests read it)
 //
 // A call is a list of parts: each effective command, each file a file tool touches, the MCP
 // tool, the fetched URL. Precedence:
 //   0. a grant for the exact realpath lifts the built-in self-protection deny on that write
-//   1. built-in self-protection (paths, ancestor operations, protected commands)
-//   2. opaque -> deny
-//   3. protected-branch rules (built-in), then policy deny rules (minus `except`)
-//   4. allow, only when every part is covered by some allow rule or by a grant (rule "grant",
+//   1. the floor, scanned over every part and target before anything else counts: an unknown
+//      profile; a built-in deny marked floor (resolved self-protection, host config, fence
+//      commands); the opaque reasons internal, size and depth and the host-config-var construct;
+//      an opaque call without its raw text, or whose raw text sets, unsets or clears a
+//      host-config name; an opaque call or an uncertain self-protection deny whose raw text names
+//      a switch-off marker; a claude/codex part whose cwd maps to another mode (unless
+//      ctx.envProfileSet). An internal error.
+//   2. uncertain self-protection -> the mode's selfProtection action
+//   3. opaque -> the mode's constructs[construct], else its opaque action
+//   4. deny rules in policy order: the effective action is the mode's rules[id], else the rule's
+//      decision; off skips. Then the protected-branch rule, whose effective action is always deny
+//      (a mode's `rules` can not name it). Deny only when the effective action and the category
+//      action (certain, or uncertain.rules) are both deny, else audit
+//   5. any audited deny -> undecided under the mode's `undecided` (no allow rule applies)
+//   6. allow, only when every part is covered by some allow rule or by a grant (rule "grant",
 //      under every profile); an allow rule covers a part only when it judges every effect
-//   5. undecided -> the profile (`host` -> undecided, `deny` -> deny)
+//   7. undecided -> the mode (`host` -> undecided, `deny` -> deny)
+// The first returned deny ends evaluation; an audited deny is only listed in wouldDeny.
 // Unknown (a value the normalizer could not determine, or a malformed value from the caller)
 // satisfies every deny predicate and no allow predicate or `except`. An unresolvable
 // `${repo}`/`${cwd}` makes a deny glob match, an allow glob not match, a deny rule's except not
-// match and an allow rule's except match (it can not be ruled out). evaluate never throws: an
-// internal error is a deny (`builtin:internal-error`).
+// match and an allow rule's except match (it can not be ruled out). A rule match is certain only
+// when it holds without any of these (no Unknown value, guessed class, Unknown program or
+// unresolved placeholder); otherwise it is uncertain. evaluate never throws: an internal error is
+// a floor deny (`builtin:internal-error`).
 
 import nodeFs from 'node:fs';
 import nodePath from 'node:path';
@@ -34,9 +58,17 @@ import { compileGlob, resolveGlobPrefix } from '../match/glob.mjs';
 import { UNKNOWN, isUnknown } from '../norm/unknown.mjs';
 import { ARGV_COVERED_CLASSES, exceptKindAllowed } from '../policy/classes.mjs';
 import { foldCase } from '../resolve/paths.mjs';
-import { checkAncestorOp, checkCommandArgv, checkPathWrite } from './builtin.mjs';
+import { checkAncestorOp, checkCommandArgv, checkPathWrite, programName } from './builtin.mjs';
+import { namesSwitchOff } from './markers.mjs';
 
 const SELF = 'builtin:self-protection';
+const OPAQUE = 'builtin:opaque';
+const BRANCH = 'builtin:protected-branch';
+// Opaque reasons that mean the normalizer itself failed or hit a limit: floor.
+const FLOOR_OPAQUE_REASONS = new Set(['internal', 'size', 'depth']);
+const HOST_CONFIG_VAR = 'host-config-var';
+const WOULD_DENY_CAP = 8;
+const HOST_PROGRAMS = new Set(['claude', 'codex']);
 const SHOW_UNKNOWN = '<unknown>';
 const PER_CALL_PLACEHOLDER = /\$\{(?:repo|cwd)\}/;
 const GIT_VALUE_FLAGS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--config-env', '--super-prefix']);
@@ -97,6 +129,8 @@ function commandPart(c) {
     argv: c.argv.map(asWord),
     cwd: asPath(c.cwd),
     classes: listOf(c.classes, asWord),
+    // classes given only because of an Unknown word: a match on one is uncertain
+    guessed: listOf(c.guessedClasses, asWord),
     reads: listOf(c.reads, asPath),
     writes: listOf(c.writes, asPath),
     domains: listOf(c.domains, asDomain),
@@ -143,8 +177,15 @@ function readOptions(opts) {
   if (ctx === null || typeof ctx !== 'object' || typeof ctx.home !== 'string' || !ctx.home.startsWith('/')) {
     throw new TypeError('evaluate needs ctx.home as an absolute path');
   }
+  if (opts.modeOf !== undefined && opts.modeOf !== null && typeof opts.modeOf !== 'function') {
+    throw new TypeError('evaluate modeOf must be a function');
+  }
   return {
     profile: opts.profile === undefined ? 'default' : opts.profile,
+    // null: every dir is in the active mode
+    modeOf: typeof opts.modeOf === 'function' ? opts.modeOf : null,
+    raw: typeof opts.raw === 'string' ? opts.raw : null,
+    envProfileSet: ctx.envProfileSet === true,
     grants: Array.isArray(opts.grants) ? opts.grants : [],
     home: ctx.home,
     platform: ctx.platform,
@@ -202,8 +243,9 @@ function cwdOf(part) {
 
 // ---- glob matching -----------------------------------------------------------------------------
 
-// Result for a glob that can not be resolved or compiled, per use.
-const UNRESOLVED = { deny: true, allow: false, exceptDeny: false, exceptAllow: true };
+// Result for a glob that can not be resolved or compiled, per use. `certainDeny` and
+// `certainExceptDeny` are the uses of a certain deny match: an unresolved glob can not make it.
+const UNRESOLVED = { deny: true, allow: false, exceptDeny: false, exceptAllow: true, certainDeny: false, certainExceptDeny: true };
 
 const compiled = new Map();
 const COMPILED_CAP = 2000;
@@ -229,7 +271,7 @@ function globHit(patterns, value, part, kind, use, o) {
       if (kind === 'path' && PER_CALL_PLACEHOLDER.test(pattern)) {
         forms = [resolveGlobPrefix(pattern, vars, o.realpath)];
         // A deny also meets the placeholder value as written (a dangling or unresolved link).
-        if (use === 'deny') forms.push(resolveGlobPrefix(pattern, vars, noRealpath));
+        if (use === 'deny' || use === 'certainDeny') forms.push(resolveGlobPrefix(pattern, vars, noRealpath));
       } else if (PER_CALL_PLACEHOLDER.test(pattern)) {
         // Placeholders in a name glob: expanded to literal text, then compiled.
         forms = [resolveGlobPrefix(pattern, vars, noRealpath)];
@@ -258,8 +300,8 @@ function globHit(patterns, value, part, kind, use, o) {
 
 // ---- deny rules --------------------------------------------------------------------------------
 
-function accessMeetsDeny(ruleAccess, access) {
-  if (ruleAccess === 'any' || isUnknown(access)) return true;
+function accessMeetsDeny(ruleAccess, access, certain = false) {
+  if (ruleAccess === 'any' || (!certain && isUnknown(access))) return true;
   return ruleAccess === access;
 }
 
@@ -268,19 +310,22 @@ function accessMeetsAllow(ruleAccess, access) {
   return ruleAccess === 'any' || ruleAccess === access;
 }
 
-function hasClassDeny(part, classes) {
-  return part.type === 'command' && part.classes.some((c) => isUnknown(c) || classes.includes(c));
+// With `certain`, only a known class the normalizer did not guess counts.
+function hasClassDeny(part, classes, certain = false) {
+  if (part.type !== 'command') return false;
+  if (certain) return part.classes.some((c) => !isUnknown(c) && classes.includes(c) && !part.guessed.includes(c));
+  return part.classes.some((c) => isUnknown(c) || classes.includes(c));
 }
 
-function argvHitDeny(prefixes, part) {
+function argvHitDeny(prefixes, part, certain = false) {
   if (part.type !== 'command') return false;
   const argv = part.argv;
   return prefixes.some((prefix) => {
     for (let i = 0; i < prefix.length; i++) {
       const a = argv[i];
       // An Unknown word inside the prefix may stand for the rest of it (`git $X` may be
-      // `git push --force`), so the remaining prefix words count as matched.
-      if (isUnknown(a)) return true;
+      // `git push --force`), so the remaining prefix words count as matched (not certainly).
+      if (isUnknown(a)) return !certain;
       if (a === undefined) return false;
       if (a === prefix[i]) continue;
       // A program named by path (`/bin/rm`) still meets a deny on its name.
@@ -291,20 +336,28 @@ function argvHitDeny(prefixes, part) {
   });
 }
 
-function ruleDeniesPart(rule, part, o) {
+// True when the deny rule matches the part. With `certain`, only a match that needs no Unknown
+// value, guessed class, Unknown program or unresolved placeholder counts (every certain match is
+// also a match).
+function ruleDeniesPart(rule, part, o, certain = false) {
   const m = rule.match;
   const ex = rule.except;
-  if (m.class && !hasClassDeny(part, m.class)) return false;
-  if (m.argv && !argvHitDeny(m.argv, part)) return false;
+  const use = certain ? 'certainDeny' : 'deny';
+  const exUse = certain ? 'certainExceptDeny' : 'exceptDeny';
+  // An Unknown value satisfies a deny predicate, but not certainly.
+  const unknownHit = (v) => !certain && isUnknown(v);
+  if (certain && part.type === 'command' && part.argv.length > 0 && isUnknown(part.argv[0])) return false;
+  if (m.class && !hasClassDeny(part, m.class, certain)) return false;
+  if (m.argv && !argvHitDeny(m.argv, part, certain)) return false;
   if (m.mcp) {
     if (part.type !== 'mcp') return false;
-    if (!isUnknown(part.name) && !globHit(m.mcp, part.name, part, 'mcp', 'deny', o)) return false;
+    if (isUnknown(part.name) ? certain : !globHit(m.mcp, part.name, part, 'mcp', use, o)) return false;
   }
   if (m.domains) {
     const hit = domainsOf(part).some(
       (d) =>
-        isUnknown(d) ||
-        (globHit(m.domains, d, part, 'domain', 'deny', o) && !(ex?.domains && globHit(ex.domains, d, part, 'domain', 'exceptDeny', o))),
+        unknownHit(d) ||
+        (!isUnknown(d) && globHit(m.domains, d, part, 'domain', use, o) && !(ex?.domains && globHit(ex.domains, d, part, 'domain', exUse, o))),
     );
     if (!hit) return false;
   }
@@ -312,21 +365,22 @@ function ruleDeniesPart(rule, part, o) {
     const access = m.access ?? 'any';
     const hit = pathsOf(part).some(
       ({ path, access: a }) =>
-        accessMeetsDeny(access, a) &&
-        (isUnknown(path) ||
-          (globHit(m.paths, path, part, 'path', 'deny', o) && !(ex?.paths && globHit(ex.paths, path, part, 'path', 'exceptDeny', o)))),
+        accessMeetsDeny(access, a, certain) &&
+        (unknownHit(path) ||
+          (!isUnknown(path) && globHit(m.paths, path, part, 'path', use, o) && !(ex?.paths && globHit(ex.paths, path, part, 'path', exUse, o)))),
     );
     if (!hit) return false;
   }
   // An `except` key with no matching `match` key excuses the part only when every one of its
-  // paths (domains) is known and excepted.
+  // paths (domains) is known and excepted. For a certain match an Unknown one may be excepted.
+  const excused = (v, patterns, kind) => (isUnknown(v) ? certain : globHit(patterns, v, part, kind, exUse, o));
   if (ex?.paths && !m.paths && exceptKindAllowed(m, 'paths')) {
     const ps = pathsOf(part);
-    if (ps.length > 0 && ps.every(({ path }) => !isUnknown(path) && globHit(ex.paths, path, part, 'path', 'exceptDeny', o))) return false;
+    if (ps.length > 0 && ps.every(({ path }) => excused(path, ex.paths, 'path'))) return false;
   }
   if (ex?.domains && !m.domains && exceptKindAllowed(m, 'domains')) {
     const ds = domainsOf(part);
-    if (ds.length > 0 && ds.every((d) => !isUnknown(d) && globHit(ex.domains, d, part, 'domain', 'exceptDeny', o))) return false;
+    if (ds.length > 0 && ds.every((d) => excused(d, ex.domains, 'domain'))) return false;
   }
   return true;
 }
@@ -431,13 +485,25 @@ function grantOnlyCommand(part, lifted) {
   );
 }
 
-// Returns {deny} or {granted: Set<part>, lifted: [{path, grant}]}: `granted` holds the parts whose
-// effects are only writes a grant lifted; `lifted` each distinct path a grant lifted the
-// self-protection deny on, with that grant (the engine reserves exactly these).
+// Scans every part and target. Returns {deny} for the first floor deny, else {granted: Set<part>,
+// lifted: [{path, grant}], uncertain: [deny]}: `granted` holds the parts whose effects are only
+// writes a grant lifted; `lifted` each distinct path a grant lifted the self-protection deny on,
+// with that grant (the engine reserves exactly these); `uncertain` the built-in denies outside the
+// floor (an unresolved target or root), in part order. A deny without a `floor` mark is floor.
 function builtinCheck(parts, o) {
   const bopts = { home: o.home, platform: o.platform, caseInsensitive: o.ci, projectRoots: projectRootsOf(parts), realpath: o.realpath };
   const granted = new Set();
   const lifts = new Map();
+  const uncertain = [];
+  // the deny when it is floor; an uncertain one is kept for later
+  const floorOf = (r) => {
+    if (!r) return null;
+    if (r.floor === false) {
+      uncertain.push(r);
+      return null;
+    }
+    return r;
+  };
   const writeCheck = (target) => {
     const r = checkPathWrite(target, bopts);
     if (r && r.rule === SELF) {
@@ -448,11 +514,12 @@ function builtinCheck(parts, o) {
         return { lifted: true };
       }
     }
-    return r ? { deny: r } : {};
+    const deny = floorOf(r);
+    return deny ? { deny } : {};
   };
   for (const part of parts) {
     if (part.type === 'command') {
-      const r = checkCommandArgv(part.argv);
+      const r = floorOf(checkCommandArgv(part.argv));
       if (r) return { deny: r };
       let lifted = 0;
       for (const w of part.writes) {
@@ -461,7 +528,7 @@ function builtinCheck(parts, o) {
         if (c.lifted) lifted++;
       }
       for (const op of part.ops) {
-        const r2 = checkAncestorOp(op.path, op.op, bopts);
+        const r2 = floorOf(checkAncestorOp(op.path, op.op, bopts));
         if (r2) return { deny: r2 };
       }
       if (grantOnlyCommand(part, lifted)) granted.add(part);
@@ -471,7 +538,7 @@ function builtinCheck(parts, o) {
       if (c.lifted && part.access === 'write') granted.add(part);
     }
   }
-  return { granted, lifted: [...lifts.values()] };
+  return { granted, lifted: [...lifts.values()], uncertain };
 }
 
 // The protected state of a part's repo: null (no repo or not protected) or the branch shown.
@@ -493,30 +560,55 @@ function insideRepo(target, repo, o) {
   return r === '' || t === r || t.startsWith(`${r}/`);
 }
 
-function branchCheck(parts, policy, o) {
-  const list = policy.branches.protected;
-  const shownList = list.length ? list.join(', ') : '(none)';
-  for (const part of parts) {
-    const prot = protectedBranch(part.repo, list);
-    if (!prot) continue;
-    const name = prot.branch === SHOW_UNKNOWN ? 'a branch fence could not determine' : `the protected branch "${prot.branch}"`;
-    if (hasClassDeny(part, ['vcs-write'])) {
+// A write target certainly inside a known repository root.
+function insideRepoCertain(target, repo, o) {
+  if (isUnknown(target)) return false;
+  const root = repo !== null && typeof repo === 'object' && !isUnknown(repo) ? repo.root : undefined;
+  if (typeof root !== 'string' || !root.startsWith('/')) return false;
+  return insideRepo(target, repo, o);
+}
+
+// The protected-branch hit of one part, or null: {rule, reason, certain}. It is certain only on a
+// known protected branch of a known repository, by a known (not guessed) class or a known target
+// inside the known root, with a known program.
+function branchHit(part, policy, list, shownList, o) {
+  const prot = protectedBranch(part.repo, list);
+  if (!prot) return null;
+  const knownBranch = prot.branch !== SHOW_UNKNOWN && !(part.type === 'command' && part.argv.length > 0 && isUnknown(part.argv[0]));
+  const name = prot.branch === SHOW_UNKNOWN ? 'a branch fence could not determine' : `the protected branch "${prot.branch}"`;
+  if (hasClassDeny(part, ['vcs-write'])) {
+    return {
+      rule: BRANCH,
+      reason: `"${showArgv(part.argv)}" changes history on ${name} (protected: ${shownList}); work on a feature branch.`,
+      certain: knownBranch && hasClassDeny(part, ['vcs-write'], true),
+    };
+  }
+  if (policy.branches.denyFileWrites === true) {
+    const targets = writeTargets(part);
+    const target = targets.find((w) => insideRepo(w, part.repo, o));
+    if (target !== undefined) {
       return {
-        rule: 'builtin:protected-branch',
-        reason: `"${showArgv(part.argv)}" changes history on ${name} (protected: ${shownList}); work on a feature branch.`,
+        rule: BRANCH,
+        reason: `Writing ${isUnknown(target) ? 'an undetermined file' : target} inside a repository on ${name} is denied (protected: ${shownList}; branches.denyFileWrites is on); work on a feature branch.`,
+        certain: knownBranch && targets.some((w) => insideRepoCertain(w, part.repo, o)),
       };
-    }
-    if (policy.branches.denyFileWrites === true) {
-      const target = writeTargets(part).find((w) => insideRepo(w, part.repo, o));
-      if (target !== undefined) {
-        return {
-          rule: 'builtin:protected-branch',
-          reason: `Writing ${isUnknown(target) ? 'an undetermined file' : target} inside a repository on ${name} is denied (protected: ${shownList}; branches.denyFileWrites is on); work on a feature branch.`,
-        };
-      }
     }
   }
   return null;
+}
+
+// The protected-branch deny of the call, or null: the first certain hit, else the first hit.
+function branchCheck(parts, policy, o) {
+  const list = policy.branches.protected;
+  const shownList = list.length ? list.join(', ') : '(none)';
+  let first = null;
+  for (const part of parts) {
+    const hit = branchHit(part, policy, list, shownList, o);
+    if (!hit) continue;
+    if (hit.certain) return hit;
+    first ??= hit;
+  }
+  return first;
 }
 
 // ---- scope -------------------------------------------------------------------------------------
@@ -568,41 +660,484 @@ function computeScope(parts) {
   return out;
 }
 
+// ---- host-config net ---------------------------------------------------------------------------
+//
+// setsHostConfig(raw): true when the raw text of an opaque call assigns, unsets or clears a
+// host-config variable. A linear word scan, no backtracking regex: the text is split into simple
+// commands on `;` `|` `&` `(` `)` `{` `}` newline and backtick (so `&&`, `||` and `$(` too; not the
+// braces of `${…}`, not the `&` of `>&`, `<&` or `&>`), each into words on whitespace and `<`/`>` (a
+// redirection target and an fd number before `<`/`>` are dropped; quotes are stripped from a word's
+// ends). It does not parse quoting: text inside quotes is scanned like any other, which can only add
+// floor denies on a call fence already could not read. Nested shell text (eval, `sh -c` and other
+// shells, `env -S`, find's -exec) is followed up to MAX_NEST levels; deeper nesting is a floor deny.
+// A command word is matched by its program name, so `/usr/bin/env` and `\env` are env.
+
+const HOST_NAMES = new Set(['HOME', 'FENCE_PROFILE', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_PLUGIN_DIRS', 'CODEX_HOME']);
+// A word in a name position: a host-config name, an XDG_ name, or a value fence can not read (`$X`).
+const isHostName = (n) => typeof n === 'string' && (HOST_NAMES.has(n) || n.startsWith('XDG_') || n.startsWith('$'));
+
+const SEPARATORS = new Set([';', '|', '&', '(', ')', '{', '}', '\n', '`']);
+const SPACES = new Set([' ', '\t', '\r', '\v', '\f']);
+const QUOTES = new Set(['"', "'"]);
+// Reserved words that may start a simple command before its assignments.
+const RESERVED = new Set(['{', '}', '!', 'if', 'then', 'else', 'elif', 'do', 'while', 'until']);
+// Wrappers skipped before the command word, with their flags that take a value word.
+const WRAPPERS = {
+  sudo: new Set(['-u', '-g', '-C', '-D', '-h', '-p', '-r', '-t', '-U']),
+  doas: new Set(['-u', '-C']),
+  command: new Set(),
+  builtin: new Set(),
+  nohup: new Set(),
+  time: new Set(['-f', '-o']),
+  nice: new Set(['-n']),
+  // timeout also takes its duration word (skipped after the flags)
+  timeout: new Set(['-s', '--signal', '-k', '--kill-after']),
+  setsid: new Set(),
+  stdbuf: new Set(['-i', '-o', '-e', '--input', '--output', '--error']),
+  xargs: new Set(['-I', '-L', '-n', '-P', '-s', '-d', '-E', '-a', '--arg-file', '--delimiter', '--max-args', '--max-lines', '--max-procs', '--max-chars', '--replace', '--eof']),
+};
+const ENV_VALUE_FLAGS = 'uCSP';
+const ENV_LONG_VALUE_FLAGS = new Set(['--unset', '--chdir', '--split-string', '--default-signal', '--ignore-signal', '--block-signal']);
+// Shells whose `-c` string is scanned as commands; `-o`/`+o` take an option name.
+const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
+const SHELL_VALUE_FLAGS = new Set(['--rcfile', '--init-file', '-o', '+o', '-O', '+O']);
+// find's actions that run a command, up to a `;`, `\;` or `+` word (`\` when the split cut `\;`).
+const FIND_ACTIONS = new Set(['-exec', '-execdir', '-ok', '-okdir']);
+const FIND_ENDS = new Set([';', '\\;', '+', '\\']);
+// How deep nested shell text (eval, sh -c, env -S) is followed; deeper text can not be checked: floor.
+const MAX_NEST = 8;
+// Builtins whose operands (after flags) name variables they assign, unset or export.
+const NAMING_BUILTINS = new Set(['read', 'mapfile', 'readarray', 'getopts', 'unset', 'export', 'declare', 'typeset', 'local', 'readonly', 'let']);
+const DECLARING = new Set(['declare', 'typeset', 'local']);
+
+const isNameStart = (c) => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c === '_';
+const isNameChar = (c) => isNameStart(c) || (c >= '0' && c <= '9');
+
+function stripQuotes(w) {
+  let a = 0;
+  let b = w.length;
+  while (a < b && QUOTES.has(w[a])) a++;
+  while (b > a && QUOTES.has(w[b - 1])) b--;
+  return w.slice(a, b);
+}
+
+// The simple commands of the text, each a list of words.
+function simpleCommands(raw) {
+  const cmds = [];
+  let words = [];
+  let start = -1;
+  let redirect = false;
+  const endWord = (at, dropFd = false) => {
+    if (start === -1) return;
+    const w = stripQuotes(raw.slice(start, at));
+    start = -1;
+    if (dropFd && /^\d+$/.test(w)) return;
+    if (redirect) redirect = false;
+    else if (w !== '') words.push(w);
+  };
+  const endCommand = (at) => {
+    endWord(at);
+    if (words.length > 0) cmds.push(words);
+    words = [];
+    redirect = false;
+  };
+  // open `${` expansions: their braces are word text, not separators
+  let params = 0;
+  const wordChar = (i) => {
+    if (start === -1) start = i;
+  };
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    if (c === '$' && raw[i + 1] === '{') {
+      params++;
+      wordChar(i);
+      i++;
+    } else if (c === '}' && params > 0) {
+      params--;
+      wordChar(i);
+    } else if (c === '<' || c === '>' || (c === '&' && (raw[i + 1] === '>' || raw[i - 1] === '<' || raw[i - 1] === '>'))) {
+      // a redirection operator: `<`, `>`, and the `&` of `>&`, `<&`, `&>` (not a command separator)
+      endWord(i, true);
+      redirect = true;
+    } else if (SEPARATORS.has(c)) endCommand(i);
+    else if (SPACES.has(c)) endWord(i);
+    else wordChar(i);
+  }
+  endCommand(raw.length);
+  return cmds;
+}
+
+// The name an assignment word assigns (`NAME=`, `NAME+=`, `NAME[…]=`, `NAME[…]+=`), else null.
+function assignmentName(w) {
+  if (!isNameStart(w[0] ?? '')) return null;
+  let j = 1;
+  while (j < w.length && isNameChar(w[j])) j++;
+  const name = w.slice(0, j);
+  if (w[j] === '[') {
+    const close = w.indexOf(']', j);
+    if (close === -1) return null;
+    j = close + 1;
+  }
+  if (w[j] === '+') j++;
+  return w[j] === '=' ? name : null;
+}
+
+// True when the word holds `${NAME=` or `${NAME:=` for a host-config NAME.
+function defaultAssigns(w) {
+  for (let k = w.indexOf('${'); k !== -1; k = w.indexOf('${', k + 2)) {
+    let j = k + 2;
+    while (j < w.length && isNameChar(w[j])) j++;
+    const name = w.slice(k + 2, j);
+    if (name !== '' && isHostName(name) && (w[j] === '=' || (w[j] === ':' && w[j + 1] === '='))) return true;
+  }
+  return false;
+}
+
+// The name part of a builtin operand: up to its first `=`, `+=` or `[`.
+function operandName(w) {
+  let j = 0;
+  while (j < w.length && w[j] !== '=' && w[j] !== '[' && !(w[j] === '+' && w[j + 1] === '=')) j++;
+  return w.slice(0, j);
+}
+
+// Skips a wrapper's flags (and the value words of `valueFlags`); returns the next index.
+function skipFlags(words, i, valueFlags) {
+  while (i < words.length && words[i].startsWith('-')) {
+    if (words[i] === '--') return i + 1;
+    i += valueFlags.has(words[i]) ? 2 : 1;
+  }
+  return i;
+}
+
+// env's options: {floor} when they clear the environment or unset a host-config name; {nested} (the
+// words of a `-S` string, from its value word on) to scan as commands; else {next}, the index of the
+// first word after them (an assignment or the program).
+function envOptions(words, i) {
+  // the -S / --split-string string: its value word (attached or not) and the words after it
+  const split = (value, at) => ({ nested: value === undefined ? words.slice(at) : [value, ...words.slice(at)] });
+  for (; i < words.length; i++) {
+    const w = words[i];
+    if (w === '-' || w === '--ignore-environment') return { floor: true };
+    if (w === '--') return { next: i + 1 };
+    if (!w.startsWith('-')) return { next: i };
+    if (w.startsWith('--')) {
+      const eq = w.indexOf('=');
+      const flag = eq === -1 ? w : w.slice(0, eq);
+      if (flag === '--split-string') return eq === -1 ? split(undefined, i + 1) : split(w.slice(eq + 1), i + 1);
+      const value = eq === -1 ? (ENV_LONG_VALUE_FLAGS.has(flag) ? words[++i] : undefined) : w.slice(eq + 1);
+      if (flag === '--unset' && isHostName(value ?? '')) return { floor: true };
+      continue;
+    }
+    for (let k = 1; k < w.length; k++) {
+      const c = w[k];
+      if (c === 'i') return { floor: true };
+      if (ENV_VALUE_FLAGS.includes(c)) {
+        if (c === 'S') return k + 1 < w.length ? split(w.slice(k + 1), i + 1) : split(undefined, i + 1);
+        const value = k + 1 < w.length ? w.slice(k + 1) : words[++i];
+        if (c === 'u' && isHostName(value ?? '')) return { floor: true };
+        break;
+      }
+    }
+  }
+  return { next: i };
+}
+
+// A shell's options: the index of its `-c` string's first word, or -1 when it runs no `-c` string.
+function shellCommandStart(words, i) {
+  let c = false;
+  for (; i < words.length; i++) {
+    const w = words[i];
+    if (w === '--' || w === '-') return c ? i + 1 : -1;
+    if (!(w.startsWith('-') || w.startsWith('+'))) return c ? i : -1;
+    // --rcfile / --init-file take a file, -o / +o and -O / +O an option name
+    if (SHELL_VALUE_FLAGS.has(w)) {
+      i++;
+      continue;
+    }
+    if (w.startsWith('--')) continue;
+    if (w.slice(1).includes('c')) c = true;
+  }
+  return -1;
+}
+
+// exec's options: {clears} when a short-flag cluster holds `c`; `-a` takes a value word.
+function execOptions(words, i) {
+  for (; i < words.length; i++) {
+    const w = words[i];
+    if (w === '--') return { clears: false, next: i + 1 };
+    if (!w.startsWith('-') || w === '-') return { clears: false, next: i };
+    for (let k = 1; k < w.length; k++) {
+      if (w[k] === 'c') return { clears: true, next: i };
+      if (w[k] === 'a') {
+        if (k + 1 === w.length) i++;
+        break;
+      }
+    }
+  }
+  return { clears: false, next: i };
+}
+
+// True when a builtin command word names a host-config variable among its operands.
+function builtinNames(cmd, words, i) {
+  if (cmd === 'for' || cmd === 'select') return isHostName(operandName(words[i] ?? ''));
+  if (cmd === 'printf') {
+    for (; i < words.length; i++) {
+      const w = words[i];
+      if (w === '-v') return isHostName(words[i + 1] ?? '');
+      if (w.startsWith('-v')) return isHostName(w.slice(2));
+      if (w === '--' || !w.startsWith('-')) return false;
+    }
+    return false;
+  }
+  if (!NAMING_BUILTINS.has(cmd)) return false;
+  let nameref = false;
+  for (; i < words.length; i++) {
+    const w = words[i];
+    if (w.startsWith('-') || (DECLARING.has(cmd) && w.startsWith('+'))) {
+      if (DECLARING.has(cmd) && w.startsWith('-') && w.includes('n')) nameref = true;
+      continue;
+    }
+    if (isHostName(operandName(w))) return true;
+    // `declare -n r=HOME` makes r an alias of HOME
+    if (nameref) {
+      const eq = w.indexOf('=');
+      if (eq !== -1 && isHostName(w.slice(eq + 1))) return true;
+    }
+  }
+  return false;
+}
+
+// True when the simple command `words` (from `i`) sets, unsets or clears a host-config name. Nested
+// shell text (eval's words, a shell's `-c` string, env's `-S` string) is scanned as a command from
+// where it starts: the top-level split already cut every separator, quoted or not, so the words
+// that follow are the nested text's own words and need no second split. `depth` counts the nesting.
+function scanCommand(words, i, depth) {
+  if (depth > MAX_NEST) return true;
+  while (i < words.length) {
+    const w = words[i];
+    const assigned = assignmentName(w);
+    // the command word's program: `/usr/bin/env` and `\env` are env
+    const cmd = programName(w.startsWith('\\') ? w.slice(1) : w);
+    if (assigned !== null) {
+      if (isHostName(assigned)) return true;
+      i++;
+    } else if (RESERVED.has(w)) {
+      i++;
+    } else if (Object.hasOwn(WRAPPERS, cmd)) {
+      i = skipFlags(words, i + 1, WRAPPERS[cmd]);
+      if (cmd === 'timeout') i++;
+    } else if (cmd === 'exec') {
+      const r = execOptions(words, i + 1);
+      if (r.clears) return true;
+      i = r.next;
+    } else if (cmd === 'env') {
+      const r = envOptions(words, i + 1);
+      if (r.floor) return true;
+      if (r.nested) return scanCommand(r.nested, 0, depth + 1);
+      i = r.next;
+    } else if (cmd === 'eval') {
+      return scanCommand(words, i + 1, depth + 1);
+    } else if (SHELLS.has(cmd)) {
+      const at = shellCommandStart(words, i + 1);
+      return at !== -1 && scanCommand(words, at, depth + 1);
+    } else if (cmd === 'find') {
+      return findActions(words, i + 1, depth);
+    } else if (FIND_ACTIONS.has(w)) {
+      // a find action after a `{}` the split cut (`find . -exec a {} \; -exec b …`)
+      return findActions(words, i, depth);
+    } else {
+      return builtinNames(cmd, words, i + 1);
+    }
+  }
+  return false;
+}
+
+// True when one of find's -exec / -execdir / -ok / -okdir commands (from `i`) sets, unsets or
+// clears a host-config name; each runs up to its `;`, `\;` or `+` word and is scanned as a command.
+function findActions(words, i, depth) {
+  for (; i < words.length; i++) {
+    if (!FIND_ACTIONS.has(words[i])) continue;
+    let end = i + 1;
+    while (end < words.length && !FIND_ENDS.has(words[end])) end++;
+    if (scanCommand(words.slice(i + 1, end), 0, depth + 1)) return true;
+    i = end;
+  }
+  return false;
+}
+
+function commandSetsHostConfig(words) {
+  return words.some(defaultAssigns) || scanCommand(words, 0, 0);
+}
+
+function setsHostConfig(raw) {
+  return simpleCommands(raw).some(commandSetsHostConfig);
+}
+
 // ---- decision ----------------------------------------------------------------------------------
 
-const deny = (rule, reason) => ({ decision: 'deny', rule, reason });
+const deny = (rule, reason, more = {}) => ({ decision: 'deny', rule, reason, ...more });
+const floorDeny = (rule, reason, more = {}) => deny(rule, reason, { ...more, floor: true });
+
+const action = (v) => (v === 'audit' ? 'audit' : 'deny');
+
+// A mode's actions; a key a policy object lacks is `deny` (an old policy decides as before).
+function actionsOf(prof) {
+  const u = prof.uncertain !== null && typeof prof.uncertain === 'object' ? prof.uncertain : {};
+  const constructs = u.constructs !== null && typeof u.constructs === 'object' ? u.constructs : {};
+  const rules = prof.rules !== null && typeof prof.rules === 'object' ? prof.rules : {};
+  return {
+    opaque: action(u.opaque),
+    selfProtection: action(u.selfProtection),
+    rules: action(u.rules),
+    construct: (name) => (Object.hasOwn(constructs, name) ? action(constructs[name]) : action(u.opaque)),
+    certain: action(prof.certain),
+    // the mode's override for a rule id: deny | audit | off, else undefined
+    ruleOverride: (id) => (Object.hasOwn(rules, id) && ['deny', 'audit', 'off'].includes(rules[id]) ? rules[id] : undefined),
+  };
+}
+
+// The options for the switch-off marker test: the call's resolved reads (never write targets) and
+// its effective cwds and project roots.
+function markerOptions(parts, o) {
+  const readPaths = [];
+  for (const part of parts) {
+    if (part.type === 'command') readPaths.push(...part.reads.filter((p) => typeof p === 'string'));
+    else if (part.type === 'path' && part.access === 'read' && typeof part.path === 'string') readPaths.push(part.path);
+  }
+  const projectRoots = projectRootsOf(parts).filter((r) => typeof r === 'string' && r.startsWith('/'));
+  return { home: o.home, platform: o.platform, readPaths, projectRoots, realpath: o.realpath };
+}
+
+// Floor item 4: a claude or codex part whose cwd maps to another mode than the session's. An
+// Unknown cwd, or a dir modeOf can not resolve (null), counts as different.
+function modeEscape(parts, o) {
+  if (o.envProfileSet || o.modeOf === null) return null;
+  for (const part of parts) {
+    if (part.type !== 'command' || part.argv.length === 0 || typeof part.argv[0] !== 'string') continue;
+    const prog = programName(part.argv[0]);
+    if (!HOST_PROGRAMS.has(prog)) continue;
+    const mode = isUnknown(part.cwd) ? null : o.modeOf(part.cwd);
+    if (mode === o.profile) continue;
+    const where = isUnknown(part.cwd) ? 'a directory fence could not determine' : part.cwd;
+    const target = typeof mode === 'string' ? `the mode ${JSON.stringify(mode)}` : 'a mode fence could not resolve';
+    return floorDeny(
+      'builtin:mode-escape',
+      `"${showArgv(part.argv)}" starts ${prog} in ${where}, which maps to ${target}, not this session's mode ${JSON.stringify(o.profile)}; a human launches it there (FENCE_PROFILE set at launch is inherited).`,
+    );
+  }
+  return null;
+}
+
+function opaqueReason(reason, construct, tail) {
+  return `fence could not tell what this command would run (${reason}: ${construct}); ${tail}`;
+}
 
 function decide(policy, parts, opaque, o) {
   checkPolicyShape(policy);
   if (typeof o.profile !== 'string' || !Object.hasOwn(policy.profiles, o.profile)) {
     const name = typeof o.profile === 'string' ? o.profile : String(o.profile);
-    return deny(
+    return floorDeny(
       'builtin:unknown-profile',
       `The fence profile ${JSON.stringify(name)} (FENCE_PROFILE) is not defined in the policy (defined: ${Object.keys(policy.profiles).join(', ')}); every call is denied until it is fixed.`,
     );
   }
+  const prof = policy.profiles[o.profile];
+  const act = actionsOf(prof);
 
+  // 0-1. The floor, over every part and target, before any uncertain deny counts.
   const builtin = builtinCheck(parts, o);
-  if (builtin.deny) return deny(builtin.deny.rule, builtin.deny.reason);
+  if (builtin.deny) return floorDeny(builtin.deny.rule, builtin.deny.reason);
   // `o` is this call's own options object: evaluate() reads the lifts back from it.
   o.lifted = builtin.lifted;
 
+  const reason = opaque && typeof opaque.reason === 'string' ? opaque.reason : 'unknown reason';
+  const construct = opaque && typeof opaque.construct === 'string' ? opaque.construct : 'unknown construct';
+  const mopts = markerOptions(parts, o);
   if (opaque) {
-    const reason = typeof opaque.reason === 'string' ? opaque.reason : 'unknown reason';
-    const construct = typeof opaque.construct === 'string' ? opaque.construct : 'unknown construct';
-    return deny('builtin:opaque', `fence could not tell what this command would run (${reason}: ${construct}); commands fence can not read are always denied.`);
-  }
-
-  const branch = branchCheck(parts, policy, o);
-  if (branch) return deny(branch.rule, branch.reason);
-
-  for (const rule of policy.rules) {
-    if (rule.decision !== 'deny') continue;
-    if (parts.some((part) => ruleDeniesPart(rule, part, o))) {
-      return deny(rule.id, `${rule.why} (fence rule "${rule.id}")`);
+    if (FLOOR_OPAQUE_REASONS.has(reason) || construct === HOST_CONFIG_VAR) {
+      return floorDeny(OPAQUE, opaqueReason(reason, construct, 'this is always denied, in every mode.'));
+    }
+    // An opaque verdict comes only from shell text: without it the floor tests below can not run.
+    if (o.raw === null) {
+      return floorDeny(OPAQUE, opaqueReason(reason, construct, 'its command text was not passed to the evaluator, so it can not be checked; it is denied.'));
+    }
+    if (setsHostConfig(o.raw)) {
+      return floorDeny(
+        OPAQUE,
+        opaqueReason(reason, construct, 'its text sets or unsets a variable that redirects the host or fence (HOME, FENCE_PROFILE, CLAUDE_CONFIG_DIR, CLAUDE_CODE_PLUGIN_DIRS, CODEX_HOME, XDG_*); it is always denied.'),
+      );
+    }
+    const marker = namesSwitchOff(o.raw, mopts);
+    if (marker !== null) {
+      return floorDeny(OPAQUE, opaqueReason(reason, construct, 'its text names a file that can switch fence off; it is always denied.'), { marker });
     }
   }
+  if (builtin.uncertain.length > 0) {
+    const marker = namesSwitchOff(o.raw, mopts);
+    if (marker !== null) {
+      const first = builtin.uncertain[0];
+      return floorDeny(first.rule, `${first.reason} The command text names a file that can switch fence off, so this is always denied.`, { marker });
+    }
+  }
+  const escape = modeEscape(parts, o);
+  if (escape) return escape;
 
+  const audited = [];
+  const withAudit = (result) => (audited.length > 0 ? { ...result, wouldDeny: audited.slice(0, WOULD_DENY_CAP) } : result);
+
+  // 2. Uncertain self-protection.
+  for (const u of builtin.uncertain) {
+    if (act.selfProtection === 'deny') return deny(u.rule, u.reason, { category: 'selfProtection' });
+    audited.push({ rule: u.rule, category: 'selfProtection', reason: u.reason });
+  }
+
+  // 3. Opaque.
+  if (opaque) {
+    const r = opaqueReason(reason, construct, 'the active mode denies commands fence can not read.');
+    if (act.construct(construct) === 'deny') return withAudit(deny(OPAQUE, r, { category: 'opaque' }));
+    audited.push({ rule: OPAQUE, category: 'opaque', construct, reason: r });
+  }
+
+  // 4. Deny rules in policy order, then the protected-branch rule.
+  const judge = (id, effective, certain, why) => {
+    const category = certain ? act.certain : act.rules;
+    if (effective === 'deny' && category === 'deny') return withAudit(deny(id, why, certain ? {} : { category: 'rules' }));
+    audited.push({ rule: id, category: 'rules', ...(certain ? { certain: true } : {}), reason: why });
+    return null;
+  };
+  for (const rule of policy.rules) {
+    if (rule.decision !== 'deny' && rule.decision !== 'audit') continue;
+    const effective = act.ruleOverride(rule.id) ?? rule.decision;
+    if (effective === 'off') continue;
+    if (!parts.some((part) => ruleDeniesPart(rule, part, o))) continue;
+    const certain = parts.some((part) => ruleDeniesPart(rule, part, o, true));
+    const r = judge(rule.id, effective, certain, `${rule.why} (fence rule "${rule.id}")`);
+    if (r) return r;
+  }
+  const branch = branchCheck(parts, policy, o);
+  if (branch) {
+    const r = judge(branch.rule, 'deny', branch.certain, branch.reason);
+    if (r) return r;
+  }
+
+  // 5. An audited deny: no allow rule applies.
+  if (audited.length > 0) {
+    if (prof.undecided === 'deny') {
+      return withAudit(
+        deny(
+          'builtin:profile',
+          `No fence rule allowed this call and the active profile ${JSON.stringify(o.profile)} denies undecided calls; fence would deny it: ${audited[0].reason}`,
+        ),
+      );
+    }
+    return withAudit({
+      decision: 'undecided',
+      rule: null,
+      reason: `fence would deny this call (${audited[0].rule}) but the active mode only audits it; the host's normal permission flow applies.`,
+    });
+  }
+
+  // 6. Allow.
   if (parts.length > 0) {
     const allows = policy.rules.filter((r) => r.decision === 'allow');
     const covering = [];
@@ -652,6 +1187,7 @@ export function evaluate(policy, call, normalized, opts) {
       rule: 'builtin:internal-error',
       reason: `fence could not evaluate this call (${message}); it is denied.`,
       scope,
+      floor: true,
     };
   }
 }
