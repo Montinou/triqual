@@ -16,6 +16,7 @@
     "src",
     "bin",
     "policies",
+    "fixtures",
     "NOTICE"
   ],
   "license": "MIT"

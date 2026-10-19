@@ -16,6 +16,9 @@
 //        command text (or argv) and the temporary repo as cwd.
 //        runTest(args, io, {home}) takes the home directory from its third argument (default
 //        os.homedir()); `fence apply` passes its own so a draft is tested against the same home.
+//        After the examples it runs the built-in self-protection table (selfprotect.mjs), one
+//        PASS/FAIL/SKIP line per case; a failing built-in case fails the command too. `builtin: false`
+//        leaves it out (`fence apply` tests a draft policy only); `builtinCases` replaces the table.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -25,6 +28,7 @@ import { runEngine } from '../engine.mjs';
 import { evaluate } from '../eval/evaluate.mjs';
 import { ARGV_COVERED_CLASSES } from '../policy/classes.mjs';
 import { loadPolicy } from '../policy/load.mjs';
+import { runBuiltinCases } from './selfprotect.mjs';
 
 export const DEFAULT_POLICY = (home) => path.join(home, '.config', 'fence', 'policy.json');
 
@@ -173,14 +177,15 @@ function shellDecision(ex, file, repo, aux, home) {
     session_id: 'fence-test',
     permission_mode: 'default',
   };
-  const env = { ...process.env, HOME: home };
-  delete env.FENCE_PROFILE; // examples run under the default profile
+  // Examples run under the default profile in a fixed minimal environment, so `fence test` gives the
+  // same answer on every machine (no caller variable, no user or system git config reaches the engine).
+  const env = { PATH: process.env.PATH ?? '', HOME: home, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
   const argv = ['pre', '--host', claudeHost ? 'claude' : 'codex', '--policy', file, '--state-dir', path.join(aux, 'state'), '--admin-dir', path.join(aux, 'admin')];
   const r = runEngine(argv, { stdin: JSON.stringify(payload), env });
   return JSON.parse(r.stdout);
 }
 
-export function runTest(args, io, { home } = {}) {
+export function runTest(args, io, { home, builtin = true, builtinCases } = {}) {
   const r = load(args, io, home ?? os.homedir());
   if (!r.loaded) return r.code;
   const { policy } = r.loaded;
@@ -191,7 +196,12 @@ export function runTest(args, io, { home } = {}) {
   const aux = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'fence-test-aux-')));
   try {
     makeExampleRepo(repo);
-    return runExamples(policy, opts, r.home, repo, io, { file: r.file, aux });
+    const code = runExamples(policy, opts, r.home, repo, io, { file: r.file, aux });
+    if (!builtin) return code;
+    // The built-in self-protection table, after the policy examples: independent of the policy under
+    // test and judged against a synthetic home and repository (analysis only, see selfprotect.mjs).
+    const table = runBuiltinCases(io, builtinCases === undefined ? {} : { cases: builtinCases });
+    return code !== 0 || table.failed > 0 ? 1 : 0;
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
     fs.rmSync(aux, { recursive: true, force: true });

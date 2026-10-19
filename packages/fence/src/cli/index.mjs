@@ -1,6 +1,6 @@
 // fence CLI entry. bin/fence.mjs calls main(args) with the arguments after the script path
 // (args[0] is the subcommand) and uses the returned number as the exit code. main returns the number
-// itself for the commands that run synchronously (help, version, check, test, log) and a Promise of
+// itself for the commands that run synchronously (help, version, check, test, log, replay) and a Promise of
 // it for doctor and the human-only commands; bin/fence.mjs and the installed shim await either.
 //
 //   main(args, io?, host?)
@@ -12,13 +12,14 @@
 // Every human-only command goes through its row of the table in humanonly.mjs: requireHuman first
 // (an interactive terminal on stdin, no agent session variable), then the table's sudo gate for the
 // commands it gates, then the implementation. doctor is read-only and open to the agent.
+// replay is read-only and open to the agent too (no terminal check, no sudo); its seams (home,
+// platform, now, spawnHook; replay.mjs) come only from the `host` argument, never from argv or env.
 
 import { runCheck, runTest } from './check.mjs';
 import { humanOnly } from './humanonly.mjs';
 import { runLog } from './log.mjs';
+import { runReplay } from './replay.mjs';
 import { packageVersion } from './version.mjs';
-
-const NOT_YET = new Set(['replay']);
 
 export function helpText() {
   return [
@@ -32,6 +33,9 @@ export function helpText() {
     '  log [--session id] [--denies | --undecided | --unknown-tools | --agent id --reads | --latency] [--state-dir d]',
     '                       decision log views (plain text)',
     '  doctor [--json]      report on the install, the hosts, the policy, the hatch and sudo (exit 1 on a failure)',
+    '  replay --transcripts <dir> --policy <file> --out <dir> [--labels <file>]',
+    '                       decide every tool call of local Claude transcripts (nothing is run); write',
+    '                       denies.md, undecided.md, latency.json and summary.md (local, never commit them)',
     '  version              print the version',
     '  help                 print this help',
     '',
@@ -46,7 +50,7 @@ export function helpText() {
     '  allow-once <path>    one single-use write grant (sudo)',
     '  uninstall [--purge]  remove fence (sudo)',
     '',
-    'Not yet implemented: replay, lock',
+    'Not yet implemented: lock',
     '',
     'The default policy is ~/.config/fence/policy.json.',
   ].join('\n');
@@ -101,12 +105,10 @@ export function main(args = [], io = defaultIo, host = undefined) {
         return runTest(rest, io);
       case 'log':
         return runLog(rest, io);
+      case 'replay':
+        return runReplay(rest, io, host ?? {});
       default:
         if (command === 'doctor' || humanOnly(command) !== undefined) return runWired(command, rest, io, host);
-        if (NOT_YET.has(command)) {
-          io.err(`fence: "${command}" is not yet implemented`);
-          return 1;
-        }
         io.err(`fence: unknown command ${JSON.stringify(command)}; run "fence help"`);
         return 1;
     }

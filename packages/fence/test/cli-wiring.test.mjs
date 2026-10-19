@@ -90,6 +90,11 @@ function hostFor({ answers = [], run, env, over = {} } = {}) {
       sudoers: { read: () => '', list: () => [] },
       smoke: () => ({ ok: true, failures: [], latencyMs: [1, 2] }),
       deadlineMs: DEADLINE,
+      // never the machine's managed-settings paths, its root-owned fence directory or a real editor
+      claudeManaged: [],
+      codexManaged: [],
+      lockedDir: path.join(TMP, 'locked-fence'),
+      spawn: () => ({ status: 0 }),
       ...over,
     },
     home,
@@ -305,16 +310,26 @@ test('rollback and uninstall check their arguments before the sudo gate', async 
   assert.equal(gateRuns(w.calls), 1);
 });
 
-test('lock and replay are not implemented yet; help says so', async () => {
+test('lock is not implemented yet and replay is a read-only command; help says so', async () => {
   const w = hostFor();
   const c = capture();
   assert.equal(await main(['lock'], c.io, w.host), 1);
   assert.match(c.err.join('\n'), /not yet implemented/);
+  // replay is wired and read-only: no terminal check, no sudo, straight to its own argument check
   const r = capture();
   assert.equal(await main(['replay'], r.io, w.host), 1);
-  assert.match(r.err.join('\n'), /not yet implemented/);
+  assert.match(r.err.join('\n'), /usage: fence replay --transcripts <dir> --policy <file> --out <dir>/);
+  assert.doesNotMatch(r.err.join('\n'), /not yet implemented|interactive terminal/);
+  assert.deepEqual(sudoCalls(w.calls), []);
   const h = helpText();
-  assert.match(h, /Not yet implemented: replay, lock/);
+  assert.match(h, /Not yet implemented: lock$/m);
+  assert.match(h, /^ {2}replay --transcripts <dir> --policy <file> --out <dir>/m);
+  // the staged home is a module seam only, never a flag
+  assert.doesNotMatch(h, /replay [^\n]*--home/);
+  const rh = capture();
+  assert.equal(await main(['replay', '--transcripts', TMP, '--policy', 'p.json', '--out', path.join(TMP, 'never'), '--home', TMP], rh.io, w.host), 1);
+  assert.match(rh.err.join('\n'), /unknown argument "--home"/);
+  assert.equal(fs.existsSync(path.join(TMP, 'never')), false);
   for (const cmd of ['install', 'upgrade', 'rollback', 'edit', 'apply', 'repair', 'hatch', 'allow-once', 'uninstall', 'doctor']) assert.ok(h.includes(cmd), cmd);
   assert.doesNotMatch(h, /doctor\s+\(not yet implemented\)/);
   assert.equal(await main(['bogus'], capture().io, w.host), 1);

@@ -10,13 +10,27 @@
       "decision": "deny",
       "match": { "paths": ["**/.env", "**/.env.*", "~/.aws/**", "~/.ssh/**"], "access": "any" },
       "except": { "paths": ["**/.env.example", "**/.env.sample"] },
-      "why": "Credential files are never read or written by the agent."
+      "why": "Credential files are never read or written by the agent.",
+      "examples": {
+        "deny": [
+          { "tool": "Bash", "command": "cat .env" },
+          { "tool": "Bash", "command": "cat ~/.aws/credentials" }
+        ],
+        "allow": [
+          { "tool": "Read", "path": ".env.example" },
+          { "tool": "Bash", "command": "cat .env.sample" }
+        ]
+      }
     },
     {
       "id": "privilege",
       "decision": "deny",
       "match": { "class": ["privilege"] },
-      "why": "Raising privileges is denied."
+      "why": "Raising privileges is denied.",
+      "examples": {
+        "deny": [{ "tool": "Bash", "command": "sudo ls" }],
+        "allow": [{ "tool": "Bash", "command": "ls" }]
+      }
     }
   ]
 }

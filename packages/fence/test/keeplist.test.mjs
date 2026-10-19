@@ -13,7 +13,17 @@ import { validatePolicy } from '../src/policy/schema.mjs';
 // Hermetic: one realpath'd temp root; the engine runs in-process with an explicit policy and state
 // directory, so nothing outside the temp root is read or written.
 const TMP = nodeFs.realpathSync(nodeFs.mkdtempSync(path.join(os.tmpdir(), 'fence-keeplist-')));
-after(() => nodeFs.rmSync(TMP, { recursive: true, force: true }));
+// Hermetic: the in-process engine and the policy loader read the home through os.homedir() (HOME);
+// a fake home under TMP stands in for it for the whole file, restored after.
+const FAKE_HOME = path.join(TMP, 'home');
+nodeFs.mkdirSync(FAKE_HOME, { recursive: true });
+const SAVED_HOME = process.env.HOME;
+process.env.HOME = FAKE_HOME;
+after(() => {
+  if (SAVED_HOME === undefined) delete process.env.HOME;
+  else process.env.HOME = SAVED_HOME;
+  nodeFs.rmSync(TMP, { recursive: true, force: true });
+});
 
 const EXAMPLE = fileURLToPath(new URL('../policies/example.json', import.meta.url));
 const exampleText = nodeFs.readFileSync(EXAMPLE, 'utf8');

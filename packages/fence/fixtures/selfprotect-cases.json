@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "about": "Regression table for fence's built-in self-protection. Each row is a call that must be denied with expectRule; its harmless twin must not be denied. Rows are only analysed by the engine, never run. Placeholders: ${home} (a synthetic home), ${repo} (a synthetic git repository, the default cwd) and ${tmp} (their parent).",
+  "cases": [
+    {
+      "id": "edit-claude-settings",
+      "host": "claude",
+      "tool": "Edit",
+      "input": { "file_path": "${home}/.claude/settings.json", "old_string": "x", "new_string": "y" },
+      "expectRule": "builtin:self-protection",
+      "setup": { "files": { "${home}/.claude/settings.json": "x" } },
+      "harmless": { "tool": "Edit", "input": { "file_path": "${repo}/notes.txt", "old_string": "x", "new_string": "y" } }
+    },
+    {
+      "id": "write-claude-settings",
+      "host": "claude",
+      "tool": "Write",
+      "input": { "file_path": "${home}/.claude/settings.json", "content": "x" },
+      "expectRule": "builtin:self-protection",
+      "harmless": { "tool": "Write", "input": { "file_path": "${repo}/notes.txt", "content": "x" } }
+    },
+    {
+      "id": "write-fence-policy",
+      "host": "claude",
+      "tool": "Write",
+      "input": { "file_path": "${home}/.config/fence/policy.json", "content": "x" },
+      "expectRule": "builtin:self-protection",
+      "harmless": { "tool": "Write", "input": { "file_path": "${repo}/notes.txt", "content": "x" } }
+    },
+    {
+      "id": "write-fence-install",
+      "host": "claude",
+      "tool": "Write",
+      "input": { "file_path": "${home}/.local/share/fence/versions/0.0.0/src/engine.mjs", "content": "x" },
+      "expectRule": "builtin:self-protection",
+      "harmless": { "tool": "Write", "input": { "file_path": "${repo}/notes.txt", "content": "x" } }
+    },
+    {
+      "id": "apply-patch-codex-hooks",
+      "host": "codex",
+      "tool": "apply_patch",
+      "input": { "command": "*** Begin Patch\n*** Add File: ${home}/.codex/hooks.json\n+x\n*** End Patch\n" },
+      "expectRule": "builtin:self-protection",
+      "harmless": { "tool": "apply_patch", "input": { "command": "*** Begin Patch\n*** Add File: ${repo}/notes.txt\n+x\n*** End Patch\n" } }
+    },
+    {
+      "id": "shell-redirect",
+      "host": "claude",
+      "tool": "Bash",
+      "input": { "command": "echo x > ${home}/.claude/settings.json" },
+      "expectRule": "builtin:self-protection",
+      "harmless": { "tool": "Bash", "input": { "command": "echo x > ./notes.txt" } }
+    },
+    {
+      "id": "shell-sed-in-place",
+      "host": "claude",
+      "tool": "Bash",
+      "input": { "command": "sed -i s/a/b/ ${home}/.claude/settings.json" },
+      "expectRule": "builtin:self-protection",
+      "setup": { "files": { "${home}/.claude/settings.json": "a" } },
+      "harmless": { "tool": "Bash", "input": { "command": "sed -i s/a/b/ ./notes.txt" } }
+    },
+    {
+      "id": "interpreter-python-c",
+      "host": "claude",
+      "tool": "Bash",
+      "input": { "command": "python3 -c \"open('${home}/.claude/settings.json', 'w').write('x')\"" },
+      "expectRule": "builtin:opaque",
+      "harmless": { "tool": "Bash", "input": { "command": "python3 -c 'print(1)'" } }
+    },
+    {
+      "id": "agent-written-script",
+      "host": "claude",
+      "tool": "Bash",
+      "input": { "command": "sh ./deploy.sh" },
+      "expectRule": "builtin:self-protection",
+      "setup": { "files": { "${repo}/deploy.sh": "echo x > ${home}/.claude/settings.json\n", "${repo}/tidy.sh": "echo x > ./notes.txt\n" } },
+      "harmless": { "tool": "Bash", "input": { "command": "sh ./tidy.sh" } }
+    },
+    {
+      "id": "opaque-command",
+      "host": "claude",
+      "tool": "Bash",
+      "input": { "command": "sh -c \"$FENCE_CASE_PAYLOAD\"" },
+      "expectRule": "builtin:opaque",
+      "harmless": { "tool": "Bash", "input": { "command": "sh -c 'echo x > ./notes.txt'" } }
+    },
+    {
+      "id": "mv-onto-missing-claude-dir",
+      "host": "claude",
+      "tool": "Bash",
+      "input": { "command": "mv ${repo}/evil ${repo}/.claude" },
+      "expectRule": "builtin:self-protection",
+      "setup": { "files": { "${repo}/evil/settings.json": "x", "${repo}/stuff/readme.md": "x" } },
+      "harmless": { "tool": "Bash", "input": { "command": "mv ${repo}/stuff ${repo}/docs" } }
+    },
+    {
+      "id": "case-flipped-path",
+      "host": "claude",
+      "tool": "Bash",
+      "input": { "command": "echo x > ${home}/.CLAUDE/SETTINGS.JSON" },
+      "expectRule": "builtin:self-protection",
+      "requires": ["case-insensitive"],
+      "setup": { "files": { "${home}/.claude/settings.json": "x" } },
+      "harmless": { "tool": "Bash", "input": { "command": "echo x > ./NOTES.TXT" } }
+    },
+    {
+      "id": "home-redirect-claude",
+      "host": "claude",
+      "tool": "Bash",
+      "input": { "command": "HOME=${tmp}/other-home claude" },
+      "expectRule": "builtin:opaque",
+      "harmless": { "tool": "Bash", "input": { "command": "FENCE_CASE=1 claude --version" } }
+    },
+    {
+      "id": "claude-plugin-disable",
+      "host": "claude",
+      "tool": "Bash",
+      "input": { "command": "claude plugin disable fence" },
+      "expectRule": "builtin:host-config",
+      "harmless": { "tool": "Bash", "input": { "command": "claude --version" } }
+    },
+    {
+      "id": "codex-features-disable-hooks",
+      "host": "claude",
+      "tool": "Bash",
+      "input": { "command": "codex features disable hooks" },
+      "expectRule": "builtin:host-config",
+      "harmless": { "tool": "Bash", "input": { "command": "codex --version" } }
+    },
+    {
+      "id": "fence-install-command",
+      "host": "claude",
+      "tool": "Bash",
+      "input": { "command": "fence install" },
+      "expectRule": "builtin:fence-command",
+      "harmless": { "tool": "Bash", "input": { "command": "fence version" } }
+    },
+    {
+      "id": "git-checkout-brings-claude-settings",
+      "host": "claude",
+      "tool": "Bash",
+      "input": { "command": "git checkout with-settings" },
+      "expectRule": "builtin:self-protection",
+      "requires": ["git"],
+      "setup": { "gitBranch": { "name": "with-settings", "files": { ".claude/settings.json": "x" } } },
+      "harmless": { "tool": "Bash", "input": { "command": "git status" } }
+    },
+    {
+      "id": "cd-protected-dir-unmodeled-tool",
+      "host": "claude",
+      "tool": "Bash",
+      "input": { "command": "cd ${home}/.claude && sometool settings.json" },
+      "expectRule": "builtin:self-protection",
+      "setup": { "files": { "${home}/.claude/settings.json": "x", "${repo}/docs/notes.txt": "x" } },
+      "harmless": { "tool": "Bash", "input": { "command": "cd ${repo}/docs && sometool notes.txt" } }
+    }
+  ]
+}

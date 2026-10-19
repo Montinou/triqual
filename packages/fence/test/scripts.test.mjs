@@ -586,3 +586,105 @@ test('more than 256 background jobs or file routes is opaque region-count, fast;
   ms = performance.now() - t0;
   assert.ok(ms < 20000, `${ms} ms`);
 });
+
+// ---- task 48: a fed stdin is data when the program is a module or a file ------------------------
+
+test('a fed stdin is data for python -m MODULE and python FILE, code only when python reads its program from it', () => {
+  const d = project();
+  write(path.join(d, 'x.py'), 'print("ok")\n');
+  write(path.join(d, 'x.js'), 'console.log("ok")\n');
+  // the jev control: pytest takes its program from the module, the piped text is data
+  for (const t of ['echo ok | python -m pytest -q', 'echo ok | python3 -m pytest', 'echo x | python3 -m http.server', 'echo x | python -m json.tool', 'echo x | python x.py', 'echo x | python3 -u x.py', 'echo x | node x.js']) {
+    const c = find(cmds(t, d), t.split('|')[1].trim().split(' ')[0]);
+    assert.ok(c.classes.includes('runs-repo-code'), t);
+  }
+  // an agent-written file is still judged as the program
+  assert.equal(opaque('echo x | python x.py', d, [path.join(d, 'x.py')]).construct, 'agent-written-script');
+  // the program is stdin (no operand, `-`, a stdin path, a link to stdin): still opaque
+  fs.symlinkSync('/dev/stdin', path.join(d, 'in.py'));
+  for (const t of [
+    'echo code | python',
+    'echo code | python3',
+    'echo code | python -',
+    'echo code | python -u -',
+    'echo code | python /dev/stdin',
+    'echo code | python /dev/fd/0',
+    'echo code | python -- -',
+    'echo code | python in.py',
+    'echo code | python "$F"',
+    'echo code | node',
+    'echo code | node -',
+    'echo code | node /dev/stdin',
+    'echo code | node in.py',
+  ]) {
+    assert.equal(opaque(t, d).construct, 'stdin-interpreter', t);
+  }
+  // inline code that is not provably clean stays opaque
+  opaque('echo x | python -c "$(cat)"', d);
+});
+
+test('node: a fed stdin is data only when a main script (or --test) is named, never for a preload alone', () => {
+  const d = project();
+  write(path.join(d, 'a.js'), 'void 0\n');
+  write(path.join(d, 'x.js'), 'void 0\n');
+  write(path.join(d, 'a.mjs'), 'void 0\n');
+  write(path.join(d, 'package.json'), '{}\n');
+  for (const t of [
+    'echo x | node -r ./package.json',
+    'echo x | node --require=./a.js',
+    'echo x | node --require ./a.js',
+    'echo x | node --import ./a.mjs',
+    'echo x | node --import=./a.mjs',
+    'echo x | node --loader ./a.mjs',
+    'echo x | node --experimental-loader=./a.mjs',
+    'echo x | node -r ./x.js --',
+  ]) {
+    assert.equal(opaque(t, d).construct, 'stdin-interpreter', t);
+  }
+  for (const t of ['echo x | node x.js', 'echo x | node -r ./a.js x.js', 'echo x | node --test x.js']) {
+    const c = find(cmds(t, d), 'node');
+    assert.ok(c.classes.includes('runs-repo-code'), t);
+  }
+});
+
+test('python -m pytest: a fed stdin is code when pytest can open a debugger on it', () => {
+  const d = project();
+  for (const t of [
+    'echo x | python -m pytest --pdb',
+    'echo x | python -m pytest -q --pdb x.py',
+    'echo x | python -m pytest --pdbcls=IPython.terminal.debugger:Pdb',
+    'echo x | python -m pytest --pdbcls IPython.terminal.debugger:Pdb',
+    'echo x | python -m pytest --trace',
+    'echo x | python -m pytest --pd',
+    'echo x | python -m pytest -o addopts=--pdb',
+    'echo x | PYTEST_ADDOPTS=--pdb python -m pytest',
+    'echo x | env PYTEST_ADDOPTS=--pdb python -m pytest',
+  ]) {
+    assert.equal(opaque(t, d).construct, 'stdin-interpreter', t);
+  }
+  const c = find(cmds('echo x | python -m pytest -q -k pdbish', d), 'python');
+  assert.ok(c.classes.includes('runs-repo-code'));
+});
+
+test('a fed stdin stays code for python modules that read a program from it and for the interactive flag', () => {
+  const d = project();
+  write(path.join(d, 'x.py'), 'print("ok")\n');
+  for (const t of [
+    'echo x | python3 -m code',
+    'echo x | python -m pdb x.py',
+    'echo x | python -m asyncio',
+    'echo x | python -mcode',
+    'echo x | python -m some_unknown_module',
+    'echo x | python -i x.py',
+    'echo x | python3 -Ii x.py',
+    'echo x | python -ui x.py',
+    'echo x | python -im pytest',
+    'echo x | python -i -- x.py',
+  ]) {
+    assert.equal(opaque(t, d).construct, 'stdin-interpreter', t);
+  }
+  // PYTHONINSPECT in the command's own env is a code-loading var: opaque before the stdin rule is asked
+  for (const t of ['echo x | PYTHONINSPECT=1 python x.py', 'echo x | env PYTHONINSPECT=1 python x.py', 'PYTHONINSPECT=1 python x.py']) {
+    assert.equal(opaque(t, d).construct, 'code-loading-var', t);
+  }
+});

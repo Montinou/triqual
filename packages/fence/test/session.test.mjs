@@ -12,6 +12,7 @@ import { renderSessionStart } from '../src/hosts/render.mjs';
 import { renderKeepList } from '../src/hooks/keeplist.mjs';
 import { SCAN_FILE_BYTES, sessionContext } from '../src/hooks/session.mjs';
 import { loadPolicy } from '../src/policy/load.mjs';
+import { childEnv } from './helpers/isolation.mjs';
 
 // Hermetic: one realpath'd temp root holding a fake HOME (process.env.HOME points at it for the whole
 // file, so os.homedir() inside the engine is the fake one), the policy copies, and the state and admin
@@ -473,8 +474,7 @@ test('through the real bundled watchdog the compact output reaches stdout as Ses
   nodeFs.chmodSync(hook, 0o755);
 
   const d = fresh();
-  const env = { ...process.env, HOME: home };
-  delete env.FENCE_PROFILE;
+  const env = childEnv(home);
   const payload = JSON.stringify(payloadFor({ source: 'compact' }));
   for (const host of ['claude', 'codex']) {
     const r = spawnSync(process.execPath, [hook, 'session-start', '--host', host, '--policy', d.policy, '--state-dir', d.state, '--admin-dir', d.admin], {
@@ -582,7 +582,7 @@ function hatchSetup(name) {
     return f === hatchFile ? { uid: 0, gid: 0, mode: st.mode & ~0o022, size: st.size, ino: st.ino, dev: st.dev, ctimeMs: st.ctimeMs, mtimeMs: st.mtimeMs } : st;
   };
   const argv = (event, host) => [event, '--host', host, '--policy', d.policy, '--state-dir', d.state, '--admin-dir', d.admin];
-  const call = (main, event, host) => main(argv(event, host), { stdin: Buffer.from(JSON.stringify(HOOK_PAYLOADS[event])), env: { ...process.env, HOME: home, FENCE_PROFILE: 'default' }, lstat });
+  const call = (main, event, host) => main(argv(event, host), { stdin: Buffer.from(JSON.stringify(HOOK_PAYLOADS[event])), env: childEnv(home, { FENCE_PROFILE: 'default' }), lstat });
   return { home, d, hatchFile, expires, call };
 }
 

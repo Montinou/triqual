@@ -222,7 +222,7 @@ test('fence test runs a Bash example expecting deny', () => {
   assert.match(ok.stdout, /PASS credentials allow\[0\] Bash ls/);
   assert.match(ok.stdout, /PASS repo-secrets deny\[0\] Bash cat \.\/secret\/a\.txt/);
   assert.match(ok.stdout, /6 passed, 0 failed, 0 skipped/);
-  assert.ok(!/SKIP/.test(ok.stdout), ok.stdout);
+  assert.ok(!/^SKIP (?!builtin )/m.test(ok.stdout), ok.stdout); // only the built-in table may skip a case
 
   // a Bash example that expects a deny but is not denied fails the run
   const wrong = path.join(home, 'wrong.json');

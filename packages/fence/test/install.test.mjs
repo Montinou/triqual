@@ -54,6 +54,8 @@ function copyPackage(dest, { strict }) {
     if (fs.existsSync(from)) fs.cpSync(from, path.join(dest, part), { recursive: true });
   }
   fs.copyFileSync(path.join(PKG_DIR, 'package.json'), path.join(dest, 'package.json'));
+  // the real package ships policies/strict.json; a copy has it only when the test asks for one
+  fs.rmSync(path.join(dest, 'policies', 'strict.json'), { force: true });
   if (strict) {
     fs.mkdirSync(path.join(dest, 'policies'), { recursive: true });
     fs.writeFileSync(path.join(dest, 'policies', 'strict.json'), STRICT_TEXT);

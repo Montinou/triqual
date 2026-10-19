@@ -12,6 +12,7 @@ import { compareManifest, parseIso, parseManifest, MAX_FILE_BYTES } from '../src
 import { formatLine, appendLine, logFileFor, TRUNCATED, PROTECTED_KEYS } from '../src/watchdog/line.mjs';
 import { buildWatchdog } from '../src/build/bundle-watchdog.mjs';
 import { renderSessionStart } from '../src/hosts/render.mjs';
+import { childEnv } from './helpers/isolation.mjs';
 
 // Hermetic: every install (fake HOME with .local/share/fence/{current,versions/<v>/src/engine.mjs}),
 // state directory and admin directory lives in one temp root. The "engine" is a stub script written
@@ -91,7 +92,7 @@ function rootify(...files) {
 }
 
 function run(inst, argv, { stdin = Buffer.from(PAYLOAD), ...io } = {}) {
-  return main([...argv, '--state-dir', inst.state, '--admin-dir', inst.admin], { stdin, env: { ...process.env, HOME: inst.home }, ...io });
+  return main([...argv, '--state-dir', inst.state, '--admin-dir', inst.admin], { stdin, env: childEnv(inst.home), ...io });
 }
 
 // A deny for fence's own failure, Claude shape: one JSON line, exit 0, human text, no disable line.
@@ -598,7 +599,7 @@ describe('EVENTS', () => {
     for (const host of ['claude', 'codex']) {
       const r = spawnSync(process.execPath, [hook, 'session-start', '--host', host, '--state-dir', inst.state, '--admin-dir', inst.admin], {
         input: '{"hook_event_name":"SessionStart"}',
-        env: { ...process.env, HOME: inst.home },
+        env: childEnv(inst.home),
         encoding: 'utf8',
         timeout: 10000,
       });
@@ -610,7 +611,7 @@ describe('EVENTS', () => {
     fs.rmSync(path.join(inst.share, 'versions'), { recursive: true });
     const d = spawnSync(process.execPath, [hook, 'pre', '--host', 'codex', '--state-dir', inst.state, '--admin-dir', inst.admin], {
       input: PAYLOAD,
-      env: { ...process.env, HOME: inst.home },
+      env: childEnv(inst.home),
       encoding: 'utf8',
       timeout: 10000,
     });

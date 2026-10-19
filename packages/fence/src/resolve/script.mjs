@@ -461,15 +461,23 @@ function pytestFiles(args) {
   return out;
 }
 
+// pytest options that open pdb on a failure or at the start (and read it from stdin). argparse accepts
+// any unambiguous prefix (`--pd`, `--tra`), so the check is on the prefix; `addopts` through -o is
+// the same switch by another name; a word fence cannot read may be any of them.
+function pytestDebugger(args) {
+  return args.some((a) => !isStr(a) || /^--(pd|tra)/.test(a) || a.includes('addopts'));
+}
+
 function pythonRoute(argv) {
   let isolated = false;
+  let inspect = false; // -i: after the program the interpreter reads a REPL from stdin
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
     if (!isStr(a)) return { type: 'code', files: [UNKNOWN], modules: [], isolated };
     if (a === '-') return null; // the program is stdin (the stdin-interpreter rule)
     if (a === '--') {
       const f = argv[i + 1];
-      return f === undefined ? null : { type: 'code', files: [f], modules: [], isolated };
+      return f === undefined ? null : { type: 'code', files: [f], modules: [], isolated, inspect };
     }
     if (a === '--check-hash-based-pycs') {
       i++;
@@ -480,12 +488,13 @@ function pythonRoute(argv) {
       for (let k = 1; k < a.length; k++) {
         const c = a[k];
         if (c === 'I' || c === 'P') isolated = true;
+        if (c === 'i') inspect = true;
         if (c === 'c') return null; // inline code: the interpreter allowlist
         if (c === 'm') {
           const mod = k + 1 < a.length ? a.slice(k + 1) : argv[i + 1];
           const after = argv.slice(k + 1 < a.length ? i + 1 : i + 2);
           const files = mod === 'pytest' ? pytestFiles(after) : [];
-          return { type: 'code', files, modules: isStr(mod) ? [mod] : [UNKNOWN], isolated };
+          return { type: 'code', files, modules: isStr(mod) ? [mod] : [UNKNOWN], isolated, inspect, debugger: mod === 'pytest' && pytestDebugger(after) };
         }
         if (PY_VALUE.includes(c)) {
           if (k + 1 === a.length) i++;
@@ -494,7 +503,7 @@ function pythonRoute(argv) {
       }
       continue;
     }
-    return { type: 'code', files: [a], modules: [], isolated };
+    return { type: 'code', files: [a], modules: [], isolated, inspect };
   }
   return null; // no program: interactive, or stdin
 }
@@ -533,8 +542,10 @@ function nodeRoute(argv) {
       continue;
     }
     if (a === '--') {
-      if (isStr(argv[i + 1]) || argv[i + 1] === UNKNOWN) files.push(argv[i + 1]);
-      main = true;
+      if (isStr(argv[i + 1]) || argv[i + 1] === UNKNOWN) {
+        files.push(argv[i + 1]);
+        main = true; // a main script follows; `node -r ./x.js --` has none
+      }
       break;
     }
     if (a.startsWith('-') && a.length > 1) {
@@ -564,7 +575,7 @@ function nodeRoute(argv) {
     if (!isStr(f)) out.push(f);
     else for (const ext of NODE_EXTS) out.push(f + ext);
   }
-  return { type: 'code', files: out, modules: [], isolated: true };
+  return { type: 'code', files: out, modules: [], isolated: true, main: main || test };
 }
 
 const DENO_VALUE = new Set(words('-c --config --import-map --lock --cert --location --seed -L --log-level --ext --preload --import --watch-exclude --env-file'));

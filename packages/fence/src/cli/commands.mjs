@@ -17,7 +17,7 @@
 //   stdin, stdout, env, home (os.userInfo().homedir, never $HOME), platform, cwd, uid,
 //   run (wiringRun: sudo on the terminal, everything else captured), nodePath, npmPath,
 //   adminDir (adminDir(platform)), sudoers (the real, read-only reader), spawn (the editor),
-//   and, absent in production: probes, smoke, deadlineMs, claudeManaged, codexManaged, draftDir.
+//   and, absent in production: probes, smoke, deadlineMs, claudeManaged, codexManaged, lockedDir, draftDir.
 
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
@@ -226,6 +226,7 @@ async function uninstallCommand({ args, io, host }) {
     purge: a.bools.has('--purge'),
     io,
     adminDir: host.adminDir,
+    lockedDir: host.lockedDir, // absent in production: uninstall then uses the default root-owned directory
   });
   if (!r.ok) return failure(io, r.reason ?? `uninstall finished with problems: ${(r.warnings ?? []).join('; ')}`);
   return 0;

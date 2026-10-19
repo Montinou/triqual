@@ -258,7 +258,7 @@ export async function apply({ draftPath, policyPath, home, confirm, gate, io } =
 
     // 5: the draft's examples
     const lines = [];
-    const code = runTest(['--policy', snapshot], { out: (s) => (lines.push(s), say(s)), err: (s) => (lines.push(s), say(s)) }, { home: p.home });
+    const code = runTest(['--policy', snapshot], { out: (s) => (lines.push(s), say(s)), err: (s) => (lines.push(s), say(s)) }, { home: p.home, builtin: false });
     result.testOutput = lines.join('\n');
     if (code !== 0) return fail(`the draft's examples failed (fence test exit ${code}); nothing was written`);
 
