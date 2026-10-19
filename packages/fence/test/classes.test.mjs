@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { classesOf, fileEffects, domainsOf, hostToDomain, writesNothing, READ_ONLY_PROGRAMS } from '../src/tables/classes.mjs';
+import { classesOf, guessedClassesOf, fileEffects, domainsOf, hostToDomain, writesNothing, READ_ONLY_PROGRAMS } from '../src/tables/classes.mjs';
 import { normalize, CERTAIN_CD_PREDECESSORS } from '../src/norm/normalize.mjs';
 import { opsOf } from '../src/norm/ops.mjs';
 import { UNKNOWN } from '../src/norm/unknown.mjs';
@@ -2078,4 +2078,34 @@ test('round 5: curl -#O and curl -#o into protected paths are denied end to end'
     assert.equal(r.decision, 'deny', `${text}: ${JSON.stringify(r)}`);
     assert.equal(r.rule, 'builtin:self-protection', text);
   }
+});
+
+// ---- guessed classes: the part of classesOf that exists only because of an UNKNOWN word ----------
+
+const guessed = (...argv) => [...guessedClassesOf(argv)].sort();
+
+test('guessedClassesOf names the classes given only because of an UNKNOWN word', () => {
+  assert.deepEqual(guessed('rsync', UNKNOWN, 'a', 'b'), set('delete', 'network-fetch'));
+  assert.deepEqual(guessed('export', UNKNOWN), set('env-dump'));
+  assert.deepEqual(guessed('git', 'branch', UNKNOWN), set('vcs-write'));
+  // classesOf itself is unchanged
+  assert.deepEqual(cls('rsync', UNKNOWN, 'a', 'b'), set('delete', 'network-fetch'));
+});
+
+test('guessedClassesOf is empty when every class is certain', () => {
+  assert.deepEqual(guessed('rsync', '-a', 'a', 'b'), []);
+  assert.deepEqual(guessed('rm', '-rf', './x'), []);
+  assert.deepEqual(guessed('git', 'push', 'origin', 'main'), []);
+  assert.deepEqual(guessed(), []);
+});
+
+test('guessedClassesOf keeps a class a certain word also gives', () => {
+  // --delete is certain; the UNKNOWN word only adds network-fetch
+  assert.deepEqual(guessed('rsync', '--delete', UNKNOWN, 'a', 'b'), set('network-fetch'));
+  assert.deepEqual(guessed('rsync', '--delete', 'a', 'host:b', UNKNOWN), []);
+  assert.deepEqual(guessed('rm', UNKNOWN), []);
+});
+
+test('guessedClassesOf sees an UNKNOWN word of a nested command', () => {
+  assert.deepEqual(guessed('find', '.', '-exec', 'rsync', UNKNOWN, 'a', 'b', ';'), set('delete', 'network-fetch'));
 });

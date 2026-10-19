@@ -4,12 +4,13 @@
 //   normalize(command, ctx) -> {commands: EffectiveCommand[]} | {opaque: {reason, construct, offset}}
 //   ctx = {cwd, home, env, writtenIndex, writtenIndexIncomplete, readFile, gitTreeDiff, patchTargets, fs, expandGlob}
 //
-// EffectiveCommand = {argv, cwd, env, classes, reads, writes, ops, domains, repo} (carry-norm):
+// EffectiveCommand = {argv, cwd, env, classes, guessedClasses, reads, writes, ops, domains, repo} (carry-norm):
 //   argv     words after value substitution and glob expansion (UNKNOWN where undetermined)
 //   cwd      the directory the command runs in (UNKNOWN when it cannot be tracked)
 //   env      the command's prefix assignments (`X=1 cmd`), values possibly UNKNOWN
 //   reads/writes  realpaths from redirections and cd targets (T14 adds argument file effects)
 //   ops      ancestor operations from ops.mjs, paths resolved from cwd
+//   guessedClasses  the subset of classes given only because of an UNKNOWN word; [] when none
 //   domains/classes  `/dev/tcp` and `/dev/udp` redirections give a domain and `network-fetch`
 //   repo     {root, branch} of the repository the command works in, null outside one, UNKNOWN
 // Commands come out in execution order as far as it is known; a command substitution's commands
@@ -139,7 +140,7 @@ import { opsOf } from './ops.mjs';
 import { resolvePath, foldCase, isCaseInsensitive } from '../resolve/paths.mjs';
 import { expandGlob as defaultExpandGlob } from '../resolve/glob.mjs';
 import { repoOf, hasLocalBranch } from '../resolve/repo.mjs';
-import { classesOf, fileEffects, domainsOf, hostToDomain, urlDomainOf, isEnvironPath, writesNothing, READ_ONLY_PROGRAMS } from '../tables/classes.mjs';
+import { classesOf, guessedClassesOf, fileEffects, domainsOf, hostToDomain, urlDomainOf, isEnvironPath, writesNothing, READ_ONLY_PROGRAMS } from '../tables/classes.mjs';
 import { checkPathWrite } from '../eval/builtin.mjs';
 import { stripOne, findExecs, valueFlags, MAX_WRAP_DEPTH } from '../tables/wrappers.mjs';
 import { isCodeLoadingAssignment } from '../tables/envvars.mjs';
@@ -1326,8 +1327,27 @@ function feedsStdin(redirs) {
   return redirs.some((r) => STDIN_REDIRS.has(r.op) && (r.fd === undefined || r.fd === 0));
 }
 
+// A class from a certain source; it is no longer a guess when a guessed source gave it too.
 function addClass(eff, c) {
   if (!eff.classes.includes(c)) eff.classes.push(c);
+  const i = eff.guessedClasses.indexOf(c);
+  if (i >= 0) eff.guessedClasses.splice(i, 1);
+}
+
+// A class given only because of an UNKNOWN word: guessed unless some source already gave it certainly.
+function addGuessedClass(eff, c) {
+  if (eff.classes.includes(c)) return;
+  eff.classes.push(c);
+  eff.guessedClasses.push(c);
+}
+
+// The classes of one command line: the certain ones first, then the guessed.
+function addClassesOf(eff, argv) {
+  const classes = classesOf(argv);
+  const guessed = new Set(guessedClassesOf(argv));
+  for (const c of classes) if (!guessed.has(c)) addClass(eff, c);
+  for (const c of classes) if (guessed.has(c)) addGuessedClass(eff, c);
+  return classes;
 }
 
 // File effects of redirections; targets[i] is the value of redirs[i].target.
@@ -1553,9 +1573,8 @@ function commandEffectsStep(eff, info, sh, g) {
   const argv = eff.argv;
   if (argv.length > 0) {
     // a wrapper PRE_STEPS removed still contributes its own class (sudo -> privilege)
-    for (const layer of info.unwrapped) for (const c of classesOf(layer)) addClass(eff, c);
-    const classes = classesOf(argv);
-    for (const c of classes) addClass(eff, c);
+    for (const layer of info.unwrapped) addClassesOf(eff, layer);
+    const classes = addClassesOf(eff, argv);
     const domains = domainsOf(argv);
     if (classes.includes('network-fetch') && eff.env && typeof eff.env === 'object') {
       for (const k of Object.keys(eff.env)) {
@@ -3514,6 +3533,7 @@ function newEff(argv, env, sh, g) {
     cwd: sh.cwd,
     env,
     classes: [],
+    guessedClasses: [],
     reads: [],
     writes: [],
     ops: [],

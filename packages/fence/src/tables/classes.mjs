@@ -3,6 +3,7 @@
 // self-protection).
 //
 //   classesOf(argv)         class names (policy/classes.mjs order) the command carries
+//   guessedClassesOf(argv)  the subset of classesOf given only because of a standalone UNKNOWN word
 //   fileEffects(argv, ctx)  {reads, writes}: resolved absolute paths, or UNKNOWN
 //   domainsOf(argv)         network hosts the command talks to: lower case, port and userinfo
 //                           removed; UNKNOWN for anything that cannot be named with certainty
@@ -30,7 +31,9 @@
 //   `=` or a separate value; an unambiguous long-option prefix counts (`--del`). For the tools
 //   that write, a dash word after an operand is also an operand (BSD stops option parsing there).
 // - A standalone UNKNOWN word may be a flag: the command gets every class its flags could give
-//   it. An UNKNOWN program name is opaque upstream; defensively it carries every class.
+//   it. The classes that vanish when the same parse is read with `hasUnknown` false are "guessed"
+//   (guessedClassesOf). An UNKNOWN program name is opaque upstream; defensively it carries every
+//   class, and none of them counts as guessed (the UNKNOWN program has its own mark).
 
 import { UNKNOWN } from '../norm/unknown.mjs';
 import { CLASS_NAMES } from '../policy/classes.mjs';
@@ -180,6 +183,11 @@ function longMatches(raw, longV, boolV) {
   const all = longV.filter((l) => l.startsWith(raw));
   return all.length > 0 ? all : [raw];
 }
+
+// True while guessedClassesOf computes the classes a second time with `hasUnknown` off. Every
+// row's `classes(p)` reads the parse, so one switch in parseArgs covers every row (the git
+// sub-command parse and nested commands too). UNKNOWN operands stay in `operands`.
+let ignoringUnknown = false;
 
 class Parsed {
   constructor() {
@@ -333,6 +341,7 @@ function parseArgs(argv, spec = {}) {
       }
     }
   }
+  if (ignoringUnknown) p.hasUnknown = false;
   return p;
 }
 
@@ -2448,6 +2457,31 @@ export function classesOf(argv) {
     if (w.includes('/dev/tcp/') || w.includes('/dev/udp/')) out.add('network-fetch');
   }
   return CLASS_NAMES.filter((c) => out.has(c));
+}
+
+/**
+ * The classes of classesOf that exist only because of a standalone UNKNOWN word (a flag it might
+ * be): the row's classes computed again with `p.hasUnknown` false, UNKNOWN operands kept, and
+ * subtracted. `rsync $F a b` -> delete, network-fetch; `rsync -a a b` -> none. An UNKNOWN program
+ * name is not a guessed class (it is an UNKNOWN program, which has its own mark).
+ * @param {(string|typeof UNKNOWN)[]} argv
+ * @returns {string[]}
+ */
+export function guessedClassesOf(argv) {
+  const all = classesOf(argv);
+  if (all.length === 0) return [];
+  const certain = new Set(withUnknownIgnored(() => classesOf(argv)));
+  return all.filter((c) => !certain.has(c));
+}
+
+function withUnknownIgnored(fn) {
+  const prior = ignoringUnknown;
+  ignoringUnknown = true;
+  try {
+    return fn();
+  } finally {
+    ignoringUnknown = prior;
+  }
 }
 
 /**
