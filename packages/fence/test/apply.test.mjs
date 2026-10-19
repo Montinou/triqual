@@ -223,6 +223,149 @@ test('changing undecided from deny to host is weakening', () => {
   assert.equal(classifyChange(BASE, added).weakening, true);
 });
 
+// A BASE variant with extra mode settings on the `unattended` profile.
+function withProfile(over) {
+  const next = clone(BASE);
+  next.profiles.unattended = { ...next.profiles.unattended, ...over };
+  return next;
+}
+
+test('loosening a mode setting is weakening, tightening it is not', () => {
+  const audited = withProfile({ uncertain: 'audit' });
+  const denied = withProfile({ uncertain: 'deny' });
+  // opaque deny -> audit
+  const opaqueAudit = withProfile({ uncertain: { opaque: 'audit' } });
+  const r = classifyChange(denied, opaqueAudit);
+  assert.equal(r.weakening, true);
+  assert.ok(r.reasons.some((s) => /unattended/.test(s) && /opaque/.test(s)), r.reasons.join('\n'));
+  // the same setting back to deny tightens
+  assert.deepEqual(classifyChange(opaqueAudit, denied), { weakening: false, reasons: [] });
+  assert.deepEqual(classifyChange(audited, denied), { weakening: false, reasons: [] });
+  assert.equal(classifyChange(denied, audited).weakening, true);
+  // selfProtection, rules, a construct
+  assert.equal(classifyChange(denied, withProfile({ uncertain: { selfProtection: 'audit' } })).weakening, true);
+  assert.equal(classifyChange(denied, withProfile({ uncertain: { rules: 'audit' } })).weakening, true);
+  const construct = withProfile({ uncertain: { constructs: { 'eval-dynamic': 'audit' } } });
+  assert.equal(classifyChange(denied, construct).weakening, true);
+  assert.equal(classifyChange(construct, withProfile({ uncertain: { constructs: { 'eval-dynamic': 'deny' } } })).weakening, false);
+  // a construct override that is dropped falls back to the opaque action: audit there is weakening
+  assert.equal(classifyChange(withProfile({ uncertain: { opaque: 'audit', constructs: { x: 'deny' } } }), withProfile({ uncertain: 'audit' })).weakening, true);
+  // dropping an audit override while opaque stays deny tightens
+  assert.equal(classifyChange(construct, denied).weakening, false);
+});
+
+test('certain deny -> audit is weakening', () => {
+  const next = withProfile({ certain: 'audit' });
+  const r = classifyChange(BASE, next);
+  assert.equal(r.weakening, true);
+  assert.ok(r.reasons.some((s) => /unattended/.test(s) && /certain/.test(s)), r.reasons.join('\n'));
+  assert.deepEqual(classifyChange(next, BASE), { weakening: false, reasons: [] });
+});
+
+test('a rules override moving away from deny is weakening; an added deny override is not', () => {
+  const off = withProfile({ rules: { credentials: 'off' } });
+  const r = classifyChange(BASE, off);
+  assert.equal(r.weakening, true);
+  assert.ok(r.reasons.some((s) => /credentials/.test(s)), r.reasons.join('\n'));
+  assert.equal(classifyChange(BASE, withProfile({ rules: { credentials: 'audit' } })).weakening, true);
+  // off -> audit -> deny tighten
+  const audit = withProfile({ rules: { credentials: 'audit' } });
+  assert.deepEqual(classifyChange(off, audit), { weakening: false, reasons: [] });
+  assert.deepEqual(classifyChange(audit, withProfile({ rules: { credentials: 'deny' } })), { weakening: false, reasons: [] });
+  assert.deepEqual(classifyChange(off, BASE), { weakening: false, reasons: [] });
+  // an added `rules: {x: "deny"}` is not weakening (it only matters against an audit rule)
+  const auditRule = clone(BASE);
+  auditRule.rules.push({ id: 'soft', decision: 'audit', match: { paths: ['**/x'] }, why: 'observe' });
+  const forced = clone(auditRule);
+  forced.profiles.unattended = { ...forced.profiles.unattended, rules: { soft: 'deny' } };
+  assert.deepEqual(classifyChange(auditRule, forced), { weakening: false, reasons: [] });
+  // removing it is weakening again
+  assert.equal(classifyChange(forced, auditRule).weakening, true);
+});
+
+test('a rule decision changed to audit is weakening; audit to deny is not', () => {
+  const audited = clone(BASE);
+  audited.rules[0].decision = 'audit';
+  const r = classifyChange(BASE, audited);
+  assert.equal(r.weakening, true);
+  assert.ok(r.reasons.some((s) => /credentials/.test(s) && /audit/.test(s)), r.reasons.join('\n'));
+  assert.deepEqual(classifyChange(audited, BASE), { weakening: false, reasons: [] });
+  // an allow rule turned into an audit rule stops allowing and starts observing: both tighten
+  const allow = clone(BASE);
+  allow.rules.push({ id: 'ok', decision: 'allow', match: { paths: ['/srv/docs/**'], access: 'read' }, why: 'docs' });
+  const allowToAudit = clone(allow);
+  allowToAudit.rules[1].decision = 'audit';
+  assert.equal(classifyChange(allow, allowToAudit).weakening, false);
+  // a new audit rule is an observer: it adds no allow and no deny
+  const addedAudit = clone(BASE);
+  addedAudit.rules.push({ id: 'soft', decision: 'audit', match: { paths: ['**/x'] }, why: 'observe' });
+  assert.equal(classifyChange(BASE, addedAudit).weakening, false);
+  // an audit rule still keeps allow rules from allowing what it matches, so removing it or narrowing it loosens
+  const removed = classifyChange(addedAudit, BASE);
+  assert.equal(removed.weakening, true);
+  assert.ok(removed.reasons.some((s) => /soft/.test(s) && /removed/.test(s)), removed.reasons.join('\n'));
+  const narrowed = clone(addedAudit);
+  narrowed.rules[1].match.paths = ['**/xyz'];
+  assert.equal(classifyChange(addedAudit, narrowed).weakening, true);
+  const widened = clone(addedAudit);
+  widened.rules[1].match.paths.push('**/y');
+  assert.equal(classifyChange(addedAudit, widened).weakening, false);
+  // an audit rule turned into a deny keeps its blocking only when its match is not narrowed
+  const auditToDeny = (mutate) => {
+    const before = clone(BASE);
+    before.rules.push({ id: 'soft', decision: 'audit', match: { paths: ['**/x', '**/y'] }, why: 'observe' });
+    const after = clone(before);
+    after.rules[1].decision = 'deny';
+    mutate(after, before);
+    return [before, after];
+  };
+  assert.deepEqual(classifyChange(...auditToDeny(() => {})), { weakening: false, reasons: [] });
+  const [b1, a1] = auditToDeny((a) => { a.rules[1].match.paths = ['**/x']; });
+  const dropped = classifyChange(b1, a1);
+  assert.equal(dropped.weakening, true);
+  assert.ok(dropped.reasons.some((s) => /soft/.test(s) && /\*\*\/y/.test(s)), dropped.reasons.join('\n'));
+  const [b2, a2] = auditToDeny((a) => { a.rules[1].except = { paths: ['**/x/safe'] }; });
+  assert.equal(classifyChange(b2, a2).weakening, true);
+  // the same narrowing with a profile override that already forced the rule to deny on both sides
+  const forcedDeny = { default: { undecided: 'deny', rules: { soft: 'deny' } } };
+  const [b3, a3] = auditToDeny((a, b) => {
+    a.rules[1].match.paths = ['**/x'];
+    for (const p of [a, b]) p.profiles = structuredClone(forcedDeny);
+  });
+  assert.equal(classifyChange(b3, a3).weakening, true);
+  const [b4, a4] = auditToDeny((a, b) => {
+    for (const p of [a, b]) p.profiles = structuredClone(forcedDeny);
+  });
+  assert.deepEqual(classifyChange(b4, a4), { weakening: false, reasons: [] });
+  // an audit rule turned into an allow is weakening
+  const auditToAllow = clone(addedAudit);
+  auditToAllow.rules[1].decision = 'allow';
+  assert.equal(classifyChange(addedAudit, auditToAllow).weakening, true);
+});
+
+test('any change to projects is weakening', () => {
+  const added = clone(BASE);
+  added.projects = [{ path: '~/sandbox/**', profile: 'default' }];
+  const r = classifyChange(BASE, added);
+  assert.equal(r.weakening, true);
+  assert.ok(r.reasons.some((s) => /projects/.test(s)), r.reasons.join('\n'));
+  // removed, repointed, reordered and an unchanged list
+  assert.equal(classifyChange(added, BASE).weakening, true);
+  const repointed = clone(added);
+  repointed.projects[0].profile = 'unattended';
+  assert.equal(classifyChange(added, repointed).weakening, true);
+  const two = clone(added);
+  two.projects.push({ path: '~/other/**', profile: 'unattended' });
+  const swapped = clone(two);
+  swapped.projects.reverse();
+  assert.equal(classifyChange(two, swapped).weakening, true);
+  assert.deepEqual(classifyChange(added, clone(added)), { weakening: false, reasons: [] });
+  // an empty list is the same as none
+  const empty = clone(BASE);
+  empty.projects = [];
+  assert.deepEqual(classifyChange(BASE, empty), { weakening: false, reasons: [] });
+});
+
 test('denyFileWrites true to false is weakening', () => {
   const next = clone(BASE);
   next.branches.denyFileWrites = false;

@@ -4,6 +4,8 @@
 //        a load error; warn (exit 0) on any allow rule that can cover a `runs-repo-code` part:
 //        one whose `class` lists it, or one with an `argv` match (an argv match alone covers
 //        runs-repo-code). A rule without either can not cover such a part (see evaluate.mjs).
+//        Also warns (exit 0) on a profile's `uncertain.constructs` name that fence never reports
+//        (src/norm/constructs.mjs): construct names are free strings, so an unknown one is a likely typo.
 // test:  run each rule's examples through the evaluator with the default profile, in a fresh
 //        temporary repo directory (the example cwd and repo root; `${repo}`, `${cwd}` and
 //        relative paths resolve inside it, `~` to the home; paths are realpath-resolved). A
@@ -27,6 +29,7 @@ import path from 'node:path';
 import { runEngine } from '../engine.mjs';
 import { evaluate } from '../eval/evaluate.mjs';
 import { ARGV_COVERED_CLASSES } from '../policy/classes.mjs';
+import { isKnownConstruct } from '../norm/constructs.mjs';
 import { loadPolicy } from '../policy/load.mjs';
 import { runBuiltinCases } from './selfprotect.mjs';
 
@@ -94,6 +97,14 @@ export function runCheck(args, io) {
       const how = rule.match.class?.includes('runs-repo-code') ? 'lists runs-repo-code' : 'has an argv match, which covers runs-repo-code';
       io.err(
         `fence: warning: allow rule "${rule.id}" ${how}: it lets the agent run repository code (tests, scripts, hooks) whose contents fence does not read.`,
+      );
+    }
+  }
+  for (const [name, profile] of Object.entries(policy.profiles)) {
+    for (const construct of Object.keys(profile.uncertain.constructs)) {
+      if (isKnownConstruct(construct)) continue;
+      io.err(
+        `fence: warning: profile "${name}": uncertain.constructs names "${construct}", which is not in fence's known list of opaque constructs (a likely typo).`,
       );
     }
   }

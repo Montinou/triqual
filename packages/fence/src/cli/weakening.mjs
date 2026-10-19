@@ -27,6 +27,16 @@
 // from an allow (an allow's keys also decide which effects it covers), `access` on an allow changed
 // other than from `any`, an allow's `except` narrowed or removed; a profile added or removed; an
 // `undecided` moved from deny to host; a protected branch removed; denyFileWrites turned off.
+//
+// Modes (profiles carry `undecided`, `uncertain.{opaque,selfProtection,rules,constructs}`, `certain`
+// and `rules`; the policy carries `projects`): every profile setting is ranked toward deny (actions
+// off < audit < deny, undecided host < deny) and moving a setting down the ranking is weakening, up is
+// not. A construct's effective action is `constructs[name]` or else `opaque`; a rule's is the profile's
+// `rules[id]` or else the rule's own decision, so an added `rules` entry of `deny` is not weakening
+// unless it is later removed from an audit rule. Rule `decision`: deny -> audit and audit -> allow are
+// weakening, allow -> audit is not, and audit -> deny is compared like a deny (a narrowed match or an added except weakens); a new audit rule is not, but removing or narrowing
+// one is (an audit rule keeps allow rules from allowing what it matches). Any change to `projects`
+// (which profile applies where) is weakening.
 
 import { validatePolicy } from '../policy/schema.mjs';
 
@@ -44,30 +54,30 @@ function missingFrom(key, a, b) {
 
 const accessOf = (match) => (match.paths ? (match.access ?? 'any') : null);
 
-function compareDeny(id, o, n) {
+function compareDeny(id, o, n, label = 'deny') {
   const reasons = [];
   const hasExcept = Boolean(o.except || n.except);
   for (const key of MATCH_LIST_KEYS) {
     const a = o.match[key];
     const b = n.match[key];
-    if (!a && b) reasons.push(`deny rule "${id}": match.${key} was added, which narrows the rule`);
+    if (!a && b) reasons.push(`${label} rule "${id}": match.${key} was added, which narrows the rule`);
     else if (a && !b) {
-      if (hasExcept) reasons.push(`deny rule "${id}": match.${key} was removed while the rule has an except, so the change is not proven to widen it`);
+      if (hasExcept) reasons.push(`${label} rule "${id}": match.${key} was removed while the rule has an except, so the change is not proven to widen it`);
     } else if (a && b) {
       const lost = missingFrom(key, a, b);
-      if (lost.length) reasons.push(`deny rule "${id}": match.${key} lost or edited ${lost.join(', ')}`);
+      if (lost.length) reasons.push(`${label} rule "${id}": match.${key} lost or edited ${lost.join(', ')}`);
     }
   }
   const oa = accessOf(o.match);
   const na = accessOf(n.match);
-  if (oa && na && oa !== na && na !== 'any') reasons.push(`deny rule "${id}": match.access changed from ${oa} to ${na}, which narrows the rule`);
+  if (oa && na && oa !== na && na !== 'any') reasons.push(`${label} rule "${id}": match.access changed from ${oa} to ${na}, which narrows the rule`);
   for (const key of EXCEPT_KEYS) {
     const a = o.except?.[key];
     const b = n.except?.[key];
-    if (!a && b) reasons.push(`deny rule "${id}": except.${key} was added (${b.map((v) => show(key, v)).join(', ')})`);
+    if (!a && b) reasons.push(`${label} rule "${id}": except.${key} was added (${b.map((v) => show(key, v)).join(', ')})`);
     else if (a && b) {
       const gained = missingFrom(key, b, a);
-      if (gained.length) reasons.push(`deny rule "${id}": except.${key} was widened with ${gained.join(', ')}`);
+      if (gained.length) reasons.push(`${label} rule "${id}": except.${key} was widened with ${gained.join(', ')}`);
     }
   }
   return reasons;
@@ -108,14 +118,20 @@ function compareRules(oldRules, newRules) {
     const n = newById.get(id);
     if (!n) {
       if (o.decision === 'deny') reasons.push(`deny rule "${id}" was removed`);
+      else if (o.decision === 'audit') reasons.push(`audit rule "${id}" was removed (it kept allow rules from allowing what it matched)`);
       continue;
     }
     if (o.decision !== n.decision) {
-      // allow -> deny removes an allow and adds a deny: both tighten
-      if (n.decision === 'allow') reasons.push(`rule "${id}" changed from deny to allow`);
+      // allow -> deny and allow -> audit remove an allow and add an observer or a deny: both tighten
+      if (n.decision === 'allow') reasons.push(`rule "${id}" changed from ${o.decision} to allow`);
+      else if (n.decision === 'audit' && o.decision === 'deny') reasons.push(`rule "${id}" changed from deny to audit`);
+      // an audit rule already kept allow rules from allowing what it matches, so audit -> deny
+      // tightens only when its match is not narrowed: compare it like any deny
+      else if (n.decision === 'deny' && o.decision === 'audit') reasons.push(...compareDeny(id, o, n, 'audit -> deny'));
       continue;
     }
-    reasons.push(...(o.decision === 'deny' ? compareDeny(id, o, n) : compareAllow(id, o, n)));
+    if (o.decision === 'allow') reasons.push(...compareAllow(id, o, n));
+    else reasons.push(...compareDeny(id, o, n, o.decision));
   }
   for (const [id, n] of newById) {
     if (!oldById.has(id) && n.decision === 'allow') reasons.push(`allow rule "${id}" was added`);
@@ -123,16 +139,58 @@ function compareRules(oldRules, newRules) {
   return reasons;
 }
 
-function compareProfiles(o, n) {
+const ACTION_RANK = { off: 0, audit: 1, deny: 2 };
+const UNDECIDED_RANK = { host: 0, deny: 1 };
+
+// The action a profile gives a rule: its `rules` override, else the rule's own decision (a rule
+// missing from the policy counts as deny, the strictest reading).
+function ruleAction(policy, profile, id) {
+  if (Object.hasOwn(profile.rules, id)) return profile.rules[id];
+  const rule = policy.rules.find((r) => r.id === id);
+  return rule && rule.decision === 'audit' ? 'audit' : 'deny';
+}
+
+// Reasons for the settings of profile `name` that moved away from deny.
+function compareModeSettings(name, o, n, oldPolicy, newPolicy) {
+  const reasons = [];
+  const lowered = (what, from, to) => reasons.push(`profile "${name}": ${what} moved from ${from} to ${to}`);
+  if (UNDECIDED_RANK[n.undecided] < UNDECIDED_RANK[o.undecided]) lowered('undecided', o.undecided, n.undecided);
+  for (const key of ['opaque', 'selfProtection', 'rules']) {
+    if (ACTION_RANK[n.uncertain[key]] < ACTION_RANK[o.uncertain[key]]) lowered(`uncertain.${key}`, o.uncertain[key], n.uncertain[key]);
+  }
+  const constructAction = (profile, c) => (Object.hasOwn(profile.uncertain.constructs, c) ? profile.uncertain.constructs[c] : profile.uncertain.opaque);
+  for (const c of new Set([...Object.keys(o.uncertain.constructs), ...Object.keys(n.uncertain.constructs)])) {
+    const from = constructAction(o, c);
+    const to = constructAction(n, c);
+    if (ACTION_RANK[to] < ACTION_RANK[from]) lowered(`uncertain.constructs[${JSON.stringify(c)}]`, from, to);
+  }
+  if (ACTION_RANK[n.certain] < ACTION_RANK[o.certain]) lowered('certain', o.certain, n.certain);
+  for (const id of new Set([...Object.keys(o.rules), ...Object.keys(n.rules)])) {
+    const from = ruleAction(oldPolicy, o, id);
+    const to = ruleAction(newPolicy, n, id);
+    if (ACTION_RANK[to] < ACTION_RANK[from]) lowered(`rules[${JSON.stringify(id)}]`, from, to);
+  }
+  return reasons;
+}
+
+function compareProfiles(oldPolicy, newPolicy) {
+  const o = oldPolicy.profiles;
+  const n = newPolicy.profiles;
   const reasons = [];
   for (const name of Object.keys(n)) {
     if (!Object.hasOwn(o, name)) reasons.push(`profile "${name}" was added (profile changes are not proven to tighten the policy)`);
-    else if (o[name].undecided === 'deny' && n[name].undecided === 'host') reasons.push(`profile "${name}": undecided moved from deny to host`);
+    else reasons.push(...compareModeSettings(name, o[name], n[name], oldPolicy, newPolicy));
   }
   for (const name of Object.keys(o)) {
     if (!Object.hasOwn(n, name)) reasons.push(`profile "${name}" was removed (profile changes are not proven to tighten the policy)`);
   }
   return reasons;
+}
+
+// Which profile applies where is a mode choice, so any change to the list (entries, their order) weakens.
+function compareProjects(o, n) {
+  if (JSON.stringify(o) === JSON.stringify(n)) return [];
+  return ['projects changed (which profile applies to which project is not proven to tighten the policy)'];
 }
 
 function compareBranches(o, n) {
@@ -161,6 +219,11 @@ export function classifyChange(oldPolicy, newPolicy) {
   if (prev.error) return { weakening: true, reasons: [`the current policy is not valid (${prev.error}), so the change can not be proven to tighten it`] };
   const o = prev.policy;
   const n = next.policy;
-  const reasons = [...compareProfiles(o.profiles, n.profiles), ...compareBranches(o.branches, n.branches), ...compareRules(o.rules, n.rules)];
+  const reasons = [
+    ...compareProfiles(o, n),
+    ...compareProjects(o.projects, n.projects),
+    ...compareBranches(o.branches, n.branches),
+    ...compareRules(o.rules, n.rules),
+  ];
   return { weakening: reasons.length > 0, reasons };
 }

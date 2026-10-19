@@ -12,7 +12,7 @@
 //   unknown-key    a key the schema does not define (including symbol keys)
 //   duplicate-id   two rules share an id
 //   unknown-class  a match.class entry outside CLASS_NAMES
-//   glob           an invalid glob pattern
+//   glob           an invalid glob pattern (a rule glob, or a `projects` path)
 //   forbidden-key  __proto__, constructor or prototype inside an example
 
 import { PolicyError } from './errors.mjs';
@@ -26,8 +26,12 @@ const PLACEHOLDERS = ['${repo}', '${cwd}'];
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const CLASS_SET = new Set(CLASS_NAMES);
 
-const TOP_KEYS = ['version', 'profiles', 'branches', 'rules'];
-const PROFILE_KEYS = ['undecided'];
+const TOP_KEYS = ['version', 'profiles', 'projects', 'branches', 'rules'];
+const PROFILE_KEYS = ['undecided', 'uncertain', 'certain', 'rules'];
+const UNCERTAIN_KEYS = ['opaque', 'selfProtection', 'rules', 'constructs'];
+const UNCERTAIN_CATEGORIES = ['opaque', 'selfProtection', 'rules'];
+const PROJECT_KEYS = ['path', 'profile'];
+const ACTIONS = ['deny', 'audit'];
 const BRANCH_KEYS = ['protected', 'denyFileWrites'];
 const RULE_KEYS = ['id', 'decision', 'match', 'except', 'why', 'examples'];
 const MATCH_KEYS = ['class', 'paths', 'access', 'argv', 'mcp', 'domains'];
@@ -220,7 +224,7 @@ function validateRule(v, ptr, seenIds) {
   if (seenIds.has(src.id)) fail('duplicate-id', `duplicate rule id ${JSON.stringify(src.id)}`, idPtr);
   seenIds.add(src.id);
   out.id = src.id;
-  out.decision = oneOf(src.decision, ['deny', 'allow'], ptr + token('decision'), 'decision');
+  out.decision = oneOf(src.decision, ['deny', 'allow', 'audit'], ptr + token('decision'), 'decision');
   out.match = validateMatch(src.match, ptr + token('match'));
   if (Object.hasOwn(src, 'except')) out.except = validateExcept(src.except, ptr + token('except'));
   const whyPtr = ptr + token('why');
@@ -228,6 +232,37 @@ function validateRule(v, ptr, seenIds) {
   if (src.why.trim() === '') fail('value', 'why must not be blank', whyPtr);
   out.why = src.why;
   if (Object.hasOwn(src, 'examples')) out.examples = validateExamples(src.examples, ptr + token('examples'));
+  return out;
+}
+
+function uncertainActions(v, ptr) {
+  const out = newObject();
+  if (typeof v === 'string') {
+    // a string applies to every category; `constructs` stays empty
+    const action = oneOf(v, ACTIONS, ptr, 'uncertain');
+    for (const key of UNCERTAIN_CATEGORIES) out[key] = action;
+    out.constructs = newObject();
+    return out;
+  }
+  const src = v === undefined ? newObject() : readObject(v, ptr, UNCERTAIN_KEYS);
+  for (const key of UNCERTAIN_CATEGORIES) {
+    out[key] = Object.hasOwn(src, key) ? oneOf(src[key], ACTIONS, ptr + token(key), key) : 'deny';
+  }
+  out.constructs = newObject();
+  if (Object.hasOwn(src, 'constructs')) {
+    const p = ptr + token('constructs');
+    const names = readObject(src.constructs, p, null);
+    // Construct names are free strings: the normalizer builds some at run time. `fence check` warns on unknown ones.
+    for (const name of Object.keys(names)) put(out.constructs, name, oneOf(names[name], ACTIONS, p + token(name), 'construct action'));
+  }
+  return out;
+}
+
+function validateProfileRules(v, ptr) {
+  const out = newObject();
+  if (v === undefined) return out;
+  const src = readObject(v, ptr, null);
+  for (const id of Object.keys(src)) put(out, id, oneOf(src[id], [...ACTIONS, 'off'], ptr + token(id), 'rule action'));
   return out;
 }
 
@@ -242,15 +277,64 @@ function validateProfiles(v, ptr) {
       if (!Object.hasOwn(prof, 'undecided')) fail('missing-key', 'profile is missing "undecided"', p + token('undecided'));
       const entry = newObject();
       entry.undecided = oneOf(prof.undecided, ['host', 'deny'], p + token('undecided'), 'undecided');
+      entry.uncertain = uncertainActions(prof.uncertain, p + token('uncertain'));
+      entry.certain = Object.hasOwn(prof, 'certain') ? oneOf(prof.certain, ACTIONS, p + token('certain'), 'certain') : 'deny';
+      entry.rules = validateProfileRules(prof.rules, p + token('rules'));
       put(out, name, entry);
     }
   }
   if (!Object.hasOwn(out, 'default')) {
     const entry = newObject();
     entry.undecided = 'host';
+    entry.uncertain = uncertainActions(undefined, '/profiles/default/uncertain');
+    entry.certain = 'deny';
+    entry.rules = newObject();
     out.default = entry;
   }
   return out;
+}
+
+// A profile's `rules` overrides may name only rules whose own decision is deny or audit.
+function checkProfileRules(profiles, rules) {
+  const decisions = new Map(rules.map((r) => [r.id, r.decision]));
+  for (const name of Object.keys(profiles)) {
+    for (const id of Object.keys(profiles[name].rules)) {
+      const p = '/profiles' + token(name) + '/rules' + token(id);
+      if (!decisions.has(id)) fail('value', `rule override names ${JSON.stringify(id)}, which is not a rule`, p);
+      if (decisions.get(id) === 'allow') fail('value', `rule override names ${JSON.stringify(id)}, which is an allow rule (only deny and audit rules can be overridden)`, p);
+    }
+  }
+}
+
+// The text of a glob before its first glob character (`*`, `?`, `[`).
+function literalPrefix(glob) {
+  const at = glob.search(/[*?[]/);
+  return at === -1 ? glob : glob.slice(0, at);
+}
+
+function validateProjects(v, ptr, profiles) {
+  if (v === undefined) return [];
+  const prefixes = new Map();
+  return readArray(v, ptr).map((entry, i) => {
+    const p = ptr + token(i);
+    const src = readObject(entry, p, PROJECT_KEYS);
+    for (const key of PROJECT_KEYS) {
+      if (!Object.hasOwn(src, key)) fail('missing-key', `project entry is missing ${JSON.stringify(key)}`, p + token(key));
+    }
+    const out = newObject();
+    out.path = checkGlob(src.path, p + token('path'));
+    const profilePtr = p + token('profile');
+    if (typeof src.profile !== 'string') fail('type', `profile must be a string, got ${kind(src.profile)}`, profilePtr);
+    if (!Object.hasOwn(profiles, src.profile)) fail('value', `profile ${JSON.stringify(src.profile)} is not defined in profiles`, profilePtr);
+    out.profile = src.profile;
+    // Two entries with the same literal prefix would tie on "longest literal prefix": refused here, statically.
+    const prefix = literalPrefix(out.path);
+    if (prefixes.has(prefix)) {
+      fail('value', `projects entries ${prefixes.get(prefix)} and ${i} have the same literal prefix ${JSON.stringify(prefix)}`, p + token('path'));
+    }
+    prefixes.set(prefix, i);
+    return out;
+  });
 }
 
 function validateBranches(v, ptr) {
@@ -285,6 +369,9 @@ export function validatePolicy(obj) {
   out.profiles = validateProfiles(src.profiles, '/profiles');
   out.branches = validateBranches(src.branches, '/branches');
   const seenIds = new Set();
+  if (Object.hasOwn(src, 'projects') && src.projects === undefined) fail('type', 'expected an array, got undefined', '/projects');
+  out.projects = validateProjects(src.projects, '/projects', out.profiles);
   out.rules = readArray(src.rules, '/rules').map((r, i) => validateRule(r, '/rules' + token(i), seenIds));
+  checkProfileRules(out.profiles, out.rules);
   return out;
 }

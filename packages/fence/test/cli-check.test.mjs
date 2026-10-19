@@ -110,6 +110,29 @@ test('fence check warns on an allow rule matching runs-repo-code', () => {
   assert.ok(!out2.includes('"search-only"'), out2);
 });
 
+test('fence check warns, without failing, on an unknown construct name in a profile', () => {
+  const text = (constructs) =>
+    JSON.stringify({
+      version: 1,
+      profiles: { default: { undecided: 'host', uncertain: { constructs } } },
+      rules: [],
+    });
+  const bad = setup(text({ 'no-such': 'audit', 'eval-dynamic': 'deny' }));
+  const r = fence(['check', '--policy', bad.policy], bad.home);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stderr, /warning: profile "default": uncertain\.constructs names "no-such"/);
+  assert.match(r.stderr, /not in fence's known list of opaque constructs \(a likely typo\)/);
+  assert.ok(!/never applies/.test(r.stderr), r.stderr);
+  assert.ok(!r.stderr.includes('"eval-dynamic"'), r.stderr);
+  assert.match(r.stdout, /is valid/);
+
+  // known names draw no warning
+  const good = setup(text({ 'eval-dynamic': 'audit', 'command-substitution': 'deny' }));
+  const g = fence(['check', '--policy', good.policy], good.home);
+  assert.equal(g.code, 0, g.stderr);
+  assert.ok(!/warning/.test(g.stderr), g.stderr);
+});
+
 test('fence test runs examples with non-shell tools and shell examples through the engine', () => {
   const ok = setup(SPEC_EXAMPLE);
   const r = fence(['test', '--policy', ok.policy], ok.home);

@@ -62,7 +62,15 @@ test('accepts the spec example policy', () => {
   const before = JSON.stringify(input);
   const p = validatePolicy(input);
   assert.equal(JSON.stringify(input), before, 'input must not be mutated');
-  assert.equal(JSON.stringify(p), JSON.stringify(JSON.parse(SPEC_EXAMPLE)));
+  // Defaults are filled: every profile carries all mode settings, and `projects` is [].
+  const expected = JSON.parse(SPEC_EXAMPLE);
+  const DENY_ALL = { opaque: 'deny', selfProtection: 'deny', rules: 'deny', constructs: {} };
+  expected.profiles = {
+    default: { undecided: 'host', uncertain: DENY_ALL, certain: 'deny', rules: {} },
+    unattended: { undecided: 'deny', uncertain: DENY_ALL, certain: 'deny', rules: {} },
+  };
+  expected.projects = [];
+  assert.deepEqual(JSON.parse(JSON.stringify(p)), expected);
   assertNullProtoTree(p);
   // Fresh copies, never the input's own objects.
   assert.notEqual(p.rules, input.rules);
@@ -185,7 +193,10 @@ test('rejects a match with no keys', () => {
 test('fills defaults', () => {
   const p = validatePolicy({ version: 1, rules: [] });
   assert.equal(p.version, 1);
-  assert.deepEqual(JSON.parse(JSON.stringify(p.profiles)), { default: { undecided: 'host' } });
+  assert.deepEqual(JSON.parse(JSON.stringify(p.profiles)), {
+    default: { undecided: 'host', uncertain: { opaque: 'deny', selfProtection: 'deny', rules: 'deny', constructs: {} }, certain: 'deny', rules: {} },
+  });
+  assert.deepEqual(p.projects, []);
   assert.deepEqual([...p.branches.protected], ['main', 'master', 'develop']);
   assert.equal(p.branches.denyFileWrites, false);
   assert.deepEqual(p.rules, []);
@@ -273,4 +284,109 @@ test('never mutates the input and returns fresh objects', () => {
   p.rules[0].match.paths.push('x');
   p.rules[0].examples.deny[0].tool = 'Write';
   assert.deepEqual(input, snapshot);
+});
+
+// ---- mode settings (profiles are modes) and projects ----
+
+const MODES_EXAMPLE = {
+  profiles: {
+    default: { undecided: 'host', uncertain: 'audit' },
+    strict: { undecided: 'host', uncertain: 'deny' },
+    relaxed: { undecided: 'host', uncertain: 'audit', certain: 'audit' },
+    unattended: { undecided: 'deny', uncertain: 'deny' },
+  },
+  projects: [{ path: '~/Projectos/sandbox/**', profile: 'relaxed' }],
+};
+
+test('the four-profile modes example loads and normalizes', () => {
+  const p = validatePolicy(policy([rule()], MODES_EXAMPLE));
+  assertNullProtoTree(p);
+  const all = (a) => ({ opaque: a, selfProtection: a, rules: a, constructs: {} });
+  assert.deepEqual(JSON.parse(JSON.stringify(p.profiles)), {
+    default: { undecided: 'host', uncertain: all('audit'), certain: 'deny', rules: {} },
+    strict: { undecided: 'host', uncertain: all('deny'), certain: 'deny', rules: {} },
+    relaxed: { undecided: 'host', uncertain: all('audit'), certain: 'audit', rules: {} },
+    unattended: { undecided: 'deny', uncertain: all('deny'), certain: 'deny', rules: {} },
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(p.projects)), [{ path: '~/Projectos/sandbox/**', profile: 'relaxed' }]);
+  assert.equal(Object.getPrototypeOf(p.projects[0]), null);
+});
+
+test('an uncertain object fills omitted categories with deny and keeps constructs', () => {
+  const p = validatePolicy(
+    policy([rule()], {
+      profiles: { ci: { undecided: 'host', uncertain: { opaque: 'audit', constructs: { eval: 'deny', 'process-substitution': 'audit' } } } },
+    }),
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(p.profiles.ci.uncertain)), {
+    opaque: 'audit',
+    selfProtection: 'deny',
+    rules: 'deny',
+    constructs: { eval: 'deny', 'process-substitution': 'audit' },
+  });
+  assertNullProtoTree(p);
+});
+
+test('rules overrides accept deny, audit and off on deny and audit rules', () => {
+  const rules = [rule({ id: 'x' }), rule({ id: 'y', decision: 'audit' })];
+  const p = validatePolicy(policy(rules, { profiles: { ci: { undecided: 'host', rules: { x: 'off', y: 'deny' } } } }));
+  assert.deepEqual(JSON.parse(JSON.stringify(p.profiles.ci.rules)), { x: 'off', y: 'deny' });
+  // a rule whose own decision is audit loads, and `rules: {x: "deny"}` on it loads
+  assert.equal(p.rules[1].decision, 'audit');
+  validatePolicy(policy([rule({ id: 'x', decision: 'audit' })], { profiles: { default: { undecided: 'host', rules: { x: 'deny' } } } }));
+});
+
+test('rejects bad mode settings', () => {
+  const prof = (over) => policy([rule({ id: 'x' }), rule({ id: 'a', decision: 'allow' })], { profiles: { default: { undecided: 'host', ...over } } });
+  rejects(prof({ uncertain: { weird: 'deny' } }), 'unknown-key', '/profiles/default/uncertain/weird');
+  rejects(prof({ uncertain: { opaque: 'off' } }), 'value', '/profiles/default/uncertain/opaque');
+  rejects(prof({ uncertain: 'allow' }), 'value', '/profiles/default/uncertain');
+  rejects(prof({ uncertain: 7 }), 'type', '/profiles/default/uncertain');
+  rejects(prof({ uncertain: { constructs: { eval: 'off' } } }), 'value', '/profiles/default/uncertain/constructs/eval');
+  rejects(prof({ certain: 'off' }), 'value', '/profiles/default/certain');
+  rejects(prof({ certain: 'host' }), 'value', '/profiles/default/certain');
+  rejects(prof({ rules: { x: 'allow' } }), 'value', '/profiles/default/rules/x');
+  rejects(prof({ rules: { nope: 'deny' } }), 'value', '/profiles/default/rules/nope');
+  rejects(prof({ rules: { a: 'deny' } }), 'value', '/profiles/default/rules/a');
+  rejects(prof({ rules: [] }), 'type', '/profiles/default/rules');
+});
+
+test('rejects a rule decision other than deny, allow or audit', () => {
+  rejects(policy([rule({ decision: 'off' })]), 'value', '/rules/0/decision');
+  validatePolicy(policy([rule({ decision: 'audit' })]));
+});
+
+test('rejects bad projects entries', () => {
+  const proj = (projects, profiles) => policy([rule()], { projects, ...(profiles ? { profiles } : {}) });
+  rejects(proj([{ path: '~/a/**', profile: 'nope' }]), 'value', '/projects/0/profile');
+  rejects(proj([{ path: '~/a/**', profile: 'default', extra: 1 }]), 'unknown-key', '/projects/0/extra');
+  rejects(proj([{ path: '~/a/**' }]), 'missing-key', '/projects/0/profile');
+  rejects(proj([{ profile: 'default' }]), 'missing-key', '/projects/0/path');
+  rejects(proj([{ path: '', profile: 'default' }]), 'glob', '/projects/0/path');
+  rejects(proj([{ path: '~/a/[', profile: 'default' }]), 'glob', '/projects/0/path');
+  rejects(proj({}), 'type', '/projects');
+  rejects(proj(['x']), 'type', '/projects/0');
+  // two entries with the same literal prefix are a load error, whatever the rest of the glob says
+  rejects(proj([{ path: '~/a/**', profile: 'default' }, { path: '~/a/*', profile: 'default' }]), 'value', '/projects/1/path');
+  rejects(proj([{ path: '~/a/**', profile: 'default' }, { path: '~/a/**', profile: 'default' }]), 'value', '/projects/1/path');
+  rejects(proj([{ path: '~/a/b', profile: 'default' }, { path: '~/a/b', profile: 'ci' }], { ci: { undecided: 'deny' } }), 'value', '/projects/1/path');
+  // different literal prefixes are fine, and so is a prefix that only contains the other
+  const ok = validatePolicy(proj([{ path: '~/a/**', profile: 'default' }, { path: '~/a/b/**', profile: 'default' }, { path: '~/b*', profile: 'default' }]));
+  assert.equal(ok.projects.length, 3);
+});
+
+test('a policy with no mode keys normalizes to all deny, empty rules and no projects', () => {
+  const p = validatePolicy({ version: 1, rules: [], profiles: { ci: { undecided: 'deny' } } });
+  assert.deepEqual(JSON.parse(JSON.stringify(p.profiles.ci)), {
+    undecided: 'deny',
+    uncertain: { opaque: 'deny', selfProtection: 'deny', rules: 'deny', constructs: {} },
+    certain: 'deny',
+    rules: {},
+  });
+  assert.deepEqual(p.projects, []);
+  // each profile owns its constructs and rules objects
+  const q = validatePolicy({ version: 1, rules: [], profiles: { a: { undecided: 'deny' }, b: { undecided: 'deny' } } });
+  assert.notEqual(q.profiles.a.uncertain, q.profiles.b.uncertain);
+  assert.notEqual(q.profiles.a.uncertain.constructs, q.profiles.b.uncertain.constructs);
+  assert.notEqual(q.profiles.a.rules, q.profiles.b.rules);
 });
