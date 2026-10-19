@@ -89,7 +89,10 @@
 // - Code-loading variables (T17, tables/envvars.mjs): a prefix assignment, a standalone assignment,
 //   `export|declare|typeset|readonly|local NAME[=v]`, `read NAME`, `printf -v NAME`, `unset NAME`,
 //   `env NAME=v|-u NAME|--unset=NAME|-i`, and `sudo|doas NAME=v` of a listed name are opaque
-//   `code-loading-var` (loadingVar() is the one place that throws). A name that is not literal in
+//   `code-loading-var`, or `host-config-var` for HOME, FENCE_PROFILE, CLAUDE_CONFIG_DIR,
+//   CLAUDE_CODE_PLUGIN_DIRS, CODEX_HOME, XDG_*, a name that is not literal, `env -i` and `exec -c`
+//   (loadingVar(), envLayer's wipe and execLayer throw; the parser throws it for `NAME+=v`,
+//   `NAME[i]=v` and `NAME=( … )` of those names). A name that is not literal in
 //   those positions is opaque too. Re-parsed text goes through the same walk.
 // - Bulk writers, patch targets and git tree updates (T18, tables/bulk.mjs, bulkStep): a bulk
 //   writer adds its source's would-be files under the protected subpaths to `writes` (the source
@@ -143,7 +146,7 @@ import { repoOf, hasLocalBranch } from '../resolve/repo.mjs';
 import { classesOf, guessedClassesOf, fileEffects, domainsOf, hostToDomain, urlDomainOf, isEnvironPath, writesNothing, READ_ONLY_PROGRAMS } from '../tables/classes.mjs';
 import { checkPathWrite } from '../eval/builtin.mjs';
 import { stripOne, findExecs, valueFlags, MAX_WRAP_DEPTH } from '../tables/wrappers.mjs';
-import { isCodeLoadingAssignment } from '../tables/envvars.mjs';
+import { isCodeLoadingAssignment, isHostConfigName } from '../tables/envvars.mjs';
 import { bulkOf, PROTECTED_SUBGLOBS, MAX_WALK_ENTRIES, MAX_WALK_DEPTH, TREE_PATHSPECS, UNNAMEABLE } from '../tables/bulk.mjs';
 import { gitTreeDiff as defaultGitTreeDiff, gitConfigFiles, gitConfigClosure, gitConfigEntries, inProtectedSubpath, indexMentionsProtected, MAX_CONFIG_BYTES, NOT_A_REVISION } from '../resolve/git.mjs';
 import { patchTargets as defaultPatchTargets, patchTargetsFromText } from '../resolve/patch.mjs';
@@ -2014,6 +2017,9 @@ const NAME_PREFIX = /^[A-Za-z_][A-Za-z0-9_]*/;
 const ENV_ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/;
 
 function loadingVar(name, value, off) {
+  // host-config first: those names are code-loading names too (and a name that is not literal could
+  // be one of them), but they get a construct of their own
+  if (isHostConfigName(name)) throw new Opaque('unsupported', 'host-config-var', off);
   if (isCodeLoadingAssignment(name, value)) throw new Opaque('unsupported', 'code-loading-var', off);
 }
 
@@ -2357,7 +2363,7 @@ function declaredVars(argv, leads, off, kind) {
 function envLayer(argv, off) {
   const { short, long } = valueFlags('env');
   const wipe = () => {
-    throw new Opaque('unsupported', 'code-loading-var', off);
+    throw new Opaque('unsupported', 'host-config-var', off); // clears HOME and the rest
   };
   let done = false; // after `--`, only assignments remain
   for (let i = 1; i < argv.length; i++) {
@@ -2398,6 +2404,25 @@ function envLayer(argv, off) {
   }
 }
 
+// `exec -c` starts the program with an empty environment, like `env -i`: it clears HOME and the
+// rest. exec's flags are -c, -l and -a NAME (alone or clustered); the program starts at the first
+// word that is not a flag. Anything else is left to stripOne.
+function execLayer(argv, off) {
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (typeof a !== 'string' || a === '--' || a.length < 2 || a[0] !== '-') return;
+    for (let k = 1; k < a.length; k++) {
+      const c = a[k];
+      if (c === 'c') throw new Opaque('unsupported', 'host-config-var', off);
+      if (c === 'a') {
+        if (k === a.length - 1) i++; // the name is the next word
+        break;
+      }
+      if (c !== 'l') return;
+    }
+  }
+}
+
 // The wrapper a program word names, for the checks above (stripOne's own name rules: basename,
 // lower case, a GNU `g` prefix).
 function wrapperBase(word) {
@@ -2418,6 +2443,7 @@ function wrapperStep({ argv, node, first, scripts }, sh, g) {
   const off = node && node.off ? node.off : 0;
   const base = wrapperBase(argv[0]);
   if (base === 'env') envLayer(argv, off);
+  else if (base === 'exec') execLayer(argv, off);
   const r = stripOne(argv, { bareHead: first === true && bareHead(node) });
   if (r === null) {
     // sudo -s HOME=x, sudo -i HOME=x, sudo -E HOME=x: no program is left, but the shell it starts

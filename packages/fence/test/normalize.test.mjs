@@ -852,7 +852,7 @@ test('guessedClasses marks the classes given only because of an UNKNOWN word', (
     return cs.at(-1).guessedClasses.slice().sort();
   };
   assert.deepEqual(g('rsync $F a b'), ['delete', 'network-fetch']);
-  // (`export "$X"` is opaque code-loading-var here, so `ps $X` stands for the env-dump guess)
+  // (`export "$X"` is opaque host-config-var here, so `ps $X` stands for the env-dump guess)
   assert.deepEqual(g('ps $X'), ['env-dump']);
   assert.deepEqual(g('git branch $X'), ['vcs-write']);
   assert.deepEqual(g('rsync -a a b'), []);

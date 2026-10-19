@@ -6,7 +6,7 @@ import path from 'node:path';
 
 import { normalize } from '../src/norm/normalize.mjs';
 import { UNKNOWN } from '../src/norm/unknown.mjs';
-import { CODE_LOADING_VARS, isCodeLoadingAssignment } from '../src/tables/envvars.mjs';
+import { CODE_LOADING_VARS, HOST_CONFIG_VARS, isCodeLoadingAssignment, isHostConfigName } from '../src/tables/envvars.mjs';
 
 // Hermetic: a temp cwd and a fake home. Nothing is executed: the commands are only parsed and
 // classified (argv labels such as `python3 x` never run).
@@ -33,6 +33,19 @@ function loading(text) {
   assert.equal(o.reason, 'unsupported');
   assert.equal(typeof o.offset, 'number');
   return o;
+}
+
+function hostConfig(text) {
+  const o = opaque(text);
+  assert.equal(o.construct, 'host-config-var', `${JSON.stringify(text)}: ${JSON.stringify(o)}`);
+  assert.equal(o.reason, 'unsupported');
+  assert.equal(typeof o.offset, 'number');
+  return o;
+}
+
+// Literal membership in the HOST_CONFIG_VARS table (names and prefixes), not isHostConfigName.
+function inHostConfigTable(name) {
+  return HOST_CONFIG_VARS.names.includes(name) || HOST_CONFIG_VARS.prefixes.some((p) => name.startsWith(p));
 }
 
 function plain(text) {
@@ -70,23 +83,23 @@ test('env LD_PRELOAD=x ls is opaque', () => {
 });
 
 test('HOME=/tmp/h claude -p is opaque', () => {
-  loading('HOME=/tmp/h claude -p');
+  hostConfig('HOME=/tmp/h claude -p');
 });
 
 test('env -i cmd is opaque', () => {
-  loading('env -i ls');
-  loading('env --ignore-environment ls');
-  loading('env - ls');
-  loading('env -i');
-  loading('env -0i ls');
-  loading('/usr/bin/env -i ls');
-  loading('sudo env -i ls');
+  hostConfig('env -i ls');
+  hostConfig('env --ignore-environment ls');
+  hostConfig('env - ls');
+  hostConfig('env -i');
+  hostConfig('env -0i ls');
+  hostConfig('/usr/bin/env -i ls');
+  hostConfig('sudo env -i ls');
 });
 
 test('unset HOME is opaque', () => {
-  loading('unset HOME');
-  loading('unset -v HOME');
-  loading('unset -v FOO HOME');
+  hostConfig('unset HOME');
+  hostConfig('unset -v HOME');
+  hostConfig('unset -v FOO HOME');
 });
 
 test('NODE_OPTIONS=--max-old-space-size=4096 npm run build is not opaque', () => {
@@ -110,7 +123,7 @@ test('NODE_OPTIONS=--require ./x.js is opaque', () => {
 });
 
 test('FENCE_PROFILE=default cmd is opaque', () => {
-  loading('FENCE_PROFILE=default ls');
+  hostConfig('FENCE_PROFILE=default ls');
 });
 
 test('git alias GIT_SSH_COMMAND is opaque', () => {
@@ -128,11 +141,13 @@ test('every listed name and prefix is opaque as a prefix assignment', () => {
   for (const n of names) {
     assert.ok(CODE_LOADING_VARS.names.includes(n), n);
     assert.equal(isCodeLoadingAssignment(n, 'x'), true, n);
-    loading(`${n}=x ls`);
+    if (inHostConfigTable(n)) hostConfig(`${n}=x ls`);
+    else loading(`${n}=x ls`);
   }
   for (const p of ['DYLD_INSERT_LIBRARIES', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'npm_config_foo', 'NPM_CONFIG_FOO', 'Npm_Config_x']) {
     assert.equal(isCodeLoadingAssignment(p, 'x'), true, p);
-    loading(`${p}=x ls`);
+    if (inHostConfigTable(p)) hostConfig(`${p}=x ls`);
+    else loading(`${p}=x ls`);
   }
 });
 
@@ -157,51 +172,51 @@ test('an unlisted prefix assignment stays normal', () => {
 });
 
 test('a standalone assignment of a listed name is opaque', () => {
-  loading('HOME=/tmp/h');
+  hostConfig('HOME=/tmp/h');
   loading('BASH_ENV=f');
   loading('PYTHONPATH=.; ls');
-  loading('XDG_DATA_HOME=x');
+  hostConfig('XDG_DATA_HOME=x');
   plain('FOO=1');
   plain('NODE_OPTIONS=--no-warnings');
 });
 
 test('declaration builtins naming a listed variable are opaque', () => {
-  loading('declare -x HOME=/tmp/h');
+  hostConfig('declare -x HOME=/tmp/h');
   loading('declare -g PAGER=less');
   loading('typeset -x BASH_ENV=f');
-  loading('readonly HOME');
+  hostConfig('readonly HOME');
   loading('local PYTHONPATH=.');
-  loading('export FOO=1 HOME=/tmp/h');
-  loading('export -n HOME');
-  loading('builtin export HOME=x');
-  loading('command export HOME=x');
-  loading('export "$N=x"');
-  loading('export $N');
+  hostConfig('export FOO=1 HOME=/tmp/h');
+  hostConfig('export -n HOME');
+  hostConfig('builtin export HOME=x');
+  hostConfig('command export HOME=x');
+  hostConfig('export "$N=x"');
+  hostConfig('export $N');
   plain('declare -x FOO=1');
   plain('readonly FOO=1');
 });
 
 test('read and printf -v targeting a listed variable are opaque', () => {
-  loading('read HOME');
+  hostConfig('read HOME');
   loading('read -r PAGER');
   loading('read -r -p prompt EDITOR');
-  loading('read $N');
-  loading('printf -v HOME %s x');
-  loading('printf -vHOME %s x');
-  loading('printf -v $N %s x');
+  hostConfig('read $N');
+  hostConfig('printf -v HOME %s x');
+  hostConfig('printf -vHOME %s x');
+  hostConfig('printf -v $N %s x');
   loading('printf -v "BASH_ENV" %s x');
 });
 
 test('env --unset, -u and an unlisted-name env stay precise', () => {
-  loading('env --unset=HOME ls');
-  loading('env --unset HOME ls');
-  loading('env --uns=HOME ls');
-  loading('env -u HOME ls');
-  loading('env -uHOME ls');
-  loading('env -u FOO -u HOME ls');
-  loading('env -u $N ls');
-  loading('env -i FOO=1 ls');
-  loading('env -C . HOME=x ls');
+  hostConfig('env --unset=HOME ls');
+  hostConfig('env --unset HOME ls');
+  hostConfig('env --uns=HOME ls');
+  hostConfig('env -u HOME ls');
+  hostConfig('env -uHOME ls');
+  hostConfig('env -u FOO -u HOME ls');
+  hostConfig('env -u $N ls');
+  hostConfig('env -i FOO=1 ls');
+  hostConfig('env -C . HOME=x ls');
   plain('env -u FOO ls');
   plain('env --unset=FOO ls');
   plain('env -C . FOO=1 ls');
@@ -215,45 +230,45 @@ test('names with an array subscript or += are judged by their base name', () => 
   assert.equal(isCodeLoadingAssignment('NODE_OPTIONS+', '--no-warnings'), false);
   assert.equal(isCodeLoadingAssignment('NODE_OPTIONS+', '--require=x'), true);
   loading('export BASH_ENV+=x');
-  loading('export BASH_ENV[0]=x');
-  loading('unset BASH_ENV[0]');
+  hostConfig('export BASH_ENV[0]=x');
+  hostConfig('unset BASH_ENV[0]');
   opaque('PATH+=x ls'); // the parser's own append-assign opacity
 });
 
 test('the check applies inside re-parsed text', () => {
-  loading('bash -c "HOME=/tmp/h ls"');
+  hostConfig('bash -c "HOME=/tmp/h ls"');
   loading("sh -c 'export BASH_ENV=f; bash'");
-  loading("bash -c 'unset HOME'");
+  hostConfig("bash -c 'unset HOME'");
   loading("eval 'PYTHONPATH=. ls'");
   loading("env -S 'LD_PRELOAD=x ls'");
   loading("sudo bash -c 'GIT_SSH_COMMAND=x git status'");
-  loading('echo "HOME=x ls" | bash');
+  hostConfig('echo "HOME=x ls" | bash');
   plain("bash -c 'FOO=1 ls'");
   plain("bash -c 'NODE_OPTIONS=--no-warnings ls'");
 });
 
 test('wrapper assignments of listed names are opaque, others pass', () => {
-  loading('sudo HOME=/tmp/h ls');
+  hostConfig('sudo HOME=/tmp/h ls');
   loading('sudo -u root PAGER=x ls');
-  loading('doas HOME=/tmp/h ls');
+  hostConfig('doas HOME=/tmp/h ls');
   loading('nice env LD_PRELOAD=x ls');
   loading('env FOO=1 LD_PRELOAD=x ls');
-  loading('xargs env -i');
+  hostConfig('xargs env -i');
   plain('sudo FOO=1 ls');
   plain('sudo -E ls');
 });
 
 test('assignments inside control flow and substitutions are seen', () => {
-  loading('if true; then HOME=x; fi');
+  hostConfig('if true; then HOME=x; fi');
   loading('for i in a b; do BASH_ENV=f ls; done');
-  loading('(export HOME=x)');
-  loading('echo $(HOME=x ls)');
+  hostConfig('(export HOME=x)');
+  hostConfig('echo $(HOME=x ls)');
   loading('{ PAGER=x; }');
   plain('for i in a b; do FOO=$i ls; done');
 });
 
 test('opaque offset points at the command', () => {
-  const o = loading('ls; HOME=x ls');
+  const o = hostConfig('ls; HOME=x ls');
   assert.equal(o.offset, 4);
 });
 
@@ -293,12 +308,12 @@ test('an UNKNOWN value of an unlisted literal name stays normal; an UNKNOWN name
   plain('export FOO=$(date)');
   plain('for i in a b; do export X=$i; done');
   plain('env FOO=1 -- ls');
-  loading('export FOO=$(date) HOME=$(echo x)');
-  loading('export $(date)=1');
-  loading('unset $(echo a)');
-  loading('export FOO$N=1');
-  loading('env -- HOME=x ls');
-  loading('env -S"HOME=x ls"');
+  hostConfig('export FOO=$(date) HOME=$(echo x)');
+  hostConfig('export $(date)=1');
+  hostConfig('unset $(echo a)');
+  hostConfig('export FOO$N=1');
+  hostConfig('env -- HOME=x ls');
+  hostConfig('env -S"HOME=x ls"');
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -319,19 +334,19 @@ test('read (bash): option values are not names; -a takes a name', () => {
   plain(inBash('read -p HOME line'));
   plain(inBash('read -d x -n 3 -N 4 line'));
   plain(inBash('read -pHOME line'));
-  loading(inBash('read -p x HOME'));
-  loading(inBash('read -a HOME'));
+  hostConfig(inBash('read -p x HOME'));
+  hostConfig(inBash('read -a HOME'));
   loading(inBash('read -ra BASH_ENV'));
-  loading(inBash('read -aHOME'));
-  loading(inBash('read -r -p "$P" HOME'));
-  loading(inBash('read $N'));
+  hostConfig(inBash('read -aHOME'));
+  hostConfig(inBash('read -r -p "$P" HOME'));
+  hostConfig(inBash('read $N'));
 });
 
 test('read (zsh): -p has no operand, every word is a name except the values of -u and -d', () => {
-  loading('read -p HOME line');
-  loading('read -p "$P" line');
+  hostConfig('read -p HOME line');
+  hostConfig('read -p "$P" line');
   loading('read -r -p prompt PAGER');
-  loading('read -u 3 HOME');
+  hostConfig('read -u 3 HOME');
   plain('read -u HOME line');
   plain('read -d HOME line');
   plain('read -r line');
@@ -352,42 +367,42 @@ test('declare, typeset, local, readonly, export with -p, -f or -F, and unset -f,
   plain('readonly -p HOME');
   plain('local -pf HOME');
   // without those flags the names count; flags after a name do not hide it
-  loading('declare -x HOME');
-  loading('unset -v HOME');
-  loading('declare HOME -p');
+  hostConfig('declare -x HOME');
+  hostConfig('unset -v HOME');
+  hostConfig('declare HOME -p');
 });
 
 test('any nameref declaration is opaque, whatever the name', () => {
-  loading('declare -n r=BASH_ENV');
-  loading('typeset -n r=HOME[0]');
-  loading('local -n r=PAGER');
-  loading('declare -nx r=HOME');
-  loading('declare -n r=$X');
-  loading('declare -n r=FOO');
-  loading('declare -n r; r=ok');
-  loading('typeset -n r');
-  loading('local -n r=ok');
-  loading('declare -n');
+  hostConfig('declare -n r=BASH_ENV');
+  hostConfig('typeset -n r=HOME[0]');
+  hostConfig('local -n r=PAGER');
+  hostConfig('declare -nx r=HOME');
+  hostConfig('declare -n r=$X');
+  hostConfig('declare -n r=FOO');
+  hostConfig('declare -n r; r=ok');
+  hostConfig('typeset -n r');
+  hostConfig('local -n r=ok');
+  hostConfig('declare -n');
   plain('declare +n r');
   plain('declare r=BASH_ENV_X');
   plain('declare -x FOO=1');
 });
 
 test('expansion assignments of a listed name are opaque', () => {
-  loading('echo ${HOME:=/x}');
-  loading('echo ${HOME=/x}');
+  hostConfig('echo ${HOME:=/x}');
+  hostConfig('echo ${HOME=/x}');
   loading('echo "${BASH_ENV:=f}"');
-  loading('echo $((HOME=1))');
+  hostConfig('echo $((HOME=1))');
   loading('echo $((BASH_ENV+=1))');
-  loading('echo $((x=1, HOME=2))');
-  loading('echo $((HOME++))');
-  loading('echo $((++HOME))');
-  loading('echo $((HOME[0]=1))');
-  loading('echo $(($n=1))');
-  loading('echo $(( HOME = 1 ))');
-  loading('cat <<EOF\n${HOME:=/x}\nEOF');
+  hostConfig('echo $((x=1, HOME=2))');
+  hostConfig('echo $((HOME++))');
+  hostConfig('echo $((++HOME))');
+  hostConfig('echo $((HOME[0]=1))');
+  hostConfig('echo $(($n=1))');
+  hostConfig('echo $(( HOME = 1 ))');
+  hostConfig('cat <<EOF\n${HOME:=/x}\nEOF');
   loading('case ${PAGER:=less} in a) ls;; esac');
-  loading('FOO=${HOME:=/x} ls');
+  hostConfig('FOO=${HOME:=/x} ls');
   loading('echo ${NODE_OPTIONS:=--require=x}');
   plain('echo ${NODE_OPTIONS:=--no-warnings}');
   plain('echo ${FOO:=1}');
@@ -403,53 +418,53 @@ test('expansion assignments of a listed name are opaque', () => {
 });
 
 test('for, getopts, mapfile, readarray, let, print -v, vared and zparseopts targets', () => {
-  loading('for HOME in a b; do ls; done');
+  hostConfig('for HOME in a b; do ls; done');
   loading('for BASH_ENV; do ls; done');
   plain('for i in a b; do ls; done');
-  loading('getopts ab HOME');
-  loading('getopts ab "$N"');
+  hostConfig('getopts ab HOME');
+  hostConfig('getopts ab "$N"');
   plain('getopts ab opt');
-  loading('mapfile HOME');
+  hostConfig('mapfile HOME');
   loading('mapfile -t -d x -n 3 BASH_ENV');
-  loading('readarray -t HOME');
-  loading('mapfile -t "$N"');
+  hostConfig('readarray -t HOME');
+  hostConfig('mapfile -t "$N"');
   plain('mapfile -t arr');
   plain('mapfile');
   plain('mapfile -C "$cb" -c 5 arr');
-  loading('let HOME=1');
+  hostConfig('let HOME=1');
   loading('let "BASH_ENV=3"');
-  loading('let i=1 HOME+=2');
-  loading('let $x=1');
-  loading('let "HOME$x=1"');
-  loading('let "x=1, HOME=2"');
-  loading('let HOME++');
+  hostConfig('let i=1 HOME+=2');
+  hostConfig('let $x=1');
+  hostConfig('let "HOME$x=1"');
+  hostConfig('let "x=1, HOME=2"');
+  hostConfig('let HOME++');
   plain('let "x=1"');
   plain('let i++');
   plain('let "n=$n+1"');
   plain('let "n = n + 1"');
-  loading('print -v HOME x');
+  hostConfig('print -v HOME x');
   loading('print -r -v BASH_ENV x');
-  loading('print -vHOME x');
+  hostConfig('print -vHOME x');
   plain('print -r x');
   plain('print -u 2 -v out x');
-  loading('vared HOME');
-  loading('vared -p prompt HOME');
+  hostConfig('vared HOME');
+  hostConfig('vared -p prompt HOME');
   plain('vared -p HOME line');
   plain('vared line');
-  loading('zparseopts -a HOME x:');
+  hostConfig('zparseopts -a HOME x:');
   loading('zparseopts -A BASH_ENV');
   loading('zparseopts -D -E -aPAGER x:');
   plain('zparseopts -D -E -a arr x:');
 });
 
 test('zparseopts spec words name targets too', () => {
-  loading('zparseopts x=HOME');
+  hostConfig('zparseopts x=HOME');
   loading('zparseopts -D -E x:=BASH_ENV');
   loading('zparseopts x+=PAGER');
   loading('zparseopts -D -E -- -foo=EDITOR');
-  loading('zparseopts -D -E a=b c::=HOME');
-  loading('zparseopts -D "$spec"');
-  loading('zparseopts -D x=$N');
+  hostConfig('zparseopts -D -E a=b c::=HOME');
+  hostConfig('zparseopts -D "$spec"');
+  hostConfig('zparseopts -D x=$N');
   plain('zparseopts x=opt');
   plain('zparseopts -D -E a=b c:=d -- e+:=f');
   plain('zparseopts -D -E -a arr x: y');
@@ -479,12 +494,12 @@ test('set -k, set -o keyword, and a shell started with them, are keyword-assign'
 });
 
 test('sudo, doas and su left with no program still see NAME=v words', () => {
-  loading('sudo -s HOME=x');
-  loading('sudo -i HOME=x');
-  loading('sudo -E HOME=x');
-  loading('sudo -u root -s HOME=x');
-  loading('doas -s HOME=x');
-  loading('su HOME=x');
+  hostConfig('sudo -s HOME=x');
+  hostConfig('sudo -i HOME=x');
+  hostConfig('sudo -E HOME=x');
+  hostConfig('sudo -u root -s HOME=x');
+  hostConfig('doas -s HOME=x');
+  hostConfig('su HOME=x');
   loading('sudo -s BASH_ENV=f');
   plain('sudo -s FOO=1');
   plain('sudo -E FOO=1');
@@ -492,7 +507,7 @@ test('sudo, doas and su left with no program still see NAME=v words', () => {
 });
 
 test('the offset of a late assignment points at its command', () => {
-  assert.equal(loading('ls; echo ${HOME:=x}').offset, 4);
+  assert.equal(hostConfig('ls; echo ${HOME:=x}').offset, 4);
   assert.equal(keyword('ls; set -k').offset, 4);
 });
 
@@ -508,11 +523,11 @@ test('SHELLOPTS and PS4 are code-loading names', () => {
 });
 
 test('++ and -- on a computed name are assignments', () => {
-  loading('echo $(($n++))');
-  loading('echo $((++$n))');
-  loading('echo $((n--$m))'.replace('n--$m', '$n--'));
-  loading('echo $((--${n}))');
-  loading('let "$n++"'.replace('$n', '$N'));
+  hostConfig('echo $(($n++))');
+  hostConfig('echo $((++$n))');
+  hostConfig('echo $((n--$m))'.replace('n--$m', '$n--'));
+  hostConfig('echo $((--${n}))');
+  hostConfig('let "$n++"'.replace('$n', '$N'));
   plain('echo $((n--))');
   plain('echo $((i++))');
   plain('echo $((1 + 2))');
@@ -520,18 +535,18 @@ test('++ and -- on a computed name are assignments', () => {
 });
 
 test('zsh builtins that write a named variable name their target', () => {
-  loading('getln HOME');
-  loading('getln "$N"');
+  hostConfig('getln HOME');
+  hostConfig('getln "$N"');
   loading('zstyle -s :ctx style PAGER');
   loading('zstyle -g BASH_ENV :ctx style');
-  loading('zformat -f HOME %a a:b');
+  hostConfig('zformat -f HOME %a a:b');
   loading('zformat -a EDITOR : a:b');
-  loading('strftime -s HOME %Y 0');
+  hostConfig('strftime -s HOME %Y 0');
   loading('strftime -rs PAGER %Y x');
-  loading('sysread -c HOME');
+  hostConfig('sysread -c HOME');
   loading('sysread -o 1 BASH_ENV');
-  loading('sysread HOME');
-  loading('sysread "$N"');
+  hostConfig('sysread HOME');
+  hostConfig('sysread "$N"');
   plain('getln line');
   plain('zstyle -s :ctx style out');
   plain('zstyle :ctx style value');
@@ -546,20 +561,20 @@ test('-F and -E: skipped only under bash; bare words only under -p -f -F', () =>
   plain(inBash('typeset -F x'));
   plain(inBash('typeset -F HOME'));
   plain(inBash('declare -F'));
-  loading('typeset -F HOME=1');
+  hostConfig('typeset -F HOME=1');
   loading('local -F PAGER');
-  loading('typeset -E HOME');
-  loading('typeset -F HOME');
+  hostConfig('typeset -E HOME');
+  hostConfig('typeset -F HOME');
   plain('typeset -F x');
   plain('typeset -p HOME');
   plain('typeset -f HOME');
-  loading('typeset -p HOME=x');
-  loading('declare -p HOME=x');
-  loading(inBash('typeset -F HOME=x'));
+  hostConfig('typeset -p HOME=x');
+  hostConfig('declare -p HOME=x');
+  hostConfig(inBash('typeset -F HOME=x'));
   loading(inBash('declare -f BASH_ENV=1'));
-  loading('declare -p "HOME=$x"');
-  loading('export -n HOME');
-  loading(inBash('export -n HOME'));
+  hostConfig('declare -p "HOME=$x"');
+  hostConfig('export -n HOME');
+  hostConfig(inBash('export -n HOME'));
   plain('export -n FOO');
   plain(inBash('read -r -p "$P" line'));
   plain(inBash('declare -p HOME'));
@@ -569,11 +584,11 @@ test('-F and -E: skipped only under bash; bare words only under -p -f -F', () =>
 // ---------------------------------------------------------------------------------------------
 // Fix round 4
 test('zsh integer and float declare like typeset', () => {
-  loading('integer HOME=1');
+  hostConfig('integer HOME=1');
   loading('float PAGER=1');
   loading('integer -r BASH_ENV');
-  loading('integer "$N"=1');
-  loading('integer n=1 HOME');
+  hostConfig('integer "$N"=1');
+  hostConfig('integer n=1 HOME');
   plain('integer n=1');
   plain('float x=1.5');
   plain('integer -p');
@@ -582,28 +597,28 @@ test('zsh integer and float declare like typeset', () => {
 });
 
 test('zstyle -a/-b and zformat -F write their target too', () => {
-  loading('zstyle -a :c st HOME');
+  hostConfig('zstyle -a :c st HOME');
   loading('zstyle -b :c st PAGER');
-  loading('zformat -F HOME x');
-  loading('zformat -F "$N" x');
+  hostConfig('zformat -F HOME x');
+  hostConfig('zformat -F "$N" x');
   plain('zstyle -a :c st arr');
   plain('zstyle -b :c st flag');
   plain('zformat -F out x');
 });
 
 test('zsh module builtins write named variables', () => {
-  loading('zselect -r HOME');
+  hostConfig('zselect -r HOME');
   loading('zselect -A BASH_ENV');
-  loading('zsystem flock -f HOME ./f');
-  loading('zsystem supports HOME');
-  loading('zstat -A HOME ./f');
+  hostConfig('zsystem flock -f HOME ./f');
+  hostConfig('zsystem supports HOME');
+  hostConfig('zstat -A HOME ./f');
   loading('zstat -H PAGER ./f');
-  loading('zstat +mtime -v HOME ./f');
-  loading('zstat -A "$N" ./f');
-  loading('pcre_match -a HOME -v PAGER x');
-  loading('private HOME=1');
+  hostConfig('zstat +mtime -v HOME ./f');
+  hostConfig('zstat -A "$N" ./f');
+  hostConfig('pcre_match -a HOME -v PAGER x');
+  hostConfig('private HOME=1');
   loading('private -a BASH_ENV');
-  loading('private "$N"=1');
+  hostConfig('private "$N"=1');
   plain('zselect -r 0');
   plain('zsystem flock -f fd ./f');
   plain('zstat -A arr ./f');
@@ -611,4 +626,140 @@ test('zsh module builtins write named variables', () => {
   plain('pcre_match -a arr -v v x');
   plain('private x=1');
   plain('private -a arr');
+});
+
+// ---------------------------------------------------------------------------------------------
+// T2 host-config-var: the five names and the XDG_ prefix are split out of code-loading-var; every
+// way to set, export, unset or clear one of them is `host-config-var`. The names stay in
+// CODE_LOADING_VARS (doctor builds its lists from it); the host-config check runs first.
+
+test('HOST_CONFIG_VARS lists the host-config names and prefix; they stay code-loading names', () => {
+  assert.deepEqual([...HOST_CONFIG_VARS.names], ['HOME', 'FENCE_PROFILE', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_PLUGIN_DIRS', 'CODEX_HOME']);
+  assert.deepEqual([...HOST_CONFIG_VARS.prefixes], ['XDG_']);
+  assert.ok(Object.isFrozen(HOST_CONFIG_VARS));
+  for (const n of HOST_CONFIG_VARS.names) assert.ok(CODE_LOADING_VARS.names.includes(n), n);
+  assert.ok(CODE_LOADING_VARS.prefixes.includes('XDG_'));
+});
+
+test('isHostConfigName: names, XDG_ prefix, subscripts and +, UNKNOWN; not the other code-loading names', () => {
+  for (const n of ['HOME', 'FENCE_PROFILE', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_PLUGIN_DIRS', 'CODEX_HOME', 'XDG_CONFIG_HOME', 'XDG_', 'HOME[0]', 'HOME+']) {
+    assert.equal(isHostConfigName(n), true, n);
+  }
+  assert.equal(isHostConfigName(UNKNOWN), true);
+  assert.equal(isHostConfigName(undefined), true);
+  for (const n of ['PAGER', 'EDITOR', 'NODE_OPTIONS', 'BASH_ENV', 'GIT_SSH_COMMAND', 'DYLD_X', 'npm_config_x', 'FOO', 'home', 'HOMEX', 'xdg_cache_home', '']) {
+    assert.equal(isHostConfigName(n), false, n);
+  }
+});
+
+test('setting, exporting, unsetting or clearing a host-config variable is host-config-var', () => {
+  hostConfig('HOME=/tmp/x claude');
+  hostConfig('export FENCE_PROFILE=relaxed');
+  hostConfig('env CLAUDE_CONFIG_DIR=/tmp claude');
+  hostConfig('unset FENCE_PROFILE; claude -p hi');
+  hostConfig('env -u CODEX_HOME codex');
+  hostConfig('env -i claude');
+  hostConfig('XDG_CONFIG_HOME=/tmp x');
+  hostConfig('printf -v HOME x');
+  hostConfig('CLAUDE_CODE_PLUGIN_DIRS=/tmp x');
+  hostConfig('env --unset=HOME ls');
+  hostConfig('env -uHOME ls');
+  hostConfig('env --ignore-environment ls');
+  hostConfig('env - ls');
+  hostConfig('sudo HOME=/tmp/h ls');
+  hostConfig('doas HOME=/tmp/h ls');
+  hostConfig('read HOME');
+  hostConfig('declare -x HOME=/tmp/h');
+  hostConfig('readonly CODEX_HOME');
+  hostConfig('export XDG_DATA_HOME=x');
+  hostConfig('bash -c "HOME=/tmp/h ls"');
+  hostConfig('echo ${HOME:=/x}');
+  hostConfig('echo $((HOME=1))');
+});
+
+test('a name that is not literal is host-config-var: it cannot be shown not to be HOME', () => {
+  hostConfig('export $N');
+  hostConfig('read $N');
+  hostConfig('env -u $N ls');
+  hostConfig('printf -v $N %s x');
+  hostConfig('unset $(echo a)');
+});
+
+test('the other code-loading variables stay code-loading-var', () => {
+  loading('PAGER=cat git log');
+  loading('EDITOR=vim git commit');
+  loading('NODE_OPTIONS=--require ./x node a.js');
+  loading('export BASH_ENV=f');
+  loading('env LD_PRELOAD=x ls');
+  loading('unset NODE_OPTIONS');
+  loading('GIT_CONFIG_COUNT=1 git status');
+});
+
+test('a host-config name assigned with +=, a subscript or an array is host-config-var', () => {
+  hostConfig('HOME+=x ls');
+  hostConfig('FENCE_PROFILE+=relaxed claude');
+  hostConfig('XDG_CONFIG_HOME+=/x claude');
+  hostConfig('HOME[0]=x ls');
+  hostConfig('HOME[0]=x');
+  hostConfig('HOME=(a) ls');
+  hostConfig('bash -c "HOME+=x ls"');
+  hostConfig('bash -c "FENCE_PROFILE+=relaxed claude"');
+  hostConfig('bash -c "XDG_CONFIG_HOME+=/x claude"');
+  hostConfig('bash -c "HOME[0]=x ls"');
+  hostConfig('bash -c "HOME=(a) ls"');
+  // a name that is not host-config keeps the parser's own construct
+  assert.equal(opaque('FOO+=x ls').construct, 'append-assign');
+  assert.equal(opaque('ARR=(a) ls').construct, 'array-assign');
+  assert.equal(opaque('FOO[0]=x ls').construct, 'array-assign');
+  assert.equal(opaque('bash -c "FOO+=x ls"').construct, 'append-assign');
+  assert.equal(opaque('bash -c "ARR=(a) ls"').construct, 'array-assign');
+});
+
+test('exec -c clears the environment like env -i: host-config-var', () => {
+  hostConfig('exec -c claude');
+  hostConfig('exec -cl claude');
+  hostConfig('exec -lc claude');
+  hostConfig('exec -a name -c claude');
+  hostConfig('exec -ca name claude');
+  hostConfig('bash -c "exec -c claude"');
+  // exec without -c, and a -c that is another flag's value, keep the environment
+  plain('exec -l ls');
+  plain('exec -a c ls');
+  plain('exec ls');
+});
+
+test('a host-config prefix assignment anywhere in the command wins over an unmodelled assignment form', () => {
+  hostConfig('HOME=/x FOO+=y claude');
+  hostConfig('FOO+=y HOME=/x claude');
+  hostConfig('FENCE_PROFILE=relaxed FOO+=y claude');
+  hostConfig('FOO+=y FENCE_PROFILE=relaxed claude');
+  hostConfig('HOME=/x ARR=(a) claude');
+  hostConfig('ARR=(a) HOME=/x claude');
+  hostConfig('HOME=/x FOO[0]=y claude');
+  hostConfig('FOO[0]=y HOME=/x claude');
+  hostConfig('FOO+=y XDG_CONFIG_HOME=/x claude');
+  hostConfig('ARR=(a b) FOO=1 HOME=/x claude');
+  hostConfig('bash -c "HOME=/x FOO+=y claude"');
+  hostConfig('bash -c "FOO+=y HOME=/x claude"');
+  hostConfig('bash -c "ARR=(a) HOME=/x claude"');
+  // only assignment positions count: a HOME= argument after the command word does not
+  assert.equal(opaque('FOO+=y echo HOME=1').construct, 'append-assign');
+  assert.equal(opaque('ARR=(a) echo HOME=1').construct, 'array-assign');
+  // no host-config name anywhere: the parser's own construct
+  assert.equal(opaque('FOO=1 BAR+=y claude').construct, 'append-assign');
+  assert.equal(opaque('FOO=1 ARR=(a) BAR=2 claude').construct, 'array-assign');
+});
+
+test('a declaration of a host-config name with a zsh =( value is host-config-var', () => {
+  hostConfig('export HOME=(a)');
+  hostConfig('local FENCE_PROFILE=(a)');
+  hostConfig('typeset XDG_X=(a)');
+  hostConfig('export FOO=1 HOME=(a)');
+  hostConfig('export FOO=(a) HOME=x');
+  hostConfig('export HOME=x FOO=(a)');
+  hostConfig('bash -c "export HOME=(a)"');
+  // another name keeps the zsh construct
+  assert.equal(opaque('export FOO=(a)').construct, 'zsh-syntax');
+  assert.equal(opaque('local BAR=(a)').construct, 'zsh-syntax');
+  assert.equal(opaque('typeset FOO=1 BAR=(a)').construct, 'zsh-syntax');
 });
