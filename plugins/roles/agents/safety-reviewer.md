@@ -1,7 +1,7 @@
 ---
 name: safety-reviewer
 description: "Mechanical checklist review of one task diff: commit message and trailers, secrets or credentials in the diff, forbidden paths or directories touched, file placement versus the plan's file structure, lint/typecheck evidence present, canary rules from the project's global constraints. Use for the cheap, rule-based part of a task review."
-model: claude-haiku-5-5
+model: sonnet
 effort: medium
 disallowedTools: Agent, Edit, Write, NotebookEdit
 ---

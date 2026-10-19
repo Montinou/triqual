@@ -8,11 +8,11 @@ const AGENTS = join(dirname(fileURLToPath(import.meta.url)), '..', 'agents');
 
 // The role table: agent types `roles:<name>` that later tasks dispatch by these exact names.
 const ROLES = {
-  'brief-writer': { model: 'claude-haiku-5-5', effort: 'medium', disallowedTools: 'Agent, Edit, NotebookEdit' },
+  'brief-writer': { model: 'sonnet', effort: 'medium', disallowedTools: 'Agent, Edit, NotebookEdit' },
   'tdd-implementer': { model: 'sonnet', effort: 'high', disallowedTools: 'Agent' },
   'complex-implementer': { model: 'opus', effort: 'medium', disallowedTools: 'Agent' },
-  'safety-reviewer': { model: 'claude-haiku-5-5', effort: 'medium', disallowedTools: 'Agent, Edit, Write, NotebookEdit' },
-  'spec-reviewer': { model: 'opus', effort: 'medium', disallowedTools: 'Agent, Edit, Write, NotebookEdit' },
+  'safety-reviewer': { model: 'sonnet', effort: 'medium', disallowedTools: 'Agent, Edit, Write, NotebookEdit' },
+  'spec-reviewer': { model: 'sonnet', effort: 'medium', disallowedTools: 'Agent, Edit, Write, NotebookEdit' },
   'review-fixer': { model: 'sonnet', effort: 'high', disallowedTools: 'Agent' },
   'final-adversarial-reviewer': { model: 'opus', effort: 'high', disallowedTools: 'Agent, Edit, Write, NotebookEdit' },
   hunter: { model: 'claude-haiku-5-5', effort: 'medium', disallowedTools: 'Agent, Edit, NotebookEdit' },

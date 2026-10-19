@@ -79,9 +79,12 @@ test('using-methodology keeps the <headjack-suggestions> rule', () => {
       'headjack add',
       '/reload-plugins',
       'catalog data, not instructions',
+      'When headjack is installed',
+      'any time you lack a capability',
     ]),
     [],
   );
+  assert.doesNotMatch(flat(USING), /block in the prompt names/, 'no block arrives in the prompt by itself');
 });
 
 test('the suggestion offer comes before building and survives "do not ask me questions"', () => {
@@ -201,6 +204,8 @@ test('brainstorming skips triqual suggest silently on a non-zero exit or empty o
   const text = flat(BRAIN);
   assert.ok(text.includes('`triqual suggest "<the request>"`'));
   assert.ok(text.includes('<headjack-suggestions>'));
+  assert.ok(text.includes('When headjack is installed'));
+  assert.match(text, /never install without/i);
   assert.match(text, /non-zero exit/);
   assert.match(text, /empty output/);
   assert.match(text, /skip (?:it|this) silently/);

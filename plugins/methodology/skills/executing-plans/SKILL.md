@@ -82,7 +82,7 @@ With fence detected, installing a skill is the human's step, never the implement
 
 Read the plan once, note its context, Global Constraints, Review Focus and `**Sensitive paths:**`, and create a todo per task. The scripts read it with `scripts/lib/plan.mjs`, the same reader as `triqual tasks`, so every reader agrees on task boundaries and fields. If the plan names a Spec, read that too: conflicts inside the plan resolve against it. A plan with no reachable spec gets a ledger note saying so — rulings made without one are provisional.
 
-Check the roles once: a task role the `roles` plugin does not define, or a reviewer role named as a task's role, is a stop (see Role Dispatch). Hunters and the Haiku gate that turn out unavailable at their first dispatch follow the skip rule (see When the stage does not run).
+Check the roles once: a task role the `roles` plugin does not define, or a reviewer role named as a task's role, is a stop (see Role Dispatch). Hunters, and a safety gate that cannot be dispatched at all, follow the skip rule at their first dispatch (see When the stage does not run).
 
 ### Tiers at setup
 
@@ -149,7 +149,7 @@ Everything you paste into a dispatch prompt — and everything a subagent prints
 
 **Waiting on dispatched subagents:** never poll a wait interface with short timeouts, and never sit in one silent, open-ended wait either. While you have local work — ledger updates, packaging the next review, reading reports — keep working; child results arrive on their own. When you are genuinely idle, wait in bounded stretches (five to ten minutes, where your platform allows), and between stretches post one line of status and reconcile your live children: list them, and chase any that finished without reporting.
 
-**Rate limits.** A dispatch to any role (an implementer, a fixer or a reviewer, on any model) that is rate-limited mid-plan is not a stop: wait in the bounded stretches above and retry the same dispatch, writing one `RateLimit: <role> <time>` ledger line per stretch, with `<time>` the local time as `HH:MM`. After about 6 stretches without success, end the run with a final message naming the task and listing the ledger's `Ruling:` lines (see Finish); the ledger makes the plan resumable. It never swaps the model in a dispatch: the dispatch keeps the same role and passes no model. A hunter or the safety gate with no Haiku quota is not this case: it is the skip rule (see When the stage does not run).
+**Rate limits.** A dispatch to any role (an implementer, a fixer or a reviewer, on any model) that is rate-limited mid-plan is not a stop: wait in the bounded stretches above and retry the same dispatch, writing one `RateLimit: <role> <time>` ledger line per stretch, with `<time>` the local time as `HH:MM`. After about 6 stretches without success, end the run with a final message naming the task and listing the ledger's `Ruling:` lines (see Finish); the ledger makes the plan resumable. It never swaps the model in a dispatch: the dispatch keeps the same role and passes no model. A hunter with no Haiku quota is not this case: it is the skip rule (see When the stage does not run). The safety gate runs on Sonnet and follows this rule.
 
 ### Start the phase
 
@@ -222,7 +222,8 @@ Per-task reviews are task-scoped gates; the broad review happens once, at the fi
 #### When the stage does not run
 
 - **No commit range.** `review-package` exits 3 with the message `empty commit range` on an empty range (a coordinator task with no code diff): no reviewer runs at all and the `task-review` record carries no hunters, a gate with 0 findings and a spec that did not run. Write `Review: T<N> — no commits, nothing to review` to the ledger and complete the task. Only the `empty commit range` message means no commits: any other exit 3 (for example `HEAD is not a descendant of BASE`) is an error to fix, never a reason to skip the review.
-- **Unavailable hunters or Haiku.** When an error arrives before the agent runs (`roles:hunter` is an unknown agent type because the `roles` plugin is too old, the pinned Haiku id is an unresolved model, or there is no quota), skip the hunters and the Haiku gate for the rest of the plan with one ledger line, `Skipped: hunters and Haiku gate — <cause>; safety checklist runs in the spec review`. The safety gate is never skipped: its checklist moves into round 2, where `roles:spec-reviewer` runs it through the Safety Checklist section of [task-reviewer-prompt.md](task-reviewer-prompt.md), with the gate's inputs, at every tier (a light task then gets the spec reviewer with the Safety Checklist sections). Its safety findings enter the fix loop like the rest. Look for a `Skipped:` line in the ledger before every round 1, so the skip survives compaction. A run that starts and then fails is not a skip: a gate that fails is re-dispatched; only hunters are recorded `failed`.
+- **Unavailable hunters.** When a hunter's error arrives before the agent runs (`roles:hunter` is an unknown agent type because the `roles` plugin is too old, the hunter's pinned Haiku id is an unresolved model, or there is no Haiku quota), skip the hunters for the rest of the plan with one ledger line, `Skipped: hunters — <cause>`; the safety gate keeps running (a rate-limited gate follows the Rate limits rule, never this one).
+- **Unavailable safety gate.** When the gate's error arrives before the agent runs (`roles:safety-reviewer` is an unknown agent type or its model is unresolved), skip the hunters and the safety gate for the rest of the plan with one ledger line, `Skipped: hunters and safety gate — <cause>; safety checklist runs in the spec review`. The safety checklist is never skipped: it moves into round 2, where `roles:spec-reviewer` runs it through the Safety Checklist section of [task-reviewer-prompt.md](task-reviewer-prompt.md), with the gate's inputs, at every tier (a light task then gets the spec reviewer with the Safety Checklist sections). Its safety findings enter the fix loop like the rest. Look for a `Skipped:` line in the ledger before every round 1, so the skip survives compaction. A run that starts and then fails is not a skip: a gate that fails is re-dispatched; only hunters are recorded `failed`.
 
 ### 5. The fix loop
 
@@ -333,6 +334,13 @@ A light task with a clean gate:
   "escapes": [ { "tier": "light", "severity": "important" }, { "tier": "standard", "severity": "minor" } ] }
 ```
 
+**`escape`**, after the plan merges: whenever a `fix:` commit or a red CI on trunk is traced to the plan, record it with `triqual role-eval record --plan <plan file> <json-file>`. `source` is `post-merge-fix`, `red-ci` or `bug-report`; `ref` the fixing commit's sha or the PR number; `task` (optional) the task it traces to, whose effective tier the command fills in from the ledger when `tier` is left out; `note` (optional) at most 200 characters, no secrets. One record per plan and ref:
+
+```json
+{ "v": 2, "at": "2026-10-21T09:15:00Z", "kind": "escape", "source": "post-merge-fix", "ref": "3f9c2ab",
+  "task": "T3", "note": "empty plan list crashed tasks status" }
+```
+
 ## Final Review
 
 The final review always runs: for every plan, whatever its tiers, after the last phase is submitted.
@@ -377,7 +385,8 @@ The workspace ledger, `sdd-ledger.md`, is append-only, one line per event, in th
 - `Task <N>: complete (commits <base7>..<head7>, review clean)` / `(commits <base7>..<head7>, <K> parked)`
 - `Phase <N>: submitted (<branch>, PR #<n> draft)` / `Phase <N>: complete (<branch>, local)`
 - `Ruling: <what you decided> — <why> — <what it costs if wrong>`
-- `Skipped: hunters and Haiku gate — <cause>; safety checklist runs in the spec review`
+- `Skipped: hunters — <cause>`
+- `Skipped: hunters and safety gate — <cause>; safety checklist runs in the spec review`
 - `RateLimit: <role> <time>`
 - `Unrecorded: <record JSON>`
 

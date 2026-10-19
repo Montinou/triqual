@@ -29,7 +29,7 @@ A reply approves what was actually shown. Approving an idea or a scope does not 
 
 ## Vault skills and tracking paths
 
-At the start, run `triqual suggest "<the request>"`. It prints a `<headjack-suggestions>` block, and you handle a fitting skill the way `methodology:using-methodology` says. On a non-zero exit (exit 3 means headjack is not installed), on empty output, or when `triqual` is not on `PATH` (`command -v triqual` fails, or exit 127), there is no suggestion: skip it silently.
+When headjack is installed, run `triqual suggest "<the request>"` once at the start. It prints a `<headjack-suggestions>` block: offer a fitting skill with its printed `headjack add` command the way `methodology:using-methodology` says, and never install without your human partner's OK. On a non-zero exit (exit 3 means headjack is not installed), on empty output, or when `triqual` is not on `PATH` (`command -v triqual` fails, or exit 127), there is no suggestion: skip it silently.
 
 Before you write a spec, run `triqual tasks paths --json` once to learn where tracking files go:
 

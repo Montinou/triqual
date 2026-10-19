@@ -3,6 +3,48 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## methodology 1.0.1
+
+### Changed
+
+- **headjack is an instruction, not a hook.** `brainstorming` and `writing-plans` say "when headjack is installed, run
+  `triqual suggest`", and `using-methodology` no longer says a suggestions block arrives in the prompt by itself.
+  Headjack's prompt-time suggestion hook is off by default on the author's machine after an audit found none of its 18
+  suggestions taken, 18% of runs timed out, and hosted prompts leaving the machine.
+- The review ledger line for a skipped round reads `Skipped: hunters and safety gate — <cause>` (it said "Haiku gate");
+  older ledgers still match its prefix.
+- `triqual cost [--since] [--until] [--project] [--json]` sums token usage from the Claude Code transcripts on the
+  machine, split between the controller session and its subagents, with an estimated price per model from
+  `cli/lib/prices.json`.
+- `triqual role-eval record` takes a new `escape` kind: a defect that reached trunk after merge (`post-merge-fix`,
+  `red-ci` or `bug-report`), once per plan and ref. `triqual role-eval summary --by-tier` reports them per tier.
+  `executing-plans` and `finishing-branch` tell the executor to record one whenever a `fix:` commit or a red trunk CI is
+  traced to a merged plan.
+- `triqual doctor` and the README name headjack's launcher as `cli/headjack`.
+
+## progress-tracking 0.5.1
+
+### Changed
+
+- Registering a plan prints a warning when more than 80% of at least five tasks are `heavy`. The ledger and the exit
+  code do not change. `writing-plans` self-review item 7 asks for the same check.
+
+## workflow-gate 0.3.1
+
+### Changed
+
+- The gate counts `brief-writer`, `safety-reviewer` and `spec-reviewer` against the Sonnet cap (they moved from Haiku
+  and Opus). The caps themselves are unchanged.
+
+## roles 0.3.4
+
+### Changed
+
+- `brief-writer`, `safety-reviewer` and `spec-reviewer` run on Sonnet. Hunters stay on Haiku, `complex-implementer` and
+  `final-adversarial-reviewer` stay on Opus, `tdd-implementer` and `review-fixer` stay on Sonnet. The plugin cache is
+  keyed by version, so machines on 0.3.3 keep the old models until they update. The Codex routing table is separate and
+  unchanged.
+
 ## roles 0.3.3
 
 ### Changed

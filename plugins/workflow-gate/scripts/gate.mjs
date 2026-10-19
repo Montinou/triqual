@@ -45,11 +45,11 @@ const windowFrom = (name, dflt) => (Number(process.env[name]) > 0 ? Number(proce
 
 // Model of each roles:* agent (plugins/roles/agents/*.md frontmatter; a test keeps this in sync).
 const ROLE_MODELS = {
-  "brief-writer": "haiku",
+  "brief-writer": "sonnet",
   "tdd-implementer": "sonnet",
   "complex-implementer": "opus",
-  "safety-reviewer": "haiku",
-  "spec-reviewer": "opus",
+  "safety-reviewer": "sonnet",
+  "spec-reviewer": "sonnet",
   "review-fixer": "sonnet",
   "final-adversarial-reviewer": "opus",
   "hunter": "haiku",

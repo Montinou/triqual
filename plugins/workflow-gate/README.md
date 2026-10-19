@@ -90,9 +90,9 @@ test keeps it equal to the `model:` of each agent file in `plugins/roles/agents/
 
 | Role | Model family |
 |---|---|
-| `brief-writer`, `safety-reviewer`, `hunter` | haiku |
-| `tdd-implementer`, `review-fixer` | sonnet |
-| `complex-implementer`, `spec-reviewer`, `final-adversarial-reviewer` | opus |
+| `hunter` | haiku |
+| `brief-writer`, `tdd-implementer`, `safety-reviewer`, `spec-reviewer`, `review-fixer` | sonnet |
+| `complex-implementer`, `final-adversarial-reviewer` | opus |
 
 ## The `Agent` burst cap
 

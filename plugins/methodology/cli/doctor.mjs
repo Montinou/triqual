@@ -91,6 +91,7 @@ export const SHIM_COMMANDS = {
   memory: ['memory-report', 'cli/memory.mjs'],
   'role-eval': ['methodology', 'cli/role-eval.mjs'],
   migrate: ['methodology', 'cli/migrate.mjs'],
+  cost: ['methodology', 'cli/cost.mjs'],
 };
 
 // { value } for a parsed JSON file, { missing: true } when it does not exist, { error } when it cannot be read or
@@ -422,7 +423,7 @@ async function headjackCheck(run, warnings) {
   }
   warnings.push(`headjack is unreachable (headjack search ${detail}): skill search will not work; `
     + 'Headjack is optional: install it with `claude plugin install headjack@triqual` or sign in with '
-    + '`headjack login`, and to run it from a terminal link bin/headjack from a clone of '
+    + '`headjack login`, and to run it from a terminal link cli/headjack from a clone of '
     + 'https://github.com/Montinou/headjack into ~/.local/bin (not from the installed plugin\'s directory, '
     + 'which changes on every update; see its README)');
 }

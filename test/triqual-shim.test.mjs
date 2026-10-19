@@ -86,6 +86,7 @@ test('COMMANDS maps every triqual command to its plugin and cli file', () => {
     memory: ['memory-report', 'cli/memory.mjs'],
     'role-eval': ['methodology', 'cli/role-eval.mjs'],
     migrate: ['methodology', 'cli/migrate.mjs'],
+    cost: ['methodology', 'cli/cost.mjs'],
   });
 });
 
@@ -351,6 +352,7 @@ test('DESCRIPTIONS gives every command its one-line description', () => {
     memory: 'weekly local claude-mem memory report and its allowlist',
     'role-eval': 'record hunter results and summarize the store',
     migrate: `move this machine from ${BRAND.legacy.marketplace} to ${BRAND.marketplace}`,
+    cost: 'estimated token spend per model from the Claude Code transcripts, controller vs subagents',
   });
 });
 
@@ -494,9 +496,9 @@ test('triqual progress-init runs the progress-tracking init in the cwd repo', ()
   }
 });
 
-test('progress-tracking is at version 0.5.0', () => {
+test('progress-tracking is at version 0.5.1', () => {
   const manifest = JSON.parse(readFileSync(join(ROOT, 'plugins', 'progress-tracking', '.claude-plugin', 'plugin.json'), 'utf8'));
-  assert.equal(manifest.version, '0.5.0');
+  assert.equal(manifest.version, '0.5.1');
 });
 
 // Before methodology 0.1.2 and progress-tracking 0.2.1 the commands ignored --help: sync ran and wrote

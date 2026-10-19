@@ -1,7 +1,7 @@
 ---
 name: brief-writer
 description: "Extracts a task brief from an implementation plan plus the current code (interfaces, file paths, constraints, exact values). Reads and summarizes; makes no design decisions. Use to prepare the single source of requirements an implementer will work from."
-model: claude-haiku-5-5
+model: sonnet
 effort: medium
 disallowedTools: Agent, Edit, NotebookEdit
 ---

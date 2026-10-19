@@ -13,7 +13,7 @@ const GATE = join(PLUGIN, 'scripts', 'gate.mjs');
 const fixture = (name) => JSON.parse(readFileSync(join(HERE, 'fixtures', name), 'utf8'));
 
 const CAPS = { fable: 3, opus: 8, sonnet: 12, haiku: Infinity };
-const ROLE_MODELS = { hunter: 'haiku', 'tdd-implementer': 'sonnet', 'spec-reviewer': 'opus' };
+const ROLE_MODELS = { hunter: 'haiku', 'tdd-implementer': 'sonnet', 'final-adversarial-reviewer': 'opus' };
 const T0 = 1_700_000_000_000;
 
 function tempDir() {
@@ -80,7 +80,7 @@ test('4 unresolved starts and 5 real Opus starts in one window are all allowed',
   try {
     const out = [];
     for (let i = 0; i < 4; i++) out.push(await decide(dir, agentInput({ subagent_type: i % 2 ? 'Explore' : 'general-purpose' }), { now: T0 + i * 1000 }));
-    for (let i = 4; i < 9; i++) out.push(await decide(dir, agentInput({ subagent_type: 'roles:spec-reviewer' }), { now: T0 + i * 1000 }));
+    for (let i = 4; i < 9; i++) out.push(await decide(dir, agentInput({ subagent_type: 'roles:final-adversarial-reviewer' }), { now: T0 + i * 1000 }));
     assert.deepEqual(out.map((d) => d.decision), Array(9).fill('allow'));
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -138,7 +138,7 @@ test('an unrecognised model string falls back to the role model', async () => {
 test('the 9th Opus start within 120 s is denied, naming the model, the count and the window', async () => {
   const dir = tempDir();
   try {
-    const out = await startMany(dir, { subagent_type: 'roles:spec-reviewer' }, 9);
+    const out = await startMany(dir, { subagent_type: 'roles:final-adversarial-reviewer' }, 9);
     assert.deepEqual(out.slice(0, 8).map((d) => d.decision), Array(8).fill('allow'));
     assert.equal(out[8].decision, 'deny');
     assert.match(out[8].reason, /opus/);
@@ -153,13 +153,13 @@ test('the 9th Opus start within 120 s is denied, naming the model, the count and
 test('a denied start is not counted, so a later start is allowed once an old one expires', async () => {
   const dir = tempDir();
   try {
-    await startMany(dir, { subagent_type: 'roles:spec-reviewer' }, 8); // at T0 .. T0+7s
-    const denied = await decide(dir, agentInput({ subagent_type: 'roles:spec-reviewer' }), { now: T0 + 8_000 });
+    await startMany(dir, { subagent_type: 'roles:final-adversarial-reviewer' }, 8); // at T0 .. T0+7s
+    const denied = await decide(dir, agentInput({ subagent_type: 'roles:final-adversarial-reviewer' }), { now: T0 + 8_000 });
     assert.equal(denied.decision, 'deny');
     // The first start (T0) leaves the window at T0 + 120 s.
-    const later = await decide(dir, agentInput({ subagent_type: 'roles:spec-reviewer' }), { now: T0 + 120_500 });
+    const later = await decide(dir, agentInput({ subagent_type: 'roles:final-adversarial-reviewer' }), { now: T0 + 120_500 });
     assert.equal(later.decision, 'allow');
-    const again = await decide(dir, agentInput({ subagent_type: 'roles:spec-reviewer' }), { now: T0 + 120_600 });
+    const again = await decide(dir, agentInput({ subagent_type: 'roles:final-adversarial-reviewer' }), { now: T0 + 120_600 });
     assert.equal(again.decision, 'deny');
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -179,7 +179,7 @@ test('Haiku is never denied', async () => {
 test('the caps come from the caps option', async () => {
   const dir = tempDir();
   try {
-    const out = await startMany(dir, { subagent_type: 'roles:spec-reviewer' }, 3, { caps: { ...CAPS, opus: 2 } });
+    const out = await startMany(dir, { subagent_type: 'roles:final-adversarial-reviewer' }, 3, { caps: { ...CAPS, opus: 2 } });
     assert.deepEqual(out.map((d) => d.decision), ['allow', 'allow', 'deny']);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -189,10 +189,10 @@ test('the caps come from the caps option', async () => {
 test('models are counted separately and sessions do not share a count', async () => {
   const dir = tempDir();
   try {
-    await startMany(dir, { subagent_type: 'roles:spec-reviewer' }, 8);
+    await startMany(dir, { subagent_type: 'roles:final-adversarial-reviewer' }, 8);
     const sonnet = await decide(dir, agentInput({ subagent_type: 'roles:tdd-implementer' }), { now: T0 + 9_000 });
     assert.equal(sonnet.decision, 'allow');
-    const other = await decide(dir, agentInput({ subagent_type: 'roles:spec-reviewer' }, { session_id: 'sess-2' }), { now: T0 + 9_000 });
+    const other = await decide(dir, agentInput({ subagent_type: 'roles:final-adversarial-reviewer' }, { session_id: 'sess-2' }), { now: T0 + 9_000 });
     assert.equal(other.decision, 'allow');
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -202,8 +202,8 @@ test('models are counted separately and sessions do not share a count', async ()
 test('old starts expire', async () => {
   const dir = tempDir();
   try {
-    await startMany(dir, { subagent_type: 'roles:spec-reviewer' }, 8);
-    const out = await decide(dir, agentInput({ subagent_type: 'roles:spec-reviewer' }), { now: T0 + 200_000 });
+    await startMany(dir, { subagent_type: 'roles:final-adversarial-reviewer' }, 8);
+    const out = await decide(dir, agentInput({ subagent_type: 'roles:final-adversarial-reviewer' }), { now: T0 + 200_000 });
     assert.equal(out.decision, 'allow');
     const state = JSON.parse(readFileSync(join(dir, 'sess-1.json'), 'utf8'));
     assert.equal(state.v, 1);
@@ -216,8 +216,8 @@ test('old starts expire', async () => {
 test('the window comes from the windowS option', async () => {
   const dir = tempDir();
   try {
-    await startMany(dir, { subagent_type: 'roles:spec-reviewer' }, 8);
-    const out = await decide(dir, agentInput({ subagent_type: 'roles:spec-reviewer' }), { now: T0 + 20_000, windowS: 10 });
+    await startMany(dir, { subagent_type: 'roles:final-adversarial-reviewer' }, 8);
+    const out = await decide(dir, agentInput({ subagent_type: 'roles:final-adversarial-reviewer' }), { now: T0 + 20_000, windowS: 10 });
     assert.equal(out.decision, 'allow');
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -228,7 +228,7 @@ test('a bad or missing session_id allows and writes nothing', async () => {
   const dir = tempDir();
   try {
     for (const session_id of [undefined, '', '../escape', 'a/b', 'x'.repeat(129), 42, 'has space']) {
-      const input = agentInput({ subagent_type: 'roles:spec-reviewer' }, { session_id });
+      const input = agentInput({ subagent_type: 'roles:final-adversarial-reviewer' }, { session_id });
       for (let i = 0; i < 10; i++) {
         const decision = await decide(dir, input);
         assert.equal(decision.decision, 'allow', `session_id ${JSON.stringify(session_id)}`);
@@ -244,7 +244,7 @@ test('a bad session_id never creates the state dir', async () => {
   const parent = tempDir();
   const dir = join(parent, 'state');
   try {
-    const out = await decide(dir, agentInput({ subagent_type: 'roles:spec-reviewer' }, { session_id: '../escape' }));
+    const out = await decide(dir, agentInput({ subagent_type: 'roles:final-adversarial-reviewer' }, { session_id: '../escape' }));
     assert.equal(out.decision, 'allow');
     assert.deepEqual(readdirSync(parent), []);
   } finally {
@@ -256,8 +256,8 @@ test('anything that is not an Agent or Task start allows and writes nothing', as
   const dir = tempDir();
   try {
     const cases = [
-      agentInput({ subagent_type: 'roles:spec-reviewer' }, { tool_name: 'Workflow' }),
-      agentInput({ subagent_type: 'roles:spec-reviewer' }, { tool_name: 'Bash' }),
+      agentInput({ subagent_type: 'roles:final-adversarial-reviewer' }, { tool_name: 'Workflow' }),
+      agentInput({ subagent_type: 'roles:final-adversarial-reviewer' }, { tool_name: 'Bash' }),
       agentInput({ prompt: 'no type' }, { tool_name: 'Read' }),
       agentInput({ subagent_type: 7 }, { tool_name: 'Workflow' }),
       { session_id: 'sess-1', tool_name: 'Agent' },
@@ -277,7 +277,7 @@ test('the Task tool name is gated like Agent', async () => {
   const dir = tempDir();
   try {
     const out = [];
-    for (let i = 0; i < 9; i++) out.push(await decide(dir, agentInput({ subagent_type: 'roles:spec-reviewer' }, { tool_name: 'Task' }), { now: T0 + i }));
+    for (let i = 0; i < 9; i++) out.push(await decide(dir, agentInput({ subagent_type: 'roles:final-adversarial-reviewer' }, { tool_name: 'Task' }), { now: T0 + i }));
     assert.equal(out[8].decision, 'deny');
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -287,11 +287,11 @@ test('the Task tool name is gated like Agent', async () => {
 test('a corrupt state file is treated as empty', async () => {
   const dir = tempDir();
   try {
-    await decide(dir, agentInput({ subagent_type: 'roles:spec-reviewer' }));
+    await decide(dir, agentInput({ subagent_type: 'roles:final-adversarial-reviewer' }));
     const file = join(dir, 'sess-1.json');
     for (const bad of ['{not json', '{"v":2,"starts":[]}', '{"v":1,"starts":"x"}', '{"v":1,"starts":[{"model":1}]}']) {
       writeFileSync(file, bad);
-      const out = await decide(dir, agentInput({ subagent_type: 'roles:spec-reviewer' }));
+      const out = await decide(dir, agentInput({ subagent_type: 'roles:final-adversarial-reviewer' }));
       assert.equal(out.decision, 'allow', bad);
       assert.equal(JSON.parse(readFileSync(file, 'utf8')).starts.length, 1, bad);
     }
@@ -305,7 +305,7 @@ test('a lock timeout allows', async () => {
   try {
     mkdirSync(join(dir, 'sess-1.json.lock')); // fresh, so not stale
     const started = Date.now();
-    const out = await decide(dir, agentInput({ subagent_type: 'roles:spec-reviewer' }), { lockWaitMs: 150, now: Date.now() });
+    const out = await decide(dir, agentInput({ subagent_type: 'roles:final-adversarial-reviewer' }), { lockWaitMs: 150, now: Date.now() });
     assert.equal(out.decision, 'allow');
     assert.match(out.reason, /lock/);
     assert.ok(Date.now() - started < 5000);
@@ -319,7 +319,7 @@ test('an unusable state dir allows', async () => {
   const dir = tempDir();
   try {
     writeFileSync(join(dir, 'file'), 'x');
-    const out = await decide(join(dir, 'file', 'state'), agentInput({ subagent_type: 'roles:spec-reviewer' }));
+    const out = await decide(join(dir, 'file', 'state'), agentInput({ subagent_type: 'roles:final-adversarial-reviewer' }));
     assert.equal(out.decision, 'allow');
   } finally {
     rmSync(dir, { recursive: true, force: true });

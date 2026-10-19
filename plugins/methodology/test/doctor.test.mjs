@@ -724,6 +724,8 @@ test('an unreachable headjack is a warning, never a failure', async () => {
       assert.ok(r.warnings[0].includes('headjack login'), r.warnings[0]);
       assert.ok(r.warnings[0].includes('~/.local/bin'), r.warnings[0]);
       assert.ok(r.warnings[0].includes('clone'), r.warnings[0]);
+      assert.ok(r.warnings[0].includes('link cli/headjack'), r.warnings[0]);
+      assert.doesNotMatch(r.warnings[0], /(^|[^/\w])bin\/headjack/, r.warnings[0]);
       assert.ok(r.warnings[0].includes('not from the installed plugin'), r.warnings[0]);
       assert.deepEqual(calls, [HEADJACK_ARGS]);
     });

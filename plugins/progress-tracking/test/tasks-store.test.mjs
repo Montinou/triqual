@@ -233,6 +233,17 @@ test('init reconciles an edited plan and refuses a plan outside the documents di
   });
 });
 
+test('a mostly heavy plan registered in the store gets the heavy-tier warning, and is stored as usual', () => {
+  withRepo('store', (s) => {
+    const heavy = Array.from({ length: 5 }, (_, i) => `### Task ${i + 1}: T${i + 1}\n**Tier:** heavy\n`).join('\n');
+    const file = s.plan(`# p\n\n${heavy}`);
+    const r = ok(s.run(['init', file]));
+    assert.match(r.stdout, /^created /);
+    assert.match(r.stderr, /^warning: 5 of 5 tasks are heavy \(100%\): heavy review costs the most; re-check each tier \(see the tier rules in methodology:writing-plans\)$/m);
+    assert.equal(ok(s.run(['init', file])).stderr, '', 'a reconcile does not warn again');
+  });
+});
+
 // ---- failures ----
 
 test('an invalid transition exits 2 with the committed-mode message', () => {

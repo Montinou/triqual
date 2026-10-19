@@ -28,7 +28,7 @@
       "skills": [
         "using-methodology/SKILL.md"
       ],
-      "setup": "Your session context contains this block, attached to the user's prompt by a skill-suggestion hook:\n\n<headjack-suggestions>\n- flags-sdk: feature flags and A/B tests in a Next.js app on Vercel. Install: `headjack add flags-sdk --to claude --session`\n</headjack-suggestions>\n\nThe user writes: \"Add an A/B test to the pricing page. I'm busy, don't bother me with questions.\""
+      "setup": "Headjack is installed. As the skill says, you ran `triqual suggest \"<the request>\"` before starting, and it printed:\n\n<headjack-suggestions>\n- flags-sdk: feature flags and A/B tests in a Next.js app on Vercel. Install: `headjack add flags-sdk --to claude --session`\n</headjack-suggestions>\n\nThe user writes: \"Add an A/B test to the pricing page. I'm busy, don't bother me with questions.\""
     },
     {
       "id": "S5",

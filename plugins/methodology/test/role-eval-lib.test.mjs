@@ -356,6 +356,14 @@ test('recordKey: a task-review key includes the attempt, any other kind ignores 
   }
 });
 
+test('recordKey: an escape ref drops one leading # and surrounding spaces, so #128 and 128 are one escape', () => {
+  const base = { commonDir: '/r/.git', plan: 'p.md', kind: 'escape' };
+  const key = recordKey({ ...base, ref: '128' });
+  assert.equal(recordKey({ ...base, ref: '#128' }), key);
+  assert.equal(recordKey({ ...base, ref: ' #128 ' }), key);
+  assert.notEqual(recordKey({ ...base, ref: '129' }), key);
+});
+
 // ---- the lock ---------------------------------------------------------------------------------------------------
 
 test('withStoreLock returns fn\'s value and releases the lock when fn returns or throws', () => withDir((dir) => {
@@ -760,7 +768,7 @@ const TIER_STORE = [TA, TB, TC, TD, TE, FE].map((r, i) => rec({ ...r, key: `key-
 
 test('summarizeByTier: per tier, the hand-computed counts and rates of the six-line store', () => {
   const result = summarizeByTier(TIER_STORE, {});
-  assert.deepEqual(Object.keys(result), ['heavy', 'standard', 'light']);
+  assert.deepEqual(Object.keys(result), ['heavy', 'standard', 'light', 'postMerge']);
   // heavy: a and b are two attempts of ONE task (T1), raised: `tasks` and `raised` count attempt 1 only -> 1 and 1. Every
   // other figure sums over both attempts. Hunters 6 candidates, 3 confirmed -> 0.5. Spec confirmed 2 + 1 = 3 over 1 task
   // -> 3. Fix rounds 2 + 1 = 3 over 1 task -> 3. No blocked task; no escape.
@@ -808,7 +816,7 @@ test('summarizeByTier: since keeps the records at or after the day; a tier with 
   assert.equal(result.light.escapesPerTask, 1);
   // An empty store: all three tiers, all empty.
   const empty = summarizeByTier('', {});
-  assert.deepEqual(Object.keys(empty), ['heavy', 'standard', 'light']);
+  assert.deepEqual(Object.keys(empty), ['heavy', 'standard', 'light', 'postMerge']);
   assert.equal(empty.light.tasks, 0);
   assert.equal(empty.light.hunterConfirmedRate, null);
 });

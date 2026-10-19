@@ -24,9 +24,11 @@ export function storePath(env, home) {
 
 // The idempotency key: hex sha256 of the git common dir, the plan's basename, the task and the kind. A task-review
 // also hashes its attempt (1, then +1 after each reopen), so a re-review is stored; every other kind ignores `attempt`,
-// which keeps the keys of the lines stored before v 2 as they were.
-export function recordKey({ commonDir, plan, task, kind, attempt }) {
-  const base = `${commonDir}\0${basename(plan)}\0${task}\0${kind}`;
+// which keeps the keys of the lines stored before v 2 as they were. An escape hashes its `ref` in place of the task, so
+// it is stored once per plan and ref; the ref is trimmed and drops one leading `#`, so `#128` and `128` are one escape.
+export function recordKey({ commonDir, plan, task, kind, attempt, ref }) {
+  const id = kind === 'escape' ? String(ref ?? '').trim().replace(/^#/, '') : task;
+  const base = `${commonDir}\0${basename(plan)}\0${id}\0${kind}`;
   return createHash('sha256').update(kind === 'task-review' ? `${base}\0${attempt}` : base).digest('hex');
 }
 
@@ -34,8 +36,9 @@ export function recordKey({ commonDir, plan, task, kind, attempt }) {
 
 const PROVIDERS = ['claude', 'codex'];
 // v 1 kinds (safety-shadow, hunters) and v 2 kinds (task-review, final-escapes); a line's `v` must match its kind.
-const KINDS = ['safety-shadow', 'hunters', 'task-review', 'final-escapes'];
-const V2_KINDS = ['task-review', 'final-escapes'];
+// v 2 also has `escape`: a defect that reached trunk after the plan merged.
+const KINDS = ['safety-shadow', 'hunters', 'task-review', 'final-escapes', 'escape'];
+const V2_KINDS = ['task-review', 'final-escapes', 'escape'];
 export const TIERS = Object.freeze(['heavy', 'standard', 'light']);
 // The top-level keys each kind may carry; any other key is rejected by name.
 const V1_KEYS = ['v', 'at', 'provider', 'task', 'kind', 'gate', 'shadow', 'hunters', 'budget'];
@@ -44,7 +47,14 @@ const TASK_REVIEW_KEYS = [
   'blocked', 'coordinator',
 ];
 const FINAL_ESCAPES_KEYS = ['v', 'at', 'provider', 'task', 'kind', 'escapes'];
-const ALL_KEYS = [...new Set([...V1_KEYS, ...TASK_REVIEW_KEYS, ...FINAL_ESCAPES_KEYS])];
+// An escape names no provider; `plan` is the plan file's base name, which `record` sets from --plan.
+const ESCAPE_KEYS = ['v', 'at', 'kind', 'plan', 'source', 'ref', 'task', 'tier', 'note'];
+const ALL_KEYS = [...new Set([...V1_KEYS, ...TASK_REVIEW_KEYS, ...FINAL_ESCAPES_KEYS, ...ESCAPE_KEYS])];
+export const ESCAPE_SOURCES = Object.freeze(['post-merge-fix', 'red-ci', 'bug-report']);
+// A commit sha (7 to 40 hex) or a PR number (optionally `#`).
+const REF = /^([0-9a-f]{7,40}|#?[0-9]{1,9})$/;
+const PLAN_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const NOTE_MAX = 200;
 // Kinds `record` no longer accepts: the safety shadow was retired (roles 0.3.0). validateRecord still accepts them, so
 // the lines stored before stay valid and the summary keeps reporting them.
 export const RETIRED_KINDS = Object.freeze(['safety-shadow']);
@@ -235,14 +245,28 @@ function validateFinalEscapes(obj) {
   });
 }
 
+function validateEscape(obj) {
+  if (obj.plan !== undefined && (typeof obj.plan !== 'string' || !PLAN_NAME.test(obj.plan))) fail('plan');
+  if (!ESCAPE_SOURCES.includes(obj.source)) fail('source');
+  if (typeof obj.ref !== 'string' || !REF.test(obj.ref)) fail('ref');
+  if (obj.task !== undefined && (typeof obj.task !== 'string' || !/^T[0-9]+$/.test(obj.task))) fail('task');
+  if (obj.tier !== undefined) tier(obj, 'tier', '', { nullable: false });
+  if (obj.note !== undefined && (typeof obj.note !== 'string' || obj.note.length > NOTE_MAX || /[\r\n]/.test(obj.note))) fail('note');
+}
+
 function check(obj) {
   object(obj, '$');
   noUnknown(obj, ALL_KEYS, '');
   if (obj.v !== 1 && obj.v !== 2) fail('v');
   if (typeof obj.at !== 'string' || !AT.test(obj.at) || Number.isNaN(Date.parse(obj.at))) fail('at');
-  if (!PROVIDERS.includes(obj.provider)) fail('provider');
+  if (obj.kind !== 'escape' && !PROVIDERS.includes(obj.provider)) fail('provider');
   if (!KINDS.includes(obj.kind)) fail('kind');
   if (V2_KINDS.includes(obj.kind) !== (obj.v === 2)) fail('v');
+  if (obj.kind === 'escape') {
+    noUnknown(obj, ESCAPE_KEYS, '');
+    validateEscape(obj);
+    return;
+  }
   if (typeof obj.task !== 'string' || !TASK.test(obj.task)) fail('task');
   noUnknown(obj, obj.kind === 'task-review' ? TASK_REVIEW_KEYS : obj.kind === 'final-escapes' ? FINAL_ESCAPES_KEYS : V1_KEYS, '');
   if (obj.kind === 'task-review') {
@@ -509,11 +533,12 @@ function readRecords(text, since, onRecord) {
 }
 
 // The per-provider summary: shadow agreement (the records stored before that kind was retired), hunters per category
-// (from `hunters` and `task-review` records) and the budget. A `final-escapes` record names no provider here.
+// (from `hunters` and `task-review` records) and the budget. A `final-escapes` or `escape` record names no provider
+// here (escapes show in summarizeByTier).
 export function summarize(text, { since } = {}) {
   const providers = {};
   const skipped = readRecords(text, since, (record) => {
-    if (record.kind === 'final-escapes') return;
+    if (record.kind === 'final-escapes' || record.kind === 'escape') return;
     const p = providers[record.provider] ??= emptyProvider();
     if (record.kind === 'safety-shadow') addShadow(p, record);
     else addHunters(p, record);
@@ -541,9 +566,21 @@ function emptyTier() {
 // final-review escapes traced to that tier, over `tasks`; `blocked` the records that ended blocked. Every count other
 // than `tasks` and `raised` sums over all attempts. A window that starts after a task's first attempt leaves that task
 // out of `tasks`. A rate with no denominator is null. The window and the skipped lines work as in summarize.
+// `postMerge` counts the `escape` records (defects that reached trunk after the plan merged) per tier, `unattributed`
+// when the record has no tier, in total and per plan.
+const emptyEscapes = () => ({ ...Object.fromEntries(TIERS.map((t) => [t, 0])), unattributed: 0 });
+
 export function summarizeByTier(text, { since } = {}) {
   const tiers = Object.fromEntries(TIERS.map((t) => [t, emptyTier()]));
+  const postMerge = { ...emptyEscapes(), byPlan: {} };
   readRecords(text, since, (record) => {
+    if (record.kind === 'escape') {
+      const slot = record.tier ?? 'unattributed';
+      postMerge[slot] += 1;
+      const plan = postMerge.byPlan[record.plan ?? 'unknown'] ??= emptyEscapes();
+      plan[slot] += 1;
+      return;
+    }
     if (record.kind === 'final-escapes') {
       for (const escape of record.escapes) tiers[escape.tier].escapes += 1;
       return;
@@ -562,7 +599,7 @@ export function summarizeByTier(text, { since } = {}) {
       t.confirmed += sum(SEVERITIES.map((s) => hunter.confirmed[s]));
     }
   });
-  return Object.fromEntries(TIERS.map((name) => {
+  const result = Object.fromEntries(TIERS.map((name) => {
     const t = tiers[name];
     return [name, {
       tasks: t.tasks,
@@ -574,6 +611,7 @@ export function summarizeByTier(text, { since } = {}) {
       escapesPerTask: ratio(t.escapes, t.tasks),
     }];
   }));
+  return { ...result, postMerge };
 }
 
 // ---- the text report ----------------------------------------------------------------------------------------
@@ -611,8 +649,10 @@ export function formatSummary(summary) {
 
 const perTask = (value) => (value === null ? 'n/a' : value.toFixed(2));
 
+const escapeCounts = (e) => `${TIERS.map((t) => `${t} ${e[t]}`).join(', ')}, unattributed ${e.unattributed}`;
+
 // The by-tier summary as text, one line per tier: rates as percentages with one decimal, per-task figures with two, a
-// figure with no denominator as n/a.
+// figure with no denominator as n/a; then the post-merge escapes per tier, and per plan (sorted by name).
 export function formatTierSummary(byTier) {
   const out = TIERS.map((name) => {
     const t = byTier[name];
@@ -620,5 +660,10 @@ export function formatTierSummary(byTier) {
       + `spec confirmed/task ${perTask(t.specConfirmedPerTask)}, fix rounds/task ${perTask(t.fixRoundsPerTask)}, `
       + `blocked ${t.blocked}, escapes/task ${perTask(t.escapesPerTask)}`;
   });
+  const pm = byTier.postMerge;
+  if (pm) {
+    out.push(`post-merge escapes: ${escapeCounts(pm)}`);
+    for (const plan of Object.keys(pm.byPlan).sort()) out.push(`  ${plan}: ${escapeCounts(pm.byPlan[plan])}`);
+  }
   return `${out.join('\n')}\n`;
 }

@@ -126,12 +126,12 @@ test('TDD is required for every task, in the skill and the implementer template'
   assert.doesNotMatch(impl, /following TDD if task says to/);
 });
 
-test('the role-eval record examples in the skill validate, and cover task-review, final-escapes and the final hunters', () => {
+test('the role-eval record examples in the skill validate, and cover task-review, final-escapes, the final hunters and a post-merge escape', () => {
   const blocks = [...skill().matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => JSON.parse(m[1]));
   assert.ok(blocks.length >= 3, 'fewer than three record examples');
   for (const record of blocks) assert.deepEqual(validateRecord(record), { ok: true }, JSON.stringify(record));
   const kinds = blocks.map((r) => `${r.kind}:${r.task === 'final' ? 'final' : 'task'}`);
-  for (const k of ['task-review:task', 'final-escapes:final', 'hunters:final']) assert.ok(kinds.includes(k), `no ${k} example`);
+  for (const k of ['task-review:task', 'final-escapes:final', 'hunters:final', 'escape:task']) assert.ok(kinds.includes(k), `no ${k} example`);
   assert.ok(flat(skill()).includes('`triqual role-eval record --plan <plan file> <json-file>`'));
 });
 
@@ -621,7 +621,22 @@ test('the Codex missing-role stop exempts hunter', () => {
   assert.ok(missing[0].includes('stop and ask'), 'the Codex rule no longer stops and asks');
   assert.ok(missing[0].includes(exception), 'the Codex stop does not exempt hunter');
   // The skip rule the exception points at is in the orchestrator.
-  assert.ok(skill().includes('`Skipped: hunters and Haiku gate — <cause>; safety checklist runs in the spec review`'), 'the skill lost the skip rule');
+  assert.ok(skill().includes('`Skipped: hunters and safety gate — <cause>; safety checklist runs in the spec review`'), 'the skill lost the skip rule');
+});
+
+test('only the hunters skip on no quota: the Sonnet safety gate keeps running', () => {
+  const text = skill();
+  assert.ok(text.includes('A hunter with no Haiku quota is not this case'), 'the rate-limit rule still exempts the safety gate');
+  assert.ok(text.includes('`Skipped: hunters — <cause>`'), 'the skill lost the hunters-only skip line');
+  assert.match(text, /the safety gate keeps running/);
+  assert.doesNotMatch(text, /hunter or the safety gate with no Haiku quota/);
+  assert.ok(read('executing-plans/task-reviewer-prompt.md').includes('`Skipped: hunters and …`'), 'the reviewer prompt lost the gate-skip prefix');
+});
+
+test('no executing-plans file calls the safety gate a Haiku gate', () => {
+  for (const name of ['SKILL.md', 'task-reviewer-prompt.md']) {
+    assert.doesNotMatch(read(`executing-plans/${name}`), /Haiku gate/, `${name} still calls the safety gate a Haiku gate`);
+  }
 });
 
 test('no harness reference offers inline work: a harness that cannot dispatch a role stops and asks', () => {

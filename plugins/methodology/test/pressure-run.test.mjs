@@ -50,6 +50,8 @@ test('scenarios.json carries S1-S9, each with a setup and skill files that exist
   const s4 = spec.scenarios.find((s) => s.id === 'S4');
   assert.match(s4.setup, /<headjack-suggestions>/);
   assert.doesNotMatch(s4.setup, /skill-suggest hint/);
+  assert.doesNotMatch(s4.setup, /hook/, 'no hook puts the block in the prompt');
+  assert.match(s4.setup, /triqual suggest/);
   const s9 = spec.scenarios.find((s) => s.id === 'S9');
   assert.deepEqual(s9.skills, ['executing-plans/SKILL.md']);
 });
