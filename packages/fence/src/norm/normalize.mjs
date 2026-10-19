@@ -1368,7 +1368,30 @@ function redirEffects(redirs, targets, eff, sh, g) {
 // Finishing an effective command. Later tasks (T14-T18) add steps here; each step may change the
 // command, add commands to g.commands, or throw an Opaque.
 
-function stdinInterpreterStep(eff, info) {
+// Modules run with `python -m` that never read a program from stdin (code, pdb, asyncio and unknown ones do).
+const STDIN_FREE_MODULES = new Set(['pytest', 'unittest', 'pip', 'json.tool', 'http.server', 'venv', 'mypy', 'black', 'ruff', 'isort', 'flake8', 'pyflakes', 'pylint']);
+
+// Does python/node take its program from a module or a file it can name (`python -m pytest`,
+// `python x.py`, `node x.js`), never from stdin? Then a fed stdin is data. A file operand that is
+// stdin, a descriptor, a FIFO or a device (also through a symlink), an UNKNOWN word, or a route fence
+// cannot follow keeps the stdin rule.
+function programNotStdin(eff, sh, g) {
+  const route = scriptRoute(eff.argv, sh.kind);
+  if (route === null || route.type !== 'code' || route.opaque) return false;
+  // python -i reads a REPL from stdin after the program (PYTHONINSPECT is a code-loading var: opaque earlier)
+  if (route.inspect === true) return false;
+  // node with only preloads (-r/--import/--loader) has no main script: it reads its program from stdin
+  if (route.main === false) return false;
+  // pytest with --pdb/--trace (or PYTEST_ADDOPTS) opens a debugger that reads stdin
+  if (route.debugger === true) return false;
+  if (route.modules[0] === 'pytest' && eff.env !== null && typeof eff.env === 'object' && Object.hasOwn(eff.env, 'PYTEST_ADDOPTS')) return false;
+  // -m: the program is the module, but only a module that never reads a program from stdin
+  if (route.modules.length > 0) return route.modules.every((m) => typeof m === 'string' && STDIN_FREE_MODULES.has(m));
+  if (route.files.length === 0) return false;
+  return route.files.every((f) => typeof f === 'string' && !deviceFile(f, pathAt(sh, g, f), g) && !stdinLinkChain(f, sh, g));
+}
+
+function stdinInterpreterStep(eff, info, sh, g) {
   // a busybox/toybox applet is the program it names
   const prog = programName(appletArgv(eff.argv)[0]);
   if (!info.stdin || prog === null) return;
@@ -1381,6 +1404,8 @@ function stdinInterpreterStep(eff, info) {
     if (PYTHON.test(base) || base === 'node' || base === 'nodejs') {
       const inv = inlineInterpreter(eff.argv);
       if (inv !== null && !inv.opaque && (inv.mode === 'c' || heredocCode(info))) return;
+      // a module or a file is the program: the fed stdin is data (the file route judges the file)
+      if (inv === null && programNotStdin(eff, sh, g)) return;
     }
     throw new Opaque('unsupported', 'stdin-interpreter', info.off);
   }

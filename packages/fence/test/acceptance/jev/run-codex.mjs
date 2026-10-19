@@ -26,6 +26,7 @@ import os from 'node:os';
 import nodePath from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { isolationLevel } from '../../helpers/isolation.mjs';
 import { stageHome } from '../stage-home.mjs';
 import { diffDecisions } from './compare.mjs';
 
@@ -183,14 +184,19 @@ function main(argv) {
   const project = nodePath.join(root, 'project');
   const admin = nodePath.join(root, 'admin');
   for (const d of [project, admin]) nodeFs.mkdirSync(d, { recursive: true });
-  must(spawnSync('git', ['init', '-q', project], { encoding: 'utf8' }), 'git init');
-  must(spawnSync('git', ['-C', project, 'symbolic-ref', 'HEAD', 'refs/heads/acceptance'], { encoding: 'utf8' }), 'git symbolic-ref');
+  // FENCE_TEST_ISOLATION (helpers/isolation.mjs): git never reads the user's or the system's config here;
+  // at `full` uv's cache lives under the temp root too, unless the caller chose UV_CACHE_DIR.
+  const level = isolationLevel();
+  const gitEnv = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
+  const uvEnv = level === 'full' && !process.env.UV_CACHE_DIR ? { ...process.env, UV_CACHE_DIR: nodePath.join(root, 'uv-cache') } : process.env;
+  must(spawnSync('git', ['init', '-q', project], { encoding: 'utf8', env: gitEnv }), 'git init');
+  must(spawnSync('git', ['-C', project, 'symbolic-ref', 'HEAD', 'refs/heads/acceptance'], { encoding: 'utf8', env: gitEnv }), 'git symbolic-ref');
 
   const { home, watchdog } = stageHome(nodePath.join(root, 'stage'), { policyPath: args.policy });
   const policy = nodePath.join(home, '.config', 'fence', 'policy.json');
 
   const dump = must(
-    spawnSync(process.env.UVX || 'uvx', ['--from', JEV_SPEC, 'python', '-c', DUMP, project], { cwd: project, encoding: 'utf8', timeout: UVX_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024 }),
+    spawnSync(process.env.UVX || 'uvx', ['--from', JEV_SPEC, 'python', '-c', DUMP, project], { cwd: project, env: uvEnv, encoding: 'utf8', timeout: UVX_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024 }),
     'the jev corpus dump',
   );
   const corpus = JSON.parse(dump.stdout);
@@ -208,10 +214,18 @@ function main(argv) {
     return classify(host, r);
   };
   const results = { codex: [], claude: [] };
-  for (const row of corpus) {
+  const started = Date.now();
+  for (const [i, row] of corpus.entries()) {
     const meta = { id: row.id, category: row.category, disguise: row.disguise, expected: row.expected, tool: row.tool };
-    results.codex.push({ ...meta, decision: decide('codex', toCodexPayload(row, { cwd: project })) });
-    results.claude.push({ ...meta, decision: decide('claude', toClaudePayload(row, { cwd: project })) });
+    const codex = decide('codex', toCodexPayload(row, { cwd: project }));
+    const claude = decide('claude', toClaudePayload(row, { cwd: project }));
+    results.codex.push({ ...meta, decision: codex });
+    results.claude.push({ ...meta, decision: claude });
+    // live progress on stderr, one line per row (the tables go to stdout at the end)
+    const mark = codex === claude ? '' : '  DIFFERS';
+    process.stderr.write(
+      `[${i + 1}/${corpus.length}] ${((Date.now() - started) / 1000).toFixed(1)}s ${row.expected} ${row.category} ${row.id}: codex=${codex} claude=${claude}${mark}\n`,
+    );
   }
   for (const host of ['codex', 'claude']) {
     nodeFs.writeFileSync(nodePath.join(outDir, `${host}-decisions.json`), `${JSON.stringify(results[host], null, 1)}\n`);

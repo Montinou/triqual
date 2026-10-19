@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { appendWritten, isAgentWritten, readWritten, writtenFileName } from '../src/log/written.mjs';
 import { prune } from '../src/log/prune.mjs';
 import { runEngine } from '../src/engine.mjs';
+import { childEnv, withTempHome } from './helpers/isolation.mjs';
 
 const LINES = (file) => fs.readFileSync(file, 'utf8').split('\n').filter((l) => l !== '');
 
@@ -219,12 +220,14 @@ test('prune never follows or removes a symlink and tolerates a missing state dir
 });
 
 test('the engine prunes at session start', () => {
-  const state = dir();
+  const { policy, state, admin } = setup();
   appendWritten(state, 'old', ['/work/old.txt']);
   setAge(indexOf(state, 'old'), 45 * DAY);
-  const r = runEngine(['session-start', '--host', 'claude', '--state-dir', state], { stdin: '{}', now: NOW });
+  // explicit temp policy, state and admin directories, and the home pinned: nothing real is read or written
+  const argv = ['session-start', '--host', 'claude', '--policy', policy, '--state-dir', state, '--admin-dir', admin];
+  const r = withTempHome(HOME, () => runEngine(argv, { stdin: '{}', now: NOW, env: childEnv(HOME) }));
   assert.equal(r.exit, 0);
-  assert.deepEqual(JSON.parse(r.stdout), {});
+  assert.match(JSON.parse(r.stdout).additionalContext, /^fence policy, profile default/); // the temp policy's start-of-session summary
   assert.ok(!fs.existsSync(indexOf(state, 'old')));
 });
 

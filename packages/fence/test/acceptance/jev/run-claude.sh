@@ -20,6 +20,15 @@
 # project as its repo root (compare.mjs --check-cwd); otherwise the script fails with exit 3.
 set -euo pipefail
 
+# FENCE_TEST_ISOLATION (test/helpers/isolation.mjs): writes (default) | full | off. At `full` uv's cache
+# lives under the temp root (unless UV_CACHE_DIR is already set); every level pins git away from the
+# user's and the system's config for the project setup.
+LEVEL="${FENCE_TEST_ISOLATION:-writes}"
+case "$LEVEL" in
+  writes|full|off) ;;
+  *) echo "run-claude: FENCE_TEST_ISOLATION='$LEVEL' is not a level; use one of: writes, full, off" >&2; exit 2 ;;
+esac
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PKG="$(cd "$HERE/../../.." && pwd)"
 POLICY="$PKG/policies/strict.json"
@@ -47,8 +56,9 @@ if [[ "$ROOT" =~ [^A-Za-z0-9_./-] ]]; then
   exit 2
 fi
 
-git init -q "$PROJECT"
-git -C "$PROJECT" symbolic-ref HEAD refs/heads/acceptance
+GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git init -q "$PROJECT"
+GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -C "$PROJECT" symbolic-ref HEAD refs/heads/acceptance
+if [ "$LEVEL" = full ] && [ -z "${UV_CACHE_DIR:-}" ]; then export UV_CACHE_DIR="$ROOT/uv-cache"; fi
 # jev's temp root (and so its workspace, the hook cwd) inside the repository
 JEV_TMP="$PROJECT/.jev-tmp"
 mkdir -p "$JEV_TMP"
@@ -69,6 +79,14 @@ GUARD="env HOME=$HOME_DIR $HOOK pre --host claude --policy $HOME_DIR/.config/fen
 echo "guard: $GUARD"
 
 cd "$PROJECT"
+# live progress: every 5 s, how many hook runs the engine has logged so far (jev prints nothing until it ends)
+( while sleep 5; do
+    n=$(find "$STATE" -name '*.jsonl' -type f -exec cat {} + 2>/dev/null | wc -l | tr -d ' ')
+    echo "progress: $n hook runs logged" >&2
+  done ) &
+WATCH=$!
+# the watcher's `sleep 5` child would keep our stdout open after the subshell dies: stop it first
+trap 'pkill -P "$WATCH" 2>/dev/null || true; kill "$WATCH" 2>/dev/null || true' EXIT
 # jev exits non-zero when payloads got through; the metrics are printed either way.
 status=0
 TMPDIR="$JEV_TMP" TMP="$JEV_TMP" TEMP="$JEV_TMP" \

@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 
 import { runCheck, runTest } from '../src/cli/check.mjs';
 import { runEngine } from '../src/engine.mjs';
+import { childEnv, withTempHome as isolated } from './helpers/isolation.mjs';
 
 const POLICIES = fileURLToPath(new URL('../policies/', import.meta.url));
 const STRICT = path.join(POLICIES, 'strict.json');
@@ -54,21 +55,10 @@ function sink() {
   return { io: { out: (s) => out.push(s), err: (s) => err.push(s) }, out, err, text: () => [...out, ...err].join('\n') };
 }
 
-// runCheck has no home argument and falls back to os.homedir(), which reads HOME (USERPROFILE on
-// Windows); pin both to the temp home while `fn` runs so `~/` globs never resolve against the real one.
-function withTempHome(fn) {
-  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
-  process.env.HOME = home;
-  process.env.USERPROFILE = home;
-  try {
-    return fn();
-  } finally {
-    for (const [key, value] of Object.entries(saved)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  }
-}
+// runCheck and the in-process engine have no home argument and fall back to os.homedir(), which reads
+// HOME (USERPROFILE on Windows); pin both to the temp home while `fn` runs (helpers/isolation.mjs) so
+// `~/` globs never resolve against the real one.
+const withTempHome = (fn) => isolated(home, fn);
 
 // The engine decision for a Claude Bash command run in the temp repo under `policy`.
 function decide(policy, command) {
@@ -80,10 +70,8 @@ function decide(policy, command) {
     session_id: 'strict-policy-test',
     permission_mode: 'default',
   };
-  const env = { ...process.env, HOME: home };
-  delete env.FENCE_PROFILE;
   const argv = ['pre', '--host', 'claude', '--policy', policy, '--state-dir', path.join(aux, 'state'), '--admin-dir', path.join(aux, 'admin')];
-  const r = runEngine(argv, { stdin: JSON.stringify(payload), env });
+  const r = withTempHome(() => runEngine(argv, { stdin: JSON.stringify(payload), env: childEnv(home) }));
   return JSON.parse(r.stdout);
 }
 

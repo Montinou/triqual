@@ -37,8 +37,11 @@ export function diffDecisions(claudeRows, codexRows) {
 }
 
 // run-claude.sh's check that jev really ran the hooks inside the project: every engine log line
-// under <stateDir>/log must carry a cwd inside `project` and the repo root `project`.
-// -> {ok: true, lines} | {ok: false, reason}
+// under <stateDir>/log must carry a cwd inside `project` and the repo root `project`. A watchdog
+// line (rule builtin:watchdog: the engine timed out or failed, the call was denied) has no cwd, since
+// the engine never reported one: it is counted in `watchdog`, not checked, but at least one engine
+// line must remain.
+// -> {ok: true, lines, watchdog} | {ok: false, reason}
 export function checkLogCwd(stateDir, project) {
   const logDir = nodePath.join(stateDir, 'log');
   let files = [];
@@ -49,6 +52,7 @@ export function checkLogCwd(stateDir, project) {
   }
   const inside = (p) => typeof p === 'string' && (p === project || p.startsWith(`${project}/`));
   let n = 0;
+  let watchdog = 0;
   for (const f of files) {
     for (const text of nodeFs.readFileSync(nodePath.join(logDir, f), 'utf8').split('\n')) {
       if (text.trim() === '') continue;
@@ -59,12 +63,16 @@ export function checkLogCwd(stateDir, project) {
       } catch {
         return { ok: false, reason: `${f}: a log line does not parse` };
       }
+      if (entry.rule === 'builtin:watchdog') {
+        watchdog++;
+        continue;
+      }
       if (!inside(entry.cwd)) return { ok: false, reason: `a hook ran with cwd ${JSON.stringify(entry.cwd)}, outside the project ${project}` };
       if (entry.repo?.root !== project) return { ok: false, reason: `a hook at ${JSON.stringify(entry.cwd)} resolved the repo ${JSON.stringify(entry.repo?.root ?? null)}, not the project ${project}` };
     }
   }
-  if (n === 0) return { ok: false, reason: `no engine log lines under ${logDir}: the guard did not run` };
-  return { ok: true, lines: n };
+  if (n - watchdog === 0) return { ok: false, reason: `no engine log lines under ${logDir}: the guard did not run` };
+  return { ok: true, lines: n, watchdog };
 }
 
 function main(args) {
@@ -82,7 +90,8 @@ function main(args) {
       process.stderr.write(`run-claude: ${r.reason}\n`);
       return 1;
     }
-    process.stdout.write(`every hook (${r.lines} log lines) ran inside the project with ${'${repo}'} = the project\n`);
+    process.stdout.write(`every checked hook (${r.lines - r.watchdog} of ${r.lines} log lines) ran inside the project with ${'${repo}'} = the project\n`);
+    process.stdout.write(`watchdog denies (engine timed out or failed, no cwd to check, not checked): ${r.watchdog}\n`);
     return 0;
   }
   if (args.length !== 2) {

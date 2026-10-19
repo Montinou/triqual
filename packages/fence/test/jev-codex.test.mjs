@@ -179,7 +179,13 @@ test('checkLogCwd accepts only log lines whose cwd and repo root are inside the 
   const file = path.join(logDir, '2026-10-18.jsonl');
   assert.equal(checkLogCwd(state, project).ok, false, 'no log lines is a failure');
   fs.writeFileSync(file, `${line(path.join(project, '.jev-tmp', 'jev-harness-x', 'guard-bench'), project)}\n`);
-  assert.deepEqual(checkLogCwd(state, project), { ok: true, lines: 1 });
+  assert.deepEqual(checkLogCwd(state, project), { ok: true, lines: 1, watchdog: 0 });
+  const wd = `${JSON.stringify({ host: 'claude', event: 'pre', decision: 'deny', rule: 'builtin:watchdog' })}\n`;
+  fs.appendFileSync(file, wd);
+  assert.deepEqual(checkLogCwd(state, project), { ok: true, lines: 2, watchdog: 1 }, 'a watchdog line has no cwd and is counted, not checked');
+  fs.writeFileSync(file, wd);
+  assert.equal(checkLogCwd(state, project).ok, false, 'watchdog lines alone are not evidence the guard ran in the project');
+  fs.writeFileSync(file, `${line(path.join(project, '.jev-tmp', 'jev-harness-x', 'guard-bench'), project)}\n`);
   fs.appendFileSync(file, `${line(path.join(TMP, 'jev-harness-y', 'guard-bench'), null)}\n`);
   const bad = checkLogCwd(state, project);
   assert.equal(bad.ok, false);

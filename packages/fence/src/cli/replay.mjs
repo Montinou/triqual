@@ -463,7 +463,10 @@ function run(opts, seams) {
   const { hook, hookHome, policy, stateDir, adminDir, tmpRoot } = opts;
   const now = seams.now;
   const spawn = seams.spawnHook;
-  const env = { ...process.env, HOME: hookHome };
+  // a fixed minimal environment: the hook sees the staged home and no caller variable or git config,
+  // except FENCE_PROFILE (when set), so the replay decides under the owner's profile
+  const env = { PATH: process.env.PATH ?? '', HOME: hookHome, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
+  if (typeof process.env.FENCE_PROFILE === 'string') env.FENCE_PROFILE = process.env.FENCE_PROFILE;
   const r = { transcripts: 0, lines: 0, malformed: 0, unknown: 0, skipped: 0, duplicates: 0, unreadable: 0, seeded: 0, calls: [], profiles: [] };
   const usedIds = new Set();
   const decidedIds = new Set();
@@ -533,6 +536,14 @@ function run(opts, seams) {
         const out = spawn(hook, args, { input: JSON.stringify(payload), env, cwd: tmpRoot });
         const elapsed = now() - t0;
         const c = classify(out);
+        // a caller-only seam for live progress (the acceptance script prints it); never from argv
+        if (typeof seams.progress === 'function') {
+          try {
+            seams.progress({ n, tool: item.name, kind: c.kind, ms: elapsed, transcript: t.rel });
+          } catch {
+            // progress is best effort
+          }
+        }
         r.calls.push({
           n,
           id: idFor(item.id, n),
@@ -580,6 +591,7 @@ export function replay(opts, seams = {}) {
   const s = {
     now: typeof seams.now === 'function' ? seams.now : () => performance.now(),
     spawnHook: typeof seams.spawnHook === 'function' ? seams.spawnHook : spawnHook,
+    progress: typeof seams.progress === 'function' ? seams.progress : undefined,
   };
   const hookHome = isAbs(seams.hookHome) ? nodePath.resolve(seams.hookHome) : realHome;
   const homes = [...new Set([realHome, hookHome])];

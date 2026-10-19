@@ -86,3 +86,19 @@ in place for inspection. Remove them when you are done. Results go in the accept
 
 `packages/fence/test/jev-codex.test.mjs` covers the conversion, the table, the diff and the staged
 layout, using inline fixture rows. It needs no network, no uvx and no git process.
+
+## Isolation level
+
+`FENCE_TEST_ISOLATION` (`writes` | `full` | `off`) says how hard the tests and these scripts keep away
+from your real files. The helper `packages/fence/test/helpers/isolation.mjs` documents it.
+
+- `writes` (default): nothing is written outside temp directories; children get a temp HOME. Reads of
+  normal system config (`/etc/gitconfig`, your git global config) stay allowed, and the real uv package
+  cache may be written (it is a download cache, not user data); `full` moves it to temp.
+  Both runners always run `git init` with `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL=/dev/null`.
+- `full`: also a minimal environment for children and in-process engines, and uv's cache under the
+  runner's temp root (`UV_CACHE_DIR`, unless you already set it). The first run then fetches jev again.
+- `off`: only unlocks `../cwd-probe/run.sh`, the manual real-host probe, which refuses to run at the other
+  levels unless `HOME` or `CLAUDE_CONFIG_DIR` points inside a temp directory.
+
+Any other value is an error.

@@ -40,7 +40,9 @@ const root = nodeFs.realpathSync(nodeFs.mkdtempSync(nodePath.join(os.tmpdir(), '
 let code = 1;
 try {
   const { home } = stageHome(nodePath.join(root, 'stage'), { policyPath: nodePath.resolve(policy) });
-  code = runReplay(args, io, { hookHome: home });
+  // live progress on stderr, one line per decided call
+  const progress = ({ n, tool, kind, ms, transcript }) => io.err(`[${n}] ${Math.round(ms)}ms ${kind} ${tool} (${transcript})`);
+  code = runReplay(args, io, { hookHome: home, progress });
 } catch (err) {
   io.err(`replay-staged: ${err instanceof Error ? err.message : String(err)}`);
 } finally {

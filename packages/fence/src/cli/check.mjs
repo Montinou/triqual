@@ -177,8 +177,9 @@ function shellDecision(ex, file, repo, aux, home) {
     session_id: 'fence-test',
     permission_mode: 'default',
   };
-  const env = { ...process.env, HOME: home };
-  delete env.FENCE_PROFILE; // examples run under the default profile
+  // Examples run under the default profile in a fixed minimal environment, so `fence test` gives the
+  // same answer on every machine (no caller variable, no user or system git config reaches the engine).
+  const env = { PATH: process.env.PATH ?? '', HOME: home, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
   const argv = ['pre', '--host', claudeHost ? 'claude' : 'codex', '--policy', file, '--state-dir', path.join(aux, 'state'), '--admin-dir', path.join(aux, 'admin')];
   const r = runEngine(argv, { stdin: JSON.stringify(payload), env });
   return JSON.parse(r.stdout);

@@ -13,6 +13,7 @@ import { fencePaths } from '../src/cli/paths.mjs';
 import { compareManifest, parseManifest, ABSENT } from '../src/watchdog/integrity.mjs';
 import { hatchIsValid } from '../src/watchdog.mjs';
 import { buildWatchdog } from '../src/build/bundle-watchdog.mjs';
+import { childEnv } from './helpers/isolation.mjs';
 
 // Hermetic: every HOME, state directory and admin directory is a temp directory; the admin writer
 // and the gate are injected (nothing runs sudo); root ownership is simulated by an injected lstat.
@@ -485,7 +486,7 @@ test('the bundled watchdog detects a mismatch against a manifest built by buildM
   const main = await bundledMain();
   const fx = expiredHatch();
   put(path.join(fx.claudePlugin, 'hooks', 'hooks.json'), '{"hooks":{}}\n');
-  const r = await main(argvFor(fx), { stdin: PAYLOAD, env: { ...process.env, HOME: fx.h }, lstat: fx.lstat });
+  const r = await main(argvFor(fx), { stdin: PAYLOAD, env: childEnv(fx.h), lstat: fx.lstat });
   assert.equal(r.exit, 0);
   const out = JSON.parse(r.stdout);
   assert.equal(out.hookSpecificOutput.permissionDecision, 'deny');
@@ -497,8 +498,8 @@ test('the bundled watchdog detects a mismatch against a manifest built by buildM
 test('the bundled watchdog writes a stamp after a clean comparison', async () => {
   const main = await bundledMain();
   const fx = expiredHatch();
-  const r = await main(argvFor(fx), { stdin: PAYLOAD, env: { ...process.env, HOME: fx.h }, lstat: fx.lstat });
-  assert.deepEqual(r, { stdout: '', stderr: '', exit: 0 }, 'clean: the engine decides (undecided)');
+  const r = await main(argvFor(fx), { stdin: PAYLOAD, env: childEnv(fx.h), lstat: fx.lstat });
+  assert.deepEqual(r,{ stdout: '', stderr: '', exit: 0 }, 'clean: the engine decides (undecided)');
   const stamp = path.join(fx.p.verifiedDir, sha(fs.readFileSync(fx.file)));
   assert.ok(fs.lstatSync(stamp).isFile(), 'the stamp is named by the sha256 of the raw manifest bytes');
   assert.equal(fs.existsSync(path.join(fx.p.stateDir, 'needs-repair')), false);

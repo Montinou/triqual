@@ -101,9 +101,23 @@ const MAIN = {
   ],
 };
 
+// Run fn with the caller's FENCE_PROFILE set to value (undefined: unset), then restore it.
+function withProfile(value, fn) {
+  const had = Object.hasOwn(process.env, 'FENCE_PROFILE');
+  const prev = process.env.FENCE_PROFILE;
+  if (value === undefined) delete process.env.FENCE_PROFILE;
+  else process.env.FENCE_PROFILE = value;
+  try {
+    return fn();
+  } finally {
+    if (had) process.env.FENCE_PROFILE = prev;
+    else delete process.env.FENCE_PROFILE;
+  }
+}
+
 let mainRun;
 function mainReplay() {
-  mainRun ??= replay(transcripts(MAIN));
+  mainRun ??= withProfile(undefined, () => replay(transcripts(MAIN)));
   return mainRun;
 }
 
@@ -117,8 +131,8 @@ test('decides Bash, Write, Read and mcp calls from tool_use events', () => {
   assert.match(summary, /deny: 5\b/);
   assert.match(summary, /malformed lines: 1\b/);
   assert.match(summary, /tool_use items skipped: 1\b/);
-  // the profile the engine decided under (FENCE_PROFILE of the replay's environment, else default)
-  assert.match(summary, new RegExp(`^- profile: ${process.env.FENCE_PROFILE ?? 'default'}$`, 'm'));
+  // the profile the engine decided under: no FENCE_PROFILE in the caller's environment, so the default
+  assert.match(summary, /^- profile: default$/m);
   const undecided = r.read('undecided.md');
   for (const id of ['toolu_echo', 'toolu_write', 'toolu_read']) assert.ok(undecided.includes(id), `${id} undecided`);
   const denies = r.read('denies.md');
@@ -391,4 +405,44 @@ test('no transcript command is executed (a canary file named in a replayed comma
   // the canary command was decided, not skipped
   assert.ok(r.read('denies.md').includes(CANARY));
   assert.ok(r.read('undecided.md').includes(CANARY_ECHO));
+});
+
+test('the hook gets the caller FENCE_PROFILE when set, and only that variable of the caller', () => {
+  const dir = transcripts({ 'p/s.jsonl': [assistant([toolUse('toolu_prof', 'Bash', { command: 'ls' })], { session: 'sess-p' })] });
+  const envs = [];
+  const seen = [];
+  const spawnHook = (file, args, opts) => {
+    envs.push(opts.env);
+    seen.push(opts.env);
+    return realSpawnHook(file, args, opts);
+  };
+  const leak = 'FENCE_REPLAY_TEST_LEAK';
+  process.env[leak] = '1';
+  try {
+    // set: passed through, and the engine decides (and the summary reports) under it
+    const set = withProfile('default', () => replay(dir, [], { spawnHook }));
+    assert.equal(set.code, 0, set.c.err.join('\n'));
+    assert.equal(envs.length, 1);
+    assert.equal(envs[0].FENCE_PROFILE, 'default');
+    assert.match(set.read('summary.md'), /^- profile: default$/m);
+    // a profile name the policy does not define reaches the hook unchanged (a fake spawn: nothing runs)
+    envs.length = 0;
+    const other = withProfile('strict', () => replay(dir, [], { spawnHook: (f, a, o) => (envs.push(o.env), seen.push(o.env), { status: 0, stdout: '', stderr: '' }) }));
+    assert.equal(envs.length, 1);
+    assert.equal(envs[0].FENCE_PROFILE, 'strict');
+    assert.match(other.read('summary.md'), /^- profile: strict$/m);
+    // unset: the key is absent, not an empty string
+    envs.length = 0;
+    const unset = withProfile(undefined, () => replay(dir, [], { spawnHook }));
+    assert.equal(unset.code, 0, unset.c.err.join('\n'));
+    assert.equal(envs.length, 1);
+    assert.equal(Object.hasOwn(envs[0], 'FENCE_PROFILE'), false);
+    assert.match(unset.read('summary.md'), /^- profile: default$/m);
+    // no other caller variable reaches the hook
+    assert.equal(seen.length, 3);
+    for (const e of seen) assert.equal(Object.hasOwn(e, leak), false);
+    assert.deepEqual(Object.keys(seen[2]).sort(), ['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM', 'HOME', 'PATH']);
+  } finally {
+    delete process.env[leak];
+  }
 });

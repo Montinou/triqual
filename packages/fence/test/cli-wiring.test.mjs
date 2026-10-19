@@ -90,6 +90,11 @@ function hostFor({ answers = [], run, env, over = {} } = {}) {
       sudoers: { read: () => '', list: () => [] },
       smoke: () => ({ ok: true, failures: [], latencyMs: [1, 2] }),
       deadlineMs: DEADLINE,
+      // never the machine's managed-settings paths, its root-owned fence directory or a real editor
+      claudeManaged: [],
+      codexManaged: [],
+      lockedDir: path.join(TMP, 'locked-fence'),
+      spawn: () => ({ status: 0 }),
       ...over,
     },
     home,
