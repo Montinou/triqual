@@ -156,3 +156,11 @@ test('plugin.json and marketplace.json describe the store mode', () => {
   }
   assert.equal(plugin.description, entry.description, 'both descriptions are the same text');
 });
+
+test('README Tiers section documents the heavy-tier warning at registration', () => {
+  const readme = readFileSync(join(PLUGIN, 'README.md'), 'utf8');
+  const tiers = readme.slice(readme.indexOf('#### Tiers'));
+  assert.match(tiers.slice(0, 3000).replace(/\s+/g, ' '),
+    /more than 80% of the tasks of a plan of at least 5 are `heavy`[^.]*warning[^.]*stderr[^.]*exit code and the ledger/,
+    'README #### Tiers: the warning, its threshold, stderr, and that nothing else changes');
+});

@@ -161,6 +161,9 @@ A task's review tier is its `**Tier:**` line, one of `heavy`, `standard` or `lig
   task: `init` (and `tracking write plan` and `--adopt`) exit 2 naming the tasks without one. In a tiered plan a
   `coordinator` task must be `light` and a `roles:complex-implementer` task `heavy`. A plan with no tier registers as it
   always did. Reconciling an existing ledger applies none of these rules.
+- **A mostly heavy plan gets a warning.** When more than 80% of the tasks of a plan of at least 5 are `heavy`,
+  registering it prints one warning line on stderr naming the count and share; the exit code and the ledger stay as
+  they are.
 - **Declared and effective.** The ledger keeps each task's declared `tier` and its `effectiveTier`, the tier it runs at.
   Reconciling copies a changed tier into pending tasks, and their effective tier becomes the higher of the old one and
   the new one.

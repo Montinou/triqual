@@ -1,7 +1,7 @@
 {
   "name": "progress-tracking",
   "description": "Strict progress tracking: one entry per task, the overall status and per-plan task ledgers driven by triqual tasks, kept up to date by gates that enforce them and a hook that injects the state at every session start. Committed mode (progress.md and status.md in the repo), local mode (under .git) or store mode (a local database, nothing in the repo or its history).",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "author": { "name": "Montinou" },
   "repository": "https://github.com/Montinou/triqual",
   "license": "MIT",

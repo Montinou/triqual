@@ -18,8 +18,8 @@ export const isGenerated = (text) => text.startsWith(GENERATED_MARK) || text.sta
 export const CODEX_XHIGH = true;
 export const CODEX_READONLY_REVIEWERS = false;
 
-// Codex installation policy, independent of Claude's `model` and `effort` frontmatter: Luna where Claude runs Haiku
-// (hunters, briefs, the safety gate); Sol for every role that writes code or judges it, at low effort for the
+// Codex installation policy, independent of Claude's `model` and `effort` frontmatter: Luna for the read-and-list
+// roles (hunters, briefs, the safety gate); Sol for every role that writes code or judges it, at low effort for the
 // implementer and the fixer (who work from a brief) and high for the spec gate and the complex implementer; Astra, at medium effort, is
 // reserved for the single whole-branch adversarial review.
 const CODEX_ROLE_ROUTING = Object.freeze({

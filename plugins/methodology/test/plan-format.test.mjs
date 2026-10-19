@@ -234,6 +234,7 @@ test('## Task Tiers carries the three-tier rubric and its rules', () => {
 test('the plan self-review and audit check tiers', () => {
   const item = section(PLANS, '## Self-Review').find((line) => line.startsWith('**7. Tiers:**'));
   assert.ok(item, 'the plan Self-Review has no **7. Tiers:** item');
+  assert.match(item, /more than 80% of (?:its|the plan's) tasks[^.]*`heavy`[^.]*at least 5 tasks/, 'item 7 does not re-check a mostly heavy plan');
   assert.match(section(PLANS, '## Plan Audit').join(' '), /tier/i, 'the Plan Audit does not mention tiers');
 });
 
@@ -326,7 +327,7 @@ test('the task template carries one Role line and the Skills line is skipped sil
   assert.equal(template.filter((line) => line.startsWith('**Tier:**')).length, 1);
   const skills = template.find((line) => line.startsWith('- `**Skills:**`'));
   assert.ok(skills, 'the Task Structure notes have no **Skills:** bullet');
-  for (const phrase of ['triqual suggest "<the task\'s text>" --json', 'suggestions[].slug', 'exit 3', 'headjack is not installed', 'empty output', 'exit 127', 'omit the line silently']) {
+  for (const phrase of ['When headjack is installed', 'triqual suggest "<the task\'s text>" --json', 'per task', 'suggestions[].slug', 'exit 3', 'headjack is not installed', 'empty output', 'exit 127', 'omit the line silently']) {
     assert.ok(skills.includes(phrase), `the Skills bullet does not say "${phrase}"`);
   }
 });

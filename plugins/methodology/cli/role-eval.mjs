@@ -1,39 +1,46 @@
 // `triqual role-eval record --plan <plan file> <json-file>` and `triqual role-eval summary [--by-tier] [--since YYYY-MM-DD]
 // [--json]`: the command line of the role-eval store (lib/role-eval.mjs; spec 5 and U7). `record` validates a record
-// (hunters, task-review or final-escapes), derives its idempotency key and appends it under the store lock; `summary`
-// reports the store per provider, or per review tier with --by-tier. A record of a retired kind (safety-shadow) is
+// (hunters, task-review, final-escapes or escape), derives its idempotency key and appends it under the store lock;
+// `summary` reports the store per provider, or per review tier with --by-tier (post-merge escapes included). An escape
+// with a task and no tier takes the task's effective tier from `triqual tasks export --json` when that resolves. A record of a retired kind (safety-shadow) is
 // refused; the lines of that kind already stored are still summarized.
 // Exit codes: 0 written, already recorded, or a summary (also of an empty or missing store); 2 usage, a retired kind,
 // a schema error, a bad JSON file or no git repository (the message names a field, never a value); 1 a write or lock
 // failure.
 // node: built-ins only. main() is exported for tests and runs only when this file is the entry point.
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
-  RETIRED_KINDS, appendRecord, formatSummary, formatTierSummary, recordKey, storePath, summarize, summarizeByTier,
+  RETIRED_KINDS, TIERS, appendRecord, formatSummary, formatTierSummary, recordKey, storePath, summarize, summarizeByTier,
   validateRecord,
 } from './lib/role-eval.mjs';
 
 const GIT_TIMEOUT_MS = 10000;
+const TASKS_TIMEOUT_MS = 10000;
 const SINCE = /^\d{4}-\d{2}-\d{2}$/;
 
 const USAGE = [
   'usage:',
   '  triqual role-eval record --plan <plan file> <json-file>',
-  '      Validate the record in <json-file> (kind hunters, task-review or final-escapes; counts only) and append it to',
+  '      Validate the record in <json-file> (kind hunters, task-review, final-escapes or escape) and append it to',
   '      the store once (the key comes from the repo, the plan\'s file name, the task, the kind and, for a task-review,',
   '      its attempt: attempt 2 of a task is stored, a repeated attempt is a no-op). The safety-shadow kind is retired:',
   '      record refuses it. Exits 0 when written or already recorded, 2 on a bad or retired record or usage, 1 on a',
   '      write or lock failure.',
+  '      An escape (a defect that reached trunk after the plan merged) is stored once per plan and ref (#42 and 42 are one ref):',
+  '      {"v": 2, "at": "<ISO time>", "kind": "escape", "source": "post-merge-fix|red-ci|bug-report", "ref": "<sha or PR>",',
+  '       "task": "T<n>" (optional), "tier": "heavy|standard|light" (optional), "note": "<200 chars max>" (optional)}',
+  '      With a task and no tier, the tier is the task\'s effective tier from the ledger when it resolves.',
   '  triqual role-eval summary [--since YYYY-MM-DD] [--json]',
   '      Per provider: hunter right and new rates (from hunters and task-review records), and the safety-shadow',
   '      agreement of the records stored before that kind was retired, from the records at or after --since.',
   '  triqual role-eval summary --by-tier [--since YYYY-MM-DD] [--json]',
   '      Per review tier (heavy, standard, light): task reviews, raised, hunter confirmed rate, spec confirmed per',
-  '      task, fix rounds per task, blocked, and final-review escapes per task, from the records at or after --since.',
+  '      task, fix rounds per task, blocked, and final-review escapes per task; then the post-merge escapes per tier',
+  '      (unattributed without a tier) and per plan, from the records at or after --since.',
   '  triqual role-eval --help',
   '',
 ].join('\n');
@@ -82,6 +89,22 @@ function gitCommonDir(cwd, env) {
   }
 }
 
+// The effective tier of `task` in plan `plan` from `triqual tasks export --json` run in `cwd`, or undefined when the
+// command is missing, fails, times out or does not name that task with a tier.
+function ledgerTier(cwd, env, plan, task) {
+  const res = spawnSync('triqual', ['tasks', 'export', '--json'], {
+    cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: TASKS_TIMEOUT_MS,
+  });
+  if (res.status !== 0) return undefined;
+  try {
+    const name = basename(plan).replace(/\.md$/, '');
+    const found = JSON.parse(res.stdout)?.plans?.find((p) => p?.name === name)?.tasks?.find((t) => t?.id === task);
+    return TIERS.includes(found?.effectiveTier) ? found.effectiveTier : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 const errorCode = (err) => (typeof err?.code === 'string' ? err.code : 'error');
 
 function record(args, { env, cwd, stdout, stderr }) {
@@ -104,9 +127,11 @@ function record(args, { env, cwd, stdout, stderr }) {
   // A fixed kind name, never a value from the file.
   const retired = RETIRED_KINDS.find((kind) => obj !== null && typeof obj === 'object' && obj.kind === kind);
   if (retired !== undefined) {
-    stderr.write(`triqual role-eval: the ${retired} kind is retired: record a hunters, task-review or final-escapes record\n`);
+    stderr.write(`triqual role-eval: the ${retired} kind is retired: record a hunters, task-review, final-escapes or escape record\n`);
     return 2;
   }
+  const escape = obj !== null && typeof obj === 'object' && obj.kind === 'escape';
+  if (escape) obj.plan = basename(plan);
   const verdict = validateRecord(obj);
   if (!verdict.ok) {
     stderr.write(`triqual role-eval: invalid record: field ${verdict.field}\n`);
@@ -118,8 +143,13 @@ function record(args, { env, cwd, stdout, stderr }) {
     return 2;
   }
 
+  if (escape && obj.task !== undefined && obj.tier === undefined) {
+    const tier = ledgerTier(cwd, env, plan, obj.task);
+    if (tier !== undefined) obj.tier = tier;
+  }
+
   const store = storePath(env, env.HOME || homedir());
-  const key = recordKey({ commonDir, plan, task: obj.task, kind: obj.kind, attempt: obj.attempt });
+  const key = recordKey({ commonDir, plan, task: obj.task, kind: obj.kind, attempt: obj.attempt, ref: obj.ref });
   try {
     const made = mkdirSync(store.dir, { recursive: true, mode: 0o700 });
     const result = appendRecord(store.file, obj, { key, isDefault: store.isDefault, created: made !== undefined });

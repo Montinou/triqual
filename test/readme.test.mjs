@@ -129,6 +129,8 @@ test('README documents triqual tasks, triqual ui and the status-line snippet', (
   for (const needle of ['headjack suggest', '<headjack-suggestions>', '--session-id', '^[A-Za-z0-9][A-Za-z0-9._@:-]{0,127}$', '`brainstorming`', '`writing-plans`', '`using-methodology`']) {
     assert.ok(suggest[0].includes(needle), `the triqual suggest row lacks ${needle}`);
   }
+  assert.ok(suggest[0].includes('when Headjack is installed'), 'the skills run it only when headjack is installed');
+  assert.match(suggest[0], /nothing runs it at prompt time/, 'suggest is manual, not a prompt-time hook');
   assert.match(suggest[0], /Exits 0 .*3 when Headjack is not installed.*1 when .*2 on usage/);
   assert.match(README, /git 2\.31/);
   assert.match(README, /--separate-git-dir/);
@@ -329,11 +331,12 @@ test('CONTRIBUTING.md and SECURITY.md exist, link each other and are published b
 test('README lists headjack as an optional external plugin', () => {
   const row = README.split('\n').find((line) => line.startsWith('| `headjack` | external |'));
   assert.ok(row, 'headjack row');
-  for (const text of ['claude plugin install headjack@triqual', 'Node 22.16', '2.1.275', 'https://github.com/Montinou/headjack',
-    '~/.local/bin', 'clone', 'not from the installed plugin']) {
+  for (const text of ['claude plugin install headjack@triqual', 'Node 22.16', 'https://github.com/Montinou/headjack',
+    '`cli/headjack`', '~/.local/bin', 'clone', 'not from the installed plugin']) {
     assert.ok(row.includes(text), text);
   }
   assert.doesNotMatch(row, /0\.1\.0/);
+  assert.doesNotMatch(row, /bin\/headjack`|`bin\/`/, 'the launcher is cli/headjack; the plugin ships no top-level bin/');
 });
 
 test('README says the push consent covers the phase branches, the draft PRs and marking them ready after the final review, and nothing else', () => {

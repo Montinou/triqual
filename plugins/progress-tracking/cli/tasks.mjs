@@ -267,6 +267,20 @@ function checkRegistration(tasks) {
   }
 }
 
+// The heavy-tier warning at registration: a plan of at least HEAVY_WARN_MIN_TASKS tasks with more than
+// HEAVY_WARN_SHARE of them declared heavy. It is advice only: the exit code and the ledger stay as they are.
+const HEAVY_WARN_SHARE = 0.8;
+const HEAVY_WARN_MIN_TASKS = 5;
+
+// The warning line for a plan about to be registered, or null.
+function heavyTierWarning(tasks) {
+  const total = tasks.length;
+  const heavy = tasks.filter((t) => t.tier === 'heavy').length;
+  if (total < HEAVY_WARN_MIN_TASKS || heavy <= HEAVY_WARN_SHARE * total) return null;
+  return `warning: ${heavy} of ${total} tasks are heavy (${Math.round((100 * heavy) / total)}%): heavy review costs the `
+    + 'most; re-check each tier (see the tier rules in methodology:writing-plans)';
+}
+
 // Writes `text` to `dest` only when `dest` does not exist: a complete temp file in dest's directory, then a hard link,
 // which fails with EEXIST instead of replacing a file created meanwhile.
 function writeNew(dest, text) {
@@ -359,6 +373,7 @@ function initPlan(t, { spec, branch }, abs, planArg) {
 
   let ledger;
   let message;
+  let warning = null;
   let changed = true;
   if (current) {
     const r = reconcile(current, tasks, at);
@@ -375,11 +390,13 @@ function initPlan(t, { spec, branch }, abs, planArg) {
       now: at,
     });
     message = `created ${ledgerPath}`;
+    warning = heavyTierWarning(tasks);
   }
   const ledgers = loadLedgers(t).filter((l) => l.path !== ledgerPath).concat(entry(ledgerPath, ledger));
   const status = renderedStatus(t, ledgers);
   if (changed) writeAtomic(ledgerPath, serialize(ledger));
   writeStatus(t, status);
+  if (warning) process.stderr.write(`${warning}\n`);
   return message;
 }
 
@@ -428,7 +445,8 @@ function storeInit(st, { spec, branch }, abs, planArg) {
   const specPath = spec === undefined ? null : storeSpec(st, spec);
   const branchName = branch ?? currentBranch(st.repoRoot);
   const at = now();
-  return st.store.tx(() => {
+  let warning = null;
+  const message = st.store.tx(() => {
     const existing = storeLedgers(st).find((l) => basename(l.path) === file);
     const current = existing?.ledger ?? null;
     const tasks = planTasks(text, current?.tasks.map((x) => x.id) ?? []);
@@ -441,8 +459,11 @@ function storeInit(st, { spec, branch }, abs, planArg) {
     const ledger = createLedger({ plan: `plans/${file}`, spec: specPath, branch: branchName, tasks, now: at });
     const planId = st.store.upsertPlan(st.repoId, { path: ledger.plan, spec: ledger.spec, branch: ledger.branch, state: ledger.state });
     st.store.saveLedger(planId, ledger);
+    warning = heavyTierWarning(tasks);
     return `created ${planPath}`;
   });
+  if (warning) process.stderr.write(`${warning}\n`);
+  return message;
 }
 
 function storeTransition(cmd) {

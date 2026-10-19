@@ -19,7 +19,7 @@ exits 1 for an unknown command (the command list goes to stderr) and when it can
 the plugin or the command is not installed. Otherwise it exits with the command's own status. `suggest` runs from this
 plugin (from version 1.0.0) and calls the separately installed `headjack`.
 
-`doctor`, `sync`, `migrate` and `role-eval` refuse an unknown argument with exit 2. Each of them takes
+`doctor`, `sync`, `migrate`, `role-eval` and `cost` refuse an unknown argument with exit 2. Each of them takes
 `-h` or `--help` and then writes nothing.
 
 ### `/methodology:setup`
@@ -136,9 +136,10 @@ triqual role-eval summary --by-tier [--since YYYY-MM-DD] [--json]
 ```
 
 The comparison store behind the review hunters and the review tiers. Records hold counts only: no repository, plan,
-path, diff or finding text.
+path, diff or finding text (an `escape` adds the plan file's base name, a commit sha or PR number and an optional
+short note).
 
-`record` validates one record of kind `hunters`, `task-review` or `final-escapes` and appends it once. The record has
+`record` validates one record of kind `hunters`, `task-review`, `final-escapes` or `escape` and appends it once. The record has
 these rules:
 
 - The JSON file has no `key` field. Any `key` field is rejected, because the command derives the key.
@@ -151,10 +152,21 @@ these rules:
   its `hunters`, the `gate` findings, the `spec` review, `fixRounds`, `blocked` and `coordinator`. A `tier` below the
   declared one is refused, and `raised` must say exactly that the tier is above it.
 - A `final-escapes` (`v` 2, task `final`) lists the `tier` and `severity` of each final-review finding traced to a task.
+- An `escape` (`v` 2, no `provider`) is a defect that reached trunk after the plan merged: `source` is `post-merge-fix`,
+  `red-ci` or `bug-report`, `ref` the commit sha or PR number (a string), with an optional `task` (`T<n>`), `tier` and
+  `note` (at most 200 characters, one line, no secrets). `record` stores the plan file's base name in it. With a `task`
+  and no `tier`, the tier is the task's `effectiveTier` from `triqual tasks export --json` when that resolves; else the
+  record has no tier and `summary --by-tier` counts it as `unattributed`. After a plan merges, record every `fix:`
+  commit or red CI on trunk traced to it:
+
+  ```json
+  { "v": 2, "at": "2026-10-21T09:15:00Z", "kind": "escape", "source": "post-merge-fix", "ref": "3f9c2ab", "task": "T3" }
+  ```
+
 - The kind `safety-shadow` is retired and refused.
 
 The idempotency key is the sha256 of the git common directory, the plan file's base name, the task and the kind, and for
-a `task-review` also its attempt. Because linked worktrees share the common directory, they share keys. A second `record` with the same key prints
+a `task-review` also its attempt; an `escape` hashes its `ref` in place of the task, so it is stored once per plan and ref. Because linked worktrees share the common directory, they share keys. A second `record` with the same key prints
 `already recorded` and changes nothing. The command must run inside a git repository. The appends are serialized by
 `comparisons.jsonl.lock`: it waits 2 seconds and treats a lock older than 30 seconds as stale. The file is always mode
 `0600`. The directory is set to `0700` only when it is the default directory or when `record` created it.
@@ -168,18 +180,41 @@ and 2026-02-30 is refused. `--json` prints the same numbers as JSON. An empty or
 attempt-1 task reviews, so a reopened task counts once), `raised` (those whose tier was raised above the declared
 one), the hunter confirmed rate, spec confirmed findings per task, fix rounds per task, `blocked`, and final-review
 escapes per task. A figure with no denominator reads `n/a`, or `null` with `--json`, which prints an object keyed by
-tier. [memory-report](../memory-report/README.md) reads the `--json` form for its weekly "Review tiers" section.
+tier. Then a `post-merge escapes:` line counts the `escape` records per tier (`unattributed` without a tier), followed by
+one line per plan; with `--json` they are under `postMerge` (`heavy`, `standard`, `light`, `unattributed`, `byPlan`).
+The plain `summary` is per provider and leaves escapes out. [memory-report](../memory-report/README.md) reads the
+`--json` form for its weekly "Review tiers" section.
 
 Exit codes: 0 written, already recorded, or a summary (a missing file included), 1 a write or lock failure or a store
 that exists but cannot be read, 2 a usage error, a bad or retired record, a bad JSON file or no git repository. The
 message names the field, never the value.
+
+### `triqual cost`
+
+Usage: `triqual cost [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--project <text>] [--json]`
+
+The token spend recorded in this machine's Claude Code transcripts, every `*.jsonl` under
+`~/.claude/projects/<project dir>/` (subagent transcripts included), or under `TRIQUAL_TRANSCRIPTS_DIR`. Per model it
+sums input, output, cache-read and cache-write tokens, with the main session transcripts (`controller`) apart from the
+ones under a `subagents` directory. An assistant message counts once per message id and request id. `--since` and
+`--until` keep the UTC days between them, both included; `--project` keeps the project directories whose name contains
+the text. `--json` prints the same numbers, with each model's `usd`.
+
+The USD is an estimate: list prices per million tokens from `cli/lib/prices.json`, the Anthropic first-party prices
+of the claude-api model reference (cache writes at 1.25 times input for 5 minutes and 2 times for 1 hour). A
+subscription or a partner platform bills differently. A model not in the table shows its tokens and no price, and is
+left out of the total. Edit the table when list prices change.
+
+There is no `--plan`: for one plan, pass the day its first task started and the day it closed. The ledger's event times
+are not read. The command is read-only and prints counts, model names and project directory names, never message
+content, prompts or other paths. Exits 0 (zeros when there are no transcripts), 2 on a usage error.
 
 ### `triqual suggest`
 
 Usage: `triqual suggest "<text>" [--json]`
 
 Vault skills that fit `<text>`. [Headjack](https://github.com/Montinou/headjack) owns skill finding and is installed
-separately; this command only calls it.
+separately; this command only calls it. It is manual: nothing runs it at prompt time.
 
 - It finds `~/.local/bin/headjack`, then the first `headjack` on `PATH`, and runs `headjack suggest "<text>"`. It never
   passes `--session-id`: the session dedupe would hide a skill from every task after the first.
@@ -193,8 +228,9 @@ separately; this command only calls it.
 - A text that starts with a dash is passed after `--`. A Headjack that does not answer within 20 seconds is killed.
 
 Exit codes: 0 Headjack ran (the output may be empty), 3 Headjack is not installed, 1 Headjack exited non-zero or did not
-answer in time, or `--json` printed output that is not valid JSON, 2 a usage error. The `brainstorming`, `writing-plans`
-and `using-methodology` skills treat any non-zero exit or empty output as no suggestion and say nothing.
+answer in time, or `--json` printed output that is not valid JSON, 2 a usage error. When Headjack is installed, the
+`brainstorming` and `writing-plans` skills run it (`using-methodology` says to run it when a capability is missing), and
+they treat any non-zero exit or empty output as no suggestion and say nothing.
 
 ### `triqual hook`
 
@@ -324,6 +360,7 @@ Environment variables:
 | Variable | Used by | Effect |
 |---|---|---|
 | `ROLE_EVAL_FILE` | `role-eval` | Names the store file. Its directory is not treated as the default directory. |
+| `TRIQUAL_TRANSCRIPTS_DIR` | `cost` | Replaces `~/.claude/projects` as the root of the transcripts it reads. |
 | `XDG_DATA_HOME` | `role-eval` | Replaces `~/.local/share` as the base of the store. |
 | `TRIQUAL_REGISTRY_DIR` | `migrate` | An absolute path where the repo registry `repos.json` is read from. The old `CM_REGISTRY_DIR` still works for now. |
 | `CLAUDE_PLUGIN_ROOT` | `/methodology:setup`, hooks | The plugin's directory, set by Claude Code. |

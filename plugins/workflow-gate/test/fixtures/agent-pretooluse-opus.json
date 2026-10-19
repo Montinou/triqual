@@ -1,5 +1,5 @@
 {
-  "_comment": "Hand-written PreToolUse input for the Agent tool, following Claude Code's documented hook input (session_id, tool_name, tool_input). Not captured from a live session. This variant has no tool_input.model: it resolves to Opus through roles:spec-reviewer.",
+  "_comment": "Hand-written PreToolUse input for the Agent tool, following Claude Code's documented hook input (session_id, tool_name, tool_input). Not captured from a live session. This variant has no tool_input.model: it resolves to Opus through roles:final-adversarial-reviewer.",
   "session_id": "fixture-session",
   "transcript_path": "/tmp/fixture-session.jsonl",
   "cwd": "/tmp/fixture-project",
@@ -7,9 +7,9 @@
   "hook_event_name": "PreToolUse",
   "tool_name": "Agent",
   "tool_input": {
-    "description": "Review the task against its brief",
-    "prompt": "Review the diff of Task 3 against the brief.",
-    "subagent_type": "roles:spec-reviewer"
+    "description": "Review the whole branch before merge",
+    "prompt": "Review the whole branch against the spec.",
+    "subagent_type": "roles:final-adversarial-reviewer"
   },
   "tool_use_id": "toolu_fixture_opus"
 }

@@ -285,6 +285,72 @@ test('record: a task-review whose tier is below the declared one, or whose raise
   assert.equal(existsSync(dirname(w.file)), false);
 }));
 
+// A defect that reached trunk after the plan merged (no provider; `record` adds the plan's base name).
+const escapeRecord = (over = {}) => ({
+  v: 2, at: '2026-09-10T10:00:00Z', kind: 'escape', source: 'post-merge-fix', ref: 'abc1234', ...over,
+});
+
+// A fake `triqual` first on PATH: `tasks export --json` prints `snapshot` (or exits 1 when it is null).
+function fakeTriqual(w, snapshot) {
+  const bin = join(w.root, 'bin');
+  mkdirSync(bin, { recursive: true });
+  const body = snapshot === null ? 'process.exit(1);' : `process.stdout.write(${JSON.stringify(JSON.stringify(snapshot))});`;
+  writeFileSync(join(bin, 'triqual'), `#!/usr/bin/env node\n${body}\n`);
+  chmodSync(join(bin, 'triqual'), 0o755);
+  return `${bin}:${process.env.PATH}`;
+}
+
+test('record: an escape is stored once per (plan, ref) with the plan\'s base name; another ref is a second line', () => withWorld((w) => {
+  const opts = { env: envFor(w), cwd: w.repo };
+  const one = writeInput(w, escapeRecord({ tier: 'light', note: 'off-by-one in the parser' }), 'e1.json');
+  const first = run(['record', '--plan', w.plan, one], opts);
+  assert.equal(first.code, 0, first.err);
+  assert.match(run(['record', '--plan', w.plan, one], opts).out, /already recorded/);
+  const two = writeInput(w, escapeRecord({ source: 'red-ci', ref: '#42' }), 'e2.json');
+  assert.equal(run(['record', '--plan', w.plan, two], opts).code, 0);
+  const stored = lines(w.file).map((l) => JSON.parse(l));
+  assert.equal(stored.length, 2);
+  assert.equal(stored[0].plan, 'p.md');
+  assert.equal(stored[0].tier, 'light');
+  const commonDir = realpathSync(execFileSync('git', ['-C', w.repo, 'rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8' }).trim());
+  assert.equal(stored[1].key, recordKey({ commonDir, plan: 'p.md', kind: 'escape', ref: '#42' }));
+  // The same PR without its `#` is the same escape.
+  const same = writeInput(w, escapeRecord({ source: 'red-ci', ref: '42' }), 'e3.json');
+  assert.match(run(['record', '--plan', w.plan, same], opts).out, /already recorded/);
+  assert.equal(lines(w.file).length, 2);
+}));
+
+test('record: an escape with a task and no tier takes the task\'s effective tier from the ledger', () => withWorld((w) => {
+  const snapshot = { plans: [{ name: 'p', tasks: [{ id: 'T2', tier: 'standard', effectiveTier: 'heavy' }] }] };
+  const opts = { env: envFor(w, { PATH: fakeTriqual(w, snapshot) }), cwd: w.repo };
+  const r = run(['record', '--plan', w.plan, writeInput(w, escapeRecord({ task: 'T2' }))], opts);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(JSON.parse(lines(w.file)[0]).tier, 'heavy');
+}));
+
+test('record: an escape whose task the ledger cannot resolve is stored without a tier', () => withWorld((w) => {
+  const opts = { env: envFor(w, { PATH: fakeTriqual(w, null) }), cwd: w.repo };
+  const r = run(['record', '--plan', w.plan, writeInput(w, escapeRecord({ task: 'T9' }))], opts);
+  assert.equal(r.code, 0, r.err);
+  const stored = JSON.parse(lines(w.file)[0]);
+  assert.equal(stored.task, 'T9');
+  assert.equal('tier' in stored, false);
+}));
+
+test('record: a bad escape exits 2 naming the field (source, ref, task, tier, note, provider key)', () => withWorld((w) => {
+  const opts = { env: envFor(w), cwd: w.repo };
+  const cases = [
+    [{ source: 'gossip' }, 'source'], [{ ref: 'not a ref' }, 'ref'], [{ task: 'final' }, 'task'],
+    [{ tier: 'medium' }, 'tier'], [{ note: 'x'.repeat(201) }, 'note'], [{ provider: 'claude' }, 'provider'],
+  ];
+  for (const [over, field] of cases) {
+    const r = run(['record', '--plan', w.plan, writeInput(w, escapeRecord(over))], opts);
+    assert.equal(r.code, 2, field);
+    assert.match(r.err, new RegExp(`field ${field}\\b`));
+  }
+  assert.equal(existsSync(dirname(w.file)), false);
+}));
+
 // ---- summary ----------------------------------------------------------------------------------------------------
 
 // A safety-shadow line stored before that kind was retired (record refuses new ones, so it is written directly), then
@@ -398,6 +464,7 @@ function seedTiers(w) {
 const EMPTY_TIER = {
   tasks: 0, raised: 0, hunterConfirmedRate: null, specConfirmedPerTask: null, fixRoundsPerTask: null, blocked: 0, escapesPerTask: null,
 };
+const EMPTY_POST_MERGE = { heavy: 0, standard: 0, light: 0, unattributed: 0, byPlan: {} };
 
 test('summary --by-tier --json prints the per-tier object of the store', () => withWorld((w) => {
   seedTiers(w);
@@ -410,7 +477,31 @@ test('summary --by-tier --json prints the per-tier object of the store', () => w
     heavy: { tasks: 1, raised: 1, hunterConfirmedRate: 0.5, specConfirmedPerTask: 2, fixRoundsPerTask: 3, blocked: 0, escapesPerTask: 1 },
     standard: { tasks: 1, raised: 0, hunterConfirmedRate: 0.5, specConfirmedPerTask: 0, fixRoundsPerTask: 1, blocked: 1, escapesPerTask: 0 },
     light: EMPTY_TIER,
+    postMerge: EMPTY_POST_MERGE,
   });
+}));
+
+test('summary --by-tier counts post-merge escapes per tier and per plan, unattributed without a tier', () => withWorld((w) => {
+  seedTiers(w);
+  const escapes = [
+    escapeRecord({ plan: 'a.md', tier: 'heavy' }), escapeRecord({ plan: 'a.md', ref: 'def5678' }),
+    escapeRecord({ plan: 'b.md', ref: '#7', tier: 'heavy', at: '2026-08-01T00:00:00Z' }),
+  ];
+  writeFileSync(w.file, `${readFileSync(w.file, 'utf8')}${escapes.map((r, i) => JSON.stringify({ ...r, key: `e${i}` })).join('\n')}\n`);
+  const opts = { env: envFor(w), cwd: w.repo };
+  const parsed = JSON.parse(run(['summary', '--by-tier', '--json'], opts).out);
+  assert.deepEqual(parsed.postMerge, {
+    heavy: 2, standard: 0, light: 0, unattributed: 1,
+    byPlan: { 'a.md': { heavy: 1, standard: 0, light: 0, unattributed: 1 }, 'b.md': { heavy: 1, standard: 0, light: 0, unattributed: 0 } },
+  });
+  const text = run(['summary', '--by-tier', '--since', '2026-09-01'], opts).out;
+  assert.match(text, /^post-merge escapes: heavy 1, standard 0, light 0, unattributed 1$/m);
+  assert.match(text, /^  a\.md: heavy 1, standard 0, light 0, unattributed 1$/m);
+  assert.doesNotMatch(text, /b\.md/);
+  // The plain summary is per provider: an escape adds none.
+  const plain = JSON.parse(run(['summary', '--json'], opts).out);
+  assert.deepEqual(Object.keys(plain.providers), ['claude']);
+  assert.deepEqual(plain.skipped.malformed, []);
 }));
 
 test('summary --by-tier prints one line per tier; --since narrows the window; flags work in either order', () => withWorld((w) => {
@@ -434,7 +525,7 @@ test('summary --by-tier prints one line per tier; --since narrows the window; fl
 test('summary --by-tier on a missing store exits 0 with the three empty tiers and never creates the store', () => withWorld((w) => {
   const r = run(['summary', '--by-tier', '--json'], { env: envFor(w), cwd: w.repo });
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(JSON.parse(r.out), { heavy: EMPTY_TIER, standard: EMPTY_TIER, light: EMPTY_TIER });
+  assert.deepEqual(JSON.parse(r.out), { heavy: EMPTY_TIER, standard: EMPTY_TIER, light: EMPTY_TIER, postMerge: EMPTY_POST_MERGE });
   assert.equal(existsSync(dirname(w.file)), false);
 }));
 
@@ -460,6 +551,8 @@ test('--help (and -h) lists both subcommands and exits 0', () => withWorld((w) =
     assert.match(r.out, /triqual role-eval summary --by-tier \[--since YYYY-MM-DD\] \[--json\]/);
     assert.match(r.out, /task-review/);
     assert.match(r.out, /final-escapes/);
+    assert.match(r.out, /escape \(/);
+    assert.match(r.out, /post-merge-fix/);
     assert.match(r.out, /safety-shadow kind is retired/);
     assert.match(r.out, /stored before/);
   }

@@ -16,8 +16,8 @@ to none; the reviewer judges those items only. Drop the Light Items section
 for a heavy or standard task.
 
 Keep the Safety Checklist sections only when the ledger holds the
-`Skipped: hunters and Haiku gate — …` line (see SKILL.md, When the stage does
-not run): the Haiku gate did not run, so this reviewer runs its checklist in
+`Skipped: hunters and …` line (see SKILL.md, When the stage does
+not run): the safety gate did not run, so this reviewer runs its checklist in
 the same review, with the gate's inputs; drop both otherwise.
 
 **Purpose:** Verify one task's implementation matches its requirements (nothing
@@ -200,7 +200,7 @@ Subagent (roles:spec-reviewer):
 
     ## Safety Checklist
 
-    This section is in your prompt only because the Haiku gate did not run:
+    This section is in your prompt only because the safety gate did not run:
     you also run the safety checklist on this diff, in this same review. Read the
     `## Checklist` and `## Calibration` sections of [SAFETY_TEMPLATE] and
     answer items 1–7 there pass or fail, with file:line evidence, using the

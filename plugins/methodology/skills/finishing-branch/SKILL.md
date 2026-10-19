@@ -225,6 +225,14 @@ Read the status first, from the checkout where the stack lives, never from `MAIN
 
 **Partial merge** (GitHub mode only: the top phase is not `merged`, the merge stopped below the top phase; the state file records `merged` only in GitHub mode, so a local fast-forward is never a partial merge, whatever `status` shows): run `node ../executing-plans/scripts/stack.mjs status PLAN_FILE` to refresh the state; this runs nothing else: no After Merge operation, no prune, no branch deleted, and the state file stays. The checklist stays in the closing entry and status `Next` (Step 2); name the remaining phases in your final message.
 
+### After any merge: escapes
+
+After a plan merges, whenever a `fix:` commit or a red CI on trunk is traced to the plan, record it with `triqual role-eval record --plan <plan file> <json-file>`, an `escape` record (format and example in executing-plans, Records):
+
+```json
+{ "v": 2, "at": "2026-10-21T09:15:00Z", "kind": "escape", "source": "red-ci", "ref": "128", "task": "T3" }
+```
+
 ### If your human partner asks to discard the work
 
 This path exists only as a response to an explicit request to throw the

@@ -76,14 +76,14 @@ effort parameter). Coordination and rulings stay with the session model.
 
 | Role | Agent type | Model | Effort | Dispatched by | Why |
 |---|---|---|---|---|---|
-| Briefs from plan + code | `roles:brief-writer` | claude-haiku-5-5 | medium | `methodology:executing-plans`, on demand (plan text lacks interfaces from current code) | read and summarize, no design |
+| Briefs from plan + code | `roles:brief-writer` | sonnet | medium | `methodology:executing-plans`, on demand (plan text lacks interfaces from current code) | read and summarize, no design |
 | TDD implementation | `roles:tdd-implementer` | sonnet | high | `methodology:executing-plans` (the task's `**Role:**`) | code and tests that must fail for the right reason |
 | Complex implementation | `roles:complex-implementer` | opus | medium | `methodology:executing-plans` (a task whose `**Role:**` is `roles:complex-implementer`, and its fix rounds) | multi-system or live-state work where a mistake is costly |
-| Style / canaries / commits (safety) | `roles:safety-reviewer` | claude-haiku-5-5 | medium | `methodology:executing-plans` | a mechanical checklist, no judgment |
-| Spec compliance and test honesty | `roles:spec-reviewer` | opus | medium | `methodology:executing-plans`, `methodology:reviewing-code` | judgment and branch tracing |
+| Style / canaries / commits (safety) | `roles:safety-reviewer` | sonnet | medium | `methodology:executing-plans` | a mechanical checklist, no judgment |
+| Spec compliance and test honesty | `roles:spec-reviewer` | sonnet | medium | `methodology:executing-plans`, `methodology:reviewing-code` | judgment and branch tracing |
 | Review-round fixer | `roles:review-fixer` | sonnet | high | `methodology:executing-plans` (fix rounds) | must refute the reviewer when warranted |
 | Final adversarial whole-branch review | `roles:final-adversarial-reviewer` | opus | high | `methodology:executing-plans`, `methodology:brainstorming` (spec audit), `methodology:writing-plans` (plan audit) | one pass, the most valuable one |
-| Candidate findings (hunter) | `roles:hunter` | claude-haiku-5-5 | medium | `methodology:executing-plans`, `methodology:reviewing-code` | cheap candidates, every one verified by an Opus reviewer |
+| Candidate findings (hunter) | `roles:hunter` | claude-haiku-5-5 | medium | `methodology:executing-plans`, `methodology:reviewing-code` | cheap candidates, every one verified by the Sonnet spec reviewer (by the Opus final reviewer in the final review) |
 | Coordination and decisions | (session) | session model | — | — | never delegated |
 
 Methodology's skills dispatch `roles:*` and pass no model: the role's definition carries it.

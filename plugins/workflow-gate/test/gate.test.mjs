@@ -49,7 +49,7 @@ function assertAllow(out) {
   assert.ok(out.permissionDecisionReason.startsWith('[workflow-gate] ok:'), out.permissionDecisionReason);
 }
 
-const NO_BUDGET = 'const r = await agent("x", { agentType: "roles:spec-reviewer" });\n';
+const NO_BUDGET = 'const r = await agent("x", { agentType: "roles:final-adversarial-reviewer" });\n';
 
 test('allows a built-in named workflow silently', () => {
   assert.equal(runGate({ tool_input: { name: 'deep-research' } }), null);
@@ -74,7 +74,7 @@ test('caps fable at 3', () => {
 });
 
 test('caps opus at 8', () => {
-  const s = (n) => `// MAX_AGENTS: opus=${n}\nawait agent("x", { agentType: "roles:spec-reviewer" });\n`;
+  const s = (n) => `// MAX_AGENTS: opus=${n}\nawait agent("x", { agentType: "roles:final-adversarial-reviewer" });\n`;
   assertAllow(runGate(script(s(8))));
   assertDeny(runGate(script(s(9))), 'opus=9, over the opus cap of 8');
 });
@@ -122,7 +122,7 @@ test('denies an agentType with no known model', () => {
 });
 
 test('model: overrides the role model', () => {
-  assertAllow(runGate(script('await agent("x", { agentType: "roles:spec-reviewer", model: "haiku" });\n')));
+  assertAllow(runGate(script('await agent("x", { agentType: "roles:final-adversarial-reviewer", model: "haiku" });\n')));
 });
 
 test('accepts a namespaced agentType', () => {
@@ -140,12 +140,12 @@ test('a haiku fan-out stays free in a script that also uses opus', () => {
 });
 
 test('denies unbounded map', () => {
-  const s = '// MAX_AGENTS: opus=5 sonnet=5\nconst out = findings.map(f => agent(f, { agentType: "roles:spec-reviewer" }));\n';
+  const s = '// MAX_AGENTS: opus=5 sonnet=5\nconst out = findings.map(f => agent(f, { agentType: "roles:final-adversarial-reviewer" }));\n';
   assertDeny(runGate(script(s)), 'unbounded fan-out: findings.map(');
 });
 
 test('allows sliced map', () => {
-  const s = '// MAX_AGENTS: opus=5 sonnet=5\nconst out = findings.slice(0, 5).map(f => agent(f, { agentType: "roles:spec-reviewer" }));\n';
+  const s = '// MAX_AGENTS: opus=5 sonnet=5\nconst out = findings.slice(0, 5).map(f => agent(f, { agentType: "roles:final-adversarial-reviewer" }));\n';
   assertAllow(runGate(script(s)));
 });
 
@@ -155,7 +155,7 @@ test('regression: a .slice cap counts anywhere earlier in the same .map chain', 
 });
 
 test('regression: an uncapped findings.map( is still denied', () => {
-  const s = '// MAX_AGENTS: opus=5 sonnet=5\nawait parallel(findings.map(f => () => agent(f, { agentType: "roles:spec-reviewer" })));\n';
+  const s = '// MAX_AGENTS: opus=5 sonnet=5\nawait parallel(findings.map(f => () => agent(f, { agentType: "roles:final-adversarial-reviewer" })));\n';
   assertDeny(runGate(script(s)), 'unbounded fan-out: findings.map(');
 });
 
@@ -201,7 +201,7 @@ test('denies parallel over a dynamic list', () => {
 test('allows literal fan-outs', () => {
   const s = [
     '// MAX_AGENTS: opus=1 sonnet=5',
-    'await parallel([() => agent("a", { agentType: "roles:spec-reviewer" }), () => agent("b", { model: "sonnet" })]);',
+    'await parallel([() => agent("a", { agentType: "roles:final-adversarial-reviewer" }), () => agent("b", { model: "sonnet" })]);',
     'await pipeline(Array.from({ length: 3 }), (i) => agent("c" + i, { agentType: "roles:tdd-implementer" }));',
     '',
   ].join('\n');

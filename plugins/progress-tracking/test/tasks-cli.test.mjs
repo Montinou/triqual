@@ -1067,6 +1067,46 @@ test('init --adopt rejects a partly tiered draft and leaves no copy and no ledge
   assert.deepEqual(readdirSync(join(root, 'plans')), []);
 }));
 
+// A plan registered with more than 80% of at least 5 tasks heavy gets one warning line on stderr; the exit code and the
+// ledger are what they would be without it.
+const HEAVY_WARNING = /^warning: (\d+) of (\d+) tasks are heavy \((\d+)%\): heavy review costs the most; re-check each tier \(see the tier rules in methodology:writing-plans\)$/m;
+
+test('init warns when more than 80% of a plan of at least 5 tasks is heavy, and changes nothing else', () => withRepo(({ repo, run }) => {
+  committed(repo, tiered('heavy', 'heavy', 'heavy', 'heavy', 'heavy', 'light'));
+  const r = ok(run(['init', PLAN_REL]));
+  assert.match(r.stdout, /^created /);
+  const m = r.stderr.match(HEAVY_WARNING);
+  assert.ok(m, r.stderr);
+  assert.deepEqual(m.slice(1), ['5', '6', '83']);
+  assert.equal(r.stderr.split('\n').filter(Boolean).length, 1, r.stderr);
+  assert.deepEqual(readJson(join(repo, LEDGER_REL)).tasks.map((t) => t.tier), ['heavy', 'heavy', 'heavy', 'heavy', 'heavy', 'light']);
+}));
+
+test('init does not warn at exactly 80% heavy, below 5 tasks, or on a reconcile', () => withRepo(({ repo, run }) => {
+  committed(repo, tiered('heavy', 'heavy', 'heavy', 'heavy', 'standard'));
+  const exact = ok(run(['init', PLAN_REL]));
+  assert.doesNotMatch(exact.stderr, /warning/, exact.stderr);
+  rmSync(join(repo, LEDGER_REL));
+  writeFileSync(join(repo, PLAN_REL), tiered('heavy', 'heavy', 'heavy', 'heavy'));
+  const few = ok(run(['init', PLAN_REL]));
+  assert.doesNotMatch(few.stderr, /warning/, few.stderr);
+  writeFileSync(join(repo, PLAN_REL), tiered('heavy', 'heavy', 'heavy', 'heavy', 'heavy', 'heavy'));
+  const reconciled = ok(run(['init', PLAN_REL]));
+  assert.match(reconciled.stdout, /^reconciled /);
+  assert.doesNotMatch(reconciled.stderr, /warning/, reconciled.stderr);
+}));
+
+test('init --adopt warns on a mostly heavy draft and still exits 0 with the plan adopted', () => withRepo(({ dir, repo, run }) => {
+  const root = localMode(repo);
+  const draft = join(dir, `${NAME}.md`);
+  writeFileSync(draft, tiered('heavy', 'heavy', 'heavy', 'heavy', 'heavy'));
+  const r = run(['init', '--adopt', draft]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, HEAVY_WARNING);
+  assert.match(r.stderr, /5 of 5 tasks are heavy \(100%\)/);
+  assert.deepEqual(readdirSync(join(root, 'plans')).filter((f) => f.endsWith('.md')), [`${NAME}.md`]);
+}));
+
 const retierRun = (run, ...args) => run(['retier', ...args]);
 
 test('retier raises the effective tier, keeps the declared one and records the reason in the history', () => withRepo(({ repo, run }) => {
