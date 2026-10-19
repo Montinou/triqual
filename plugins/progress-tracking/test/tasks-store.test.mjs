@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
-  existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync,
+  existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -172,6 +172,7 @@ test('status --json, next --plan and close work on the store; close of a finishe
     assert.equal(j[0].name, NAME);
     assert.deepEqual({ ...j[0], ledgerPath: undefined }, {
       name: NAME, ledgerPath: undefined, done: 0, total: 1, inProgress: [], next: 'T1',
+      tiers: { T1: { tier: null, effectiveTier: null } },
     });
     assert.equal(ok(s.run(['next', '--plan', NAME])).stdout, 'T1 Only [roles:tdd-implementer]\n');
     refused(s.run(['close']), /plan has unfinished tasks: T1/);
@@ -691,4 +692,178 @@ test('tasks outside any repository still says not opted in, without node:sqlite'
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ---- tiers: registration rule, retier, views (plan methodology-1.0 T3) ----
+
+const tiered = (...tiers) => `# Tiered plan\n\n${tiers.map((tier, i) => `### Task ${i + 1}: Task ${i + 1}\n${tier ? `**Tier:** ${tier}\n` : ''}`).join('\n')}`;
+const PARTLY = tiered('heavy', null, 'light');
+const FULL = tiered('heavy', 'standard', 'light');
+const ledgerOf = (s) => s.inStore((store) => store.ledgerOf(store.plans(store.get('SELECT id FROM repos').id)[0].id));
+
+test('store init rejects a partly tiered plan and stores no plan', () => {
+  withRepo('store', (s) => {
+    const file = s.plan(PARTLY);
+    const r = s.run(['init', file]);
+    refused(r, /the plan declares tiers but T2 has none/);
+    s.inStore((store) => assert.equal(store.get('SELECT count(*) AS n FROM plans').n, 0));
+  });
+});
+
+test('store init accepts a tierless plan and a fully tiered plan', () => {
+  withRepo('store', (s) => {
+    ok(s.run(['init', s.plan()]));
+    assert.deepEqual(ledgerOf(s).tasks.map((t) => [t.tier, t.effectiveTier]), [[null, null], [null, null], [null, null]]);
+  });
+  withRepo('store', (s) => {
+    ok(s.run(['init', s.plan(FULL)]));
+    assert.deepEqual(ledgerOf(s).tasks.map((t) => [t.tier, t.effectiveTier]),
+      [['heavy', 'heavy'], ['standard', 'standard'], ['light', 'light']]);
+  });
+});
+
+test('store init on an existing ledger does not validate, and write plan --replace reconciles a partly tiered plan', () => {
+  withRepo('store', (s) => {
+    const file = s.plan(tiered(null, null, null));
+    ok(s.run(['init', file]));
+    writeFileSync(file, PARTLY);
+    assert.match(ok(s.run(['init', file])).stdout, /^reconciled /);
+    assert.deepEqual(ledgerOf(s).tasks.map((t) => t.tier), ['heavy', null, 'light']);
+    const draft = join(s.dir, `${NAME}.md`);
+    writeFileSync(draft, `${PARTLY}\n### Task 4: Task 4\n`);
+    assert.match(ok(s.run(['write', 'plan', draft, '--replace'], { bin: TRACKING })).stdout, /reconciled .*: added T4;/);
+  });
+});
+
+test('write plan rejects a partly tiered draft and lands nothing in the documents directory', () => {
+  withRepo('store', (s) => {
+    const draft = join(s.dir, 'partly.md');
+    writeFileSync(draft, PARTLY);
+    refused(s.run(['write', 'plan', draft], { bin: TRACKING }), /the plan declares tiers but T2 has none/);
+    assert.deepEqual(readdirSync(s.plansDir), []);
+    s.inStore((store) => assert.equal(store.get('SELECT count(*) AS n FROM plans').n, 0));
+  });
+});
+
+test('store retier behaves like committed retier: raise, same tier, lower, bad arguments', () => {
+  withRepo('store', (s) => withRepo('committed', (c) => {
+    ok(s.run(['init', s.plan(FULL)]));
+    c.plan(FULL);
+    ok(c.run(['init', `docs/plans/${NAME}.md`]));
+    const reason = ['--reason', 'touches the gate'];
+    sameOutputs(s, c, [
+      ['retier', 'T3', 'heavy', ...reason], ['retier', 'T3', 'heavy', ...reason], ['retier', 'T1', 'light', ...reason],
+      ['retier', 'T1', 'huge', ...reason], ['retier', 'T9', 'heavy', ...reason], ['retier', 'T2', 'heavy'],
+      ['status'],
+    ]);
+    const t = ledgerOf(s).tasks.find((x) => x.id === 'T3');
+    assert.equal(t.tier, 'light');
+    assert.equal(t.effectiveTier, 'heavy');
+    assert.equal(t.history.at(-1).note, 'touches the gate');
+    assert.equal(t.history.length, 2);
+    assert.equal(s.run(['retier', 'T3', 'heavy', ...reason]).stdout, 'T3: already heavy\n');
+    assert.equal(ledgerOf(s).tasks.find((x) => x.id === 'T3').history.length, 2, 'a no-op records nothing');
+  }));
+});
+
+test('store status --json, next --json and export --json carry tier and effectiveTier', () => {
+  withRepo('store', (s) => {
+    ok(s.run(['init', s.plan(FULL)]));
+    ok(s.run(['start', 'T1']));
+    ok(s.run(['retier', 'T2', 'heavy', '--reason', 'risky']));
+    const [st] = JSON.parse(ok(s.run(['status', '--json'])).stdout);
+    assert.deepEqual(st.tiers, { T1: { tier: 'heavy', effectiveTier: 'heavy' }, T2: { tier: 'standard', effectiveTier: 'heavy' } });
+    assert.deepEqual(JSON.parse(ok(s.run(['next', '--json'])).stdout), {
+      id: 'T2', title: 'Task 2', role: 'roles:tdd-implementer', tier: 'standard', effectiveTier: 'heavy',
+    });
+    const snap = JSON.parse(ok(s.run(['export', '--json'])).stdout);
+    assert.deepEqual(snap.plans[0].tasks.map((t) => [t.id, t.tier, t.effectiveTier]),
+      [['T1', 'heavy', 'heavy'], ['T2', 'standard', 'heavy'], ['T3', 'light', 'light']]);
+  });
+});
+
+// ---- done --repo: a commit from another repository (plan methodology-1.0 T6) ----
+
+// A second repo at <dir>/other with one commit: its path, a runner and the commit's full sha.
+function otherRepo(dir) {
+  const path = join(dir, 'other');
+  mkdirSync(path);
+  const g = (...args) => execFileSync('git', [...ID, ...args], { cwd: path, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  g('init', '-q');
+  writeFileSync(join(path, 'file.txt'), 'other\n');
+  g('add', 'file.txt');
+  g('commit', '-qm', 'other initial');
+  return { path, sha: g('rev-parse', 'HEAD') };
+}
+
+test('store done --repo records ext:<relative path>@<full sha>, repeats as a no-op and refuses a sha the repo lacks', () => {
+  withRepo('store', (s) => {
+    const other = otherRepo(s.dir);
+    ok(s.run(['init', s.plan()]));
+    ok(s.run(['start', 'T1']));
+    const refusedRun = s.run(['done', 'T1', '--commit', s.git('rev-parse', 'HEAD'), '--repo', other.path]);
+    refused(refusedRun, /does not resolve/);
+    assert.deepEqual(ledgerOf(s).tasks[0].commits, []);
+    refused(s.run(['done', 'T1', '--repo', other.path]), /--repo requires --commit/);
+
+    assert.equal(ok(s.run(['done', 'T1', '--commit', other.sha.slice(0, 8), '--repo', other.path])).stdout, 'T1: in_progress -> done\n');
+    const commits = ledgerOf(s).tasks[0].commits;
+    assert.deepEqual(commits, [`ext:../other@${other.sha}`]);
+    assert.equal(JSON.stringify(commits).includes(s.dir), false, 'no absolute path enters the store');
+    assert.equal(ok(s.run(['done', 'T1', '--commit', other.sha, '--repo', '../other'])).stdout, 'T1: already done\n');
+    assert.deepEqual(ledgerOf(s).tasks[0].commits, [`ext:../other@${other.sha}`]);
+    assert.equal(ledgerOf(s).tasks[0].history.length, 3, 'the repeat records nothing');
+  });
+});
+
+test('store check verifies an external commit in its path and warns, without drift, when the path is missing', () => {
+  withRepo('store', (s) => {
+    const other = otherRepo(s.dir);
+    s.plan();
+    ok(s.run(['init', join(s.plansDir, `${NAME}.md`)]));
+    ok(s.run(['start', 'T1']));
+    ok(s.run(['done', 'T1', '--commit', other.sha, '--repo', other.path]));
+    const clean = ok(s.run(['check']));
+    assert.equal(clean.stdout, '');
+    assert.equal(clean.stderr, '');
+
+    renameSync(other.path, join(s.dir, 'moved'));
+    const gone = ok(s.run(['check']));
+    assert.equal(gone.stdout, '');
+    assert.match(gone.stderr, new RegExp(`external commit not checkable: \\.\\./other@${other.sha}\\n`));
+    renameSync(join(s.dir, 'moved'), other.path);
+
+    s.inStore((store) => {
+      const p = store.plans(store.get('SELECT id FROM repos').id)[0];
+      const ledger = store.ledgerOf(p.id);
+      ledger.tasks[0].commits = [`ext:../other@${'0'.repeat(40)}`];
+      store.saveLedger(p.id, ledger);
+    });
+    const bad = s.run(['check']);
+    assert.equal(bad.status, 1);
+    assert.equal(bad.stdout, 'T1 commit 0000000 does not resolve in ../other\n');
+  });
+});
+
+test('store done --repo is anchored to the main worktree root: a linked worktree and the main checkout share one ledger', () => {
+  withRepo('store', (s) => {
+    const other = otherRepo(s.dir);
+    ok(s.run(['init', s.plan()]));
+    ok(s.run(['start', 'T1']));
+    // A linked worktree two levels deeper than the main checkout.
+    const wt = join(s.dir, 'wts', 'deep', 'wt');
+    mkdirSync(dirname(wt), { recursive: true });
+    s.git('worktree', 'add', '-q', '-b', 'linked', wt);
+    const fromWt = (args) => s.run(args, { cwd: wt });
+    assert.equal(ok(fromWt(['done', 'T1', '--commit', other.sha, '--repo', other.path])).stdout, 'T1: in_progress -> done\n');
+    assert.deepEqual(ledgerOf(s).tasks[0].commits, [`ext:../other@${other.sha}`]);
+    assert.equal(ok(fromWt(['check'])).stderr, '');
+
+    const clean = ok(s.run(['check']));
+    assert.equal(clean.stdout, '');
+    assert.equal(clean.stderr, '');
+    assert.equal(ok(s.run(['done', 'T1', '--commit', other.sha, '--repo', other.path])).stdout, 'T1: already done\n');
+    assert.equal(ok(fromWt(['done', 'T1', '--commit', other.sha, '--repo', other.path])).stdout, 'T1: already done\n');
+    assert.deepEqual(ledgerOf(s).tasks[0].commits, [`ext:../other@${other.sha}`]);
+  });
 });

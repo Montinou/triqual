@@ -40,8 +40,10 @@ Create a todo per step. Steps 5–7 run only on their stated condition.
    `~/.claude/plugins/cache/triqual/<plugin>/<version>/`
    (`methodology`, `roles`, `progress-tracking`, `workflow-gate`), and in
    the session's repo the SDD workspace `.methodology/sdd/<plan>/`
-   (`sdd-ledger.md`) and the tracking files that `triqual tasks paths --json`
-   names. In store mode (`"mode": "store"`) there are no tracking files to
+   (`sdd-ledger.md`, whose `Tier:` and `Tier raised:` lines the analysts read;
+   the orchestrator deletes the workspace when a plan finishes, and then those
+   lines survive only in the transcript's tool calls that wrote them) and the
+   tracking files that `triqual tasks paths --json` names. In store mode (`"mode": "store"`) there are no tracking files to
    read: read the entries with `triqual tracking log --json` and the ledger
    state with `triqual tasks export --json` (details: `store-mode.md` under
    `references` in skill `progress-tracking:progress-tracking`).
@@ -100,6 +102,9 @@ yourself in step 3 and which findings to lead with in the verdict.
 - **Context safety.** One transcript line can be a megabyte. Follow
   `references/context-safety.md` on every session file, every time.
 - **Read-only.** Never modify, move, or delete a session file.
+- **No tracking writes.** Everything you write goes under
+  `~/.config/triqual/diagnosing/`: no tracking file is written or staged,
+  and no tracking entry is added, in any mode.
 - **Exact paths to subagents.** A subagent's "current session" is its
   own. Pass absolute paths and ids.
 - **Human prompts only.** Hook output, system reminders, and tool results
@@ -130,5 +135,3 @@ yourself in step 3 and which findings to lead with in the verdict.
 | "They want a bug report, so I'll build the bundle now" | The bundle is their session data, packaged. Build it only when they ask for it. |
 | "Small, targeted edit, no restructuring needed" | Not your call, however small. Report the evidence; the triager decides. |
 | "The price per token is well known" | Numbers you did not compute from the transcript are invented. Cite or drop. |
-
-Forked from superpowers 6.4.2 (skills/diagnosing-superpowers), MIT © Jesse Vincent — see LICENSE-superpowers.

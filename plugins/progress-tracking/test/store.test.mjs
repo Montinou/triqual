@@ -12,11 +12,14 @@ import {
   loadSqlite, storePaths, repoKey, openStore, maybeDailySnapshot, StoreError, needsTighten, createPrivate,
 } from '../lib/store.mjs';
 import { createLedger, transition } from '../lib/ledger.mjs';
+import { MIGRATIONS, SCHEMA_VERSION } from '../lib/store-schema.mjs';
 
 const STORE_URL = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'store.mjs')).href;
 const NOW = '2026-10-11T12:00:00.000Z';
 
 await loadSqlite();
+// Loaded after loadSqlite, which drops node:sqlite's experimental warning.
+const { DatabaseSync } = await import('node:sqlite');
 
 // A temp home and an env whose TRIQUAL_TRACKING_DB names a not-yet-created file: the real data dir is never touched.
 function withEnv(fn) {
@@ -48,10 +51,10 @@ function seedRepo(store, dir) {
   return { repoId, ctx: { repoId, gitDir: join(dir, 'clone', '.git'), branch: 'main' } };
 }
 
-test('schema: user_version 1, every table, the import_guard table and the (repo_id, git_dir, state) index exist', () => {
+test('schema: user_version 2, every table, the import_guard table and the (repo_id, git_dir, state) index exist', () => {
   withEnv(({ open }) => {
     const s = open();
-    assert.equal(s.db.prepare('PRAGMA user_version').get().user_version, 1);
+    assert.equal(s.db.prepare('PRAGMA user_version').get().user_version, 2);
     const names = (type) => s.db.prepare('SELECT name FROM sqlite_master WHERE type = ?').all(type).map((r) => r.name);
     const tables = names('table');
     for (const t of ['repos', 'entries', 'status', 'plans', 'tasks', 'task_events', 'import_guard']) {
@@ -70,7 +73,7 @@ test('schema: reopening keeps the data and the version', () => {
     seedRepo(a, dir);
     a.close();
     const b = open({ create: false });
-    assert.equal(b.db.prepare('PRAGMA user_version').get().user_version, 1);
+    assert.equal(b.db.prepare('PRAGMA user_version').get().user_version, 2);
     assert.equal(b.db.prepare('SELECT COUNT(*) AS n FROM repos').get().n, 1);
   });
 });
@@ -579,4 +582,58 @@ test('warning: a non-experimental warning that mentions SQLite is still emitted,
   assert.match(r.stderr, /SQLite error-form/);
   assert.match(r.stderr, /SQLite plain default-type/);
   assert.doesNotMatch(r.stderr, /experimental feature/);
+});
+
+// Plan methodology-1.0 · T2: migration V2 adds the declared and the effective tier to tasks.
+test('store migrates V1 to V2', () => {
+  withEnv(({ dir, env, open }) => {
+    assert.equal(SCHEMA_VERSION, 2);
+    const file = env.TRIQUAL_TRACKING_DB;
+    mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+    // A V1 database with one repository, plan and task, written the way a V1 triqual wrote it.
+    const v1 = new DatabaseSync(file);
+    v1.exec(MIGRATIONS[0]);
+    v1.exec('PRAGMA user_version = 1');
+    v1.prepare('INSERT INTO repos (repo_key, git_common_dir, root, origin, shareable, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('k', gitCommonDir(dir), join(dir, 'clone'), null, 1, NOW);
+    v1.prepare("INSERT INTO plans (repo_id, path, spec, branch, state) VALUES (1, 'p.md', NULL, NULL, 'active')").run();
+    v1.prepare(`INSERT INTO tasks (plan_id, key, position, title, deps, role, skills, status, commits, reason)
+      VALUES (1, 'T1', 0, 'Old task', '[]', NULL, '[]', 'pending', '[]', NULL)`).run();
+    v1.close();
+    const s = open({ create: false });
+    assert.equal(s.db.prepare('PRAGMA user_version').get().user_version, 2);
+    const cols = s.db.prepare('PRAGMA table_info(tasks)').all().map((c) => c.name);
+    assert.ok(cols.includes('tier') && cols.includes('effective_tier'), cols.join(', '));
+    assert.deepEqual({ ...s.get('SELECT key, title, tier, effective_tier FROM tasks') },
+      { key: 'T1', title: 'Old task', tier: null, effective_tier: null });
+    const [task] = s.ledgerOf(1).tasks;
+    assert.equal(task.tier, null);
+    assert.equal(task.effectiveTier, null);
+  });
+});
+
+test('ledgers: saveLedger and ledgerOf round-trip the declared and the effective tier', () => {
+  withEnv(({ dir, open }) => {
+    const s = open();
+    const { repoId } = seedRepo(s, dir);
+    const ledger = createLedger({
+      plan: 'p.md', spec: null, branch: null, now: NOW,
+      tasks: [
+        { id: 'T1', title: 'a', deps: [], skills: [], role: null, tier: 'heavy' },
+        { id: 'T2', title: 'b', deps: [], skills: [], role: null, tier: null },
+      ],
+    });
+    ledger.tasks[1].effectiveTier = 'light';
+    const planId = s.upsertPlan(repoId, { path: 'p.md', spec: null, branch: null, state: 'active' });
+    s.saveLedger(planId, ledger);
+    assert.deepEqual(s.ledgerOf(planId), ledger);
+    assert.deepEqual(s.all('SELECT key, tier, effective_tier FROM tasks ORDER BY position').map((r) => ({ ...r })), [
+      { key: 'T1', tier: 'heavy', effective_tier: 'heavy' },
+      { key: 'T2', tier: null, effective_tier: 'light' },
+    ]);
+    // An upsert replaces both.
+    ledger.tasks[1].effectiveTier = 'heavy';
+    s.saveLedger(planId, ledger);
+    assert.equal(s.ledgerOf(planId).tasks[1].effectiveTier, 'heavy');
+  });
 });

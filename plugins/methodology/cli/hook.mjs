@@ -4,6 +4,7 @@
 //   Codex session-start, and Grok's first tool call: the session context, i.e. the methodology part (drift.mjs
 //     --harness <id>: drift lines plus using-methodology, kept whole) and the progress-tracking part (gate.mjs
 //     session-start --budget <n>), merged under 9,500 characters. It also starts the detached background run.
+//     Grok's context adds one line after the methodology part when fence is installed (lib/fence.mjs, spec U9).
 //   Codex stop: gate.mjs stop, a block forwarded as {"decision":"block","reason":…}.
 //   Grok pre-tool-use / post-tool-use / post-compact: delivery state per session, so the context goes out once.
 // Each part runs only while its plugin is enabled in Claude (user-scope enabledPlugins). Scripts get the environment
@@ -17,6 +18,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { pluginId } from './lib/brand.mjs';
+import { detectFence } from './lib/fence.mjs';
 import { EVENTS, HARNESS_IDS, HOOK_TIMEOUTS, formatBlock, formatContext, normalize } from './lib/harnesses.mjs';
 import { enabledInClaude, resolvePlugin } from './lib/resolve.mjs';
 import { readMethodologyConfig } from './lib/settings.mjs';
@@ -27,6 +29,7 @@ const METHODOLOGY = 'methodology';
 const TRACKING = 'progress-tracking';
 const TOTAL = 9500; // the merged context stays under this many characters (Grok clips at 10,000)
 const SEPARATOR = '\n\n';
+const FENCE_LINE = 'fence is active: a denied call is a stop-and-ask, never a retry.';
 const DEADLINE_MARGIN_MS = 2000;
 const CLEANUP_TIMEOUT_MS = 5000;
 const SESSION_ID = /^[A-Za-z0-9_-]+$/; // a file name, never a path
@@ -131,7 +134,14 @@ function sessionRun(ctx) {
     const pending = ctx.background({ home: ctx.home, harness: ctx.harness });
     if (pending && typeof pending.catch === 'function') pending.catch(() => {});
   } catch { /* background work never affects the hook */ }
-  const m = additionalContext(runPart(ctx, METHODOLOGY, join('cli', 'drift.mjs'), ['--harness', ctx.harness]) ?? '');
+  let m = additionalContext(runPart(ctx, METHODOLOGY, join('cli', 'drift.mjs'), ['--harness', ctx.harness]) ?? '');
+  // Grok with fence installed (spec U9): one line after the methodology part, which the gate part is then fitted around.
+  // It belongs to the methodology plugin, so it needs that plugin enabled in Claude (not text from drift), and the
+  // detection gets only the time left before the deadline: none left, no line.
+  if (ctx.harness === 'grok' && enabledInClaude(ctx.home, pluginId(ctx.home, METHODOLOGY))) {
+    const left = ctx.deadline - ctx.now();
+    if (left > 0 && ctx.detect(ctx.env, left) !== null) m = m === '' ? FENCE_LINE : `${m}${SEPARATOR}${FENCE_LINE}`;
+  }
   const budget = gateRoom(m, TOTAL);
   // No room left next to the methodology part: the gate is not run at all.
   const gateArgs = ['session-start', '--budget', String(budget)];
@@ -230,6 +240,7 @@ function ignored(why) {
 // Runs one hook event: { stdout } with the JSON to print, or null for nothing. Never throws.
 export async function hook({
   home, harness, event, payload, resolve, runScript: run = runScript, background = spawnBackground, now = Date.now,
+  env = process.env, detect = detectFence,
 }) {
   try {
     const start = now();
@@ -238,7 +249,7 @@ export async function hook({
     const input = normalize(harness, event, payload);
     if (input === null) return ignored(`${harness} ${event} payload not recognized`);
     const ctx = {
-      home, harness, event, input, resolve, runScript: run, background, now,
+      home, harness, event, input, resolve, runScript: run, background, now, env, detect,
       deadline: start + HOOK_TIMEOUTS[harness][event] * 1000 - DEADLINE_MARGIN_MS,
     };
     if (harness === 'codex') {

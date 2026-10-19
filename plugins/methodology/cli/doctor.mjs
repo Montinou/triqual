@@ -1,12 +1,12 @@
 // `triqual doctor [--repo]`: a read-only diagnosis of the methodology install on this machine, and of each harness
 // config.json records as set up (spec Addendum F.5). Every check yields failure lines (each with its fix) or warnings;
 // a missing or malformed file is a line, never a crash. Nothing is ever written; every CLI call goes through the
-// injected `run`. Exit codes: 0 no failures (and for --help/-h), 1 failures, 2 an unknown argument.
+// injected `run`, except the one `fence version` call (lib/fence.mjs, information only, a 2 s timeout). Exit codes: 0 no failures (and for --help/-h), 1 failures, 2 an unknown argument.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isGenerated, parseRole } from './lib/agents.mjs';
 import { readManagedSection } from './lib/fsx.mjs';
@@ -20,6 +20,7 @@ import {
 } from './lib/harnesses.mjs';
 import { activeMarketplace, BRAND, brandDir, pluginId } from './lib/brand.mjs';
 import { legacyCliPresent } from './lib/cli-files.mjs';
+import { detectFence } from './lib/fence.mjs';
 import { isUnreadable, legacyScan } from './lib/legacy-scan.mjs';
 import { realRun } from './lib/run.mjs';
 import { configPath, readMethodologyConfig, supersededEnabled } from './lib/settings.mjs';
@@ -81,10 +82,9 @@ export const idOf = (home, name) => pluginId(home, name);
 export const SHIM_COMMANDS = {
   tasks: ['progress-tracking', 'cli/tasks.mjs'],
   'progress-init': ['progress-tracking', 'cli/progress-init.mjs'],
-  suggest: ['skill-suggest', 'cli/suggest.mjs'],
+  suggest: ['methodology', 'cli/suggest.mjs'],
   doctor: ['methodology', 'cli/doctor.mjs'],
   sync: ['methodology', 'cli/sync.mjs'],
-  'upstream-diff': ['methodology', 'cli/upstream-diff.mjs'],
   ui: ['progress-tracking', 'cli/ui.mjs'],
   tracking: ['progress-tracking', 'cli/tracking.mjs'],
   hook: ['methodology', 'cli/hook.mjs'],
@@ -946,7 +946,7 @@ function codexRulesCheck(home, path, methodologyPath, failures) {
 // The Codex skill links triqual sync wants (lib/harness-links.mjs wantedLinks). One triqual sync fixes a missing link, one of
 // ours pointing elsewhere, a dangling one or one into a superseded cache; anything else is a collision sync leaves
 // alone, listed with its fix.
-function codexLinksCheck({ home, dir, installs, patterns, keepSuperseded }, failures) {
+function codexLinksCheck({ home, dir, installs, patterns, keepSuperseded }, failures, warnings) {
   const fix = syncFix('codex');
   let want;
   try {
@@ -980,6 +980,38 @@ function codexLinksCheck({ home, dir, installs, patterns, keepSuperseded }, fail
     }
   }
   if (stale.length) failures.push(`Codex skill links in ${dir} are missing or out of date (${stale.join(', ')}): ${fix}`);
+  codexRemovedSkillLinks(dir, want, installs.methodology, warnings);
+}
+
+// A link under the Codex skills dir into a methodology install's skills/ folder (the current one or an older version's)
+// whose skill that install no longer ships: methodology 1.0 removed five skills, and a link made under 0.7.x still names
+// one. triqual sync removes the ones it recorded; this names any that stay. A link elsewhere is not methodology's.
+// Only while methodology is enabled in Claude (`want` is empty otherwise, so no skill set exists to compare with), and
+// never for a link whose skill the current install still ships.
+function codexRemovedSkillLinks(dir, want, methodology, warnings) {
+  if (!methodology?.enabled) return;
+  let names;
+  try {
+    names = readdirSync(dir).sort();
+  } catch {
+    return; // no skills dir: nothing is linked
+  }
+  for (const name of names) {
+    if (want.has(name)) continue;
+    const path = join(dir, name);
+    let cur;
+    try {
+      cur = linkState(path);
+    } catch {
+      continue;
+    }
+    // <plugins cache>/<marketplace>/methodology/<version>/skills/<skill>
+    if (cur.kind !== 'link' || basename(dirname(cur.abs)) !== 'skills') continue;
+    if (basename(dirname(dirname(dirname(cur.abs)))) !== 'methodology') continue;
+    if (existsSync(join(methodology.installPath, 'skills', basename(cur.abs), 'SKILL.md'))) continue;
+    warnings.push(`stale Codex skill link: ${name}: methodology no longer ships skill ${name}: ${syncFix('codex')}, or delete `
+      + `${path} if the link stays`);
+  }
 }
 
 // The Codex role agents, while methodology and roles are enabled in Claude: each must equal what triqual sync generates.
@@ -1071,7 +1103,7 @@ async function codexChecks(ctx, failures, warnings) {
   const methodologyPath = installs.methodology?.installPath ?? null;
   if (methodologyPath === null) return; // the missing plugin is already reported
   codexRulesCheck(home, paths.rules, methodologyPath, failures);
-  codexLinksCheck({ home, dir: paths.skills, installs, patterns, keepSuperseded: config.keepSuperseded }, failures);
+  codexLinksCheck({ home, dir: paths.skills, installs, patterns, keepSuperseded: config.keepSuperseded }, failures, warnings);
   codexAgentsCheck(home, paths.agents, installs, failures);
 }
 
@@ -1195,7 +1227,15 @@ function legacyChecks(home, failures, warnings) {
   }
 }
 
-export async function doctor({ home, cwd, repo = false, run }) {
+// Fence is information, never a check (spec U9): one note, `fence <version>` with `, profile <FENCE_PROFILE>` when set.
+// No fence on PATH gives no note, so a machine without it reports exactly what it did before.
+function fenceNotes(env) {
+  const fence = detectFence(env);
+  if (fence === null) return [];
+  return [`fence ${fence.version}${fence.profile === null ? '' : `, profile ${fence.profile}`}`];
+}
+
+export async function doctor({ home, cwd, repo = false, run, env = process.env }) {
   const failures = [];
   const warnings = [];
   nodeCheck(process.versions.node, failures);
@@ -1215,9 +1255,10 @@ export async function doctor({ home, cwd, repo = false, run }) {
   if (repo && installs.methodology !== null && !config.keepSuperseded) {
     projectSupersededCheck(home, cwd, installs.methodology, warnings);
   }
-  if (!repo) return { failures, warnings };
+  const fence = fenceNotes(env);
+  if (!repo) return fence.length === 0 ? { failures, warnings } : { failures, warnings, notes: fence };
   await repoChecks(home, cwd, installs['progress-tracking'], run, failures, warnings);
-  return { failures, warnings, notes: await trackingModes(installs['progress-tracking'], run, cwd) };
+  return { failures, warnings, notes: [...fence, ...await trackingModes(installs['progress-tracking'], run, cwd)] };
 }
 
 // The CLI's run lives in lib/run.mjs (triqual sync uses it too); doctor keeps exporting it for bootstrap.

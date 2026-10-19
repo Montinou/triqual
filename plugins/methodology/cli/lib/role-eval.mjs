@@ -22,15 +22,29 @@ export function storePath(env, home) {
   return { file: join(dir, 'comparisons.jsonl'), dir, isDefault: true };
 }
 
-// The idempotency key: hex sha256 of the git common dir, the plan's basename, the task and the kind.
-export function recordKey({ commonDir, plan, task, kind }) {
-  return createHash('sha256').update(`${commonDir}\0${basename(plan)}\0${task}\0${kind}`).digest('hex');
+// The idempotency key: hex sha256 of the git common dir, the plan's basename, the task and the kind. A task-review
+// also hashes its attempt (1, then +1 after each reopen), so a re-review is stored; every other kind ignores `attempt`,
+// which keeps the keys of the lines stored before v 2 as they were.
+export function recordKey({ commonDir, plan, task, kind, attempt }) {
+  const base = `${commonDir}\0${basename(plan)}\0${task}\0${kind}`;
+  return createHash('sha256').update(kind === 'task-review' ? `${base}\0${attempt}` : base).digest('hex');
 }
 
 // ---- validation ---------------------------------------------------------------------------------------------
 
 const PROVIDERS = ['claude', 'codex'];
-const KINDS = ['safety-shadow', 'hunters'];
+// v 1 kinds (safety-shadow, hunters) and v 2 kinds (task-review, final-escapes); a line's `v` must match its kind.
+const KINDS = ['safety-shadow', 'hunters', 'task-review', 'final-escapes'];
+const V2_KINDS = ['task-review', 'final-escapes'];
+export const TIERS = Object.freeze(['heavy', 'standard', 'light']);
+// The top-level keys each kind may carry; any other key is rejected by name.
+const V1_KEYS = ['v', 'at', 'provider', 'task', 'kind', 'gate', 'shadow', 'hunters', 'budget'];
+const TASK_REVIEW_KEYS = [
+  'v', 'at', 'provider', 'task', 'kind', 'attempt', 'tier', 'declaredTier', 'raised', 'hunters', 'gate', 'spec', 'fixRounds',
+  'blocked', 'coordinator',
+];
+const FINAL_ESCAPES_KEYS = ['v', 'at', 'provider', 'task', 'kind', 'escapes'];
+const ALL_KEYS = [...new Set([...V1_KEYS, ...TASK_REVIEW_KEYS, ...FINAL_ESCAPES_KEYS])];
 // Kinds `record` no longer accepts: the safety shadow was retired (roles 0.3.0). validateRecord still accepts them, so
 // the lines stored before stay valid and the summary keeps reporting them.
 export const RETIRED_KINDS = Object.freeze(['safety-shadow']);
@@ -169,14 +183,76 @@ function validateBudget(budget) {
   flag(budget, 'overrun', 'budget');
 }
 
+function tier(obj, key, path, { nullable }) {
+  if (nullable && obj[key] === null) return;
+  if (!TIERS.includes(obj[key])) fail(join2(path, key));
+}
+
+// The spec reviewer's confirmed findings per severity; a review that did not run counts nothing.
+function validateSpec(spec) {
+  object(spec, 'spec');
+  noUnknown(spec, ['ran', 'confirmed'], 'spec');
+  flag(spec, 'ran', 'spec');
+  const confirmed = object(spec.confirmed, 'spec.confirmed');
+  noUnknown(confirmed, SEVERITIES, 'spec.confirmed');
+  for (const s of SEVERITIES) count(confirmed, s, 'spec.confirmed');
+  if (!spec.ran) for (const s of SEVERITIES) if (confirmed[s] !== 0) fail(`spec.confirmed.${s}`);
+}
+
+function validateTaskReview(obj) {
+  if (obj.task === 'final') fail('task');
+  if (!Number.isSafeInteger(obj.attempt) || obj.attempt < 1) fail('attempt');
+  tier(obj, 'tier', '', { nullable: false });
+  tier(obj, 'declaredTier', '', { nullable: true });
+  flag(obj, 'raised', '');
+  // No code path lowers a tier, and `raised` says exactly that the tier is above the declared one (a tierless plan
+  // declares nothing and counts as standard).
+  // (TIERS runs from the highest tier down, so a smaller index is a higher tier.)
+  const at = TIERS.indexOf(obj.tier);
+  const declaredAt = TIERS.indexOf(obj.declaredTier ?? 'standard');
+  if (at > declaredAt) fail('tier');
+  if (obj.raised !== (at < declaredAt)) fail('raised');
+  if (!Array.isArray(obj.hunters)) fail('hunters');
+  obj.hunters.forEach((h, i) => validateHunter(h, `hunters.${i}`));
+  object(obj.gate, 'gate');
+  noUnknown(obj.gate, ['findings'], 'gate');
+  count(obj.gate, 'findings', 'gate');
+  validateSpec(obj.spec);
+  count(obj, 'fixRounds', '');
+  flag(obj, 'blocked', '');
+  flag(obj, 'coordinator', '');
+}
+
+function validateFinalEscapes(obj) {
+  if (obj.task !== 'final') fail('task');
+  if (!Array.isArray(obj.escapes)) fail('escapes');
+  obj.escapes.forEach((e, i) => {
+    const path = `escapes.${i}`;
+    object(e, path);
+    noUnknown(e, ['tier', 'severity'], path);
+    tier(e, 'tier', path, { nullable: false });
+    if (!SEVERITIES.includes(e.severity)) fail(join2(path, 'severity'));
+  });
+}
+
 function check(obj) {
   object(obj, '$');
-  noUnknown(obj, ['v', 'at', 'provider', 'task', 'kind', 'gate', 'shadow', 'hunters', 'budget'], '');
-  if (obj.v !== 1) fail('v');
+  noUnknown(obj, ALL_KEYS, '');
+  if (obj.v !== 1 && obj.v !== 2) fail('v');
   if (typeof obj.at !== 'string' || !AT.test(obj.at) || Number.isNaN(Date.parse(obj.at))) fail('at');
   if (!PROVIDERS.includes(obj.provider)) fail('provider');
   if (!KINDS.includes(obj.kind)) fail('kind');
+  if (V2_KINDS.includes(obj.kind) !== (obj.v === 2)) fail('v');
   if (typeof obj.task !== 'string' || !TASK.test(obj.task)) fail('task');
+  noUnknown(obj, obj.kind === 'task-review' ? TASK_REVIEW_KEYS : obj.kind === 'final-escapes' ? FINAL_ESCAPES_KEYS : V1_KEYS, '');
+  if (obj.kind === 'task-review') {
+    validateTaskReview(obj);
+    return;
+  }
+  if (obj.kind === 'final-escapes') {
+    validateFinalEscapes(obj);
+    return;
+  }
   if (obj.kind === 'safety-shadow') {
     if (obj.hunters !== undefined) fail('hunters');
     if (obj.gate === undefined) fail('gate');
@@ -390,15 +466,15 @@ function addBudget(p, budget) {
   if (budget.overrun) p.budget.overruns += 1;
 }
 
-// Reads the whole store text, one line at a time. A line that is not JSON, or a v 1 line that fails validation or
-// carries no string key, is malformed (reported by its 1-based line number); a line of another version is counted and
-// skipped; a second line with a key already seen is counted and skipped (first write wins, whatever `since` says).
-// `since` (YYYY-MM-DD) keeps the records at or after that day, UTC.
-export function summarize(text, { since } = {}) {
+// Reads the whole store text, one line at a time, and calls `onRecord(record)` for each valid record in the window.
+// A line that is not JSON, or a v 1 or v 2 line that fails validation or carries no string key, is malformed (reported
+// by its 1-based line number); a line of another version is counted and skipped; a second line with a key already seen
+// is counted and skipped (first write wins, whatever `since` says). `since` (YYYY-MM-DD) keeps the records at or after
+// that day, UTC. Returns the skipped counts.
+function readRecords(text, since, onRecord) {
   const skipped = { malformed: [], otherVersion: 0, duplicateKey: 0 };
   const cutoff = since ? Date.parse(`${since}T00:00:00Z`) : null;
   const seen = new Set();
-  const providers = {};
   text.split('\n').forEach((line, index) => {
     if (line.trim() === '') return;
     let obj;
@@ -412,7 +488,7 @@ export function summarize(text, { since } = {}) {
       skipped.malformed.push(index + 1);
       return;
     }
-    if (obj.v !== 1) {
+    if (obj.v !== 1 && obj.v !== 2) {
       skipped.otherVersion += 1;
       return;
     }
@@ -427,6 +503,17 @@ export function summarize(text, { since } = {}) {
     }
     seen.add(key);
     if (cutoff !== null && Date.parse(record.at) < cutoff) return;
+    onRecord(record);
+  });
+  return skipped;
+}
+
+// The per-provider summary: shadow agreement (the records stored before that kind was retired), hunters per category
+// (from `hunters` and `task-review` records) and the budget. A `final-escapes` record names no provider here.
+export function summarize(text, { since } = {}) {
+  const providers = {};
+  const skipped = readRecords(text, since, (record) => {
+    if (record.kind === 'final-escapes') return;
     const p = providers[record.provider] ??= emptyProvider();
     if (record.kind === 'safety-shadow') addShadow(p, record);
     else addHunters(p, record);
@@ -441,6 +528,52 @@ export function summarize(text, { since } = {}) {
     }
   }
   return { providers, skipped };
+}
+
+function emptyTier() {
+  return { tasks: 0, raised: 0, candidates: 0, confirmed: 0, specConfirmed: 0, fixRounds: 0, blocked: 0, escapes: 0 };
+}
+
+// Per effective tier (heavy, standard, light; all three always present): `tasks` counts the task-review records of
+// attempt 1, so a task reopened and reviewed again is still one task; `raised` the attempt-1 records whose tier was
+// raised above the declared one; `hunterConfirmedRate` the confirmed hunter findings over the hunter candidates;
+// `specConfirmedPerTask`, `fixRoundsPerTask` and `escapesPerTask` the spec confirmed findings, the fix rounds and the
+// final-review escapes traced to that tier, over `tasks`; `blocked` the records that ended blocked. Every count other
+// than `tasks` and `raised` sums over all attempts. A window that starts after a task's first attempt leaves that task
+// out of `tasks`. A rate with no denominator is null. The window and the skipped lines work as in summarize.
+export function summarizeByTier(text, { since } = {}) {
+  const tiers = Object.fromEntries(TIERS.map((t) => [t, emptyTier()]));
+  readRecords(text, since, (record) => {
+    if (record.kind === 'final-escapes') {
+      for (const escape of record.escapes) tiers[escape.tier].escapes += 1;
+      return;
+    }
+    if (record.kind !== 'task-review') return;
+    const t = tiers[record.tier];
+    if (record.attempt === 1) {
+      t.tasks += 1;
+      if (record.raised) t.raised += 1;
+    }
+    if (record.blocked) t.blocked += 1;
+    t.fixRounds += record.fixRounds;
+    t.specConfirmed += sum(SEVERITIES.map((s) => record.spec.confirmed[s]));
+    for (const hunter of record.hunters) {
+      t.candidates += hunter.candidates;
+      t.confirmed += sum(SEVERITIES.map((s) => hunter.confirmed[s]));
+    }
+  });
+  return Object.fromEntries(TIERS.map((name) => {
+    const t = tiers[name];
+    return [name, {
+      tasks: t.tasks,
+      raised: t.raised,
+      hunterConfirmedRate: ratio(t.confirmed, t.candidates),
+      specConfirmedPerTask: ratio(t.specConfirmed, t.tasks),
+      fixRoundsPerTask: ratio(t.fixRounds, t.tasks),
+      blocked: t.blocked,
+      escapesPerTask: ratio(t.escapes, t.tasks),
+    }];
+  }));
 }
 
 // ---- the text report ----------------------------------------------------------------------------------------
@@ -473,5 +606,19 @@ export function formatSummary(summary) {
   const k = summary.skipped;
   const malformed = k.malformed.length === 0 ? '0' : `${k.malformed.length} (lines ${k.malformed.join(', ')})`;
   out.push(`Skipped: malformed ${malformed}, other version ${k.otherVersion}, duplicate key ${k.duplicateKey}`);
+  return `${out.join('\n')}\n`;
+}
+
+const perTask = (value) => (value === null ? 'n/a' : value.toFixed(2));
+
+// The by-tier summary as text, one line per tier: rates as percentages with one decimal, per-task figures with two, a
+// figure with no denominator as n/a.
+export function formatTierSummary(byTier) {
+  const out = TIERS.map((name) => {
+    const t = byTier[name];
+    return `${name}: tasks ${t.tasks}, raised ${t.raised}, hunter confirmed ${pct(t.hunterConfirmedRate)}, `
+      + `spec confirmed/task ${perTask(t.specConfirmedPerTask)}, fix rounds/task ${perTask(t.fixRoundsPerTask)}, `
+      + `blocked ${t.blocked}, escapes/task ${perTask(t.escapesPerTask)}`;
+  });
   return `${out.join('\n')}\n`;
 }

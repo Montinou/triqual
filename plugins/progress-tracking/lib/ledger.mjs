@@ -1,6 +1,7 @@
 // Pure task-ledger model (spec §6.2): plan parsing, ledger creation, reconciliation and task transitions.
 // No I/O and no clock: every timestamp comes in as `now` (an ISO string). Functions never mutate their input.
 import { TASK_ROLES, roleOf } from './roles.mjs';
+import { PlanError, TIERS, readTasks } from './plan.mjs';
 
 export class LedgerError extends Error {
   constructor(message) {
@@ -10,72 +11,32 @@ export class LedgerError extends Error {
   }
 }
 
-// Headings and the Depends on / Skills / Role lines are read at column 0 only.
-const HEADING = /^### Task (\d+): (.+)$/;
-const DEPENDS = /^\*\*Depends on:\*\*(.*)$/;
-const SKILLS = /^\*\*Skills:\*\*(.*)$/;
-const ROLE = /^\*\*Role:\*\*(.*)$/;
-// CommonMark fence: a run of 3+ backticks or tildes, then an optional info string; after backticks the info string may
-// not hold a backtick (such a line is inline code). Groups: 1 the run, 2 the info string.
-const FENCE = /^(`{3,}(?=[^`]*$)|~{3,})(.*)$/;
-// The leading spaces and tabs of a line. Indented four or more columns (a tab counts as four) a line never opens or
-// closes a fence, as in CommonMark; subagent-driven-development's task-brief applies the same rule.
-const INDENT = /^[ \t]*/;
-const FENCE_INDENT_LIMIT = 4;
-const TAB_COLUMNS = 4;
-
-const list = (s) => s.split(',').map((x) => x.trim()).filter(Boolean);
-
-// The fence match of `line` ([, run, info]), or null when it is no fence line.
-function fenceOf(line) {
-  const [indent] = INDENT.exec(line);
-  const columns = [...indent].reduce((n, c) => n + (c === '\t' ? TAB_COLUMNS : 1), 0);
-  return columns < FENCE_INDENT_LIMIT ? FENCE.exec(line.slice(indent.length)) : null;
-}
-
+// The plan format is read by lib/plan.mjs (import-free, shared byte-for-byte with methodology's scripts); parsePlan
+// keeps the task shape ledgers are built from, plus the declared tier, and reports a PlanError as a LedgerError.
 export function parsePlan(text) {
-  const tasks = [];
-  const seen = new Set();
-  let current = null;
-  let fence = null; // { run, line } of the opening fence while inside a fenced code block
-  const lines = text.split(/\r?\n/);
-  for (const [i, line] of lines.entries()) {
-    const f = fenceOf(line);
-    if (fence) {
-      // Closes only on a run of the same character, at least as long as the opener, with no info string.
-      if (f && f[1][0] === fence.run[0] && f[1].length >= fence.run.length && !f[2].trim()) fence = null;
-      continue;
-    }
-    if (f) { fence = { run: f[1], line: i + 1 }; continue; }
-    const h = HEADING.exec(line);
-    if (h) {
-      const id = `T${Number(h[1])}`;
-      if (seen.has(id)) throw new LedgerError(`duplicate task ${id} in plan`);
-      seen.add(id);
-      current = { id, title: h[2].trim(), deps: [], skills: [], role: null };
-      tasks.push(current);
-      continue;
-    }
-    if (line.startsWith('### ')) { current = null; continue; }
-    if (!current) continue;
-    const d = DEPENDS.exec(line);
-    if (d) { current.deps = list(d[1]); continue; }
-    const s = SKILLS.exec(line);
-    if (s) { current.skills = list(s[1]); continue; }
-    const r = ROLE.exec(line);
-    if (r) current.role = r[1].trim();
+  try {
+    return readTasks(text).map(({ id, title, deps, skills, role, tier }) => ({ id, title, deps, skills, role, tier }));
+  } catch (e) {
+    if (e instanceof PlanError) throw new LedgerError(e.message);
+    throw e;
   }
-  if (fence) throw new LedgerError(`unclosed code fence opened at line ${fence.line}`);
-  return tasks;
 }
 
-const newTask = ({ id, title, deps, skills, role }, now) => ({
+// Tier order for "higher": heavy > standard > light, null (undeclared) counting as standard. On a tie `a` stays, so an
+// undeclared effective tier is kept rather than replaced by an equal `standard`.
+const TIER_RANK = { heavy: 2, standard: 1, light: 0 };
+const rankOf = (tier) => TIER_RANK[tier ?? 'standard'] ?? TIER_RANK.standard;
+export const higherTier = (a, b) => (rankOf(b) > rankOf(a) ? (b ?? null) : (a ?? null));
+
+const newTask = ({ id, title, deps, skills, role, tier }, now) => ({
   id,
   title,
   status: 'pending',
   deps: [...deps],
   skills: [...skills],
   role: role ?? null,
+  tier: tier ?? null,
+  effectiveTier: tier ?? null,
   commits: [],
   reason: null,
   history: [{ at: now, from: null, to: 'pending', note: null }],
@@ -93,8 +54,9 @@ export function createLedger({ plan, spec, branch, tasks, now }) {
 }
 
 // Reconciles by id and title: new plan tasks are appended as pending, tasks no longer in the plan are reported and
-// kept, a changed title is reported as drift and the task is left untouched. Pending tasks take the plan's deps, skills
-// and role. Adding a task reactivates a closed plan.
+// kept, a changed title is reported as drift and the task is left untouched. Pending tasks take the plan's deps, skills,
+// role and declared tier; their effective tier only ever rises to the declared one (higherTier), never falls. Adding a
+// task reactivates a closed plan.
 export function reconcile(ledger, planTasks, now) {
   const next = structuredClone(ledger);
   const planById = new Map(planTasks.map((t) => [t.id, t]));
@@ -105,7 +67,13 @@ export function reconcile(ledger, planTasks, now) {
     const p = planById.get(task.id);
     if (!p) { missing.push(task.id); continue; }
     if (p.title !== task.title) { retitled.push(task.id); continue; }
-    if (task.status === 'pending') { task.deps = [...p.deps]; task.skills = [...p.skills]; task.role = p.role ?? null; }
+    if (task.status === 'pending') {
+      task.deps = [...p.deps];
+      task.skills = [...p.skills];
+      task.role = p.role ?? null;
+      task.tier = p.tier ?? null;
+      task.effectiveTier = higherTier(task.effectiveTier, p.tier);
+    }
   }
   const known = new Set(next.tasks.map((t) => t.id));
   for (const p of planTasks) {
@@ -181,6 +149,25 @@ export function transition(ledger, cmd, id, arg, now) {
   return { ledger: next, changed: true };
 }
 
+// `retier`: raises a task's effective tier to `tier` and records `reason` as the task's history note (the status stays).
+// The same tier (null counting as standard) changes nothing; a lower one, an unknown task or tier and a missing reason
+// throw. The declared tier is never touched, and no path lowers the effective one.
+export function retier(ledger, id, tier, reason, now) {
+  const next = structuredClone(ledger);
+  const task = next.tasks.find((t) => t.id === id);
+  if (!task) throw new LedgerError(`unknown task ${id}`);
+  if (!TIERS.includes(tier)) throw new LedgerError(`unknown tier "${tier}" (expected ${TIERS.join(', ')})`);
+  const text = typeof reason === 'string' ? reason.trim() : '';
+  if (!text) throw new LedgerError(`${id}: retier requires a reason`);
+  const current = task.effectiveTier ?? null;
+  if (rankOf(tier) === rankOf(current)) return { ledger: next, changed: false };
+  if (rankOf(tier) < rankOf(current)) {
+    throw new LedgerError(`${id}: cannot lower the tier from ${current ?? 'standard'} to ${tier}`);
+  }
+  task.effectiveTier = tier;
+  task.history.push({ at: now, from: task.status, to: task.status, note: text });
+  return { ledger: next, changed: true };
+}
 
 // ---- Views (spec §6.2 `render`, `status`, `next`, `check`) ----
 
@@ -254,8 +241,10 @@ export function upsertStatusSection(statusText, body) {
 
 export function statusLine(name, ledger) {
   const { done, total } = counts(ledger);
-  const inProgress = withStatus(ledger, 'in_progress').map((t) => t.id).join(', ') || 'none';
-  const next = nextTask(ledger)?.id ?? 'none';
+  const tagged = (t) => (t.effectiveTier ? `${t.id} [${t.effectiveTier}]` : t.id);
+  const inProgress = withStatus(ledger, 'in_progress').map(tagged).join(', ') || 'none';
+  const nt = nextTask(ledger);
+  const next = nt ? tagged(nt) : 'none';
   return `${name}: ${done}/${total} done · in progress: ${inProgress} · next: ${next}`;
 }
 
@@ -268,6 +257,9 @@ export function checkSchema(ledger) {
   for (const t of Array.isArray(ledger.tasks) ? ledger.tasks : []) {
     if (!STATUSES.has(t.status)) drift.push(`${t.id} has unknown status "${t.status}"`);
     if (!Array.isArray(t.history)) drift.push(`${t.id} history is not an array`);
+    // Absent (a ledger written before tiers) and null (undeclared) are both clean.
+    if (t.tier != null && !TIERS.includes(t.tier)) drift.push(`${t.id} has unknown tier "${t.tier}"`);
+    if (t.effectiveTier != null && !TIERS.includes(t.effectiveTier)) drift.push(`${t.id} has unknown effective tier "${t.effectiveTier}"`);
   }
   return drift;
 }
@@ -286,7 +278,20 @@ export function checkSection(statusText, renderedBody) {
 }
 
 // Drift messages for one ledger, empty when clean. Never throws on a malformed plan, ledger or status text.
-export function checkLedger({ ledger, planText, statusText, renderedBody, commitExists }) {
+// A commit recorded from another repository is the string `ext:<path relative to this repo's root>@<sha>`, so no
+// home-directory path enters a ledger. Parsed at the last `@`; null for any other string (a plain sha, a malformed form).
+export const EXTERNAL_PREFIX = 'ext:';
+export function parseExternalCommit(commit) {
+  if (typeof commit !== 'string' || !commit.startsWith(EXTERNAL_PREFIX)) return null;
+  const at = commit.lastIndexOf('@');
+  const path = commit.slice(EXTERNAL_PREFIX.length, at);
+  const sha = commit.slice(at + 1);
+  return at === -1 || !path || !sha ? null : { path, sha };
+}
+
+// `commitExists(sha)` answers for a commit of this repo; for an external one it is called as `commitExists(sha, path)`
+// and answers true, false, or null when the path cannot be checked (it is then a `warn` message, never drift).
+export function checkLedger({ ledger, planText, statusText, renderedBody, commitExists, warn }) {
   const drift = checkSchema(ledger);
   const tasks = Array.isArray(ledger.tasks) ? ledger.tasks : [];
 
@@ -325,8 +330,15 @@ export function checkLedger({ ledger, planText, statusText, renderedBody, commit
 
   if (ledger.state === 'active') {
     for (const t of tasks) {
-      for (const sha of Array.isArray(t.commits) ? t.commits : []) {
-        if (!commitExists(sha)) drift.push(`${t.id} commit ${String(sha).slice(0, 7)} does not resolve`);
+      for (const commit of Array.isArray(t.commits) ? t.commits : []) {
+        const ext = parseExternalCommit(commit);
+        if (!ext) {
+          if (!commitExists(commit)) drift.push(`${t.id} commit ${String(commit).slice(0, 7)} does not resolve`);
+          continue;
+        }
+        const found = commitExists(ext.sha, ext.path);
+        if (found === null) warn?.(`external commit not checkable: ${ext.path}@${ext.sha}`);
+        else if (!found) drift.push(`${t.id} commit ${ext.sha.slice(0, 7)} does not resolve in ${ext.path}`);
       }
     }
   }

@@ -97,10 +97,10 @@ const EXPECTED_PLANS = [
     done: 1,
     total: 3,
     tasks: [
-      { id: 'T1', title: 'Alpha', status: 'done', reason: null, commits: ['abc1234'], skills: ['a'] },
-      { id: 'T2', title: 'Beta', status: 'in_progress', reason: null, commits: [], skills: [] },
-      { id: 'T3', title: 'Gamma', status: 'dropped', reason: 'not needed', commits: [], skills: [] },
-      { id: 'T4', title: 'Delta', status: 'blocked', reason: 'waiting on T9', commits: [], skills: [] },
+      { id: 'T1', title: 'Alpha', status: 'done', reason: null, tier: null, effectiveTier: null, commits: ['abc1234'], skills: ['a'] },
+      { id: 'T2', title: 'Beta', status: 'in_progress', reason: null, tier: null, effectiveTier: null, commits: [], skills: [] },
+      { id: 'T3', title: 'Gamma', status: 'dropped', reason: 'not needed', tier: null, effectiveTier: null, commits: [], skills: [] },
+      { id: 'T4', title: 'Delta', status: 'blocked', reason: 'waiting on T9', tier: null, effectiveTier: null, commits: [], skills: [] },
     ],
   },
   {
@@ -108,7 +108,7 @@ const EXPECTED_PLANS = [
     state: 'done',
     done: 1,
     total: 1,
-    tasks: [{ id: 'T1', title: 'Alpha', status: 'done', reason: null, commits: ['def5678'], skills: ['a'] }],
+    tasks: [{ id: 'T1', title: 'Alpha', status: 'done', reason: null, tier: null, effectiveTier: null, commits: ['def5678'], skills: ['a'] }],
   },
 ];
 

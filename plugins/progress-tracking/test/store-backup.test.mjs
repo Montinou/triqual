@@ -14,11 +14,14 @@ import { loadSqlite, openStore } from '../lib/store.mjs';
 import { BRAND } from '../lib/brand.mjs';
 import { buildHistory } from './fixtures/progress-history.mjs';
 import { restoreCommand } from '../cli/tracking.mjs';
-import { placeExclusive, RestoreError } from '../lib/store-backup.mjs';
+import { COLUMNS, placeExclusive, REPO_COLUMNS, RestoreError } from '../lib/store-backup.mjs';
+import { SCHEMA_VERSION } from '../lib/store-schema.mjs';
 
 const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'cli', 'tracking.mjs');
 
 await loadSqlite();
+// Loaded after loadSqlite, which drops node:sqlite's experimental warning.
+const { DatabaseSync } = await import('node:sqlite');
 
 const cleanEnv = (home, extra) => {
   const env = { ...process.env, HOME: home };
@@ -388,4 +391,101 @@ test('placeExclusive links the file into place and refuses, leaving the file the
   assert.throws(() => placeExclusive(other, dest), (err) => err instanceof RestoreError && /appeared during the restore/.test(err.message));
   assert.equal(readFileSync(dest, 'utf8'), 'restored', 'the file that was there is untouched');
   assert.equal(existsSync(other), false, 'no temp file left');
+}));
+
+// ---- Plan methodology-1.0 · T2 fix round 1: restore across schema V2 (tiers) ----
+
+// A copy of the snapshot `src` at `dest` as a V1 triqual wrote it: no tier columns, user_version 1.
+function asV1(src, dest) {
+  copyFileSync(src, dest);
+  const d = new DatabaseSync(dest);
+  try {
+    d.exec('ALTER TABLE tasks DROP COLUMN tier; ALTER TABLE tasks DROP COLUMN effective_tier; PRAGMA user_version = 1;');
+  } finally {
+    d.close();
+  }
+}
+const withVersion = (src, dest, version) => {
+  copyFileSync(src, dest);
+  const d = new DatabaseSync(dest);
+  try { d.exec(`PRAGMA user_version = ${version}`); } finally { d.close(); }
+};
+const tierRows = (s) => s.all('SELECT key, tier, effective_tier FROM tasks ORDER BY plan_id, position').map((r) => ({ ...r }));
+// The data dir holds nothing but the database, its sidecars and backups/: no temp copy is left behind.
+const leftovers = (env) => readdirSync(dirname(env.TRIQUAL_TRACKING_DB))
+  .filter((f) => !/^tracking\.db(-wal|-shm)?$/.test(f) && f !== 'backups');
+
+test('restore of a V2 snapshot keeps the declared and the effective tier', () => withTemp(({ dir, envFor, run, inStore }) => {
+  const { repo } = buildHistory(dir);
+  const a = envFor('a');
+  exit(run(repo, ['import'], a), 0);
+  inStore(a, (s) => s.run("UPDATE tasks SET tier = 'light', effective_tier = 'heavy' WHERE key = 'T1'"));
+  const snapshot = join(dir, 'snap.db');
+  inStore(a, (s) => s.snapshotTo(snapshot));
+  inStore(a, (s) => s.run('UPDATE tasks SET tier = NULL, effective_tier = NULL'));
+  exit(run(dir, ['restore', snapshot, '--yes'], a), 0);
+  assert.deepEqual(inStore(a, tierRows), [
+    { key: 'T1', tier: 'light', effective_tier: 'heavy' }, { key: 'T2', tier: null, effective_tier: null },
+  ]);
+}));
+
+test('restore of a V1 snapshot: tiers read null and every other row is intact, over a database and into an absent one', () => withTemp(({ dir, envFor, run, inStore }) => {
+  const { repo } = buildHistory(dir);
+  const a = envFor('a');
+  exit(run(repo, ['import'], a), 0);
+  inStore(a, (s) => s.run("UPDATE tasks SET tier = 'heavy', effective_tier = 'heavy'"));
+  const v2 = join(dir, 'snap-v2.db');
+  inStore(a, (s) => s.snapshotTo(v2));
+  const v1 = join(dir, 'snap-v1.db');
+  asV1(v2, v1);
+  const v1Bytes = readFileSync(v1);
+  const expected = inStore(a, (s) => normalized(s, s.get('SELECT id FROM repos').id)).map(({ table, row }) => (
+    table === 'tasks' ? { table, row: { ...row, tier: null, effective_tier: null } } : { table, row }));
+  // Something written after the snapshot, which the restore must remove.
+  inStore(a, (s) => s.addEntry({ repoId: s.get('SELECT id FROM repos').id, gitDir: '/x/.git', branch: 'main' }, FIELDS, { state: 'no_commit' }));
+
+  for (const env of [a, envFor('b')]) {
+    const r = run(dir, ['restore', v1, '--yes'], env);
+    exit(r, 0);
+    inStore(env, (s) => {
+      assert.equal(s.get('PRAGMA user_version').user_version, SCHEMA_VERSION);
+      assert.deepEqual(normalized(s, s.get('SELECT id FROM repos').id), expected);
+    });
+    assert.deepEqual(leftovers(env), [], 'no temp copy left in the data dir');
+  }
+  assert.deepEqual(readFileSync(v1), v1Bytes, 'the snapshot itself is never migrated');
+}));
+
+test('restore still refuses a snapshot newer than this schema, over a database and into an absent one', () => withTemp(({ dir, envFor, run, inStore }) => {
+  const { repo } = buildHistory(dir);
+  const a = envFor('a');
+  exit(run(repo, ['import'], a), 0);
+  const snapshot = join(dir, 'snap.db');
+  inStore(a, (s) => s.snapshotTo(snapshot));
+  const newer = join(dir, 'snap-newer.db');
+  withVersion(snapshot, newer, SCHEMA_VERSION + 1);
+  const b = envFor('b');
+  for (const env of [a, b]) {
+    const r = run(dir, ['restore', newer, '--yes'], env);
+    exit(r, 2);
+    assert.match(r.stderr, new RegExp(`schema version ${SCHEMA_VERSION}.*it has ${SCHEMA_VERSION + 1}`));
+  }
+  assert.equal(inStore(a, (s) => s.get('SELECT COUNT(*) AS n FROM entries').n), 6);
+  assert.equal(existsSync(b.TRIQUAL_TRACKING_DB), false, 'nothing is created for a refused snapshot');
+  // A version-0 file (an empty or foreign SQLite database) is no tracking snapshot either.
+  const zero = join(dir, 'snap-zero.db');
+  withVersion(snapshot, zero, 0);
+  exit(run(dir, ['restore', zero, '--yes'], a), 2);
+}));
+
+test('the restore column lists match every column of a freshly migrated store', () => withTemp(({ dir, envFor }) => {
+  const store = openStore({ home: join(dir, 'home'), env: envFor('fresh'), create: true });
+  try {
+    const columns = (table) => store.all(`PRAGMA table_info(${table})`).map((c) => c.name);
+    for (const table of Object.keys(COLUMNS)) assert.deepEqual(COLUMNS[table], columns(table), table);
+    assert.deepEqual(Object.keys(COLUMNS).sort(), ['entries', 'plans', 'status', 'task_events', 'tasks']);
+    assert.deepEqual(REPO_COLUMNS, columns('repos'));
+  } finally {
+    store.close();
+  }
 }));

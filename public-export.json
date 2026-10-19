@@ -1,5 +1,5 @@
 {
-  "include": [".claude-plugin/", ".agents/", ".github/", "bin/", "plugins/", "test/", "package.json", "README.md", "CONTRIBUTING.md", "SECURITY.md", ".gitignore", "LICENSE", "public-export.json"],
+  "include": [".claude-plugin/", ".agents/", ".github/", "bin/", "plugins/", "test/", "package.json", "README.md", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md", ".gitignore", "LICENSE", "public-export.json"],
   "exclude": ["test/e2e-probe.test.mjs", "test/provider-probes.test.mjs", "test/no-personal-data.test.mjs", "test/brand-guard.test.mjs"],
   "keepInTarget": [".github/"],
   "allowLegacy": [
@@ -26,6 +26,6 @@
     {"path": "plugins/methodology/test/doctor.test.mjs", "contains": "ghp_SecretLooking"},
     {"path": "plugins/methodology/test/doctor.test.mjs", "contains": "sk-live-SecretLook"},
     {"path": "plugins/methodology/test/doctor.test.mjs", "contains": "xai-SECRET-TOKEN-inspect"},
-    {"path": "plugins/methodology/test/fork.test.mjs", "contains": "randomBytes(32).toString('hex')"}
+    {"path": "test/companion.test.mjs", "contains": "randomBytes(32).toString('hex')"}
   ]
 }

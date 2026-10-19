@@ -11,16 +11,16 @@ Write implementation plans for an engineer who has not seen this codebase or thi
 
 **Announce at start:** "I'm using the writing-plans skill to create the implementation plan."
 
-**Context:** Plans run in the current checkout on stacked phase branches. A worktree exists only when your human partner asked for one (`methodology:using-git-worktrees`); never write a plan step that creates one.
+**Context:** Plans run in the current checkout on stacked phase branches. A worktree exists only when your human partner asked for one; never write a plan step that creates one.
 
 **Save plans to:** `YYYY-MM-DD-<feature-name>.md` in the plans directory. Run `triqual tasks paths --json` once, before writing the plan:
 - **Opted in** (`"optedIn": true`; an older `triqual` prints the same fields without `optedIn`): plans go to `plansDir`, and the plan is registered when done (see Register the Plan).
 - **Not opted in** (`"optedIn": false`, or exit 2 from an older progress-tracking): plans go to `docs/plans/`, unless your human partner names another place. Run no `triqual tasks` command, and never create `progress.md`: creating it opts the repo in and commits a personal log into a shared repo.
 - **`triqual` missing** (exit 3, or `triqual` not on `PATH`): handle it as not opted in, and say so once.
 
-Opted in with `"mode": "local"`, `plansDir` lives under the git dir, which Claude Code protects from agent file writes: make a private draft dir in the OS temp dir (`d=$(mktemp -d)`: other sessions share the temp dir), write the plan there under its final name, `$d/YYYY-MM-DD-<feature-name>.md` (it lands in `plansDir` under that name), and land it with `triqual tracking write plan <draft>`, the same as `triqual tasks init --adopt <draft>` (see Register the Plan); the `progress` entry and the `status` edit go the same way, as drafts in that `mktemp -d` dir (any name, such as `$d/entry.md` and `$d/status.md`) landed with `triqual tracking write entry <draft>` and `triqual tracking write status <draft>`. Never write or edit under `.git/` with the file tools.
+Opted in with `"mode": "local"`, `plansDir` lives under the git dir, which Claude Code protects from agent file writes: make a private draft dir in the OS temp dir (run `mktemp -d`; the directory it prints is `$d` below: other sessions share the temp dir), write the plan there under its final name, `$d/YYYY-MM-DD-<feature-name>.md` (it lands in `plansDir` under that name), and land it with `triqual tracking write plan <draft>`, the same as `triqual tasks init --adopt <draft>` (see Register the Plan); the `progress` entry and the `status` edit go the same way, as drafts in that `mktemp -d` dir (any name, such as `$d/entry.md` and `$d/status.md`) landed with `triqual tracking write entry <draft>` and `triqual tracking write status <draft>`. Never write or edit under `.git/` with the file tools.
 
-Opted in with `"mode": "store"` (details: `store-mode.md` under `references` in skill `progress-tracking:progress-tracking`), `plansDir` is in the store's documents directory and the plan never goes into the working tree: make a private draft dir (`d=$(mktemp -d)`), write the plan there under its final name, `$d/YYYY-MM-DD-<feature-name>.md`, and land it with `triqual tracking write plan <draft>` (see Register the Plan); the `progress` entry and the `status` edit go through the store too, with no commit step.
+Opted in with `"mode": "store"` (details: `store-mode.md` under `references` in skill `progress-tracking:progress-tracking`), `plansDir` is in the store's documents directory and the plan never goes into the working tree: make a private draft dir (run `mktemp -d`; the directory it prints is `$d` below), write the plan there under its final name, `$d/YYYY-MM-DD-<feature-name>.md`, and land it with `triqual tracking write plan <draft>` (see Register the Plan); the `progress` entry and the `status` edit go through the store too, with no commit step.
 
 ## Scope Check
 
@@ -86,7 +86,7 @@ ends with an independently testable deliverable and exactly one commit.
 ```markdown
 # [Feature Name] Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use methodology:subagent-driven-development (recommended) or methodology:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use methodology:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** [One sentence describing what this builds]
 
@@ -98,6 +98,8 @@ ends with an independently testable deliverable and exactly one commit.
 argues from the spec, so the spec travels with it; executors read both]
 
 **Branch prefix:** [<topic>: the prefix of every phase branch, `<topic>/<NN>-<phase-slug>`]
+
+**Sensitive paths:** [optional: `<glob>, <glob>`, paths whose change makes a task `heavy`, added to the default set (see Task Tiers); omit the line when none]
 
 ## Global Constraints
 
@@ -125,17 +127,28 @@ owns the code, in that task's own step style.]
 
 Every task gets a `**Role:**` line naming the role that does its work. Choosing the role:
 - `roles:tdd-implementer` is the default: code and tests written test-first. Most tasks take it.
-- `roles:complex-implementer` takes a task where a mistake is costly: multi-system changes, migrations of live state, or other work that needs the stronger model. Same test-first discipline; mark only the tasks that need it.
-- `roles:review-fixer` takes a task whose work is fixing review findings: a planned fix round, or answering review feedback on existing code.
-- `coordinator` takes work the controller must do itself: probes, rollout steps (migrations, deploys, env vars), user checkpoints, and anything that needs your human partner in the loop.
+- `roles:complex-implementer` takes a task where a mistake is costly: multi-system changes, migrations of live state, or other work that needs the stronger model. Same test-first discipline; mark only the tasks that need it, and tier them `heavy`.
+- `coordinator` takes work the controller must do itself: probes, rollout steps (deploys, env vars, status updates), user checkpoints, and anything that needs your human partner in the loop. It may also take a small, low-risk fix, within the `light` code allowance; every `coordinator` task is `light`.
 
-Reviewer roles and the brief writer serve a task and are never its role; the execution skills dispatch them. A plan without the line reads as `roles:tdd-implementer`, but write it for every task anyway.
+Live-state work and migrations are never coordinator work: they are `heavy`, `roles:complex-implementer` is the usual role for them, and a production operation that needs the merged trunk is an `## After Merge` item. `roles:review-fixer` is never a task role: the orchestrator dispatches it for fix rounds, so a plan never plans one. Reviewer roles and the brief writer serve a task and are never its role either. A plan without the line reads as `roles:tdd-implementer`, but write it for every task anyway.
+
+## Task Tiers
+
+Every task gets a `**Tier:**` line, `heavy`, `standard` or `light`, set by what the task's work touches:
+- **heavy** — any of: security-relevant code (auth, permissions, secrets, sandboxing, policy, parsing untrusted input), live state or migrations, changes spanning more than one plugin or system, a public interface others depend on (CLI flags and exit codes, file formats, hook contracts, the plan format), `roles:complex-implementer`.
+- **light** — only: docs, comments, config values, version bumps, renames with no behavior change, and small code fixes within the light code allowance (at most 20 added+removed lines in total, test lines included, no new file, no prompt-like Markdown, no sensitive path).
+- **standard** — everything else.
+
+A task that touches a sensitive path is `heavy`, as is a task whose diff will have more than 300 changed lines. The default sensitive paths are `**/hooks/**`, `**/setup/**`, `**/*schema*`, `**/migrations/**`, `**/drizzle/**`, `.github/**` and `plugins/workflow-gate/**`; the plan header's `**Sensitive paths:** <glob>, <glob>` adds its globs to that set.
+
+Tiers are all-or-none per plan: every task carries one, or none does. `coordinator` tasks must be `light` and `roles:complex-implementer` tasks `heavy`. The orchestrator may raise a tier at run time, never lower it.
 
 ## Task Structure
 
 ````markdown
 ### Task N: [Component Name]
 
+**Tier:** heavy
 **Depends on:** T1, T3
 **Skills:** slug-a, slug-b
 **Role:** roles:tdd-implementer
@@ -184,9 +197,12 @@ git commit -m "feat: add specific feature"
 ````
 
 The lines under the heading follow the task ledger's plan format:
+- `**Tier:**` names the task's tier (see Task Tiers); it is the first line.
 - `**Depends on:**` lists the tasks that must be done first, as `T1, T3`; omit the line when a task has none.
-- `**Skills:**` lists the vault skills the task needs: run `triqual suggest` on the task's text and keep the fitting slugs. On exit 3 from `triqual suggest` (skill-suggest is not installed yet), or when `triqual` is not on `PATH` (`command -v triqual` fails, or exit 127), omit the line silently.
+- `**Skills:**` lists the vault skills the task needs: run `triqual suggest "<the task's text>" --json` and keep the fitting `suggestions[].slug` values. On a non-zero exit from `triqual suggest` (exit 3: headjack is not installed), on empty output, or when `triqual` is not on `PATH` (`command -v triqual` fails, or exit 127), omit the line silently.
 - `**Role:**` names the task's role (see Task Roles).
+
+Test-first applies to every task that changes behavior, at any tier. A task with no behavior change (docs, config values, a rollout step) replaces the test steps with a verification step: the command to run and the output that means it passed.
 
 ## What a Step Contains
 
@@ -227,11 +243,13 @@ After writing the complete plan, look at the spec with fresh eyes and check the 
 
 **6. Phases:** Does each phase map to a slice of the spec? Does any task depend on a later phase? Does every phase have a branch, a PR title, a Phase check and a task that commits? Is anything that needs the merged trunk a task instead of an `## After Merge` item?
 
+**7. Tiers:** Does every task carry a `**Tier:**` (all or none)? Is each tier the one the rubric gives for what the task touches, with no task tiered lower than its content justifies? Is every `coordinator` task `light` and every `roles:complex-implementer` task `heavy`? Is every task that touches a sensitive path (the default set plus the header's `**Sensitive paths:**`) or whose diff will have more than 300 changed lines `heavy`?
+
 If you find issues, fix them inline. No need to re-review — just fix and move on. If you find a spec requirement with no task, add the task.
 
 ## Plan Audit
 
-After the self-review, dispatch `roles:final-adversarial-reviewer` with `../brainstorming/spec-document-reviewer-prompt.md` on the plan and its spec: the adversarial audit runs on every plan, and no other reviewer takes its place.
+After the self-review, dispatch `roles:final-adversarial-reviewer` with `../brainstorming/spec-document-reviewer-prompt.md` on the plan and its spec: the adversarial audit runs on every plan, and no other reviewer takes its place. The audit checks the tiers too: a task tiered lower than its content justifies by the Task Tiers rubric is a finding.
 
 Fix the findings in the plan. Name, in your message to your human partner, each finding you did not fix and why.
 
@@ -246,37 +264,20 @@ When opted in, the plan ends in the task ledger and the tracking files; when not
 ## Execution Handoff
 
 After saving and self-reviewing the plan, link it for your human partner
-to read. If they have already explicitly supplied an execution method, ask
-them to review the plan and confirm it captures what they want; wait for that
-review before implementation, then use the preserved method. Otherwise, ask
-them to review the plan and choose an execution method before implementation.
+to read. Ask them to review the plan and confirm it captures what they want;
+wait for that review before implementation. Every plan runs through
+`methodology:executing-plans`, which dispatches each task to a role agent, so
+there is nothing else to pick.
 
 Execution builds a stack: one branch and one draft PR per phase, one commit
 per task. In GitHub mode (a GitHub remote and `gh stack`) it pushes this
 plan's phase branches, opens and updates their draft PRs, and marks them
-ready for review after the final review; otherwise the stack stays local. Your human partner's choice of the method (or their
-confirmation of the plan, when the method was already supplied) authorizes
+ready for review after the final review; otherwise the stack stays local. Your human partner's
+confirmation of the plan authorizes
 that push of this plan's phase branches and draft PRs, and marking them ready for review after the final review, and nothing else; the
 execution skill records it in its ledger as `Authorization: push phase
 branches and draft PRs — handoff <date>`, and merging stays your human partner's.
 
-**When no execution method has already been supplied:**
-
-**"Plan complete and saved to `<plan path>`. Please review the plan. Which execution approach would you prefer?**
-
-- **Subagent-driven** - A fresh subagent implements each task and a fresh reviewer checks it before the next one starts, then a whole-branch review at the end. Most thorough; costs a fresh context per task and per review.
-- **Native** - I implement every task myself in this session, the way this harness runs work; each task still gets its reviews, and the whole branch a final review. Cheapest and fastest; no fresh implementer context per task. Runs well with a mid-tier session model, since the plan carries the design.
-
-**For this plan I recommend <one of the two>, because <one sentence from the plan: how much the tasks depend on each other's interfaces, how many there are, what a shipped mistake would cost>. Either approach builds a stack: one branch and one draft PR per phase. Choosing one authorizes the execution skill to push this plan's phase branches, to open and update their draft PRs, and to mark them ready for review after the final review (it records that in its ledger; without `gh stack` or a GitHub remote the stack stays local); merging stays yours. Does the plan capture what you want, and which approach should we use?"**
-
-**When an execution method has already been supplied:**
-
 **"Plan complete and saved to `<plan path>`. Please review the plan. Execution builds a stack: one branch and one draft PR per phase. Confirming the plan authorizes the execution skill to push this plan's phase branches, to open and update their draft PRs, and to mark them ready for review after the final review (it records that in its ledger; without `gh stack` or a GitHub remote the stack stays local); merging stays yours. Does it capture what you want?"**
 
-**If Subagent-driven chosen:**
-- **REQUIRED SUB-SKILL:** Use methodology:subagent-driven-development
-
-**If Native chosen:**
 - **REQUIRED SUB-SKILL:** Use methodology:executing-plans
-
-Forked from superpowers 6.4.2 (skills/writing-plans), MIT © Jesse Vincent — see LICENSE-superpowers.

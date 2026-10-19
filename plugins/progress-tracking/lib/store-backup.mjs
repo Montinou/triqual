@@ -12,7 +12,7 @@ import {
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { createPrivate, openStore, storePaths, StoreError } from './store.mjs';
-import { SCHEMA_VERSION } from './store-schema.mjs';
+import { migrate, SCHEMA_VERSION } from './store-schema.mjs';
 import { EXPORT_TABLES } from './store-import.mjs';
 
 const DIR_MODE = 0o700;
@@ -28,16 +28,16 @@ export function exportJsonl(store, repoId) {
   return store.rows(repoId).map((r) => `${JSON.stringify({ table: r.table, row: r.row })}\n`).join('');
 }
 
-// Every column of each table, in schema order, for the copy from the snapshot.
-const COLUMNS = {
+// Every column of each table, in schema order, for the copy from the snapshot (a test pins them to the schema).
+export const COLUMNS = {
   entries: ['id', 'repo_id', 'git_dir', 'branch', 'created_at', 'entry_date', 'title', 'stage_task', 'done', 'files', 'verification',
     'next', 'state', 'commit_sha', 'corrects', 'plan', 'task_key', 'original', 'parse_ok', 'import_hash'],
   status: ['repo_id', 'position', 'heading', 'body', 'updated_at'],
   plans: ['id', 'repo_id', 'path', 'spec', 'branch', 'state'],
-  tasks: ['plan_id', 'key', 'position', 'title', 'deps', 'role', 'skills', 'status', 'commits', 'reason'],
+  tasks: ['plan_id', 'key', 'position', 'title', 'deps', 'role', 'skills', 'status', 'commits', 'reason', 'tier', 'effective_tier'],
   task_events: ['id', 'plan_id', 'task_key', 'at', 'from_status', 'to_status', 'note'],
 };
-const REPO_COLUMNS = ['id', 'repo_key', 'git_common_dir', 'root', 'origin', 'shareable', 'created_at'];
+export const REPO_COLUMNS = ['id', 'repo_key', 'git_common_dir', 'root', 'origin', 'shareable', 'created_at'];
 
 // The snapshot path, which must exist (ATTACH would otherwise create an empty file) and must not be the live database.
 function snapshotPath(file, dbFile) {
@@ -49,8 +49,9 @@ function snapshotPath(file, dbFile) {
   return abs;
 }
 
-// Attaches `file` as `snapshot` on `db` and checks it is a sound tracking database of this schema version; detaches
-// again and throws RestoreError when it is not.
+// Attaches `file` as `snapshot` on `db` and checks it is a sound tracking database of schema version 1 up to this one;
+// returns its version. Detaches again and throws RestoreError when it is not (version 0, a foreign or empty database,
+// and a version newer than this triqual's are both refused).
 function attachChecked(db, file) {
   try {
     db.prepare(`ATTACH DATABASE ? AS ${SNAP}`).run(file);
@@ -59,17 +60,48 @@ function attachChecked(db, file) {
   }
   try {
     const version = db.prepare(`PRAGMA ${SNAP}.user_version`).get().user_version;
-    if (version !== SCHEMA_VERSION) {
-      throw new RestoreError(`${file} is not a tracking snapshot of schema version ${SCHEMA_VERSION} (it has ${version})`);
+    if (version < 1 || version > SCHEMA_VERSION) {
+      throw new RestoreError(`${file} is not a tracking snapshot of schema version ${SCHEMA_VERSION} or older (it has ${version})`);
     }
     const check = db.prepare(`PRAGMA ${SNAP}.quick_check`).all().map((r) => Object.values(r)[0]);
     if (check.length !== 1 || check[0] !== 'ok') throw new RestoreError(`${file} fails the integrity check: ${check.slice(0, 3).join('; ')}`);
+    return version;
   } catch (err) {
     try { db.exec(`DETACH DATABASE ${SNAP}`); } catch { /* the check's error is the one to report */ }
     if (err instanceof RestoreError) throw err;
     throw new RestoreError(`${file} is not a tracking snapshot: ${err.message}`);
   }
 }
+
+// Attaches the snapshot as `snapshot` at this schema version and returns the temp file to remove after the DETACH, or
+// null. A snapshot of an older schema is never read or changed as it is: VACUUM INTO writes a private copy of it
+// (0600, beside the database), migrate() brings that copy to this schema, and the copy is attached in its place, so
+// every column the copy reads exists and the migrations' defaults apply.
+async function attachCurrent(db, snapshot, dir) {
+  if (attachChecked(db, snapshot) === SCHEMA_VERSION) return null;
+  const tmp = join(dir, `.restore-migrate.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);
+  try {
+    createPrivate(tmp);
+    try {
+      db.prepare(`VACUUM ${SNAP} INTO ?`).run(tmp);
+    } finally {
+      db.exec(`DETACH DATABASE ${SNAP}`);
+    }
+    const { DatabaseSync } = await import('node:sqlite'); // already loaded, behind its warning filter, by loadSqlite
+    const copy = new DatabaseSync(tmp);
+    try { migrate(copy); } finally { copy.close(); }
+    attachChecked(db, tmp);
+    return tmp;
+  } catch (err) {
+    removeTemp(tmp);
+    if (err instanceof RestoreError) throw err;
+    throw new RestoreError(`${snapshot} could not be brought to schema version ${SCHEMA_VERSION}: ${err.message}`);
+  }
+}
+
+const removeTemp = (tmp) => {
+  for (const suffix of ['', '-journal', '-wal', '-shm']) rmSync(`${tmp}${suffix}`, { force: true });
+};
 
 // Replaces every row of the open store with the attached snapshot's, in one transaction under the import guard.
 // Returns the copied row counts per table.
@@ -137,12 +169,13 @@ export async function restoreSnapshot({ home, env }, file) {
     return { ...await restoreByCopy({ home, env }, paths, snapshot), broken };
   }
   try {
-    attachChecked(store.db, snapshot);
+    const tmp = await attachCurrent(store.db, snapshot, dirname(paths.db));
     try {
       const safety = safetySnapshot(store, paths.dataDir);
       return { db: paths.db, copied: false, counts: copyFromSnapshot(store), safety };
     } finally {
       store.db.exec(`DETACH DATABASE ${SNAP}`);
+      if (tmp) removeTemp(tmp);
     }
   } finally {
     store.close();

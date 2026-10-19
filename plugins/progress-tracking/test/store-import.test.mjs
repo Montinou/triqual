@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { headingCommits, parseHeadingLog, splitEntries } from '../lib/store-import.mjs';
+import { COLUMNS, headingCommits, importRecords, parseHeadingLog, splitEntries } from '../lib/store-import.mjs';
 import { transition } from '../lib/ledger.mjs';
 import { loadSqlite, openStore } from '../lib/store.mjs';
 import { BRAND } from '../lib/brand.mjs';
@@ -710,4 +710,59 @@ test('import: several stale drafts of one heading are replaced by one row, a cor
   assert.equal(golf[0].commit_sha, sha);
   const correction = entries().find((e) => e.id === fix);
   assert.equal(correction.corrects, first, 'the correction now names the row that replaced its draft');
+}));
+
+// Plan methodology-1.0 · T2: the declared and the effective tier survive an import, a merge and an export rebuild.
+test('store keeps tiers through import', () => withTemp(({ dir, run, inStore }) => {
+  const { repo } = buildHistory(dir);
+  const path = join(repo, LEDGER_PATH);
+  const edit = (fn) => {
+    const ledger = JSON.parse(readFileSync(path, 'utf8'));
+    fn(ledger);
+    writeFileSync(path, `${JSON.stringify(ledger, null, 2)}\n`);
+  };
+  const tiers = () => inStore((s) => s.all('SELECT key, tier, effective_tier FROM tasks ORDER BY position')
+    .map((r) => [r.key, r.tier, r.effective_tier]));
+  // A first import of a ledger with tiers stores both values.
+  edit((l) => {
+    Object.assign(l.tasks[0], { tier: 'heavy', effectiveTier: 'heavy' });
+    Object.assign(l.tasks[1], { tier: 'light', effectiveTier: 'standard' });
+  });
+  exit(run(repo, ['import']), 0);
+  assert.deepEqual(tiers(), [['T1', 'heavy', 'heavy'], ['T2', 'light', 'standard']]);
+  // A merge where the incoming side is newer copies both; an incoming lower effective tier never lowers the stored one.
+  edit((l) => {
+    Object.assign(l.tasks[1], { tier: 'heavy', effectiveTier: 'heavy', status: 'blocked' });
+    l.tasks[1].history.push({ at: '2026-01-08T00:00:00Z', from: 'pending', to: 'blocked', note: 'waiting' });
+    Object.assign(l.tasks[0], { tier: 'light', effectiveTier: 'light', status: 'in_progress' });
+    l.tasks[0].history.push({ at: '2026-01-08T00:00:00Z', from: 'pending', to: 'in_progress', note: null });
+  });
+  exit(run(repo, ['import']), 0);
+  assert.deepEqual(tiers(), [['T1', 'light', 'heavy'], ['T2', 'heavy', 'heavy']]);
+  inStore((s) => {
+    const [plan] = s.plans(s.get('SELECT id FROM repos').id);
+    assert.deepEqual(s.ledgerOf(plan.id).tasks.map((t) => [t.id, t.status, t.tier, t.effectiveTier]),
+      [['T1', 'in_progress', 'light', 'heavy'], ['T2', 'blocked', 'heavy', 'heavy']]);
+    // An export rebuild (--replace --from) writes both columns back.
+    const repoId = s.get('SELECT id FROM repos').id;
+    const records = s.rows(repoId).map(({ table, row }) => ({ table, row: { ...row } }));
+    s.replaceRows(repoId, (st) => importRecords(st, { repoId }, records));
+  });
+  assert.deepEqual(tiers(), [['T1', 'light', 'heavy'], ['T2', 'heavy', 'heavy']]);
+}));
+
+// Plan methodology-1.0 · T2 fix round 1: a column added to the schema cannot be dropped silently by --replace --from.
+test('the --from column lists, plus the remapped links, are every column of a freshly migrated store', () => withTemp(({ home, dbEnv }) => {
+  // The id and the repository/plan links each table's insert writes itself (remapped), outside COLUMNS.
+  const LINKS = { entries: ['id', 'repo_id', 'corrects'], status: ['repo_id'], plans: ['id', 'repo_id'], tasks: ['plan_id'], task_events: ['id', 'plan_id'] };
+  const store = openStore({ home, env: dbEnv, create: true });
+  try {
+    assert.deepEqual(Object.keys(COLUMNS).sort(), Object.keys(LINKS).sort());
+    for (const table of Object.keys(LINKS)) {
+      const schema = store.all(`PRAGMA table_info(${table})`).map((c) => c.name).sort();
+      assert.deepEqual([...LINKS[table], ...COLUMNS[table]].sort(), schema, table);
+    }
+  } finally {
+    store.close();
+  }
 }));

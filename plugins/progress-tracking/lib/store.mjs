@@ -461,6 +461,8 @@ class Store {
       deps: JSON.parse(t.deps),
       skills: JSON.parse(t.skills),
       role: t.role,
+      tier: t.tier,
+      effectiveTier: t.effective_tier,
       commits: JSON.parse(t.commits),
       reason: t.reason,
       history: events.get(t.key) ?? [],
@@ -477,12 +479,13 @@ class Store {
       this.run('UPDATE plans SET spec = ?, branch = ?, state = ? WHERE id = ?', ledger.spec ?? null, ledger.branch ?? null, ledger.state, planId);
       ledger.tasks.forEach((t, position) => {
         this.run(
-          `INSERT INTO tasks (plan_id, key, position, title, deps, role, skills, status, commits, reason)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO tasks (plan_id, key, position, title, deps, role, skills, status, commits, reason, tier, effective_tier)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (plan_id, key) DO UPDATE SET position = excluded.position, title = excluded.title,
              deps = excluded.deps, role = excluded.role, skills = excluded.skills, status = excluded.status,
-             commits = excluded.commits, reason = excluded.reason`,
+             commits = excluded.commits, reason = excluded.reason, tier = excluded.tier, effective_tier = excluded.effective_tier`,
           planId, t.id, position, t.title, json(t.deps), t.role ?? null, json(t.skills), t.status, json(t.commits), t.reason ?? null,
+          t.tier ?? null, t.effectiveTier ?? null,
         );
         const known = this.all(
           'SELECT at, from_status AS "from", to_status AS "to", note FROM task_events WHERE plan_id = ? AND task_key = ? ORDER BY id',

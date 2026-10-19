@@ -1,0 +1,351 @@
+#!/usr/bin/env node
+// tier-check (design U4): raise a task's review tier from its actual diff. A task declared light cannot dodge review by
+// touching more than it said, and no path through this script lowers a tier.
+//
+// Usage: tier-check PLAN_FILE N BASE HEAD [--floor <tier>] [--fix-round]
+// Prints `ok <tier>` or `raise <from> <to>: <reason>: <paths>`; exit 0. Exit 2 on bad input (unknown task, bad range,
+// bad floor, unreadable plan, usage). The orchestrator passes the task's effective tier as --floor and records a raise
+// with `triqual tasks retier`. --fix-round marks the range as a fix round's (FIX_BASE..HEAD): see the last rule.
+//
+// Rules, in order (never lowering):
+//   floor    the higher of --floor and the plan's declared tier; a tierless task with no --floor floors at standard.
+//   heavy    the diff touches a sensitive path, or its added + removed lines exceed 300.
+//   standard (from light) the diff touches anything outside the light classes: Markdown outside the excluded classes
+//            and JSON whose only changed top-level key is `version`. Lockfiles are never light. Other files stay light
+//            while, together, they add + remove at most 20 lines, create no file and are not binary.
+//   fix round (--fix-round, floor light) any change outside the light classes raises to standard, whatever its size: the
+//            light code allowance covers a task's first build, never code added by a fix.
+// A rename touches both its old and new path; a pure rename adds 0 lines and is not a create.
+//
+// Plain Node, node: built-ins only. Written so that it runs as ESM or CommonJS (dynamic imports only, no `require`, no
+// `import.meta`): the plugin may be installed with or without a package.json above it.
+
+const TIERS = ['heavy', 'standard', 'light']; // highest first
+const rank = (tier) => TIERS.length - TIERS.indexOf(tier); // heavy 3 .. light 1
+const FALLBACK_TIER = 'standard';
+const EXIT_BAD_INPUT = 2;
+const HEAVY_LINE_LIMIT = 300;
+const LIGHT_CODE_LINE_LIMIT = 20;
+
+const DEFAULT_SENSITIVE = [
+  '**/hooks/**', '**/setup/**', '**/*schema*', '**/migrations/**', '**/drizzle/**', '.github/**',
+  'plugins/workflow-gate/**',
+];
+const EXCLUDED_MARKDOWN = [
+  '**/skills/**', '**/agents/**', '**/rules/**', '**/commands/**', '**/templates/**', '**/*-prompt.md', '**/CLAUDE*.md',
+  '**/AGENTS*.md',
+];
+const LOCKFILE_NAMES = new Set([
+  'package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lock', 'bun.lockb', 'go.sum',
+  'Pipfile.lock', 'composer.lock',
+]);
+
+// Binary media types whose bytes have no lines to count; any other file git sees as binary is counted by newline bytes.
+const MEDIA_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'pdf', 'woff', 'woff2', 'zip', 'gz']);
+const extensionOf = (path) => /\.([^./]+)$/.exec(path)?.[1].toLowerCase() ?? '';
+const newlines = (buffer) => buffer.reduce((n, byte) => n + (byte === 0x0a ? 1 : 0), 0);
+
+class BadInput extends Error {}
+
+// ---- glob matching: `**` (any characters, `**/` also zero directories), `*` (anything but `/`), `?` (one non-`/`) ----
+
+function globToRegExp(glob) {
+  let out = '';
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === '*') {
+      if (glob[i + 1] === '*') {
+        if (glob[i + 2] === '/') { out += '(?:.*/)?'; i += 2; } else { out += '.*'; i += 1; }
+      } else {
+        out += '[^/]*';
+      }
+    } else if (c === '?') {
+      out += '[^/]';
+    } else {
+      out += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+    }
+  }
+  // `i`: the Markdown test ignores case, so the classes must too; `s`: `.*` also spans a newline inside a path.
+  return new RegExp(`^${out}$`, 'is');
+}
+
+// A pattern without glob characters names a file or a directory (`src/auth`, `src/auth/`); a trailing slash means
+// everything beneath. Everything else is a glob.
+function matcherFor(pattern) {
+  const p = pattern.replace(/^\.\//, '');
+  if (p.endsWith('/')) return globToRegExp(`${p}**`);
+  if (!/[*?]/.test(p)) {
+    const re = globToRegExp(p);
+    const under = globToRegExp(`${p}/**`);
+    return { test: (path) => re.test(path) || under.test(path) };
+  }
+  return globToRegExp(p);
+}
+
+const matchAny = (matchers, path) => matchers.some((m) => m.test(path));
+
+// ---- git ----
+
+async function main(argv) {
+  const { spawnSync } = await import('node:child_process');
+  const { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { basename, dirname, join } = await import('node:path');
+  const { pathToFileURL } = await import('node:url');
+
+  const git = (...args) => {
+    const r = spawnSync('git', args, { encoding: 'buffer', maxBuffer: 256 * 1024 * 1024 });
+    if (r.error) throw new BadInput(`cannot run git: ${r.error.message}`);
+    return { status: r.status, stdout: r.stdout.toString('utf8'), stderr: r.stderr.toString('utf8') };
+  };
+
+  // ---- arguments ----
+  const args = [];
+  let floorArg = null;
+  let fixRound = false;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--floor') {
+      if (i + 1 >= argv.length) throw new BadInput('--floor needs a tier');
+      floorArg = argv[++i];
+    } else if (argv[i] === '--fix-round') {
+      fixRound = true;
+    } else if (argv[i].startsWith('--floor=')) {
+      floorArg = argv[i].slice('--floor='.length);
+    } else if (argv[i].startsWith('--')) {
+      throw new BadInput(`unknown option: ${argv[i]}`);
+    } else {
+      args.push(argv[i]);
+    }
+  }
+  if (args.length !== 4) throw new BadInput('usage: tier-check PLAN_FILE N BASE HEAD [--floor <tier>] [--fix-round]');
+  const [planFile, taskArg, base, head] = args;
+  if (floorArg !== null && !TIERS.includes(floorArg)) {
+    throw new BadInput(`bad --floor "${floorArg}" (expected ${TIERS.join(', ')})`);
+  }
+
+  // ---- the plan, through the shared reader next to this script ----
+  const planLib = await import(pathToFileURL(join(dirname(realpathSync(process.argv[1])), 'lib', 'plan.mjs')).href);
+  let planText;
+  try {
+    planText = readFileSync(planFile, 'utf8');
+  } catch {
+    throw new BadInput(`no such plan file: ${planFile}`);
+  }
+  let tasks;
+  let sensitivePaths;
+  try {
+    tasks = planLib.readTasks(planText);
+    sensitivePaths = planLib.readPhases(planText, basename(planFile).replace(/\.md$/, '')).sensitivePaths;
+  } catch (e) {
+    if (e instanceof planLib.PlanError) throw new BadInput(e.message);
+    throw e;
+  }
+  const id = /^T?(\d+)$/.exec(taskArg);
+  if (!id) throw new BadInput(`bad task: ${taskArg}`);
+  const task = tasks.find((t) => t.id === `T${Number(id[1])}`);
+  if (!task) throw new BadInput(`unknown task: T${Number(id[1])}`);
+
+  // ---- the floor: never below the declared tier, never below --floor ----
+  let floor = floorArg ?? task.tier ?? FALLBACK_TIER;
+  if (task.tier && rank(task.tier) > rank(floor)) floor = task.tier;
+
+  // ---- the range ----
+  const commitOf = (ref) => {
+    const r = git('rev-parse', '--verify', '--quiet', `${ref}^{commit}`);
+    if (r.status !== 0) throw new BadInput(`bad revision: ${ref}`);
+    return r.stdout.trim();
+  };
+  const baseSha = commitOf(base);
+  const headSha = commitOf(head);
+  if (git('merge-base', '--is-ancestor', baseSha, headSha).status !== 0) {
+    throw new BadInput(`HEAD is not a descendant of BASE: ${base}..${head}`);
+  }
+
+  // ---- the diff: `-z` records are NUL-separated, so no path is ever quoted ----
+  // The flags keep repository config from changing what is measured.
+  const diff = (...flags) => git('diff', '--no-textconv', '--no-ext-diff', '--no-relative', ...flags, '-M', '-z', baseSha, headSha);
+  const stat = diff('--numstat');
+  const names = diff('--name-status');
+  if (stat.status !== 0 || names.status !== 0) throw new BadInput(`git diff failed: ${stat.stderr || names.stderr}`);
+
+  const changes = parseChanges(stat.stdout, names.stdout);
+  // numstat reports `-` for a binary file and counts no lines, and `--text` does not undo a `-diff` attribute (an
+  // untracked .git/info/attributes can set one), so a big rewrite could slip under the heavy limit. The binary flag stays
+  // (it raises to standard); the lines of each binary change are counted by diffing its two blobs outside the repository.
+  // A count that cannot be obtained fails strict: the change is marked `uncountable` and decide() raises it to heavy.
+  const blob = (rev, path, mayBeMissing) => {
+    const r = spawnSync('git', ['show', `${rev}:${path}`], { encoding: 'buffer', maxBuffer: 256 * 1024 * 1024 });
+    if (r.status === 0) return r.stdout;
+    if (mayBeMissing && !r.error) return Buffer.alloc(0); // the side a create or delete does not have
+    throw new Error(`cannot read ${rev}:${path}`);
+  };
+  const textCounts = (c) => {
+    let dir = null;
+    try {
+      dir = mkdtempSync(join(tmpdir(), 'tier-check-'));
+      const before = blob(baseSha, c.oldPath ?? c.path, c.status === 'A');
+      const after = blob(headSha, c.path, c.status === 'D');
+      writeFileSync(join(dir, 'a'), before);
+      writeFileSync(join(dir, 'b'), after);
+      const r = spawnSync('git', ['-c', 'core.attributesFile=/dev/null', 'diff', '--no-index', '--numstat', '--text', 'a', 'b'], {
+        cwd: dir, encoding: 'utf8', env: { ...process.env, GIT_ATTR_NOSYSTEM: '1', GIT_CEILING_DIRECTORIES: dirname(dir) },
+      });
+      if (r.error) return null;
+      if (r.status === 0) return { added: 0, removed: 0 }; // identical contents
+      if (r.status !== 1) return null; // 1: the files differ; anything else is an error
+      // Outside the repository, with no attributes, `-\t-` means the content itself is binary (a NUL byte). A known media
+      // type has no lines worth counting (the binary flag raises it to standard). Anything else, such as a code file
+      // with a stray NUL, is counted by its newline bytes before and after, which over-counts: the strict direction.
+      if (/^-\t-\t/.test(r.stdout)) {
+        if (MEDIA_EXTENSIONS.has(extensionOf(c.path))) return { added: 0, removed: 0 };
+        return { added: newlines(after), removed: newlines(before) };
+      }
+      const m = /^(\d+)\t(\d+)\t/.exec(r.stdout);
+      return m ? { added: Number(m[1]), removed: Number(m[2]) } : null;
+    } catch {
+      return null;
+    } finally {
+      if (dir) rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  for (const c of changes) {
+    if (!c.binary) continue;
+    const counts = textCounts(c);
+    if (counts) Object.assign(c, counts); else c.uncountable = true;
+  }
+  const sensitive = [...DEFAULT_SENSITIVE, ...sensitivePaths].map(matcherFor);
+  const excluded = EXCLUDED_MARKDOWN.map(matcherFor);
+
+  const show = (rev, path) => {
+    const r = git('show', `${rev}:${path}`);
+    return r.status === 0 ? r.stdout : null;
+  };
+  const versionOnly = (c) => {
+    if (c.status !== 'M' || !/\.json$/i.test(c.path)) return false;
+    try {
+      const a = JSON.parse(show(baseSha, c.path));
+      const b = JSON.parse(show(headSha, c.path));
+      const plain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+      if (!plain(a) || !plain(b)) return false;
+      if (a.version === b.version) return false; // nothing was bumped: a reformat or a reorder is code
+      delete a.version;
+      delete b.version;
+      return JSON.stringify(a) === JSON.stringify(b); // key order is kept: reordering `exports` conditions changes behavior
+    } catch {
+      return false;
+    }
+  };
+
+  const verdict = decide({ floor, fixRound, changes, sensitive, excluded, versionOnly });
+  if (verdict.to === floor) return `ok ${floor}`;
+  return `raise ${floor} ${verdict.to}: ${verdict.reason}: ${verdict.paths.join(', ')}`;
+}
+
+// Zip `--numstat -z` and `--name-status -z` into [{ status, path, oldPath|null, added, removed, binary, pure }].
+// numstat -z: `A\tD\tpath\0` or, for a rename, `A\tD\t\0old\0new\0`. name-status -z: `S\0path\0` or `Rnn\0old\0new\0`.
+function parseChanges(numstat, nameStatus) {
+  const counts = [];
+  const parts = numstat.split('\0');
+  for (let i = 0; i < parts.length; i++) {
+    if (!parts[i]) continue;
+    const m = /^(\d+|-)\t(\d+|-)\t(.*)$/s.exec(parts[i]);
+    if (!m) continue;
+    const binary = m[1] === '-';
+    const entry = { added: binary ? 0 : Number(m[1]), removed: binary ? 0 : Number(m[2]), binary };
+    if (m[3] === '') { entry.oldPath = parts[++i]; entry.path = parts[++i]; } else { entry.path = m[3]; }
+    counts.push(entry);
+  }
+  const byPath = new Map(counts.map((c) => [c.path, c]));
+
+  const changes = [];
+  const ns = nameStatus.split('\0');
+  for (let i = 0; i < ns.length; i++) {
+    const code = ns[i];
+    if (!code) continue;
+    const kind = code[0];
+    if (kind === 'R' || kind === 'C') {
+      const oldPath = ns[++i];
+      const path = ns[++i];
+      const c = byPath.get(path) ?? { added: 0, removed: 0, binary: false };
+      const pure = Number(code.slice(1)) === 100;
+      changes.push({
+        status: 'R', path, oldPath, pure, added: pure ? 0 : c.added, removed: pure ? 0 : c.removed,
+        binary: pure ? false : c.binary,
+      });
+    } else {
+      const path = ns[++i];
+      const c = byPath.get(path) ?? { added: 0, removed: 0, binary: false };
+      changes.push({ status: kind, path, oldPath: null, pure: false, added: c.added, removed: c.removed, binary: c.binary });
+    }
+  }
+  return changes;
+}
+
+const isLockfile = (path) => LOCKFILE_NAMES.has(path.split('/').pop()) || /\.lock$/.test(path);
+const isMarkdown = (path) => /\.md$/i.test(path);
+const touched = (c) => (c.oldPath ? [c.oldPath, c.path] : [c.path]);
+const uniq = (list) => [...new Set(list)];
+
+// The pure decision: { to, reason, paths } with `to` the resulting tier (the floor when nothing raises it).
+function decide({ floor, fixRound, changes, sensitive, excluded, versionOnly }) {
+  // heavy
+  const sensitivePaths = changes.flatMap(touched).filter((p) => matchAny(sensitive, p));
+  const total = changes.reduce((n, c) => n + c.added + c.removed, 0);
+  const heavy = [];
+  const heavyPaths = [];
+  if (sensitivePaths.length > 0) { heavy.push('sensitive path'); heavyPaths.push(...sensitivePaths); }
+  if (total > HEAVY_LINE_LIMIT) {
+    heavy.push(`${total} changed lines (over ${HEAVY_LINE_LIMIT})`);
+    heavyPaths.push(...changes.filter((c) => c.added + c.removed > 0).map((c) => c.path));
+  }
+  const uncountable = changes.filter((c) => c.uncountable);
+  if (uncountable.length > 0) { heavy.push('uncountable binary diff'); heavyPaths.push(...uncountable.map((c) => c.path)); }
+  if (heavy.length > 0) {
+    return floor === 'heavy' ? { to: 'heavy' } : { to: 'heavy', reason: heavy.join(', '), paths: uniq(heavyPaths) };
+  }
+  if (floor !== 'light') return { to: floor };
+
+  // light -> standard
+  const reasons = [];
+  const offenders = [];
+  const flag = (reason, paths) => { reasons.push(reason); offenders.push(...paths); };
+  const code = [];
+  for (const c of changes) {
+    const paths = touched(c);
+    const hit = (pred) => paths.filter(pred);
+    if (hit(isLockfile).length > 0) { flag('lockfile', hit(isLockfile)); continue; }
+    if (hit((p) => isMarkdown(p) && matchAny(excluded, p)).length > 0) {
+      flag('Markdown outside the light classes', hit((p) => isMarkdown(p) && matchAny(excluded, p)));
+      continue;
+    }
+    if (c.binary) { flag('binary change', [c.path]); continue; }
+    if (paths.every(isMarkdown)) continue; // a light class
+    if (versionOnly(c)) continue; // a light class
+    code.push(c);
+  }
+  if (fixRound && code.length > 0) {
+    flag('fix round adds code', code.flatMap(touched));
+    return { to: 'standard', reason: reasons.join(', '), paths: uniq(offenders) };
+  }
+  const codeLines = code.reduce((n, c) => n + c.added + c.removed, 0);
+  const created = code.filter((c) => c.status === 'A');
+  if (created.length > 0) flag('creates a file', created.map((c) => c.path));
+  if (codeLines > LIGHT_CODE_LINE_LIMIT) {
+    flag(`${codeLines} code lines (over ${LIGHT_CODE_LINE_LIMIT})`, code.filter((c) => c.added + c.removed > 0).map((c) => c.path));
+  }
+  if (reasons.length === 0) return { to: 'light' };
+  return { to: 'standard', reason: reasons.join(', '), paths: uniq(offenders) };
+}
+
+main(process.argv.slice(2)).then(
+  (line) => { process.stdout.write(`${line}\n`); },
+  (e) => {
+    if (e instanceof BadInput) {
+      process.stderr.write(`tier-check: ${e.message}\n`);
+      process.exitCode = EXIT_BAD_INPUT;
+    } else {
+      process.stderr.write(`tier-check: ${e && e.stack ? e.stack : e}\n`);
+      process.exitCode = 1;
+    }
+  },
+);

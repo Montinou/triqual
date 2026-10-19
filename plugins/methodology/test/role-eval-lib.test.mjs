@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, unlinkSync,
   utimesSync, writeFileSync,
@@ -10,8 +11,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
-  RETIRED_KINDS, appendRecord, formatSummary, recordKey, storePath, summarize, takeOverStale, validateRecord,
-  withStoreLock,
+  RETIRED_KINDS, appendRecord, formatSummary, formatTierSummary, recordKey, storePath, summarize, summarizeByTier,
+  takeOverStale, validateRecord, withStoreLock,
 } from '../cli/lib/role-eval.mjs';
 
 const LIB_URL = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'cli', 'lib', 'role-eval.mjs')).href;
@@ -62,6 +63,19 @@ const huntersRecord = (over = {}) => ({
   budget: { reference: 3, used: 3, overrun: false }, ...over,
 });
 
+// The v 2 kinds: a task review (one per task attempt) and the final review's escapes (one per plan).
+const taskReviewRecord = (over = {}) => ({
+  v: 2, at: '2026-09-01T10:00:00Z', provider: 'claude', task: 'T3', kind: 'task-review', attempt: 1, tier: 'heavy',
+  declaredTier: 'standard', raised: true,
+  hunters: [HUNTER({ candidates: 3, confirmed: { critical: 1, important: 0, minor: 1 }, refuted: 1 })],
+  gate: { findings: 2 }, spec: { ran: true, confirmed: { critical: 0, important: 1, minor: 0 } },
+  fixRounds: 2, blocked: false, coordinator: false, ...over,
+});
+const escapesRecord = (over = {}) => ({
+  v: 2, at: '2026-09-06T10:00:00Z', provider: 'claude', task: 'final', kind: 'final-escapes',
+  escapes: [{ tier: 'light', severity: 'important' }, { tier: 'standard', severity: 'minor' }], ...over,
+});
+
 test('safety-shadow is a retired kind: validateRecord still accepts it, so stored lines stay valid history', () => {
   assert.deepEqual([...RETIRED_KINDS], ['safety-shadow']);
   assert.ok(Object.isFrozen(RETIRED_KINDS));
@@ -70,6 +84,27 @@ test('safety-shadow is a retired kind: validateRecord still accepts it, so store
   const result = summarize(stored);
   assert.deepEqual(result.skipped.malformed, []);
   assert.equal(result.providers.claude.shadow.tasksCompared, 1);
+});
+
+test('validateRecord accepts the v 2 kinds, and the v 1 hunters and safety-shadow lines stay valid', () => {
+  assert.deepEqual(validateRecord(huntersRecord()), { ok: true });
+  assert.deepEqual(validateRecord(shadowRecord()), { ok: true });
+  assert.deepEqual(validateRecord(taskReviewRecord()), { ok: true });
+  // A tierless plan has no declared tier (it counts as standard); a light task has no hunters; a spec review that did not
+  // run counts nothing.
+  assert.deepEqual(validateRecord(taskReviewRecord({
+    declaredTier: null, tier: 'standard', raised: false, hunters: [], gate: { findings: 0 },
+    spec: { ran: false, confirmed: { critical: 0, important: 0, minor: 0 } }, coordinator: true,
+  })), { ok: true });
+  assert.deepEqual(validateRecord(taskReviewRecord({ declaredTier: null, tier: 'heavy', raised: true })), { ok: true });
+  for (const tier of ['heavy', 'standard', 'light']) {
+    assert.deepEqual(validateRecord(taskReviewRecord({ tier, declaredTier: tier, raised: false })), { ok: true }, tier);
+  }
+  // Raised above the declared tier, by one rank or two; `raised` agrees.
+  assert.deepEqual(validateRecord(taskReviewRecord({ tier: 'standard', declaredTier: 'light', raised: true })), { ok: true });
+  assert.deepEqual(validateRecord(taskReviewRecord({ tier: 'heavy', declaredTier: 'light', raised: true })), { ok: true });
+  assert.deepEqual(validateRecord(escapesRecord()), { ok: true });
+  assert.deepEqual(validateRecord(escapesRecord({ escapes: [] })), { ok: true });
 });
 
 test('validateRecord accepts one valid record of each kind', () => {
@@ -167,6 +202,61 @@ const REJECTIONS = [
   ['budget negative used', shadowRecord({ budget: { reference: 2, used: -1, overrun: false } }), 'budget.used'],
   ['budget overrun not a boolean', shadowRecord({ budget: { reference: 2, used: 2, overrun: 'no' } }), 'budget.overrun'],
   ['budget unknown field', shadowRecord({ budget: { reference: 2, used: 2, overrun: false, extra: 1 } }), 'budget.extra'],
+  ['v 3', shadowRecord({ v: 3 }), 'v'],
+  ['hunters kind with v 2', huntersRecord({ v: 2 }), 'v'],
+  // task-review
+  ['task-review with v 1', taskReviewRecord({ v: 1 }), 'v'],
+  ['task-review with an extra key', taskReviewRecord({ extra: 1 }), 'extra'],
+  ['task-review with a budget', taskReviewRecord({ budget: { reference: 1, used: 1, overrun: false } }), 'budget'],
+  ['task-review with a shadow', taskReviewRecord({ shadow: SHADOW() }), 'shadow'],
+  ['task-review with an escapes list', taskReviewRecord({ escapes: [] }), 'escapes'],
+  ['task-review tier medium', taskReviewRecord({ tier: 'medium' }), 'tier'],
+  ['task-review tier missing', (() => { const r = taskReviewRecord(); delete r.tier; return r; })(), 'tier'],
+  ['task-review declaredTier medium', taskReviewRecord({ declaredTier: 'medium' }), 'declaredTier'],
+  ['task-review declaredTier missing', (() => { const r = taskReviewRecord(); delete r.declaredTier; return r; })(), 'declaredTier'],
+  ['task-review attempt 0', taskReviewRecord({ attempt: 0 }), 'attempt'],
+  ['task-review attempt fractional', taskReviewRecord({ attempt: 1.5 }), 'attempt'],
+  ['task-review attempt a string', taskReviewRecord({ attempt: '1' }), 'attempt'],
+  ['task-review attempt missing', (() => { const r = taskReviewRecord(); delete r.attempt; return r; })(), 'attempt'],
+  ['task-review task final', taskReviewRecord({ task: 'final' }), 'task'],
+  ['task-review raised not a boolean', taskReviewRecord({ raised: 1 }), 'raised'],
+  // The effective tier is never below the declared one (no tier is lowered); a null declared tier counts as standard.
+  ['task-review tier below the declared tier', taskReviewRecord({ tier: 'light', declaredTier: 'standard', raised: false }), 'tier'],
+  ['task-review tier standard below declared heavy', taskReviewRecord({ tier: 'standard', declaredTier: 'heavy', raised: true }), 'tier'],
+  ['task-review light with a tierless plan', taskReviewRecord({ tier: 'light', declaredTier: null, raised: false }), 'tier'],
+  // `raised` is exactly "the tier is above the declared one".
+  ['task-review raised true with the declared tier', taskReviewRecord({ tier: 'standard', declaredTier: 'standard', raised: true }), 'raised'],
+  ['task-review raised false above the declared tier', taskReviewRecord({ tier: 'heavy', declaredTier: 'standard', raised: false }), 'raised'],
+  ['task-review raised true with a tierless plan at standard', taskReviewRecord({ tier: 'standard', declaredTier: null, raised: true }), 'raised'],
+  ['task-review raised false above a tierless plan', taskReviewRecord({ tier: 'heavy', declaredTier: null, raised: false }), 'raised'],
+  ['task-review hunters missing', (() => { const r = taskReviewRecord(); delete r.hunters; return r; })(), 'hunters'],
+  ['task-review hunter counts do not add up', taskReviewRecord({ hunters: [HUNTER({ candidates: 5 })] }), 'hunters.0.candidates'],
+  ['task-review gate missing', (() => { const r = taskReviewRecord(); delete r.gate; return r; })(), 'gate'],
+  ['task-review gate extra key', taskReviewRecord({ gate: { findings: 1, model: 'sonnet' } }), 'gate.model'],
+  ['task-review gate findings negative', taskReviewRecord({ gate: { findings: -1 } }), 'gate.findings'],
+  ['task-review spec missing', (() => { const r = taskReviewRecord(); delete r.spec; return r; })(), 'spec'],
+  ['task-review spec ran not a boolean', taskReviewRecord({ spec: { ran: 'yes', confirmed: { critical: 0, important: 0, minor: 0 } } }), 'spec.ran'],
+  ['task-review spec extra key', taskReviewRecord({ spec: { ran: true, confirmed: { critical: 0, important: 0, minor: 0 }, extra: 1 } }), 'spec.extra'],
+  ['task-review spec severity unknown', taskReviewRecord({ spec: { ran: true, confirmed: { critical: 0, important: 0, minor: 0, major: 1 } } }), 'spec.confirmed.major'],
+  ['task-review spec severity missing', taskReviewRecord({ spec: { ran: true, confirmed: { critical: 0, minor: 0 } } }), 'spec.confirmed.important'],
+  ['task-review spec severity negative', taskReviewRecord({ spec: { ran: true, confirmed: { critical: -1, important: 0, minor: 0 } } }), 'spec.confirmed.critical'],
+  ['task-review spec that did not run with counts', taskReviewRecord({ spec: { ran: false, confirmed: { critical: 0, important: 1, minor: 0 } } }), 'spec.confirmed.important'],
+  ['task-review fixRounds negative', taskReviewRecord({ fixRounds: -1 }), 'fixRounds'],
+  ['task-review blocked not a boolean', taskReviewRecord({ blocked: 'no' }), 'blocked'],
+  ['task-review coordinator missing', (() => { const r = taskReviewRecord(); delete r.coordinator; return r; })(), 'coordinator'],
+  ['v 1 kinds cannot carry a tier', huntersRecord({ tier: 'light' }), 'tier'],
+  ['v 1 kinds cannot carry an attempt', shadowRecord({ attempt: 1 }), 'attempt'],
+  // final-escapes
+  ['final-escapes with v 1', escapesRecord({ v: 1 }), 'v'],
+  ['final-escapes with a task id', escapesRecord({ task: 'T3' }), 'task'],
+  ['final-escapes with an extra key', escapesRecord({ extra: 1 }), 'extra'],
+  ['final-escapes with hunters', escapesRecord({ hunters: [] }), 'hunters'],
+  ['final-escapes without escapes', (() => { const r = escapesRecord(); delete r.escapes; return r; })(), 'escapes'],
+  ['final-escapes escapes not an array', escapesRecord({ escapes: {} }), 'escapes'],
+  ['final-escapes escape not an object', escapesRecord({ escapes: [null] }), 'escapes.0'],
+  ['final-escapes escape tier', escapesRecord({ escapes: [{ tier: 'medium', severity: 'minor' }] }), 'escapes.0.tier'],
+  ['final-escapes escape severity', escapesRecord({ escapes: [{ tier: 'light', severity: 'major' }] }), 'escapes.0.severity'],
+  ['final-escapes escape extra key', escapesRecord({ escapes: [{ tier: 'light', severity: 'minor' }, { tier: 'light', severity: 'minor', task: 'T1' }] }), 'escapes.1.task'],
 ];
 
 for (const [name, record, field] of REJECTIONS) {
@@ -190,6 +280,16 @@ test('validateRecord never puts the rejected value (or an odd key name) into its
     huntersRecord({ hunters: [HUNTER({ category: SENTINEL })] }),
     huntersRecord({ hunters: [HUNTER({ confirmed: { critical: SENTINEL, important: 0, minor: 0 } })] }),
     huntersRecord({ hunters: SENTINEL }),
+    taskReviewRecord({ tier: SENTINEL }),
+    taskReviewRecord({ declaredTier: SENTINEL }),
+    taskReviewRecord({ attempt: SENTINEL }),
+    taskReviewRecord({ tier: 'light', declaredTier: 'heavy', raised: SENTINEL }),
+    taskReviewRecord({ tier: 'heavy', declaredTier: 'standard', raised: SENTINEL }),
+    taskReviewRecord({ spec: { ran: true, confirmed: { critical: SENTINEL, important: 0, minor: 0 } } }),
+    taskReviewRecord({ [SENTINEL]: SENTINEL }),
+    escapesRecord({ escapes: [{ tier: SENTINEL, severity: 'minor' }] }),
+    escapesRecord({ escapes: [{ tier: 'light', severity: SENTINEL }] }),
+    escapesRecord({ escapes: SENTINEL }),
     { ...shadowRecord(), [SENTINEL]: SENTINEL },
     { ...shadowRecord(), shadow: { ...SHADOW(), [SENTINEL]: SENTINEL } },
     SENTINEL,
@@ -236,6 +336,24 @@ test('recordKey is a stable hex sha256 that changes with each of the four inputs
   }
   // The NUL separators keep neighbouring fields apart.
   assert.notEqual(recordKey({ ...base, task: 'T', kind: '3hunters' }), key);
+});
+
+test('recordKey: a task-review key includes the attempt, any other kind ignores it (stored keys stay valid)', () => {
+  const base = { commonDir: '/r/.git', plan: '/r/docs/plans/p.md', task: 'T3', kind: 'task-review' };
+  const one = recordKey({ ...base, attempt: 1 });
+  const two = recordKey({ ...base, attempt: 2 });
+  assert.match(one, /^[0-9a-f]{64}$/);
+  assert.notEqual(one, two);
+  assert.equal(recordKey({ ...base, attempt: 1 }), one);
+  // The same attempt of another task or plan is another key.
+  assert.notEqual(recordKey({ ...base, attempt: 1, task: 'T4' }), one);
+  assert.notEqual(recordKey({ ...base, attempt: 1, plan: 'q.md' }), one);
+  // hunters and final-escapes keys do not move with an attempt, and equal the pre-v2 four-field hash.
+  for (const kind of ['hunters', 'safety-shadow', 'final-escapes']) {
+    const fields = { commonDir: '/r/.git', plan: '/r/docs/plans/p.md', task: 'final', kind };
+    assert.equal(recordKey({ ...fields, attempt: 2 }), recordKey(fields), kind);
+    assert.equal(recordKey(fields), createHash('sha256').update(`/r/.git\0p.md\0final\0${kind}`).digest('hex'), kind);
+  }
 });
 
 // ---- the lock ---------------------------------------------------------------------------------------------------
@@ -416,7 +534,7 @@ const rec = (obj) => JSON.stringify(obj);
 //  5 h2  claude hunters, 2026-10-02
 //  6 c1  codex  shadow, 2026-09-20   all pass
 //  7     malformed (not JSON)
-//  8     v: 2
+//  8     v: 3
 //  9     duplicate of line 1's key
 const S1 = {
   v: 1, at: '2026-09-01T10:00:00.000Z', provider: 'claude', task: 'T1', kind: 'safety-shadow', key: 'key-s1',
@@ -462,7 +580,7 @@ const C1 = {
 const FIXTURE = [
   rec(S1), rec(S2), rec(S3), rec(H1), rec(H2), rec(C1),
   '{this is not json',
-  rec({ v: 2, key: 'key-v2', anything: 'goes' }),
+  rec({ v: 3, key: 'key-v3', anything: 'goes' }),
   rec({ ...S1, task: 'T9' }), // same key as line 1
 ].join('\n') + '\n';
 
@@ -516,7 +634,7 @@ test('summarize: the budget, the skipped lines, and the codex record under its o
   const s = summarize(FIXTURE, {});
   // Budget: h1 and h2 -> reference 2 + 2 = 4, used 2 + 3 = 5, overruns 1.
   assert.deepEqual(s.providers.claude.budget, { records: 2, reference: 4, used: 5, overruns: 1 });
-  // Skipped: line 7 is not JSON, line 8 has v 2, line 9 repeats line 1's key.
+  // Skipped: line 7 is not JSON, line 8 has v 3, line 9 repeats line 1's key.
   assert.deepEqual(s.skipped, { malformed: [7], otherVersion: 1, duplicateKey: 1 });
   assert.deepEqual(Object.keys(s.providers).sort(), ['claude', 'codex']);
   // The codex shadow passed all 6 items on both sides: 6 / 6 = 1, nothing else.
@@ -591,4 +709,155 @@ test('formatSummary prints rates as percentages with one decimal and null as n/a
   const empty = formatSummary(summarize('', {}));
   assert.equal(empty.includes('null'), false);
   assert.match(empty, /0/);
+});
+
+// ---- the v 2 kinds in the summaries -----------------------------------------------------------------------------
+
+// A store of five task reviews and one final-escapes record, written by hand (keys are made up; counts only).
+//  a  claude  T1 attempt 1  heavy (declared standard, raised)  2026-09-01
+//  b  claude  T1 attempt 2  heavy (declared standard, raised)  2026-09-03
+//  c  claude  T2            standard (declared standard)       2026-09-02  blocked
+//  d  claude  T3            light (declared light), coordinator 2026-09-04
+//  e  codex   T4            light (declared light)             2026-09-05
+//  f  claude  final-escapes 2026-09-06: light important, light minor, standard critical
+const NO_SPEC = { ran: false, confirmed: { critical: 0, important: 0, minor: 0 } };
+const TA = taskReviewRecord({
+  at: '2026-09-01T10:00:00Z', task: 'T1', attempt: 1, tier: 'heavy', declaredTier: 'standard', raised: true,
+  // 4 = 2 confirmed + 2 refuted
+  hunters: [HUNTER({ category: 'correctness', candidates: 4, confirmed: { critical: 1, important: 1, minor: 0 }, refuted: 2 })],
+  gate: { findings: 2 }, spec: { ran: true, confirmed: { critical: 1, important: 0, minor: 1 } },
+  fixRounds: 2, blocked: false, coordinator: false,
+});
+const TB = taskReviewRecord({
+  at: '2026-09-03T10:00:00Z', task: 'T1', attempt: 2, tier: 'heavy', declaredTier: 'standard', raised: true,
+  // 2 = 1 confirmed + 1 refuted
+  hunters: [HUNTER({ category: 'security', candidates: 2, confirmed: { critical: 0, important: 0, minor: 1 }, refuted: 1 })],
+  gate: { findings: 0 }, spec: { ran: true, confirmed: { critical: 0, important: 1, minor: 0 } },
+  fixRounds: 1, blocked: false, coordinator: false,
+});
+const TC = taskReviewRecord({
+  at: '2026-09-02T10:00:00Z', task: 'T2', attempt: 1, tier: 'standard', declaredTier: 'standard', raised: false,
+  // 4 = 2 confirmed + 1 refuted + 1 duplicateReview
+  hunters: [HUNTER({ category: 'correctness', candidates: 4, confirmed: { critical: 0, important: 1, minor: 1 }, refuted: 1, duplicateReview: 1 })],
+  gate: { findings: 1 }, spec: { ran: true, confirmed: { critical: 0, important: 1, minor: 0 } },
+  fixRounds: 1, blocked: true, coordinator: false,
+});
+const TD = taskReviewRecord({
+  at: '2026-09-04T10:00:00Z', task: 'T3', attempt: 1, tier: 'light', declaredTier: 'light', raised: false, hunters: [],
+  gate: { findings: 0 }, spec: NO_SPEC, fixRounds: 0, blocked: false, coordinator: true,
+});
+const TE = taskReviewRecord({
+  at: '2026-09-05T10:00:00Z', provider: 'codex', task: 'T4', attempt: 1, tier: 'light', declaredTier: 'light', raised: false,
+  hunters: [HUNTER({ category: 'state', candidates: 1, confirmed: { critical: 0, important: 0, minor: 1 } })],
+  gate: { findings: 1 }, spec: { ran: true, confirmed: { critical: 0, important: 0, minor: 0 } },
+  fixRounds: 1, blocked: false, coordinator: false,
+});
+const FE = escapesRecord({
+  at: '2026-09-06T10:00:00Z',
+  escapes: [{ tier: 'light', severity: 'important' }, { tier: 'light', severity: 'minor' }, { tier: 'standard', severity: 'critical' }],
+});
+const TIER_STORE = [TA, TB, TC, TD, TE, FE].map((r, i) => rec({ ...r, key: `key-v2-${i}` })).join('\n') + '\n';
+
+test('summarizeByTier: per tier, the hand-computed counts and rates of the six-line store', () => {
+  const result = summarizeByTier(TIER_STORE, {});
+  assert.deepEqual(Object.keys(result), ['heavy', 'standard', 'light']);
+  // heavy: a and b are two attempts of ONE task (T1), raised: `tasks` and `raised` count attempt 1 only -> 1 and 1. Every
+  // other figure sums over both attempts. Hunters 6 candidates, 3 confirmed -> 0.5. Spec confirmed 2 + 1 = 3 over 1 task
+  // -> 3. Fix rounds 2 + 1 = 3 over 1 task -> 3. No blocked task; no escape.
+  assert.deepEqual(result.heavy, {
+    tasks: 1, raised: 1, hunterConfirmedRate: 0.5, specConfirmedPerTask: 3, fixRoundsPerTask: 3, blocked: 0, escapesPerTask: 0,
+  });
+  // standard: c alone. 4 candidates, 2 confirmed (the duplicateReview is not a new finding) -> 0.5. Spec 1, fix rounds 1,
+  // blocked 1, and the one standard escape -> 1 per task.
+  assert.deepEqual(result.standard, {
+    tasks: 1, raised: 0, hunterConfirmedRate: 0.5, specConfirmedPerTask: 1, fixRoundsPerTask: 1, blocked: 1, escapesPerTask: 1,
+  });
+  // light: d and e. 1 candidate, 1 confirmed -> 1. Spec 0 / 2 tasks. Fix rounds 1 / 2. Two light escapes / 2 tasks.
+  assert.deepEqual(result.light, {
+    tasks: 2, raised: 0, hunterConfirmedRate: 1, specConfirmedPerTask: 0, fixRoundsPerTask: 0.5, blocked: 0, escapesPerTask: 1,
+  });
+});
+
+test('summarizeByTier: a later attempt adds its counts but is not another task or another raise', () => {
+  const only = (r) => `${rec({ ...r, key: 'k' })}\n`;
+  // Attempt 2 alone (attempt 1 outside the window or never recorded): no task to divide by, but the blocked count stays.
+  const second = summarizeByTier(only({ ...TB, blocked: true }), {});
+  assert.equal(second.heavy.tasks, 0);
+  assert.equal(second.heavy.raised, 0);
+  assert.equal(second.heavy.blocked, 1);
+  assert.equal(second.heavy.specConfirmedPerTask, null);
+  assert.equal(second.heavy.fixRoundsPerTask, null);
+  // Attempt 1 alone counts the task and the raise.
+  const first = summarizeByTier(only(TA), {});
+  assert.equal(first.heavy.tasks, 1);
+  assert.equal(first.heavy.raised, 1);
+  assert.equal(first.heavy.specConfirmedPerTask, 2);
+  assert.equal(first.heavy.fixRoundsPerTask, 2);
+});
+
+test('summarizeByTier: since keeps the records at or after the day; a tier with no task reports null rates', () => {
+  // Since 2026-09-04: d, e and f stay.
+  const result = summarizeByTier(TIER_STORE, { since: '2026-09-04' });
+  assert.deepEqual(result.heavy, {
+    tasks: 0, raised: 0, hunterConfirmedRate: null, specConfirmedPerTask: null, fixRoundsPerTask: null, blocked: 0, escapesPerTask: null,
+  });
+  // The standard escape has no standard task in the window to be divided by.
+  assert.equal(result.standard.tasks, 0);
+  assert.equal(result.standard.escapesPerTask, null);
+  assert.equal(result.light.tasks, 2);
+  assert.equal(result.light.escapesPerTask, 1);
+  // An empty store: all three tiers, all empty.
+  const empty = summarizeByTier('', {});
+  assert.deepEqual(Object.keys(empty), ['heavy', 'standard', 'light']);
+  assert.equal(empty.light.tasks, 0);
+  assert.equal(empty.light.hunterConfirmedRate, null);
+});
+
+test('summarizeByTier: v 1 lines, malformed lines, duplicate keys and other versions add nothing', () => {
+  const text = [
+    rec({ ...H1 }), rec({ ...S1 }), '{nope', rec({ v: 3, key: 'x' }),
+    rec({ ...TA, key: 'dup' }), rec({ ...TB, key: 'dup' }), rec({ ...TC, key: 'ok', tier: 'medium' }),
+  ].join('\n');
+  const result = summarizeByTier(text, {});
+  // Only TA counts: TB repeats its key, TC fails validation.
+  assert.equal(result.heavy.tasks, 1);
+  assert.equal(result.standard.tasks, 0);
+  assert.equal(result.light.tasks, 0);
+});
+
+test('summarize: task-review hunters count with the hunters records; final-escapes adds no provider', () => {
+  const s = summarize(TIER_STORE, {});
+  assert.deepEqual(Object.keys(s.providers).sort(), ['claude', 'codex']);
+  // claude correctness: a (4 candidates, confirmed 1/1/0, refuted 2) + c (4, confirmed 0/1/1, refuted 1, duplicateReview 1)
+  // -> 8 candidates, confirmed 1/2/1, refuted 3, duplicateReview 1. Right = (4 + 1) / 8, new = 4 / 8.
+  const c = s.providers.claude.hunters.correctness;
+  assert.equal(c.candidates, 8);
+  assert.deepEqual(c.confirmed, { critical: 1, important: 2, minor: 1 });
+  assert.equal(c.refuted, 3);
+  assert.equal(c.duplicateReview, 1);
+  assert.equal(c.rightRate, 0.625);
+  assert.equal(c.newRate, 0.5);
+  // security from b; the codex hunter from e.
+  assert.equal(s.providers.claude.hunters.security.candidates, 2);
+  assert.equal(s.providers.codex.hunters.state.candidates, 1);
+  assert.equal(s.providers.codex.hunters.state.newRate, 1);
+  // A task review has no budget and no shadow.
+  assert.deepEqual(s.providers.claude.budget, { records: 0, reference: 0, used: 0, overruns: 0 });
+  assert.equal(s.providers.claude.shadow.tasksCompared, 0);
+  assert.deepEqual(s.skipped, { malformed: [], otherVersion: 0, duplicateKey: 0 });
+  // A store of final-escapes alone names no provider.
+  assert.deepEqual(summarize(`${rec({ ...FE, key: 'k' })}\n`, {}).providers, {});
+  // The v 1 summary is unchanged by the v 2 kinds: FIXTURE still reports what it did.
+  assert.equal(summarize(FIXTURE, {}).providers.claude.hunters.correctness.candidates, 8);
+});
+
+test('formatTierSummary prints the tiers, rates as percentages and null as n/a', () => {
+  const text = formatTierSummary(summarizeByTier(TIER_STORE, {}));
+  for (const tier of ['heavy', 'standard', 'light']) assert.match(text, new RegExp(`^${tier}:`, 'm'));
+  assert.match(text, /heavy: tasks 1, raised 1, hunter confirmed 50\.0%, spec confirmed\/task 3\.00, fix rounds\/task 3\.00, blocked 0, escapes\/task 0\.00/);
+  assert.match(text, /light: tasks 2, raised 0, hunter confirmed 100\.0%, spec confirmed\/task 0\.00, fix rounds\/task 0\.50, blocked 0, escapes\/task 1\.00/);
+  const empty = formatTierSummary(summarizeByTier('', {}));
+  assert.match(empty, /heavy: tasks 0, raised 0, hunter confirmed n\/a, spec confirmed\/task n\/a, fix rounds\/task n\/a, blocked 0, escapes\/task n\/a/);
+  assert.equal(empty.includes('null'), false);
+  assert.equal(empty.includes('NaN'), false);
 });

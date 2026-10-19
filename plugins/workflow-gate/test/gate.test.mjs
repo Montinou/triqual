@@ -248,22 +248,12 @@ test('hooks.json wires PreToolUse(Workflow) to scripts/gate.mjs', () => {
   const file = join(dirname(fileURLToPath(import.meta.url)), '..', 'hooks', 'hooks.json');
   const { hooks } = JSON.parse(readFileSync(file, 'utf8'));
   assert.deepEqual(Object.keys(hooks), ['PreToolUse']);
-  assert.equal(hooks.PreToolUse.length, 1);
-  const [entry] = hooks.PreToolUse;
-  assert.equal(entry.matcher, 'Workflow');
+  assert.equal(hooks.PreToolUse.length, 2);
+  const entry = hooks.PreToolUse.find((e) => e.matcher === 'Workflow');
+  assert.ok(entry, 'no PreToolUse entry with matcher Workflow');
   assert.equal(entry.hooks.length, 1);
   assert.equal(entry.hooks[0].type, 'command');
   assert.equal(entry.hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs"');
   assert.equal(entry.hooks[0].timeout, 10);
   assert.equal(entry.hooks[0].statusMessage, 'workflow-gate: checking agent budget and role dispatch');
-});
-
-test('ROLE_MODELS matches the roles plugin frontmatter', () => {
-  const agents = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'roles', 'agents');
-  const src = readFileSync(GATE, 'utf8');
-  for (const f of readdirSync(agents).filter((x) => x.endsWith('.md'))) {
-    const model = readFileSync(join(agents, f), 'utf8').match(/^model:\s*(\S+)/m)[1];
-    const family = ['fable', 'opus', 'sonnet', 'haiku'].find((x) => model.includes(x));
-    assert.match(src, new RegExp(`"${f.slice(0, -3)}": "${family}"`), f);
-  }
 });

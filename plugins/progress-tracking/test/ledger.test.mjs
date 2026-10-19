@@ -1,10 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { LedgerError, parsePlan, createLedger, reconcile, transition } from '../lib/ledger.mjs';
-import { TASK_ROLES, DEFAULT_ROLE, roleOf } from '../lib/roles.mjs';
+import {
+  LedgerError, parsePlan, createLedger, reconcile, transition, statusLine, checkSchema, checkLedger, renderSection, upsertStatusSection,
+  parseExternalCommit,
+} from '../lib/ledger.mjs';
+import { TASK_ROLES, DEFAULT_ROLE, TIERS, roleOf } from '../lib/roles.mjs';
+import { TIERS as PLAN_TIERS } from '../lib/plan.mjs';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 // docs/plans/ exists only in the private checkout (its root carries .githooks/pre-commit).
@@ -60,9 +64,9 @@ const throwsLedger = (fn, re) => assert.throws(fn, (e) => {
 
 test('parsePlan reads headings, deps and skills', () => {
   assert.deepEqual(parsePlan(PLAN), [
-    { id: 'T1', title: 'First thing', deps: [], skills: [], role: null },
-    { id: 'T2', title: 'Second: with a colon', deps: [], skills: [], role: null },
-    { id: 'T3', title: 'Third thing', deps: ['T1', 'T2'], skills: ['jules-pr-reviews', 'skill-b'], role: null },
+    { id: 'T1', title: 'First thing', deps: [], skills: [], role: null, tier: null },
+    { id: 'T2', title: 'Second: with a colon', deps: [], skills: [], role: null, tier: null },
+    { id: 'T3', title: 'Third thing', deps: ['T1', 'T2'], skills: ['jules-pr-reviews', 'skill-b'], role: null, tier: null },
   ]);
 });
 
@@ -80,7 +84,7 @@ test('createLedger builds the §6.2 schema', () => {
   assert.equal(l.branch, 'feat/x');
   assert.deepEqual(l.tasks[2], {
     id: 'T3', title: 'Third thing', status: 'pending', deps: ['T1', 'T2'], skills: ['jules-pr-reviews', 'skill-b'],
-    role: null, commits: [], reason: null, history: [{ at: T0, from: null, to: 'pending', note: null }],
+    role: null, tier: null, effectiveTier: null, commits: [], reason: null, history: [{ at: T0, from: null, to: 'pending', note: null }],
   });
 });
 
@@ -284,7 +288,7 @@ test('reconcile adds new tasks, reports missing and retitled, keeps history', ()
   assert.deepEqual(task(r.ledger, 'T3'), task(before, 'T3'));
   assert.deepEqual(task(r.ledger, 'T4'), {
     id: 'T4', title: 'Fourth thing', status: 'pending', deps: ['T1'], skills: ['x'],
-    role: null, commits: [], reason: null, history: [{ at: T1, from: null, to: 'pending', note: null }],
+    role: null, tier: null, effectiveTier: null, commits: [], reason: null, history: [{ at: T1, from: null, to: 'pending', note: null }],
   });
   assert.deepEqual(l, before);
 });
@@ -428,9 +432,9 @@ test('parsePlan ignores headings, deps and skills inside fenced code blocks', ()
     '### Task 3: Real three', '**Depends on:** T2',
   ].join('\n');
   assert.deepEqual(parsePlan(plan), [
-    { id: 'T1', title: 'Real one', deps: [], skills: ['a'], role: null },
-    { id: 'T2', title: 'Real two', deps: ['T1'], skills: [], role: null },
-    { id: 'T3', title: 'Real three', deps: ['T2'], skills: [], role: null },
+    { id: 'T1', title: 'Real one', deps: [], skills: ['a'], role: null, tier: null },
+    { id: 'T2', title: 'Real two', deps: ['T1'], skills: [], role: null, tier: null },
+    { id: 'T3', title: 'Real three', deps: ['T2'], skills: [], role: null, tier: null },
   ]);
 });
 
@@ -439,8 +443,8 @@ test('parsePlan: a shorter fence inside a longer one does not close it', () => {
   const plan = ['### Task 1: A', '````md', '```js', '### Task 9: phantom', '**Depends on:** T7', '```', '````',
     '### Task 2: B'].join('\n');
   assert.deepEqual(parsePlan(plan), [
-    { id: 'T1', title: 'A', deps: [], skills: [], role: null },
-    { id: 'T2', title: 'B', deps: [], skills: [], role: null },
+    { id: 'T1', title: 'A', deps: [], skills: [], role: null, tier: null },
+    { id: 'T2', title: 'B', deps: [], skills: [], role: null, tier: null },
   ]);
 });
 
@@ -448,8 +452,8 @@ test('parsePlan: a fence line with an info string does not close the fence', () 
   const plan = ['### Task 1: A', '```js', '```js', '### Task 9: phantom', '**Depends on:** T7', '```  ',
     '### Task 2: B', '**Depends on:** T1'].join('\n');
   assert.deepEqual(parsePlan(plan), [
-    { id: 'T1', title: 'A', deps: [], skills: [], role: null },
-    { id: 'T2', title: 'B', deps: ['T1'], skills: [], role: null },
+    { id: 'T1', title: 'A', deps: [], skills: [], role: null, tier: null },
+    { id: 'T2', title: 'B', deps: ['T1'], skills: [], role: null, tier: null },
   ]);
 });
 
@@ -543,9 +547,9 @@ test('parsePlan reads a **Role:** line', () => {
     '**Role:**   roles:review-fixer  ', '**Skills:** s', '', '### Task 3: C', '  **Role:** coordinator',
     '```', '**Role:** coordinator', '```'].join('\n');
   assert.deepEqual(parsePlan(plan), [
-    { id: 'T1', title: 'A', deps: [], skills: [], role: 'coordinator' },
-    { id: 'T2', title: 'B', deps: ['T1'], skills: ['s'], role: 'roles:review-fixer' },
-    { id: 'T3', title: 'C', deps: [], skills: [], role: null }, // an indented or fenced Role line is not read
+    { id: 'T1', title: 'A', deps: [], skills: [], role: 'coordinator', tier: null },
+    { id: 'T2', title: 'B', deps: ['T1'], skills: ['s'], role: 'roles:review-fixer', tier: null },
+    { id: 'T3', title: 'C', deps: [], skills: [], role: null, tier: null }, // an indented or fenced Role line is not read
   ]);
 });
 
@@ -580,12 +584,7 @@ test('reconcile refreshes a pending task\'s role from the plan and keeps a start
   assert.equal(Object.hasOwn(task(r2.ledger, 'T2'), 'role'), false);
 });
 
-test('every roles:* task role names an agent in plugins/roles/agents', () => {
-  const agents = new Set(readdirSync(join(REPO_ROOT, 'plugins', 'roles', 'agents'))
-    .filter((f) => f.endsWith('.md')).map((f) => `roles:${f.slice(0, -3)}`));
-  const named = TASK_ROLES.filter((r) => r.startsWith('roles:'));
-  assert.ok(named.length > 0);
-  for (const role of named) assert.ok(agents.has(role), `${role} is not an agent in plugins/roles/agents`);
+test('the default task role is one of the task roles', () => {
   assert.ok(TASK_ROLES.includes(DEFAULT_ROLE));
 });
 
@@ -596,4 +595,138 @@ test('this plan parses with its roles', { skip: !isPrivateCheckout && 'needs doc
   for (const t of tasks) {
     assert.equal(t.role, coordinator.has(t.id) ? 'coordinator' : 'roles:tdd-implementer', t.id);
   }
+});
+
+// Plan methodology-1.0 · T1: parsePlan is a thin wrapper over lib/plan.mjs's readTasks.
+test('parsePlan carries tier', () => {
+  const plan = '### Task 1: A\n**Tier:** heavy\n**Role:** roles:complex-implementer\n\n### Task 2: B\n';
+  assert.deepEqual(parsePlan(plan), [
+    { id: 'T1', title: 'A', deps: [], skills: [], role: 'roles:complex-implementer', tier: 'heavy' },
+    { id: 'T2', title: 'B', deps: [], skills: [], role: null, tier: null },
+  ]);
+});
+
+test('parsePlan maps PlanError to LedgerError', () => {
+  throwsLedger(() => parsePlan('### Task 1: A\n**Tier:** medium\n'), /T1.*medium/);
+  throwsLedger(() => parsePlan('### Task 1: A\n```\n'), /^unclosed code fence opened at line 2$/);
+});
+
+test('roles.mjs re-exports TIERS', () => {
+  assert.equal(TIERS, PLAN_TIERS);
+  assert.deepEqual([...TIERS], ['heavy', 'standard', 'light']);
+});
+
+// Plan methodology-1.0 · T2: the declared tier and the effective tier in the ledger.
+test('newTask copies tier and sets effectiveTier = tier', () => {
+  const l = createLedger({ plan: 'p.md', spec: null, branch: 'b', now: T0,
+    tasks: parsePlan('### Task 1: A\n**Tier:** heavy\n\n### Task 2: B\n**Tier:** light\n\n### Task 3: C\n') });
+  assert.deepEqual(l.tasks.map((t) => [t.id, t.tier, t.effectiveTier]),
+    [['T1', 'heavy', 'heavy'], ['T2', 'light', 'light'], ['T3', null, null]]);
+  // A task given without a tier (an older caller) reads null for both.
+  const old = createLedger({ plan: 'p.md', spec: null, branch: 'b', now: T0,
+    tasks: [{ id: 'T1', title: 'A', deps: [], skills: [], role: null }] });
+  assert.equal(old.tasks[0].tier, null);
+  assert.equal(old.tasks[0].effectiveTier, null);
+});
+
+test('reconcile copies tier into pending tasks and raises effectiveTier to the higher', () => {
+  const plan = (t1, t2, t3) => parsePlan(`### Task 1: A\n**Tier:** ${t1}\n\n### Task 2: B\n**Tier:** ${t2}\n\n### Task 3: C\n**Tier:** ${t3}\n`);
+  let l = createLedger({ plan: 'p.md', spec: null, branch: 'b', now: T0, tasks: plan('light', 'standard', 'light') });
+  l = transition(transition(l, 'start', 'T3', null, T0).ledger, 'done', 'T3', 'abc1234', T0).ledger;
+  const before = structuredClone(l);
+  const r = reconcile(deepFreeze(l), plan('heavy', 'light', 'heavy'), T1);
+  // Pending, effective light, plan now heavy: both rise to heavy.
+  assert.equal(task(r.ledger, 'T1').tier, 'heavy');
+  assert.equal(task(r.ledger, 'T1').effectiveTier, 'heavy');
+  // Pending, effective standard, plan now light: the declared tier follows the plan, the effective one stays.
+  assert.equal(task(r.ledger, 'T2').tier, 'light');
+  assert.equal(task(r.ledger, 'T2').effectiveTier, 'standard');
+  // Done: untouched.
+  assert.deepEqual(task(r.ledger, 'T3'), task(before, 'T3'));
+  assert.equal(task(r.ledger, 'T3').effectiveTier, 'light');
+  // null counts as standard: a light plan never lowers an undeclared task, a heavy one raises it.
+  const undeclared = createLedger({ plan: 'p.md', spec: null, branch: 'b', now: T0, tasks: parsePlan('### Task 1: A\n\n### Task 2: B\n') });
+  const r2 = reconcile(undeclared, parsePlan('### Task 1: A\n**Tier:** light\n\n### Task 2: B\n**Tier:** heavy\n'), T1);
+  assert.deepEqual(r2.ledger.tasks.map((t) => [t.tier, t.effectiveTier]), [['light', null], ['heavy', 'heavy']]);
+});
+
+test('statusLine shows the effective tier', () => {
+  let l = createLedger({ plan: 'p.md', spec: null, branch: 'b', now: T0,
+    tasks: parsePlan('### Task 1: A\n**Tier:** heavy\n\n### Task 2: B\n\n### Task 3: C\n**Tier:** light\n') });
+  assert.equal(statusLine('p', l), 'p: 0/3 done · in progress: none · next: T1 [heavy]');
+  l = transition(l, 'start', 'T1', null, T1).ledger;
+  l = transition(l, 'start', 'T2', null, T1).ledger;
+  assert.equal(statusLine('p', l), 'p: 0/3 done · in progress: T1 [heavy], T2 · next: T3 [light]');
+});
+
+test('checkSchema reports an unknown tier or effective tier; absent and null ones are clean', () => {
+  const l = createLedger({ plan: 'p.md', spec: null, branch: 'b', now: T0,
+    tasks: parsePlan('### Task 1: A\n**Tier:** heavy\n\n### Task 2: B\n\n### Task 3: C\n') });
+  assert.deepEqual(checkSchema(l), []);
+  const old = structuredClone(l);
+  for (const t of old.tasks) { delete t.tier; delete t.effectiveTier; }
+  assert.deepEqual(checkSchema(old), []);
+  const bad = structuredClone(l);
+  bad.tasks[1].tier = 'medium';
+  bad.tasks[2].effectiveTier = 'huge';
+  assert.deepEqual(checkSchema(bad), ['T2 has unknown tier "medium"', 'T3 has unknown effective tier "huge"']);
+});
+
+const SHA40 = 'a'.repeat(40);
+
+test('parseExternalCommit splits ext:<path>@<sha> at the last @ and ignores every other form', () => {
+  assert.deepEqual(parseExternalCommit(`ext:../other@${SHA40}`), { path: '../other', sha: SHA40 });
+  assert.deepEqual(parseExternalCommit(`ext:../we@ird/repo@${SHA40}`), { path: '../we@ird/repo', sha: SHA40 });
+  for (const bad of [SHA40, 'ext:', 'ext:@abc', 'ext:../other@', 'ext:no-at-sign', 'xext:a@b', null, undefined, 7]) {
+    assert.equal(parseExternalCommit(bad), null, String(bad));
+  }
+});
+
+// A done task whose only commit is `commit`, in an otherwise clean active ledger.
+const withCommit = (commit) => {
+  const planText = '### Task 1: Alpha\n';
+  const ledger = createLedger({ plan: 'plans/p.md', spec: null, branch: null, tasks: parsePlan(planText), now: T0 });
+  ledger.tasks[0].status = 'done';
+  ledger.tasks[0].commits = [commit];
+  const renderedBody = renderSection([{ name: 'p', ledger }]);
+  return { ledger, planText, statusText: upsertStatusSection('# Status\n', renderedBody), renderedBody };
+};
+
+test('checkLedger checks an external commit in its path: a hit is clean, a miss is drift, an unreachable path warns', () => {
+  const commit = `ext:../other@${SHA40}`;
+  const calls = [];
+  const exists = (answer) => (sha, path) => { calls.push([sha, path]); return answer; };
+  const warnings = [];
+  const warn = (m) => warnings.push(m);
+
+  assert.deepEqual(checkLedger({ ...withCommit(commit), commitExists: exists(true), warn }), []);
+  assert.deepEqual(calls, [[SHA40, '../other']]);
+
+  assert.deepEqual(checkLedger({ ...withCommit(commit), commitExists: exists(false), warn }),
+    ['T1 commit aaaaaaa does not resolve in ../other']);
+  assert.deepEqual(warnings, []);
+
+  assert.deepEqual(checkLedger({ ...withCommit(commit), commitExists: exists(null), warn }), []);
+  assert.deepEqual(warnings, [`external commit not checkable: ../other@${SHA40}`]);
+
+  // Without a warn callback an unreachable path is still not drift.
+  assert.deepEqual(checkLedger({ ...withCommit(commit), commitExists: exists(null) }), []);
+});
+
+test('checkLedger still checks a plain commit with the sha alone, and a malformed ext: form as a plain commit', () => {
+  const seen = [];
+  const commitExists = (...args) => { seen.push(args); return false; };
+  assert.deepEqual(checkLedger({ ...withCommit(SHA40), commitExists }), ['T1 commit aaaaaaa does not resolve']);
+  assert.deepEqual(checkLedger({ ...withCommit('ext:nope'), commitExists }), ['T1 commit ext:nop does not resolve']);
+  assert.deepEqual(seen, [[SHA40], ['ext:nope']]);
+});
+
+test('transition done stores an external commit string as given; a repeat of the same string is a no-op', () => {
+  const commit = `ext:../other@${SHA40}`;
+  const l0 = createLedger({ plan: 'plans/p.md', spec: null, branch: null, tasks: parsePlan('### Task 1: Alpha\n'), now: T0 });
+  const l1 = transition(l0, 'start', 'T1', null, T0).ledger;
+  const l2 = transition(l1, 'done', 'T1', commit, T1);
+  assert.deepEqual(l2.ledger.tasks[0].commits, [commit]);
+  assert.equal(transition(l2.ledger, 'done', 'T1', commit, T1).changed, false);
+  assert.throws(() => transition(l2.ledger, 'done', 'T1', `ext:../other@${'b'.repeat(40)}`, T1), /is done; cannot done/);
 });

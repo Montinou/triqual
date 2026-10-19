@@ -1,7 +1,8 @@
-// `triqual role-eval record --plan <plan file> <json-file>` and `triqual role-eval summary [--since YYYY-MM-DD] [--json]`: the
-// command line of the role-eval store (lib/role-eval.mjs; spec 5). `record` validates a record, derives its idempotency
-// key and appends it under the store lock; `summary` reports the store per provider. A record of a retired kind
-// (safety-shadow) is refused; the lines of that kind already stored are still summarized.
+// `triqual role-eval record --plan <plan file> <json-file>` and `triqual role-eval summary [--by-tier] [--since YYYY-MM-DD]
+// [--json]`: the command line of the role-eval store (lib/role-eval.mjs; spec 5 and U7). `record` validates a record
+// (hunters, task-review or final-escapes), derives its idempotency key and appends it under the store lock; `summary`
+// reports the store per provider, or per review tier with --by-tier. A record of a retired kind (safety-shadow) is
+// refused; the lines of that kind already stored are still summarized.
 // Exit codes: 0 written, already recorded, or a summary (also of an empty or missing store); 2 usage, a retired kind,
 // a schema error, a bad JSON file or no git repository (the message names a field, never a value); 1 a write or lock
 // failure.
@@ -12,7 +13,8 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
-  RETIRED_KINDS, appendRecord, formatSummary, recordKey, storePath, summarize, validateRecord,
+  RETIRED_KINDS, appendRecord, formatSummary, formatTierSummary, recordKey, storePath, summarize, summarizeByTier,
+  validateRecord,
 } from './lib/role-eval.mjs';
 
 const GIT_TIMEOUT_MS = 10000;
@@ -21,12 +23,17 @@ const SINCE = /^\d{4}-\d{2}-\d{2}$/;
 const USAGE = [
   'usage:',
   '  triqual role-eval record --plan <plan file> <json-file>',
-  '      Validate the hunters record in <json-file> and append it to the store once (the key comes from the repo, the',
-  '      plan\'s file name, the task and the kind). The safety-shadow kind is retired: record refuses it. Exits 0 when',
-  '      written or already recorded, 2 on a bad or retired record or usage, 1 on a write or lock failure.',
+  '      Validate the record in <json-file> (kind hunters, task-review or final-escapes; counts only) and append it to',
+  '      the store once (the key comes from the repo, the plan\'s file name, the task, the kind and, for a task-review,',
+  '      its attempt: attempt 2 of a task is stored, a repeated attempt is a no-op). The safety-shadow kind is retired:',
+  '      record refuses it. Exits 0 when written or already recorded, 2 on a bad or retired record or usage, 1 on a',
+  '      write or lock failure.',
   '  triqual role-eval summary [--since YYYY-MM-DD] [--json]',
-  '      Per provider: hunter right and new rates, and the safety-shadow agreement of the records stored before that',
-  '      kind was retired, from the records at or after --since.',
+  '      Per provider: hunter right and new rates (from hunters and task-review records), and the safety-shadow',
+  '      agreement of the records stored before that kind was retired, from the records at or after --since.',
+  '  triqual role-eval summary --by-tier [--since YYYY-MM-DD] [--json]',
+  '      Per review tier (heavy, standard, light): task reviews, raised, hunter confirmed rate, spec confirmed per',
+  '      task, fix rounds per task, blocked, and final-review escapes per task, from the records at or after --since.',
   '  triqual role-eval --help',
   '',
 ].join('\n');
@@ -97,7 +104,7 @@ function record(args, { env, cwd, stdout, stderr }) {
   // A fixed kind name, never a value from the file.
   const retired = RETIRED_KINDS.find((kind) => obj !== null && typeof obj === 'object' && obj.kind === kind);
   if (retired !== undefined) {
-    stderr.write(`triqual role-eval: the ${retired} kind is retired: record only hunters records\n`);
+    stderr.write(`triqual role-eval: the ${retired} kind is retired: record a hunters, task-review or final-escapes record\n`);
     return 2;
   }
   const verdict = validateRecord(obj);
@@ -112,7 +119,7 @@ function record(args, { env, cwd, stdout, stderr }) {
   }
 
   const store = storePath(env, env.HOME || homedir());
-  const key = recordKey({ commonDir, plan, task: obj.task, kind: obj.kind });
+  const key = recordKey({ commonDir, plan, task: obj.task, kind: obj.kind, attempt: obj.attempt });
   try {
     const made = mkdirSync(store.dir, { recursive: true, mode: 0o700 });
     const result = appendRecord(store.file, obj, { key, isDefault: store.isDefault, created: made !== undefined });
@@ -126,7 +133,7 @@ function record(args, { env, cwd, stdout, stderr }) {
 
 function summary(args, { env, stdout, stderr }) {
   const usage = (message) => { stderr.write(`triqual role-eval: ${message}\n${USAGE}`); return 2; };
-  const parsed = parseArgs(args, { valued: ['--since'], boolean: ['--json'] });
+  const parsed = parseArgs(args, { valued: ['--since'], boolean: ['--json', '--by-tier'] });
   if (parsed.error) return usage(parsed.error);
   if (parsed.positional.length > 0) return usage('summary takes no argument');
   const since = parsed.flags['--since'];
@@ -141,8 +148,14 @@ function summary(args, { env, stdout, stderr }) {
       return 1;
     }
   }
+  const json = parsed.bools.has('--json');
+  if (parsed.bools.has('--by-tier')) {
+    const byTier = summarizeByTier(text, { since });
+    stdout.write(json ? `${JSON.stringify(byTier, null, 2)}\n` : formatTierSummary(byTier));
+    return 0;
+  }
   const result = summarize(text, { since });
-  stdout.write(parsed.bools.has('--json') ? `${JSON.stringify(result, null, 2)}\n` : formatSummary(result));
+  stdout.write(json ? `${JSON.stringify(result, null, 2)}\n` : formatSummary(result));
   return 0;
 }
 

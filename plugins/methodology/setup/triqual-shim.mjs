@@ -27,10 +27,9 @@ const LEGACY_MARKETPLACE = 'claude-methodology';
 export const COMMANDS = {
   tasks: ['progress-tracking', 'cli/tasks.mjs'],
   'progress-init': ['progress-tracking', 'cli/progress-init.mjs'],
-  suggest: ['skill-suggest', 'cli/suggest.mjs'],
+  suggest: ['methodology', 'cli/suggest.mjs'],
   doctor: ['methodology', 'cli/doctor.mjs'],
   sync: ['methodology', 'cli/sync.mjs'],
-  'upstream-diff': ['methodology', 'cli/upstream-diff.mjs'],
   ui: ['progress-tracking', 'cli/ui.mjs'],
   tracking: ['progress-tracking', 'cli/tracking.mjs'],
   hook: ['methodology', 'cli/hook.mjs'],
@@ -43,10 +42,9 @@ export const COMMANDS = {
 export const DESCRIPTIONS = {
   tasks: 'task ledger: move plan tasks, check drift, status, status-line segment',
   'progress-init': 'opt the current repo into strict progress tracking (--local for shared repos)',
-  suggest: 'suggest vault skills for a request',
+  suggest: 'suggest vault skills for a request (through headjack)',
   doctor: "diagnose the install (--repo: this repo's tracking)",
   sync: "write the installed rules into ~/.claude/CLAUDE.md's managed section",
-  'upstream-diff': 'diff the forked skills against a superpowers release',
   ui: 'local read-only tracking dashboard',
   tracking: 'write a tracking file (entry, status, spec, plan) from a draft; the way to write them in local mode',
   hook: 'run a methodology hook for another harness (Codex, Grok)',
@@ -59,8 +57,7 @@ const HELP_FLAGS = new Set(['help', '--help', '-h']);
 // Per command: the first version of its plugin whose command accepts --help. Older installs ignore it (sync 0.1.1 ran
 // and wrote ~/.claude/CLAUDE.md), so the shim passes --help only to a command listed here whose plugin is at that
 // version or later: an unlisted command or an unreadable version gets none. `tracking` shipped in progress-tracking
-// 0.2.2; `hook` in methodology 0.3.0; `migrate` in methodology 0.4.0. suggest must be added here when skill-suggest
-// ships.
+// 0.2.2; `hook` in methodology 0.3.0; `migrate` in methodology 0.4.0; `suggest` in methodology 1.0.0.
 const HELP_SINCE = {
   tasks: '0.2.1',
   'progress-init': '0.2.1',
@@ -68,11 +65,11 @@ const HELP_SINCE = {
   tracking: '0.2.2',
   doctor: '0.1.2',
   sync: '0.1.2',
-  'upstream-diff': '0.1.2',
   hook: '0.3.0',
   memory: '0.1.0',
   'role-eval': '0.3.3',
   migrate: '0.4.0',
+  suggest: '1.0.0',
 };
 const HELP_TIMEOUT_MS = 5000;
 export const HELP_BUDGET_MS = 8000; // the whole aggregated help; commands left after it show their description only

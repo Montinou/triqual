@@ -1,0 +1,105 @@
+#!/usr/bin/env node
+// Generate a review package: commit list, stat summary, and the net
+// diff with extended context, written to a file the reviewer reads in one
+// call. Using the recorded per-task BASE (not HEAD~1) keeps multi-commit
+// tasks intact.
+//
+// Usage: review-package PLAN_FILE BASE HEAD [OUTFILE]
+// Default OUTFILE: <repo-root>/.methodology/sdd/<plan-basename>/review-<base7>..<head7>.diff
+// (named per range, so a re-review after fixes gets a distinct fresh file).
+//
+// Exit codes: 0 written, 2 usage, missing plan file or an unknown BASE or HEAD,
+// 3 HEAD is not a descendant of BASE or the range is empty; a failing
+// sdd-workspace passes its own status through.
+//
+// Dynamic imports only: the file has no extension, so Node may load it as
+// CommonJS or as an ES module depending on the nearest package.json.
+(async () => {
+  const { spawnSync } = await import('node:child_process');
+  const fs = await import('node:fs');
+  const { dirname, join } = await import('node:path');
+
+  const stop = (code, message) => {
+    process.stderr.write(`${message}\n`);
+    process.exit(code);
+  };
+
+  const args = process.argv.slice(2);
+  if (args.length < 3 || args.length > 4) stop(2, 'usage: review-package PLAN_FILE BASE HEAD [OUTFILE]');
+  const [plan, base, head] = args;
+  const isFile = (path) => {
+    try {
+      return fs.statSync(path).isFile();
+    } catch {
+      return false;
+    }
+  };
+  if (!isFile(plan)) stop(2, `no such plan file: ${plan}`);
+
+  // git with its stdout captured; stderr flows to ours. `status` is git's exit status.
+  const git = (...gitArgs) => {
+    const res = spawnSync('git', gitArgs, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
+    if (res.error) stop(1, `review-package: git failed: ${res.error.message}`);
+    return { status: res.status ?? 1, stdout: res.stdout.replace(/\n+$/, '') };
+  };
+  const quiet = (...gitArgs) => {
+    const res = spawnSync('git', gitArgs, { stdio: 'ignore' });
+    if (res.error) stop(1, `review-package: git failed: ${res.error.message}`);
+    return res.status === 0;
+  };
+
+  if (!quiet('rev-parse', '--verify', '--quiet', base)) stop(2, `bad BASE: ${base}`);
+  if (!quiet('rev-parse', '--verify', '--quiet', head)) stop(2, `bad HEAD: ${head}`);
+
+  // Range guards (exit 3): a wrong-branch HEAD yields a range that is empty or
+  // not rooted at BASE; either would silently produce a bogus review package.
+  if (!quiet('merge-base', '--is-ancestor', base, head)) stop(3, `HEAD is not a descendant of BASE: ${base}..${head}`);
+  const range = `${base}..${head}`;
+  const counted = git('rev-list', '--count', range);
+  if (counted.status !== 0) process.exit(counted.status);
+  const commits = Number(counted.stdout);
+  if (!(commits > 0)) stop(3, `empty commit range: ${range}`);
+
+  let out = args[3];
+  if (out === undefined) {
+    // Run the workspace script by its interpreter rather than by exec: some
+    // extractors (Python zipfile) strip Unix exec bits when unpacking
+    // marketplace packages (#2040).
+    const scriptDir = dirname(fs.realpathSync(process.argv[1]));
+    const ws = spawnSync(process.execPath, [join(scriptDir, 'sdd-workspace'), plan], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'],
+    });
+    if (ws.error) stop(1, `sdd-workspace failed: ${ws.error.message}`);
+    if (ws.status !== 0) process.exit(ws.status ?? 1);
+    const short = (rev) => git('rev-parse', '--short', rev).stdout;
+    out = join(ws.stdout.replace(/\n+$/, ''), `review-${short(base)}..${short(head)}.diff`);
+  }
+
+  // Each section is a git command writing straight into the package, so a large diff never sits in memory.
+  let fd;
+  try {
+    fd = fs.openSync(out, 'w');
+  } catch (e) {
+    stop(1, `cannot write ${out}: ${e.message}`);
+  }
+  try {
+    const section = (heading, gitArgs, last = false) => {
+      fs.writeSync(fd, `${heading}\n`);
+      const res = spawnSync('git', gitArgs, { stdio: ['ignore', fd, 'inherit'] });
+      if (res.error) stop(1, `review-package: git failed: ${res.error.message}`);
+      if (res.status !== 0) process.exit(res.status ?? 1);
+      if (!last) fs.writeSync(fd, '\n');
+    };
+    fs.writeSync(fd, `# Review package: ${range}\n\n`);
+    section('## Commits', ['log', '--oneline', range]);
+    section('## Files changed', ['diff', '--stat', range]);
+    section('## Diff', ['diff', '-U10', range], true);
+  } finally {
+    fs.closeSync(fd);
+  }
+
+  process.stdout.write(`wrote ${out}: ${commits} commit(s), ${fs.statSync(out).size} bytes\n`);
+})().catch((e) => {
+  process.stderr.write(`review-package: ${e.stack ?? e}\n`);
+  process.exit(1);
+});

@@ -126,12 +126,13 @@ Exit codes:
 triqual tasks <subcommand> [args]
   init <plan.md> [--adopt] [--spec <path>] [--branch <b>]
   start|review|rework|restore T<N> [--plan <plan.md|ledger>]
-  done T<N> --commit <sha> [--plan <plan.md|ledger>]
+  done T<N> --commit <sha> [--repo <path>] [--plan <plan.md|ledger>]
   block|drop|reopen T<N> "<reason>" [--plan <plan.md|ledger>]
   retitle T<N> "<title>" [--plan <plan.md|ledger>]
+  retier T<N> <tier> --reason "<text>" [--plan <plan.md|ledger>]
   close [--plan <plan.md|ledger>]
   status [--json]
-  next [--plan <plan.md|ledger>]
+  next [--plan <plan.md|ledger>] [--json]
   check [--staged]
   render
   paths --json
@@ -140,11 +141,34 @@ triqual tasks <subcommand> [args]
 ```
 
 A plan is a Markdown file. Each task starts at a `### Task <N>: <title>` heading and is named `T<N>`. Below the
-heading, these lines are read at column 0: `**Depends on:**` (comma-separated task ids), `**Skills:**` and
-`**Role:**`. Headings inside fenced code blocks are ignored. A duplicate task number or an unclosed fence is an error.
+heading, these lines are read at column 0: `**Tier:**`, `**Depends on:**` (comma-separated task ids), `**Skills:**` and
+`**Role:**`. Headings inside fenced code blocks are ignored. A task ends at the next heading of level 1 to 3 outside a
+fence, so a field under `## After Merge` does not belong to the last task. A duplicate task number or an unclosed
+fence is an error. The reader is a library (`lib/plan.mjs`) shared with the orchestrator's scripts; there is no
+subcommand that prints the parsed tasks.
 
 A task's role is its `**Role:**` line, one of `coordinator`, `roles:tdd-implementer` (the default),
-`roles:complex-implementer` or `roles:review-fixer`. `check` flags any other.
+`roles:complex-implementer` or `roles:review-fixer`. `check` flags any other. Plans written for 1.0 never name
+`roles:review-fixer`: the orchestrator dispatches it for fix rounds.
+
+#### Tiers
+
+A task's review tier is its `**Tier:**` line, one of `heavy`, `standard` or `light`. An unknown value is an error.
+
+- **Reading never fails on a missing tier.** A task with no `**Tier:**` has `tier: null` and is treated as `standard`,
+  so plans and ledgers written before tiers keep working.
+- **Registering a new plan is all or none.** When the plan declares a tier on any task it must declare one on every
+  task: `init` (and `tracking write plan` and `--adopt`) exit 2 naming the tasks without one. In a tiered plan a
+  `coordinator` task must be `light` and a `roles:complex-implementer` task `heavy`. A plan with no tier registers as it
+  always did. Reconciling an existing ledger applies none of these rules.
+- **Declared and effective.** The ledger keeps each task's declared `tier` and its `effectiveTier`, the tier it runs at.
+  Reconciling copies a changed tier into pending tasks, and their effective tier becomes the higher of the old one and
+  the new one.
+- **`retier T<N> <tier> --reason "<text>"`** raises the effective tier and logs the reason in the task's history. The
+  same tier prints `T<N>: already <tier>` and exits 0. A lower tier exits 2: no command lowers a tier. The reason is
+  required.
+- **Where tiers show.** `status` and `tasks line` show the effective tier, `status --json` and `next --json` carry both
+  tiers, and `export --json` carries them for every task.
 
 Task statuses are `pending`, `in_progress`, `in_review`, `done`, `blocked` and `dropped`. Each move starts from fixed
 statuses:
@@ -186,11 +210,15 @@ It prints `created <ledger>` or `reconciled <ledger>: added ...; missing ...; re
 
 - `start`, `review`, `rework` and `restore` take a task id.
 - `done T<N> --commit <rev>` records the commit. `<rev>` is any revision (`HEAD` works). It is resolved to a full sha;
-  one that does not name a commit is an error. Repeating `done` with the same commit is a no-op. `done` on a done
+  one that does not name a commit is an error. `--repo <path>` records a commit of another repository, stored as
+  `ext:<path relative to the main worktree root>@<sha>`, so no home directory enters a ledger; it needs `--commit`,
+  and a path that is this repository counts as a local commit. Repeating `done` with the same commit is a no-op. `done` on a done
   task with a different sha exits 2: `reopen` it, then `done` again to replace the sha.
 - `block`, `drop` and `reopen` take a non-empty reason. `start` resumes a blocked task and `restore` brings a dropped
   one back as pending.
 - `retitle T<N> "<title>"` changes a task's title and logs it in the task history.
+- `retier T<N> <tier> --reason "<text>"` raises a task's effective tier. See [Tiers](#tiers). It prints
+  `T<N>: <from> -> <to>` and does not move the task's status.
 - `close` ends the plan. It exits 2 while any task is not done or dropped. When every ledger is already done it
   prints `plan: already done` and exits 0.
 
@@ -202,12 +230,12 @@ Each move prints one line, `T<N>: <from> -> <to>`.
 
 | Subcommand | What it does |
 |---|---|
-| `status [--json]` | One line per active plan, newest name first: `<name>: <done>/<total> done · in progress: <ids> · next: <id>`. `--json` gives `name`, `ledgerPath`, `done`, `total`, `inProgress` and `next`. Dropped tasks are not counted in `total`. |
-| `next [--plan ...]` | The first pending task whose dependencies are all done or dropped, as `T<N> <title> [<role>]`, or `none`. |
+| `status [--json]` | One line per active plan, newest name first: `<name>: <done>/<total> done · in progress: <ids> · next: <id>`, each id followed by its effective tier in brackets when it has one. `--json` gives `name`, `ledgerPath`, `done`, `total`, `inProgress`, `next` and `tiers`, a map keyed by task id with the `tier` and `effectiveTier` of the in-progress tasks and the next one. Dropped tasks are not counted in `total`. |
+| `next [--plan ...] [--json]` | The first pending task whose dependencies are all done or dropped, as `T<N> <title> [<role>]`, or `none`. `--json` prints `{ id, title, role, tier, effectiveTier }`, or `null` when there is none. |
 | `check [--staged]` | Compares each ledger with its plan and the `status.md` Active plan section (task titles, roles, dependencies, commits that still resolve, the rendered section, the ledger schema). Prints one line per drift. `--staged` reads the index instead of the working tree in committed mode, and is accepted and ignored in the other modes. It takes no `--plan`. In store mode it compares each plan whose document exists, and there is no section to drift. |
 | `render` | Rewrites the Active plan section of `status.md`, between `<!-- tasks:start -->` and `<!-- tasks:end -->`. In store mode there is no `status.md`: it prints the section instead. |
 | `paths --json` | The tracking paths. Works outside an opted-in repo: `"optedIn": false`, exit 0. |
-| `export --json [--all]` | The tracking snapshot of this repo (schema `tracking-snapshot@1`, under the previous name). `--all` prints an array with the snapshot of every registered repo that still resolves, from any directory, and skips a failing repo with a warning. |
+| `export --json [--all]` | The tracking snapshot of this repo (schema `tracking-snapshot@1`, under the previous name), with `tier` and `effectiveTier` for every task. `--all` prints an array with the snapshot of every registered repo that still resolves, from any directory, and skips a failing repo with a warning. |
 | `line` | One status-line segment. See below. |
 
 `paths --json` always carries `notOptedInMessage` and `localHookLines`. In committed and local mode it also has
@@ -223,10 +251,11 @@ and `specsDir` are `null` when the store is disabled.
 
 For the newest active plan, with ` (+<n-1>)` appended when more than one plan is active. `<current>` is, in order:
 
-1. the first in-progress task, as `T<N> (<role>)`, with `roles:` removed from the role;
-2. else the first in-review task, as `T<N> (<role>) review`;
-3. else the next pending task, as `T<N> (<role>)`;
-4. else the first blocked task, as `T<N> (<role>) blocked`;
+1. the first in-progress task, as `T<N> [<tier>] (<role>)`, with `roles:` removed from the role and the effective tier
+   in brackets (left out when the task has none);
+2. else the first in-review task, as `T<N> [<tier>] (<role>) review`;
+3. else the next pending task, as `T<N> [<tier>] (<role>)`;
+4. else the first blocked task, as `T<N> [<tier>] (<role>) blocked`;
 5. else `done` when every counted task is done, otherwise `stalled`.
 
 `line` is read-only and silent, so a status line can call it on every refresh. It prints nothing and exits 0 outside
@@ -612,6 +641,11 @@ The date an entry shows is the draft's heading date. The entry is ordered by the
 - **Entries are append-only.** No command edits or deletes an entry. A correction is a new entry (`--corrects <id>` in
   store mode).
 - **Store mode needs Node 22.13 or newer** for `node:sqlite`. Committed and local repos never load it.
+- **The store schema is V2 since 0.5.0.** The two tier columns are added by an appended migration the first time a
+  0.5.0 command opens the store; existing tasks read as untiered. An older progress-tracking refuses the migrated store
+  and its `pre-commit` gate would block commits in store-mode repos, so do not downgrade below 0.5.0.
+- **No tier is ever lowered.** `retier` refuses it, reconciling keeps the higher tier, and importing a snapshot keeps
+  the higher effective tier.
 - **Store mode fails closed.** A database that cannot be read blocks the Stop hook and the `pre-commit`, and both name
   `triqual tracking restore`. A disabled store (`TRIQUAL_TRACKING_DB` not absolute) blocks the same way.
 - **The store is one file per user.** Nothing in git holds it. Use `tracking export` for an off-store copy, and the

@@ -153,11 +153,11 @@ test('plugin versions are the ones this release ships', () => {
   const versions = Object.fromEntries(readJson('.claude-plugin/marketplace.json').plugins
     .filter((p) => !isExternal(p)).map((p) => [p.name, p.version]));
   assert.deepEqual(versions, {
-    'progress-tracking': '0.4.2',
-    'workflow-gate': '0.2.0',
-    roles: '0.3.2',
-    methodology: '0.7.4',
-    'memory-report': '0.4.2',
+    'progress-tracking': '0.5.0',
+    'workflow-gate': '0.3.0',
+    roles: '0.3.3',
+    methodology: '1.0.0',
+    'memory-report': '0.5.0',
   });
   assert.equal(readJson('plugins/methodology-codex/.codex-plugin/plugin.json').version, '0.2.0');
   assert.deepEqual(readJson('plugins/methodology/.claude-plugin/plugin.json').dependencies,
@@ -193,8 +193,18 @@ test('the marketplace, the package and the plugin repositories carry the triqual
   }
 });
 
-test('npm test runs every plugin test and the root test dir', () => {
-  assert.equal(readJson('package.json').scripts.test, 'node --test "plugins/*/test/*.test.mjs" "packages/*/test/*.test.mjs" "test/*.test.mjs"');
+test('npm test runs every plugin test, the root test dir and the per-skill pins', () => {
+  assert.equal(readJson('package.json').scripts.test, 'node --test "plugins/*/test/*.test.mjs" "packages/*/test/*.test.mjs" "test/*.test.mjs" "test/skill-pins/*.test.mjs"');
+});
+
+test('workflow-gate\'s descriptions name the Workflow cap and the Agent and Task start cap', () => {
+  const entry = readJson('.claude-plugin/marketplace.json').plugins.find((p) => p.name === 'workflow-gate');
+  const manifest = readJson('plugins/workflow-gate/.claude-plugin/plugin.json');
+  for (const description of [entry.description, manifest.description]) {
+    for (const word of [/Workflow script/, /fable 3, opus 8, sonnet 12, haiku unlimited/, /Agent/, /Task/, /120 s/]) {
+      assert.match(description, word, description);
+    }
+  }
 });
 
 test('roles\' plugin.json description lists the eight shipped role agents', () => {
@@ -203,12 +213,19 @@ test('roles\' plugin.json description lists the eight shipped role agents', () =
     + 'spec-reviewer, review-fixer, final-adversarial-reviewer, hunter.');
 });
 
-test('methodology\'s description names the fork: skills, roles dispatch and tracking', () => {
+test('methodology\'s description names its skills, roles dispatch and tracking, and no longer calls itself a fork', () => {
   const entry = readJson('.claude-plugin/marketplace.json').plugins.find((p) => p.name === 'methodology');
   const manifest = readJson('plugins/methodology/.claude-plugin/plugin.json');
   for (const description of [entry.description, manifest.description]) {
-    for (const word of [/fork/i, /skills/, /roles/, /tracking/]) assert.match(description, word, description);
+    for (const word of [/skills/, /roles/, /tracking/]) assert.match(description, word, description);
+    assert.doesNotMatch(description, /fork/i, description);
   }
+});
+
+test('the superpowers credit lives in NOTICE: it exists and names superpowers', () => {
+  const notice = join(ROOT, 'plugins/methodology/NOTICE');
+  assert.ok(existsSync(notice), 'plugins/methodology/NOTICE is missing');
+  assert.match(readFileSync(notice, 'utf8'), /superpowers/i);
 });
 
 test('the marketplace and methodology descriptions say Triqual, not the personal methodology (spec 2, brand text)', () => {

@@ -31,25 +31,39 @@ edit.
 
 ## Which skills dispatch them
 
-Found by searching `roles:<name>` in `plugins/methodology/skills`.
-`methodology:dispatching-parallel-agents` lists all eight in its dispatch table, so it can
-dispatch any of them. The other skills:
+Found by searching `roles:<name>` in `plugins/methodology/skills`:
 
 | Agent | Dispatched by |
 |---|---|
-| `brief-writer` | `subagent-driven-development`, only when a task's plan text lacks interfaces that must come from the current code |
-| `tdd-implementer` | `subagent-driven-development`: the default task role |
-| `complex-implementer` | `subagent-driven-development`: a task whose `**Role:**` is `roles:complex-implementer`, and its fix rounds |
-| `safety-reviewer` | `subagent-driven-development`, `executing-plans` |
-| `spec-reviewer` | `subagent-driven-development`, `executing-plans`, `requesting-code-review` |
-| `review-fixer` | `subagent-driven-development` (fix rounds) |
-| `final-adversarial-reviewer` | `subagent-driven-development`, `executing-plans`, `brainstorming` (spec audit), `writing-plans` (plan audit) |
-| `hunter` | `subagent-driven-development`, `executing-plans` |
+| `brief-writer` | `executing-plans`, only when a task's plan text lacks interfaces that must come from the current code |
+| `tdd-implementer` | `executing-plans`: the default task role |
+| `complex-implementer` | `executing-plans`: a task whose `**Role:**` is `roles:complex-implementer`, and its fix rounds |
+| `safety-reviewer` | `executing-plans` |
+| `spec-reviewer` | `executing-plans`, `reviewing-code` |
+| `review-fixer` | `executing-plans` (fix rounds) |
+| `final-adversarial-reviewer` | `executing-plans`, `brainstorming` (spec audit), `writing-plans` (plan audit) |
+| `hunter` | `executing-plans`, `reviewing-code` |
 
-A plan's task `**Role:**` line may be `roles:tdd-implementer` (the default when the line is
-missing), `roles:complex-implementer` or `roles:review-fixer`, or `coordinator`.
-`subagent-driven-development` stops and asks if a task names any other role: the reviewers, the
+A plan's task `**Role:**` line is `roles:tdd-implementer` (the default when the line is
+missing), `roles:complex-implementer` or `coordinator`. `roles:review-fixer` is still read in plans
+written before 1.0, but no plan plans one now: `executing-plans` dispatches it for fix rounds.
+`executing-plans` stops and asks if a task names any other role: the reviewers, the
 hunter and the brief writer serve a task and are never its role.
+
+In a plan with tiers a `roles:complex-implementer` task is `heavy` and a `coordinator` task is
+`light`, and registration refuses any other pairing.
+
+## Which tier gets which reviewers
+
+`executing-plans` sizes a task's review by its tier. The safety gate runs at every tier.
+
+| Tier | `hunter` | `safety-reviewer` | `spec-reviewer` |
+|---|---|---|---|
+| heavy | 4: correctness, security, spec-drift, state | yes | every candidate and the spec fit |
+| standard | 2: correctness and the category the plan's Review Focus names, else the riskiest | yes | yes |
+| light | none | yes | only on a finding or `Cannot verify` from the gate |
+
+The final review of a plan, whatever its tiers, runs 3 hunters and the `final-adversarial-reviewer`.
 
 ## Codex and Grok
 
@@ -60,8 +74,8 @@ The table is in [Codex and Grok](../../README.md#codex-and-grok) in the root REA
 ## Role evaluation
 
 `triqual role-eval` is a `methodology` command, not part of this plugin. `record` appends a
-hunter-comparison record to a local store and `summary` reports it per provider. See the
-[`methodology` README](../methodology/README.md).
+hunter, task-review or final-escapes record to a local store, `summary` reports it per provider
+and `summary --by-tier` per review tier. See the [`methodology` README](../methodology/README.md).
 
 ## Tests
 

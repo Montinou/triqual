@@ -15,6 +15,7 @@ import { parseStatusSections } from './status-sections.mjs';
 import { ledgerPaths, readEntry, LEDGER_EXT } from './ledger-files.mjs';
 import { progressHash, readState } from './tracking.mjs';
 import { sameEvent } from './store.mjs';
+import { higherTier } from './ledger.mjs';
 
 const GIT_TIMEOUT_MS = 60000;
 const GIT_MAX_BUFFER = 512 * 1024 * 1024;
@@ -334,8 +335,9 @@ const planPathOf = (l) => (typeof l.ledger.plan === 'string' && l.ledger.plan ? 
 // task only the incoming side has is added. The metadata (a task's title, deps, skills and role; the plan's spec and
 // branch) follows the same clock: it is the incoming side's unless the store's latest time is later, so a title changed
 // after the switch (a history event of its own) survives a later `--ref` import, while files edited on disk with no new
-// event are still picked up. The plan's state follows the side with the latest time overall. On a tie the store's
-// progress stays.
+// event are still picked up. The declared tier is metadata too; the effective tier follows the same clock but only ever
+// rises (higherTier), so a merge never lowers it. The plan's state follows the side with the latest time overall. On a
+// tie the store's progress stays.
 function mergeLedger(stored, incoming) {
   const merged = structuredClone(stored);
   const latest = (l) => l.tasks.reduce((max, x) => (lastAt(x) > max ? lastAt(x) : max), '');
@@ -349,7 +351,12 @@ function mergeLedger(stored, incoming) {
       merged.tasks.push(structuredClone(bt));
       continue;
     }
-    if (!(lastAt(st) > lastAt(bt))) Object.assign(st, { title: bt.title, deps: bt.deps ?? [], skills: bt.skills ?? [], role: bt.role ?? null });
+    if (!(lastAt(st) > lastAt(bt))) {
+      Object.assign(st, {
+        title: bt.title, deps: bt.deps ?? [], skills: bt.skills ?? [], role: bt.role ?? null,
+        tier: bt.tier ?? null, effectiveTier: higherTier(st.effectiveTier, bt.effectiveTier),
+      });
+    }
     if (lastAt(bt) > lastAt(st)) {
       const extra = (bt.history ?? []).filter((h) => !st.history.some((s) => sameEvent(s, h)));
       Object.assign(st, { status: bt.status, commits: bt.commits ?? [], reason: bt.reason ?? null });
@@ -554,13 +561,15 @@ export function reportLines(r) {
 // ---- Rebuilding from an export (--replace --from) ----
 
 export const EXPORT_TABLES = ['repos', 'entries', 'status', 'plans', 'tasks', 'task_events'];
-// The columns written back for each table, id and repo/plan links aside (those are remapped).
-const COLUMNS = {
+// The columns written back for each table, id and repo/plan links aside (those are remapped). A test pins them, links
+// included, to the schema.
+export const COLUMNS = {
   entries: ['git_dir', 'branch', 'created_at', 'entry_date', 'title', 'stage_task', 'done', 'files', 'verification', 'next', 'state',
     'commit_sha', 'plan', 'task_key', 'original', 'parse_ok', 'import_hash'],
   status: ['position', 'heading', 'body', 'updated_at'],
   plans: ['path', 'spec', 'branch', 'state'],
-  tasks: ['key', 'position', 'title', 'deps', 'role', 'skills', 'status', 'commits', 'reason'],
+  // tier and effective_tier: an export of a V1 store lacks them and they are written back NULL.
+  tasks: ['key', 'position', 'title', 'deps', 'role', 'skills', 'status', 'commits', 'reason', 'tier', 'effective_tier'],
   task_events: ['task_key', 'at', 'from_status', 'to_status', 'note'],
 };
 

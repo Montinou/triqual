@@ -67,10 +67,12 @@ Everything below is keyed on `"mode": "store"` from `triqual tasks paths --json`
 They never go into the working tree: land the draft with `triqual tracking write spec <draft>` or
 `triqual tracking write plan <draft>`.
 
+Run `mktemp -d` on its own; the directory it prints (`<dir>` below) holds the drafts. Then each command is plain:
+
 ```bash
-dir=$(mktemp -d)                       # draft $dir/2026-10-11-topic.md, then:
-triqual tracking write spec "$dir/2026-10-11-topic-design.md"
-triqual tracking write plan "$dir/2026-10-11-topic.md"      # adopts it and creates its ledger
+mktemp -d                              # prints <dir>; draft <dir>/2026-10-11-topic.md there, then:
+triqual tracking write spec <dir>/2026-10-11-topic-design.md
+triqual tracking write plan <dir>/2026-10-11-topic.md       # adopts it and creates its ledger
 ```
 
 An existing document is refused; `--replace` overwrites it (and, for a plan, reconciles its ledger).
@@ -78,9 +80,11 @@ An existing document is refused; `--replace` overwrites it (and, for a plan, rec
 **R2, an entry with a commit.** Write the entry as a draft (the same format as `progress.md`, five fields) and land it
 *before* the commit it describes:
 
+Run `mktemp` on its own; the path it prints (`<draft>` below) is the draft. Then each command is plain:
+
 ```bash
-draft=$(mktemp)                        # fill it: ## <YYYY-MM-DD> — <title> and the five fields
-triqual tracking add "$draft"          # prints: entry <id>
+mktemp                                 # prints <draft>; fill it: ## <YYYY-MM-DD> — <title> and the five fields
+triqual tracking add <draft>           # prints: entry <id>
 git commit -m "feat: ..."
 ```
 

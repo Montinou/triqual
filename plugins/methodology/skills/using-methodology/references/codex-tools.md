@@ -7,8 +7,7 @@ Add to your Codex config (`~/.codex/config.toml`):
 multi_agent = true
 ```
 
-This enables the multi-agent tools that skills like
-`dispatching-parallel-agents` and `subagent-driven-development` use.
+This enables the multi-agent tools that `executing-plans` uses.
 Which tools you get depends on the multi-agent version your model
 preset selects (current presets run V2; older ones run V1). Trust your
 actual tool list over any table — including this one — when they
@@ -19,7 +18,7 @@ disagree.
   entire transcript into the child. On Codex 0.145+, role files under
   `~/.codex/agents/` attach to isolated forks via `agent_type`.
   Full-history forks accept `model` and `reasoning_effort` overrides
-  (only `agent_type` is refused there) — isolated forks are the SDD
+  (only `agent_type` is refused there) — isolated forks are the plan-execution
   default for context hygiene, not because overrides require them.
 - **Fix rounds:** resume the implementer with `followup_task` — it
   delivers your message, triggers a turn, and transparently reloads a
@@ -91,8 +90,8 @@ Skills name roles and skills in their Claude Code form. In Codex:
   `methodology:finishing-branch` is the skill `finishing-branch`).
 
 Every other `spawn_agent` you issue —
-including when you are yourself a spawned child running a fan-out, and
-the generic fallback of `dispatching-parallel-agents` — sets `model` AND
+including when you are yourself a spawned child running a fan-out —
+sets `model` AND
 `reasoning_effort` explicitly. Setting `model` alone is a trap: the
 child's effort silently resets to that model's default, not to yours.
 
@@ -113,15 +112,16 @@ Skills that create worktrees or finish branches should detect their
 environment with read-only git commands before proceeding:
 
 ```bash
-GIT_DIR=$(cd "$(git rev-parse --git-dir)" 2>/dev/null && pwd -P)
-GIT_COMMON=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P)
-BRANCH=$(git branch --show-current)
+git rev-parse --path-format=absolute --git-dir --git-common-dir
+git branch --show-current
 ```
+
+The first prints `GIT_DIR` then `GIT_COMMON`; the second prints `BRANCH`.
 
 - `GIT_DIR != GIT_COMMON` → already in a linked worktree (skip creation)
 - `BRANCH` empty → detached HEAD (cannot branch/push/PR from sandbox)
 
-See `using-git-worktrees` Step 0 and `finishing-branch`
+See the Worktrees section of `executing-plans` and `finishing-branch`
 Step 1 for how each skill uses these signals.
 
 ## Codex App Finishing

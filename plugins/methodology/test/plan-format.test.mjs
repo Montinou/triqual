@@ -160,27 +160,205 @@ test('the audit prompt flags phase defects in plans', () => {
   }
 });
 
-// Execution Handoff (spec U2, R7): both branches say the stack, the push and who merges.
-test('both handoff branches state the stack and the push authorization', () => {
+// Execution Handoff (spec U2, R7): one message says the stack, the push and who merges; there is no method to choose.
+test('the handoff states the stack and the push authorization, and offers one execution skill', () => {
   const text = section(PLANS, '## Execution Handoff').join(' ').replace(/\s+/g, ' ');
-  const none = '**When no execution method has already been supplied:**';
-  const supplied = '**When an execution method has already been supplied:**';
-  const chosen = '**If Subagent-driven chosen:**';
-  for (const marker of [none, supplied, chosen]) assert.ok(text.includes(marker), `the handoff lost "${marker}"`);
-  const branches = {
-    'no method supplied': text.slice(text.indexOf(none), text.indexOf(supplied)),
-    'method supplied': text.slice(text.indexOf(supplied), text.indexOf(chosen)),
-  };
-  for (const [name, message] of Object.entries(branches)) {
-    for (const phrase of ['stack', 'phase branches', 'draft PR', 'authorizes', 'ready for review after the final review', 'merging stays yours']) {
-      assert.ok(message.includes(phrase), `the "${name}" handoff message does not say "${phrase}"`);
-    }
+  const message = '**"Plan complete and saved to `<plan path>`.';
+  const required = '**REQUIRED SUB-SKILL:** Use methodology:executing-plans';
+  for (const marker of [message, required]) assert.ok(text.includes(marker), `the handoff lost "${marker}"`);
+  const body = text.slice(text.indexOf(message), text.indexOf(required));
+  for (const phrase of ['stack', 'phase branches', 'draft PR', 'authorizes', 'ready for review after the final review', 'merging stays yours', 'Confirming']) {
+    assert.ok(body.includes(phrase), `the handoff message does not say "${phrase}"`);
   }
-  assert.ok(branches['no method supplied'].includes('Choosing'), 'the first message does not say that choosing authorizes');
-  assert.ok(branches['method supplied'].includes('Confirming'), 'the second message does not say that confirming authorizes');
-  // The text above the branches names who records the authorization.
-  const intro = text.slice(0, text.indexOf(none));
+  // Plans run through subagents only: no second method, no approach to choose, no Native or inline option.
+  for (const gone of ['Subagent-driven', 'Native', 'execution method', 'execution approach', 'Choosing', 'inline', 'If Subagent', 'If Native']) {
+    assert.ok(!text.includes(gone), `the handoff still offers a choice ("${gone}")`);
+  }
+  // The text above the message names who records the authorization.
+  const intro = text.slice(0, text.indexOf(message));
   for (const phrase of ['stack', 'authorizes', 'phase branches', 'draft PRs', 'ready for review after the final review', 'the execution skill records it', 'merging stays your human partner']) {
     assert.ok(intro.includes(phrase), `the handoff introduction does not say "${phrase}"`);
+  }
+});
+
+test('the plan header names only executing-plans', () => {
+  const header = section(PLANS, '## Plan Document Header').join('\n');
+  const line = header.split('\n').find((l) => l.startsWith('> **For agentic workers:**'));
+  assert.ok(line, 'the header lost its agentic-workers line');
+  assert.ok(line.includes('REQUIRED SUB-SKILL: Use methodology:executing-plans to implement this plan task-by-task.'), line);
+  assert.doesNotMatch(line, /recommended|\bor methodology:/, 'the header still offers a second skill');
+});
+
+// Task tiers (spec: orchestrator): every task carries a `**Tier:**`, all-or-none per plan, and the audit checks them.
+test('the Task Structure template opens with the tier line', () => {
+  const lines = section(PLANS, '## Task Structure');
+  const heading = lines.indexOf('### Task N: [Component Name]');
+  assert.ok(heading >= 0, 'the Task Structure template has no `### Task N:` heading');
+  const first = lines.slice(heading + 1).find((line) => line !== '');
+  assert.equal(first, '**Tier:** heavy', 'the first line under the task heading is not `**Tier:** heavy`');
+  assert.ok(lines.indexOf('**Tier:** heavy') < lines.indexOf('**Depends on:** T1, T3'), '`**Tier:**` does not come before `**Depends on:**`');
+});
+
+test('## Task Tiers carries the three-tier rubric and its rules', () => {
+  const lines = section(PLANS, '## Task Tiers');
+  const text = lines.join('\n');
+  const bullet = (tier) => lines.find((line) => line.startsWith(`- **${tier}** —`)) ?? '';
+  for (const phrase of [
+    'security-relevant code (auth, permissions, secrets, sandboxing, policy, parsing untrusted input)',
+    'live state or migrations',
+    'changes spanning more than one plugin or system',
+    'a public interface others depend on (CLI flags and exit codes, file formats, hook contracts, the plan format)',
+    '`roles:complex-implementer`',
+  ]) {
+    assert.ok(bullet('heavy').includes(phrase), `the heavy bullet lacks "${phrase}"`);
+  }
+  assert.match(bullet('heavy'), /any of:/);
+  for (const phrase of [
+    'only: docs, comments, config values, version bumps, renames with no behavior change',
+    'within the light code allowance (at most 20 added+removed lines in total, test lines included, no new file, no prompt-like Markdown, no sensitive path)',
+  ]) {
+    assert.ok(bullet('light').includes(phrase), `the light bullet lacks "${phrase}"`);
+  }
+  assert.ok(bullet('standard').includes('everything else'), 'the standard bullet lacks "everything else"');
+  for (const phrase of [
+    'all-or-none per plan',
+    '`coordinator` tasks must be `light`',
+    '`roles:complex-implementer` tasks `heavy`',
+    '**Sensitive paths:** <glob>, <glob>',
+    'raise a tier at run time, never lower it',
+  ]) {
+    assert.ok(text.includes(phrase), `## Task Tiers does not state "${phrase}"`);
+  }
+});
+
+test('the plan self-review and audit check tiers', () => {
+  const item = section(PLANS, '## Self-Review').find((line) => line.startsWith('**7. Tiers:**'));
+  assert.ok(item, 'the plan Self-Review has no **7. Tiers:** item');
+  assert.match(section(PLANS, '## Plan Audit').join(' '), /tier/i, 'the Plan Audit does not mention tiers');
+});
+
+test('the audit prompt flags tier defects in plans', () => {
+  const lines = read(AUDIT).split('\n');
+  const raw = lines.find((line) => line.trim().startsWith('| Tiers |'));
+  assert.ok(raw, 'the audit prompt has no | Tiers | row');
+  const neighbour = lines.find((line) => line.trim().startsWith('| Task format |'));
+  assert.ok(neighbour, 'the audit prompt has no | Task format | row to compare indentation with');
+  const indent = (line) => line.match(/^ */)[0];
+  assert.equal(indent(raw), indent(neighbour), 'the | Tiers | row is not indented like the other rows of the prompt block');
+  assert.equal(
+    raw.trim(),
+    '| Tiers | A task tiered lower than its content justifies by the rubric; a plan with tiers on some tasks only; a coordinator task not light; a complex-implementer task not heavy |',
+  );
+});
+
+// A sensitive path makes a task heavy (spec U4): the header field is the only place a plan author learns that.
+test('sensitive paths make a task heavy, on top of the default set, and a big diff does too', () => {
+  const defaults = ['**/hooks/**', '**/setup/**', '**/*schema*', '**/migrations/**', '**/drizzle/**', '.github/**', 'plugins/workflow-gate/**'];
+  const header = block(section(PLANS, '## Plan Document Header'), '**Sensitive paths:**');
+  assert.match(header, /makes a task `heavy`/, 'the header field does not say the paths make a task heavy');
+  assert.match(header, /added to the default set/, 'the header field does not say the paths are added to the default set');
+  assert.doesNotMatch(header, /no `light` task may touch/, 'the header field still gives the old light-exclusion meaning');
+  const tiers = section(PLANS, '## Task Tiers');
+  assert.doesNotMatch(tiers.join(' '), /the paths no light task may touch/, '## Task Tiers still gives the old light-exclusion meaning');
+  const rule = tiers.find((line) => line.includes('touches a sensitive path'));
+  assert.ok(rule, '## Task Tiers does not say that touching a sensitive path makes a task heavy');
+  assert.match(rule, /heavy/);
+  assert.match(rule, /300 changed lines/, 'the sensitive-path sentence does not state the 300 changed lines rule');
+  for (const glob of defaults) assert.ok(rule.includes(`\`${glob}\``), `the sensitive-path sentence lacks the default glob ${glob}`);
+  const item = section(PLANS, '## Self-Review').find((line) => line.startsWith('**7. Tiers:**'));
+  assert.match(item, /touches a sensitive path/, 'Self-Review item 7 does not check a sensitive path for heavy');
+  assert.doesNotMatch(item, /stay clear of the plan's/, 'Self-Review item 7 still checks light tasks against the old rule');
+});
+
+// Task Roles (spec decisions 3-4): three roles; review-fixer is the orchestrator's, never a plan task's.
+test('## Task Roles lists the three task roles and keeps review-fixer out', () => {
+  const lines = section(PLANS, '## Task Roles');
+  const bullets = lines.filter((line) => line.startsWith('- '));
+  assert.equal(bullets.length, 3, `## Task Roles lists ${bullets.length} roles`);
+  const [tdd, complex, coordinator] = bullets;
+  assert.ok(tdd.startsWith('- `roles:tdd-implementer`') && tdd.includes('default'), tdd);
+  assert.ok(complex.startsWith('- `roles:complex-implementer`') && complex.includes('heavy'), complex);
+  assert.ok(coordinator.startsWith('- `coordinator`'), coordinator);
+  for (const phrase of ['light', 'small', 'probes', 'rollout', 'user checkpoints']) {
+    assert.ok(coordinator.includes(phrase), `the coordinator bullet does not say "${phrase}"`);
+  }
+  // A coordinator task is always light, and a migration is heavy: a migration is no coordinator work.
+  assert.doesNotMatch(coordinator, /migrat/i, 'the coordinator bullet lists migrations, which are heavy, as light work');
+  assert.ok(coordinator.includes('every `coordinator` task is `light`'), coordinator);
+  const text = lines.join(' ');
+  assert.ok(lines.some((line) => line.startsWith('Every task gets a `**Role:**` line naming the role that does its work.')), 'the section does not say every task gets a **Role:** line');
+  assert.ok(text.includes('A plan without the line reads as `roles:tdd-implementer`, but write it for every task anyway.'), 'the section lost the default-role sentence');
+  // Spec decision 5: live-state work and migrations are heavy; complex-implementer is the usual role for them, not a rule.
+  assert.match(text, /migrations? are never coordinator work: they are `heavy`, `roles:complex-implementer` is the usual role for them/, 'the section does not say live-state work and migrations are heavy, with complex-implementer the usual role');
+  assert.doesNotMatch(text, /migrations?\b[^.]*\btake `roles:complex-implementer`/, 'the section makes complex-implementer mandatory for live-state work and migrations');
+  assert.match(text, /`## After Merge`/, 'the section does not send merged-trunk operations to ## After Merge');
+  assert.ok(!bullets.some((line) => line.includes('review-fixer')), '`roles:review-fixer` is still listed as a task role');
+  assert.match(text, /`roles:review-fixer` is never a task role/, 'the section does not say review-fixer is never a task role');
+  assert.match(text, /fix rounds/, 'the section does not say who takes the fix rounds');
+});
+
+test('the plan states test-first for behavior changes at any tier, and a verification step otherwise', () => {
+  const para = section(PLANS, '## Task Structure').find((line) => line.startsWith('Test-first applies'));
+  assert.ok(para, 'the Task Structure notes lost the test-first paragraph');
+  // The whole first sentence, so a rewrite that exempts a tier ("except light") fails.
+  assert.ok(para.startsWith('Test-first applies to every task that changes behavior, at any tier. '), `the test-first paragraph opens differently: ${para.slice(0, 90)}`);
+  for (const phrase of ['at any tier', 'no behavior change', 'replaces the test steps with a verification step', 'the command to run and the output that means it passed']) {
+    assert.ok(para.includes(phrase), `the test-first paragraph does not say "${phrase}"`);
+  }
+});
+
+test('writing-plans carries no per-skill credit footer (the credit lives in NOTICE and the READMEs)', () => {
+  assert.doesNotMatch(read(PLANS), /superpowers|LICENSE-superpowers/);
+});
+
+test('writing-plans names no retired skill and no second execution skill', () => {
+  const text = read(PLANS);
+  for (const gone of ['using-git-worktrees', ['subagent', 'driven', 'development'].join('-'), 'requesting-code-review', 'writing-skills', 'Native']) {
+    assert.ok(!text.includes(gone), `writing-plans still mentions ${gone}`);
+  }
+  assert.match(section(PLANS, '## Plan Document Header').join('\n'), /^> \*\*For agentic workers:\*\* REQUIRED SUB-SKILL: Use methodology:executing-plans /m);
+});
+
+// Restored contract pins (they lived in the retired execution tests): each is a promise the skill still makes.
+test('the task template carries one Role line and the Skills line is skipped silently', () => {
+  const template = section(PLANS, '## Task Structure');
+  assert.equal(template.filter((line) => line.startsWith('**Role:**')).length, 1, 'the task template has not exactly one **Role:** line');
+  assert.equal(template.filter((line) => line.startsWith('**Tier:**')).length, 1);
+  const skills = template.find((line) => line.startsWith('- `**Skills:**`'));
+  assert.ok(skills, 'the Task Structure notes have no **Skills:** bullet');
+  for (const phrase of ['triqual suggest "<the task\'s text>" --json', 'suggestions[].slug', 'exit 3', 'headjack is not installed', 'empty output', 'exit 127', 'omit the line silently']) {
+    assert.ok(skills.includes(phrase), `the Skills bullet does not say "${phrase}"`);
+  }
+});
+
+test('the plan audit is always the adversarial reviewer', () => {
+  const audit = section(PLANS, '## Plan Audit').join(' ');
+  assert.ok(audit.includes('dispatch `roles:final-adversarial-reviewer` with `../brainstorming/spec-document-reviewer-prompt.md` on the plan and its spec'), audit);
+  assert.ok(audit.includes('runs on every plan, and no other reviewer takes its place'), audit);
+});
+
+test('Register the Plan: ledger init, the local --adopt route, and the store entry without a commit', () => {
+  const lines = section(PLANS, '## Register the Plan');
+  const step = (n) => lines.find((line) => line.startsWith(`${n}. `)) ?? assert.fail(`## Register the Plan has no step ${n}`);
+  const [one, two, three, four] = [1, 2, 3, 4].map(step);
+  for (const phrase of ['triqual tasks init <plan>', '"mode": "local"', 'triqual tracking write plan <draft>', 'triqual tasks init --adopt <draft>', '--replace', '"mode": "store"']) {
+    assert.ok(one.includes(phrase), `registration step 1 does not say "${phrase}"`);
+  }
+  for (const phrase of ['triqual tracking write entry <draft>', 'triqual tracking add <draft> --no-commit', 'no commit']) {
+    assert.ok(two.includes(phrase), `registration step 2 does not say "${phrase}"`);
+  }
+  for (const phrase of ['triqual tracking write status <draft>', 'triqual tracking status set --section <heading> <draft>']) {
+    assert.ok(three.includes(phrase), `registration step 3 does not say "${phrase}"`);
+  }
+  for (const phrase of ['"mode": "committed"', 'no tracking file is staged or committed']) {
+    assert.ok(four.includes(phrase), `registration step 4 does not say "${phrase}"`);
+  }
+  assert.match(lines.join(' '), /when not opted in, skip this section/);
+});
+
+test('plans are saved by tracking mode: not opted in writes no tracking file', () => {
+  const head = read(PLANS).split('\n## Scope Check')[0].replace(/\s+/g, ' ');
+  for (const phrase of ['triqual tasks paths --json', '"optedIn": true', '`plansDir`', '`docs/plans/`', 'never create `progress.md`', 'exit 3', 'handle it as not opted in', '"mode": "local"', 'mktemp -d', 'triqual tracking write plan <draft>', '"mode": "store"', 'Never write or edit under `.git/`']) {
+    assert.ok(head.includes(phrase), `the save-plans text does not say "${phrase}"`);
   }
 });

@@ -1,0 +1,77 @@
+#!/usr/bin/env node
+// Extract one task's full text from an implementation plan into a file the
+// implementer reads in one call, so the task text never has to be pasted
+// through the controller's context.
+//
+// Usage: task-brief PLAN_FILE TASK_NUMBER [OUTFILE]
+// Default OUTFILE: <repo-root>/.methodology/sdd/<plan-basename>/task-<N>-brief.md
+// (per plan and per worktree; concurrent runs of the SAME plan in the same
+// working tree share it).
+//
+// The task is read with the shared plan reader (lib/plan.mjs, a byte-identical
+// copy of progress-tracking's), so this script and parsePlan see the same
+// tasks: the brief is exactly the lines `start..end` of the task, from its
+// `### Task N:` heading to the line before the next heading of level 1 to 3
+// outside a fenced code block (a phase, a `## After Merge`), else to the end
+// of the plan.
+//
+// Exit codes: 0 written, 2 usage, missing plan file or malformed plan, 3 no
+// such task; a failing sdd-workspace passes its own status through.
+//
+// Dynamic imports only: the file has no extension, so Node may load it as
+// CommonJS or as an ES module depending on the nearest package.json.
+(async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { existsSync, readFileSync, realpathSync, statSync, writeFileSync } = await import('node:fs');
+  const { dirname, join } = await import('node:path');
+  const { pathToFileURL } = await import('node:url');
+
+  const EXIT_USAGE = 2;
+  const EXIT_NOT_FOUND = 3;
+  const scriptDir = dirname(realpathSync(process.argv[1]));
+  const { readTasks, PlanError } = await import(pathToFileURL(join(scriptDir, 'lib', 'plan.mjs')).href);
+
+  const stop = (code, message) => {
+    process.stderr.write(`${message}\n`);
+    process.exit(code);
+  };
+
+  const args = process.argv.slice(2);
+  if (args.length < 2 || args.length > 3) stop(EXIT_USAGE, 'usage: task-brief PLAN_FILE TASK_NUMBER [OUTFILE]');
+  const [plan, n] = args;
+  if (!existsSync(plan) || !statSync(plan).isFile()) stop(EXIT_USAGE, `no such plan file: ${plan}`);
+
+  let out = args[2];
+  if (out === undefined) {
+    // Invoke via node rather than direct exec: some extractors (Python zipfile)
+    // strip Unix exec bits when unpacking marketplace packages (#2040).
+    const ws = spawnSync(process.execPath, [join(scriptDir, 'sdd-workspace'), plan], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'],
+    });
+    if (ws.error) stop(1, `sdd-workspace failed: ${ws.error.message}`);
+    if (ws.status !== 0) process.exit(ws.status ?? 1);
+    out = join(ws.stdout.replace(/\n+$/, ''), `task-${n}-brief.md`);
+  }
+
+  const text = readFileSync(plan, 'utf8');
+  let tasks;
+  try {
+    tasks = readTasks(text);
+  } catch (e) {
+    if (e instanceof PlanError) stop(EXIT_USAGE, `${plan}: ${e.message}`);
+    throw e;
+  }
+  const task = tasks.find((t) => t.id === `T${n}`);
+  if (!task) stop(EXIT_NOT_FOUND, `task ${n} not found in ${plan} (no heading matching 'Task ${n}')`);
+
+  const brief = text.split('\n').slice(task.start - 1, task.end);
+  try {
+    writeFileSync(out, `${brief.join('\n')}\n`);
+  } catch (e) {
+    stop(1, `cannot write ${out}: ${e.message}`);
+  }
+  process.stdout.write(`wrote ${out}: ${brief.length} lines\n`);
+})().catch((e) => {
+  process.stderr.write(`task-brief: ${e.stack ?? e}\n`);
+  process.exit(1);
+});

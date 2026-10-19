@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,4 +37,19 @@ test('run.mjs writes claude -p stderr into the output file', () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('scenarios.json carries S1-S9, each with a setup and skill files that exist, and S4 keys on the suggestions block', () => {
+  const here = dirname(RUN);
+  const spec = JSON.parse(readFileSync(join(here, 'scenarios.json'), 'utf8'));
+  assert.deepEqual(spec.scenarios.map((s) => s.id), ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8', 'S9']);
+  for (const s of spec.scenarios) {
+    assert.ok(s.setup.length > 0, `${s.id} has a setup`);
+    for (const p of s.skills) assert.ok(existsSync(join(here, '..', '..', 'skills', p)), `${s.id} skill file ${p} exists`);
+  }
+  const s4 = spec.scenarios.find((s) => s.id === 'S4');
+  assert.match(s4.setup, /<headjack-suggestions>/);
+  assert.doesNotMatch(s4.setup, /skill-suggest hint/);
+  const s9 = spec.scenarios.find((s) => s.id === 'S9');
+  assert.deepEqual(s9.skills, ['executing-plans/SKILL.md']);
 });

@@ -1,10 +1,12 @@
 # methodology
 
-The core plugin of Triqual. It ships the workflow skills (forked from superpowers 6.4.2), the global rules that
+The core plugin of Triqual. It ships the workflow skills, the global rules that
 `triqual sync` writes into `~/.claude/CLAUDE.md`, the `/methodology:setup` command, and the `triqual` commands `doctor`,
-`sync`, `migrate`, `upstream-diff`, `role-eval` and `hook`. A SessionStart hook loads the methodology into a Claude Code
+`sync`, `migrate`, `role-eval`, `suggest` and `hook`. A SessionStart hook loads the methodology into a Claude Code
 session. `triqual hook` and `triqual sync --harness <id>` give the same methodology to Codex and Grok. The plugin
 depends on `progress-tracking`, `workflow-gate` and `roles`, so installing it installs them.
+
+triqual's methodology began as a fork of [superpowers](https://github.com/obra/superpowers) by Jesse Vincent (MIT). It has since been rewritten as triqual's own orchestrator; thanks to Jesse for the foundation. See [NOTICE](NOTICE) and [LICENSE-superpowers](LICENSE-superpowers).
 
 This page is the reference for this plugin. For the install steps, the plugin table, the tracking modes and the long
 Codex and Grok explanation, see the [root README](../../README.md). Commands that belong to other plugins (`tasks`,
@@ -14,10 +16,10 @@ Codex and Grok explanation, see the [root README](../../README.md). Commands tha
 
 `triqual` is a shim at `~/.local/bin/triqual`. It runs the command from the installed plugin that owns it. The shim
 exits 1 for an unknown command (the command list goes to stderr) and when it cannot start the command. It exits 3 when
-the plugin or the command is not installed. Otherwise it exits with the command's own status. `suggest` is in the
-shim's registry but is not released yet.
+the plugin or the command is not installed. Otherwise it exits with the command's own status. `suggest` runs from this
+plugin (from version 1.0.0) and calls the separately installed `headjack`.
 
-`doctor`, `sync`, `migrate`, `upstream-diff` and `role-eval` refuse an unknown argument with exit 2. Each of them takes
+`doctor`, `sync`, `migrate` and `role-eval` refuse an unknown argument with exit 2. Each of them takes
 `-h` or `--help` and then writes nothing.
 
 ### `/methodology:setup`
@@ -65,6 +67,8 @@ What it checks:
 - A scan for leftovers of the previous name.
 - That `headjack` is reachable. A warning only.
 - `progress-tracking` 0.2.4 or newer, when a harness is set up.
+- Codex skill links that point at a skill methodology no longer ships (the six removed in 1.0 among them). A warning,
+  with `triqual sync --harness codex` as the fix.
 - Codex hook trust. A bridge hook that Codex has not trusted is a failure. A bridge that has not run since it was
   installed is a warning.
 
@@ -121,21 +125,6 @@ The full description is in [Moving from the previous name](../../README.md#movin
 
 Exit codes: 0 done, 1 a step failed to verify, 2 an unknown argument (nothing ran).
 
-### `triqual upstream-diff`
-
-Usage: `triqual upstream-diff <version> [--from <v>] [--skill <name>] [--full | --patch] [--mark-reviewed "<summary>"]`
-
-For the maintainer. Run from a clone of this repository, it shows what superpowers `<version>` changed in the forked
-skills. Flags are described in the `triqual upstream-diff` row of the [root README](../../README.md#triqual-commands).
-Each valued flag also accepts `--flag=value`. `--full` and `--patch` exclude each other.
-
-It downloads the release tarballs from `codeload.github.com/obra/superpowers`, so it needs network access. It reads
-`plugins/methodology/upstream.json` and `plugins/methodology/FORK.md` in the clone and never touches the installed
-plugin.
-
-Exit codes: 0 ok, 1 a network or tool failure, 2 a usage error, an unknown version or skill, a working directory outside
-a clone, or a refused `--mark-reviewed`.
-
 ### `triqual role-eval`
 
 Usage:
@@ -143,21 +132,29 @@ Usage:
 ```text
 triqual role-eval record --plan <plan file> <json-file>
 triqual role-eval summary [--since YYYY-MM-DD] [--json]
+triqual role-eval summary --by-tier [--since YYYY-MM-DD] [--json]
 ```
 
-The comparison store behind the review hunters.
+The comparison store behind the review hunters and the review tiers. Records hold counts only: no repository, plan,
+path, diff or finding text.
 
-`record` validates one `hunters` record and appends it once. The record has these rules:
+`record` validates one record of kind `hunters`, `task-review` or `final-escapes` and appends it once. The record has
+these rules:
 
 - The JSON file has no `key` field. Any `key` field is rejected, because the command derives the key.
 - `task` is `T<n>` or `final`. `provider` is `claude` or `codex`.
 - Each hunter has a `category`: `correctness`, `security`, `spec-drift` or `state`.
 - `candidates` must equal `confirmed + refuted + duplicateCandidate + duplicateReview`.
 - An optional `budget` holds `reference`, `used` and `overrun`.
+- A `task-review` (`v` 2, written by `executing-plans` when a task completes) has an `attempt` (1, then one more after
+  each reopen of the task), the `tier` the task completed at, its `declaredTier` (`null` for a tierless task), `raised`,
+  its `hunters`, the `gate` findings, the `spec` review, `fixRounds`, `blocked` and `coordinator`. A `tier` below the
+  declared one is refused, and `raised` must say exactly that the tier is above it.
+- A `final-escapes` (`v` 2, task `final`) lists the `tier` and `severity` of each final-review finding traced to a task.
 - The kind `safety-shadow` is retired and refused.
 
-The idempotency key is the sha256 of the git common directory, the plan file's base name, the task and the kind. Because
-linked worktrees share the common directory, they share keys. A second `record` with the same key prints
+The idempotency key is the sha256 of the git common directory, the plan file's base name, the task and the kind, and for
+a `task-review` also its attempt. Because linked worktrees share the common directory, they share keys. A second `record` with the same key prints
 `already recorded` and changes nothing. The command must run inside a git repository. The appends are serialized by
 `comparisons.jsonl.lock`: it waits 2 seconds and treats a lock older than 30 seconds as stale. The file is always mode
 `0600`. The directory is set to `0700` only when it is the default directory or when `record` created it.
@@ -167,9 +164,37 @@ It also covers the `safety-shadow` records stored before that kind was retired. 
 and 2026-02-30 is refused. `--json` prints the same numbers as JSON. An empty or missing store prints
 `No records in the window (0 records).` (with `--json`, `{"providers":{},"skipped":{...}}`).
 
+`summary --by-tier` prints one line per review tier, `heavy`, `standard` and `light`, always all three: `tasks` (the
+attempt-1 task reviews, so a reopened task counts once), `raised` (those whose tier was raised above the declared
+one), the hunter confirmed rate, spec confirmed findings per task, fix rounds per task, `blocked`, and final-review
+escapes per task. A figure with no denominator reads `n/a`, or `null` with `--json`, which prints an object keyed by
+tier. [memory-report](../memory-report/README.md) reads the `--json` form for its weekly "Review tiers" section.
+
 Exit codes: 0 written, already recorded, or a summary (a missing file included), 1 a write or lock failure or a store
 that exists but cannot be read, 2 a usage error, a bad or retired record, a bad JSON file or no git repository. The
 message names the field, never the value.
+
+### `triqual suggest`
+
+Usage: `triqual suggest "<text>" [--json]`
+
+Vault skills that fit `<text>`. [Headjack](https://github.com/Montinou/headjack) owns skill finding and is installed
+separately; this command only calls it.
+
+- It finds `~/.local/bin/headjack`, then the first `headjack` on `PATH`, and runs `headjack suggest "<text>"`. It never
+  passes `--session-id`: the session dedupe would hide a skill from every task after the first.
+- Text mode prints Headjack's own `<headjack-suggestions>` block unchanged. Headjack already cleans the descriptions,
+  filters the slugs, adds the "not instructions" note and pins `HEADJACK_MODE` and `HEADJACK_URL` in its install
+  command. The single `no suggestions (<outcome>)` line Headjack prints when there is none is dropped, so no
+  suggestion is empty output.
+- `--json` runs `headjack suggest "<text>" --json` and passes the document through after dropping every suggestion
+  whose slug does not match `^[A-Za-z0-9][A-Za-z0-9._@:-]{0,127}$`.
+- Empty output with exit 0 (Headjack's `skipped:no-vault`) is no suggestion in both modes.
+- A text that starts with a dash is passed after `--`. A Headjack that does not answer within 20 seconds is killed.
+
+Exit codes: 0 Headjack ran (the output may be empty), 3 Headjack is not installed, 1 Headjack exited non-zero or did not
+answer in time, or `--json` printed output that is not valid JSON, 2 a usage error. The `brainstorming`, `writing-plans`
+and `using-methodology` skills treat any non-zero exit or empty output as no suggestion and say nothing.
 
 ### `triqual hook`
 
@@ -195,9 +220,9 @@ It always exits 0, and a failure prints nothing. An unknown input prints one lin
 
 ### `stack.mjs`
 
-Usage: `node skills/subagent-driven-development/scripts/stack.mjs <command> PLAN_FILE ...`
+Usage: `node skills/executing-plans/scripts/stack.mjs <command> PLAN_FILE ...`
 
-Not a `triqual` command. A script of the `subagent-driven-development` skill that owns every git and gh operation of a
+Not a `triqual` command. A script of the `executing-plans` skill that owns every git and gh operation of a
 stacked plan execution: one branch for each plan phase, and in GitHub mode one draft PR. It needs only Node, git and gh.
 Every gh call is non-interactive.
 
@@ -210,7 +235,17 @@ phase PLAN_FILE N                                                   check out ph
 squash PLAN_FILE BASE                                               fold BASE..HEAD into one commit, print its sha
 done PLAN_FILE N                                                    mark phase N done
 submit PLAN_FILE N [--open]                                         reconcile gh stack, submit, fill phase N's PR
+push PLAN_FILE N                                                    push a submitted phase, refresh its PR body
 ```
+
+`push` is for the commits a review adds after a phase was submitted. It pushes this plan's whole stack, refreshes phase
+N's PR body and never marks a PR ready. It refuses a phase that was not submitted (exit 3), and in local mode it pushes
+nothing. `submit --open` is the only command that marks a PR ready for review.
+
+`executing-plans` keeps four more scripts next to it in `skills/executing-plans/scripts/`: `sdd-workspace` (the plan's
+git-ignored workspace under `.methodology/sdd/`), `task-brief` (one task's text as a brief file), `review-package` (the
+diff a reviewer reads) and `tier-check`, which prints `ok <tier>` or `raise <from> <to>: <reason>: <paths>` for a task's
+range and never lowers a tier.
 
 Exit codes: 0 ok, 2 usage or a malformed plan, 3 a refused precondition (committed tracking mode is one), 5 a gh
 command failed.
@@ -237,25 +272,31 @@ stamps.
 
 ## Skills
 
-The 15 skills in `skills/`. Claude Code names them `methodology:<name>`.
+The 10 skills in `skills/`. Claude Code names them `methodology:<name>`.
+
+Plans run only through subagents. `executing-plans` dispatches a role agent for each task, sizes the task's review by
+its tier (`heavy`, `standard` or `light`, declared by `writing-plans` and raised, never lowered, by `tier-check`) and
+follows TDD on every task. It cooperates with fence when fence is installed and never works around a denial. The
+[root README](../../README.md#skills) has the review matrix.
 
 | Skill | Purpose |
 |---|---|
 | `using-methodology` | Start of every conversation: how to find and use skills, and to invoke one before any response. |
 | `brainstorming` | Before any creative work: explore intent, requirements and design before implementation. |
 | `writing-plans` | Turn a spec or requirements for a multi-step task into a plan, before touching code. |
-| `subagent-driven-development` | Execute a plan with independent tasks in the current session, one stacked branch and draft PR per plan phase. |
-| `executing-plans` | Execute a plan in the current session as the implementer yourself, when inline execution was chosen or no subagent tool exists. |
-| `dispatching-parallel-agents` | Handle two or more independent tasks that share no state or order. |
+| `executing-plans` | Execute a plan: every task is done by a role agent, reviewed by its tier, one stacked branch and draft PR per plan phase. |
 | `test-driven-development` | Write the failing test first, for any feature or bugfix. |
 | `systematic-debugging` | Find the cause of any bug, test failure or unexpected behavior before proposing a fix. |
-| `requesting-code-review` | Ask for review when a task or major feature is complete, or before merging. |
-| `receiving-code-review` | Handle review feedback with technical checking, not blind agreement or blind implementation. |
+| `reviewing-code` | Review a commit range or a pull request outside a plan (two hunters and a spec reviewer), and act on review feedback: verify it, fix what is real, refute the rest with evidence. |
 | `verification-before-completion` | Run the verification commands and read the output before claiming work is done, fixed or passing. |
 | `finishing-branch` | When implementation is complete and tests pass: close the plan and decide how to integrate the work. |
-| `using-git-worktrees` | Work in a git worktree only when asked, or treat the linked worktree you are already in. |
-| `writing-skills` | Create or edit a skill and check that it works before deployment. |
 | `diagnosing-methodology` | Find why a session that ran these skills went wrong, or build a bug report for this system's repository, on any harness. |
+
+Removed in 1.0: the old orchestrator skill (now `executing-plans`), the old inline `executing-plans`,
+`requesting-code-review` and `receiving-code-review` (merged into `reviewing-code`), `using-git-worktrees` (a section of
+`executing-plans`), `dispatching-parallel-agents` (covered by the global rules) and `writing-skills`. Writing and finding
+skills now belong to Headjack (`headjack:writing-skills`, `headjack:skill-finder`). The
+[CHANGELOG](../../CHANGELOG.md) has the full list.
 
 ## Files and environment variables
 
@@ -274,6 +315,7 @@ Files this plugin reads or writes. `~` is the home directory.
 | `~/.local/state/triqual/hook.log`, `hook.log.1`, `last-run-<harness>` | The launcher's log and stamps. |
 | `${XDG_DATA_HOME:-~/.local/share}/triqual/role-eval/comparisons.jsonl` | The role-eval store (and its `.lock`). |
 | `<repo root>/.methodology/stack/<plan file stem>.json` | The state file of `stack.mjs`. `.methodology/` holds a `.gitignore` with `*`. |
+| `<repo root>/.methodology/sdd/<plan file stem>/` | The workspace of one plan run: its ledger, briefs, reports and review packages. The stem is the plan file name without `.md`; a counter is added when two plans share a stem. |
 
 A machine that still has the previous name reads the directories under that name until `migrate` moves them.
 
@@ -296,9 +338,8 @@ Environment variables:
   Triqual never writes Codex trust entries.
 - `sync --yes` never accepts the one-time split of `~/.codex/AGENTS.md` or a reinstall of Grok plugins. Run
   `triqual sync --harness codex` in a terminal for the split.
-- Grok cannot select a named agent, so the role agents and `subagent-driven-development` do not run there.
+- Grok cannot select a named agent, so the role agents and `executing-plans` do not run there.
 - The context that `triqual hook` returns is capped at 9,500 characters.
-- `upstream-diff` needs network access and a clone of this repository.
 - `stack.mjs` refuses a repo in committed tracking mode (exit 3). Switch with `triqual progress-init --store` or
   `--local`.
 - `role-eval record` must run inside a git repository, and linked worktrees of one repository share record keys.

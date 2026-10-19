@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, symlinkSync, chmodSync, realpathSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { COMMANDS, DESCRIPTIONS, HELP_BUDGET_MS, resolveInstallPath, resolveCommand, helpText } from '../plugins/methodology/setup/triqual-shim.mjs';
 import { BRAND } from '../plugins/methodology/cli/lib/brand.mjs';
 
@@ -55,14 +55,31 @@ const shimEnv = (home) => {
 const runShim = (shim, args, { home, cwd }) =>
   spawnSync(process.execPath, [shim, ...args], { cwd, env: shimEnv(home), encoding: 'utf8' });
 
+// A synthetic command no release ships (`future`, in the plugin `future-plugin`) for the cases about a command that does
+// not resolve: a copy of the shim, which is built to be copied alone, with the command added to its own COMMANDS and
+// DESCRIPTIONS. { file, mod } is the copy's path (for runShim) and its imported module.
+const FUTURE = 'future';
+const FUTURE_PLUGIN = 'future-plugin';
+async function withFuture(fn) {
+  const dir = tempDir('triqual-future-shim-');
+  try {
+    const file = join(dir, 'triqual.mjs');
+    const source = readFileSync(SHIM, 'utf8')
+      .replace('export const COMMANDS = {\n', `export const COMMANDS = {\n  ${FUTURE}: ['${FUTURE_PLUGIN}', 'cli/${FUTURE}.mjs'],\n`)
+      .replace('export const DESCRIPTIONS = {\n', `export const DESCRIPTIONS = {\n  ${FUTURE}: 'a command that no release ships',\n`);
+    assert.ok(source.includes(`${FUTURE}: ['${FUTURE_PLUGIN}'`) && source.includes(`${FUTURE}: 'a command that`), 'the synthetic command was not added');
+    writeFileSync(file, source);
+    return await fn({ file, mod: await import(pathToFileURL(file).href) });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}
+
 test('COMMANDS maps every triqual command to its plugin and cli file', () => {
   assert.deepEqual(COMMANDS, {
     tasks: ['progress-tracking', 'cli/tasks.mjs'],
     'progress-init': ['progress-tracking', 'cli/progress-init.mjs'],
-    suggest: ['skill-suggest', 'cli/suggest.mjs'],
+    suggest: ['methodology', 'cli/suggest.mjs'],
     doctor: ['methodology', 'cli/doctor.mjs'],
     sync: ['methodology', 'cli/sync.mjs'],
-    'upstream-diff': ['methodology', 'cli/upstream-diff.mjs'],
     ui: ['progress-tracking', 'cli/ui.mjs'],
     tracking: ['progress-tracking', 'cli/tracking.mjs'],
     hook: ['methodology', 'cli/hook.mjs'],
@@ -145,16 +162,16 @@ test('resolveInstallPath returns null for malformed input', () => {
   assert.equal(resolveInstallPath(twoEntries(id), `other@${BRAND.legacy.marketplace}`, '/x'), null);
 });
 
-test('resolveCommand reports a missing plugin', () => {
+test('resolveCommand reports a missing plugin', () => withFuture(({ mod }) => {
   const home = fixtureHome({ methodology: {} });
   try {
     // No marketplace is known: the missing plugin is named under triqual.
-    const r = resolveCommand({ home, cwd: home, cmd: 'suggest' });
+    const r = mod.resolveCommand({ home, cwd: home, cmd: FUTURE });
     assert.equal(r.file, undefined);
-    assert.ok(r.error.includes(`requires skill-suggest@${BRAND.marketplace}`), r.error);
-    assert.ok(r.error.includes(`claude plugin install skill-suggest@${BRAND.marketplace} --scope user`), r.error);
+    assert.ok(r.error.includes(`requires ${FUTURE_PLUGIN}@${BRAND.marketplace}`), r.error);
+    assert.ok(r.error.includes(`claude plugin install ${FUTURE_PLUGIN}@${BRAND.marketplace} --scope user`), r.error);
   } finally { rmSync(home, { recursive: true, force: true }); }
-});
+}));
 
 test('resolveCommand treats a missing or unparsable installed_plugins.json as no plugins', () => {
   const home = tempDir('triqual-home-');
@@ -187,36 +204,38 @@ function marketplaceCopy(home, names, files = {}) {
 }
 
 const RELEASED = ['methodology', 'progress-tracking', 'workflow-gate', 'roles'];
-const NOT_RELEASED = `triqual suggest: requires skill-suggest@${BRAND.legacy.marketplace}, which is not released yet`;
+const NOT_RELEASED = `triqual ${FUTURE}: requires ${FUTURE_PLUGIN}@${BRAND.legacy.marketplace}, which is not released yet`;
+const UNRELEASED = { error: NOT_RELEASED, status: 'unreleased', marker: '(not released yet)' };
 
-test('resolveCommand says "not released yet" for a plugin the installed marketplace does not list', () => {
+test('resolveCommand says "not released yet" for a plugin the installed marketplace does not list', () => withFuture(({ file, mod }) => {
   const home = fixtureHome({ methodology: {} });
   try {
     marketplaceCopy(home, RELEASED);
-    assert.deepEqual(resolveCommand({ home, cwd: home, cmd: 'suggest' }), { error: NOT_RELEASED, status: 'unreleased', marker: '(not released yet)' });
-    const r = runShim(SHIM, ['suggest'], { home, cwd: home });
+    assert.deepEqual(mod.resolveCommand({ home, cwd: home, cmd: FUTURE }), UNRELEASED);
+    const r = runShim(file, [FUTURE], { home, cwd: home });
     assert.equal(r.status, 3);
     assert.equal(r.stderr, `${NOT_RELEASED}\n`);
   } finally { rmSync(home, { recursive: true, force: true }); }
-});
+}));
 
-test('resolveCommand says "not released yet" when an unlisted plugin is installed without the command file', () => {
-  const home = fixtureHome({ 'skill-suggest': { 'README.md': '' } });
+test('resolveCommand says "not released yet" when an unlisted plugin is installed without the command file', () => withFuture(({ mod }) => {
+  const home = fixtureHome({ [FUTURE_PLUGIN]: { 'README.md': '' } });
   try {
     marketplaceCopy(home, RELEASED);
-    assert.deepEqual(resolveCommand({ home, cwd: home, cmd: 'suggest' }), { error: NOT_RELEASED, status: 'unreleased', marker: '(not released yet)' });
+    assert.deepEqual(mod.resolveCommand({ home, cwd: home, cmd: FUTURE }), UNRELEASED);
   } finally { rmSync(home, { recursive: true, force: true }); }
-});
+}));
 
-test('resolveCommand keeps the install hint for a listed plugin, and when the marketplace copy is unreadable', () => {
+test('resolveCommand keeps the install hint for a listed plugin, and when the marketplace copy is unreadable', () => withFuture(({ mod }) => {
   const home = fixtureHome({ methodology: {} });
+  const hint = `claude plugin install ${FUTURE_PLUGIN}@${BRAND.legacy.marketplace} --scope user`;
   try {
-    marketplaceCopy(home, [...RELEASED, 'skill-suggest']);
-    assert.ok(resolveCommand({ home, cwd: home, cmd: 'suggest' }).error.includes(`claude plugin install skill-suggest@${BRAND.legacy.marketplace} --scope user`));
+    marketplaceCopy(home, [...RELEASED, FUTURE_PLUGIN]);
+    assert.ok(mod.resolveCommand({ home, cwd: home, cmd: FUTURE }).error.includes(hint));
     writeFileSync(join(home, '.claude', 'plugins', 'marketplaces', BRAND.legacy.marketplace, '.claude-plugin', 'marketplace.json'), '{ nope');
-    assert.ok(resolveCommand({ home, cwd: home, cmd: 'suggest' }).error.includes(`claude plugin install skill-suggest@${BRAND.legacy.marketplace} --scope user`));
+    assert.ok(mod.resolveCommand({ home, cwd: home, cmd: FUTURE }).error.includes(hint));
   } finally { rmSync(home, { recursive: true, force: true }); }
-});
+}));
 
 test('resolveCommand reports a missing command file in an older install', () => {
   const home = fixtureHome({ 'progress-tracking': { 'scripts/init.mjs': '' } });
@@ -323,10 +342,9 @@ test('DESCRIPTIONS gives every command its one-line description', () => {
   assert.deepEqual(DESCRIPTIONS, {
     tasks: 'task ledger: move plan tasks, check drift, status, status-line segment',
     'progress-init': 'opt the current repo into strict progress tracking (--local for shared repos)',
-    suggest: 'suggest vault skills for a request',
+    suggest: 'suggest vault skills for a request (through headjack)',
     doctor: "diagnose the install (--repo: this repo's tracking)",
     sync: "write the installed rules into ~/.claude/CLAUDE.md's managed section",
-    'upstream-diff': 'diff the forked skills against a superpowers release',
     ui: 'local read-only tracking dashboard',
     tracking: 'write a tracking file (entry, status, spec, plan) from a draft; the way to write them in local mode',
     hook: 'run a methodology hook for another harness (Codex, Grok)',
@@ -344,8 +362,8 @@ const FAKE_DOCTOR = `if (process.argv.includes('--help')) process.stdout.write($
 const FAILING_SYNC = "process.stdout.write('boom\\n');\nprocess.exit(1);\n";
 const indented = (text) => text.trimEnd().split('\n').map((l) => (l ? `      ${l}` : '')).join('\n');
 
-// A temp HOME with: methodology installed (fake doctor, failing sync, no upstream-diff file), the real
-// progress-tracking of this checkout, skill-suggest neither installed nor released.
+// A temp HOME with: methodology installed (fake doctor, failing sync, no migrate file), the real
+// progress-tracking of this checkout, and no plugin that ships the synthetic `future` command, installed or released.
 const manifest = (version) => JSON.stringify({ name: 'methodology', version });
 function helpHome() {
   const home = fixtureHome({ methodology: { 'bin/doctor.mjs': FAKE_DOCTOR, 'bin/sync.mjs': FAILING_SYNC, '.claude-plugin/plugin.json': manifest('0.1.2') } });
@@ -357,10 +375,10 @@ function helpHome() {
   return home;
 }
 
-test('triqual, triqual help, triqual --help and triqual -h print the full help to stdout and exit 0', () => {
+test('triqual, triqual help, triqual --help and triqual -h print the full help to stdout and exit 0', () => withFuture(({ file }) => {
   const home = helpHome();
   try {
-    const runs = [[], ['help'], ['--help'], ['-h']].map((args) => runShim(SHIM, args, { home, cwd: home }));
+    const runs = [[], ['help'], ['--help'], ['-h']].map((args) => runShim(file, args, { home, cwd: home }));
     for (const r of runs) {
       assert.equal(r.status, 0, r.stderr);
       assert.equal(r.stderr, '');
@@ -390,13 +408,14 @@ test('triqual, triqual help, triqual --help and triqual -h print the full help t
     assert.doesNotMatch(help, /boom/);
     assert.match(lines[lines.indexOf(row('sync')[0]) + 1], /^  \S/, 'sync row directly followed by the next row');
     // Unresolvable: the marker, no usage.
-    assert.match(row('suggest')[0], / \(not released yet\)$/);
+    assert.match(row(FUTURE)[0], / \(not released yet\)$/);
+    assert.ok(row(FUTURE)[0].includes('a command that no release ships'));
     // Missing from both the install and the marketplace copy: not released, whatever the plugin.
-    assert.match(row('upstream-diff')[0], / \(not released yet\)$/);
+    assert.match(row('migrate')[0], / \(not released yet\)$/);
   } finally { rmSync(home, { recursive: true, force: true }); }
-});
+}));
 
-test('triqual help <command>, triqual --help <command>, triqual -h <command> and triqual <command> --help print the same one help', () => {
+test('triqual help <command>, triqual --help <command>, triqual -h <command> and triqual <command> --help print the same one help', () => withFuture(({ file }) => {
   const home = helpHome();
   try {
     for (const cmd of ['doctor', 'tasks']) {
@@ -410,14 +429,14 @@ test('triqual help <command>, triqual --help <command>, triqual -h <command> and
       assert.doesNotMatch(runs[0].stdout, /usage: triqual <command>/);
     }
     assert.equal(runShim(SHIM, ['help', 'doctor'], { home, cwd: home }).stdout, FAKE_DOCTOR_USAGE);
-    // An unresolvable command answers as `triqual suggest --help` does: the resolution error, exit 3.
-    for (const args of [['help', 'suggest'], ['--help', 'suggest'], ['suggest', '--help']]) {
-      const r = runShim(SHIM, args, { home, cwd: home });
+    // An unresolvable command answers as `triqual future --help` does: the resolution error, exit 3.
+    for (const args of [['help', FUTURE], ['--help', FUTURE], [FUTURE, '--help']]) {
+      const r = runShim(file, args, { home, cwd: home });
       assert.equal(r.status, 3, args.join(' '));
       assert.equal(r.stderr, `${NOT_RELEASED}\n`, args.join(' '));
     }
   } finally { rmSync(home, { recursive: true, force: true }); }
-});
+}));
 
 test('helpText shows the description only for a command whose --help times out', () => {
   const hang = "if (process.argv.includes('--help')) setTimeout(() => console.log('late'), 5000);\n";
@@ -475,9 +494,9 @@ test('triqual progress-init runs the progress-tracking init in the cwd repo', ()
   }
 });
 
-test('progress-tracking is at version 0.4.2', () => {
+test('progress-tracking is at version 0.5.0', () => {
   const manifest = JSON.parse(readFileSync(join(ROOT, 'plugins', 'progress-tracking', '.claude-plugin', 'plugin.json'), 'utf8'));
-  assert.equal(manifest.version, '0.4.2');
+  assert.equal(manifest.version, '0.5.0');
 });
 
 // Before methodology 0.1.2 and progress-tracking 0.2.1 the commands ignored --help: sync ran and wrote
@@ -531,59 +550,59 @@ test('the shim never passes --help to an install older than the one that support
 const plugin = (name, version) => ({ '.claude-plugin/plugin.json': JSON.stringify({ name, version }) });
 const rowOf = (help, cmd) => help.split('\n').find((l) => l.startsWith(`  ${cmd} `));
 
-test('markers and errors are per command: the marketplace copy decides between update and not released', () => {
+test('markers and errors are per command: the marketplace copy decides between update and not released', () => withFuture(({ file, mod }) => {
   const home = fixtureHome({ methodology: { ...plugin('methodology', '0.1.2') }, 'progress-tracking': { ...plugin('progress-tracking', '0.2.0') } });
   try {
-    // progress-tracking lacks bin/tasks.mjs, which the marketplace copy has; methodology lacks bin/upstream-diff.mjs,
-    // which the copy lacks too; skill-suggest is listed but not installed.
-    marketplaceCopy(home, [...RELEASED, 'skill-suggest'], { 'progress-tracking': ['bin/tasks.mjs'] });
+    // progress-tracking lacks bin/tasks.mjs, which the marketplace copy has; methodology lacks bin/migrate.mjs,
+    // which the copy lacks too; future-plugin is listed but not installed.
+    marketplaceCopy(home, [...RELEASED, FUTURE_PLUGIN], { 'progress-tracking': ['bin/tasks.mjs'] });
     const tasks = resolveCommand({ home, cwd: home, cmd: 'tasks' });
     assert.equal(tasks.status, 'update');
     assert.equal(tasks.marker, '(update progress-tracking to get it)');
     assert.ok(tasks.error.endsWith(`Update it with: claude plugin update progress-tracking@${BRAND.legacy.marketplace}`), tasks.error);
-    const diff = resolveCommand({ home, cwd: home, cmd: 'upstream-diff' });
+    const diff = resolveCommand({ home, cwd: home, cmd: 'migrate' });
     assert.equal(diff.status, 'unreleased');
     assert.equal(diff.marker, '(not released yet)');
     assert.doesNotMatch(diff.error, /update|install/i);
-    const suggest = resolveCommand({ home, cwd: home, cmd: 'suggest' });
-    assert.equal(suggest.status, 'not-installed');
-    assert.equal(suggest.marker, '(not installed)');
-    for (const [cmd, marker] of [['tasks', '(update progress-tracking to get it)'], ['upstream-diff', '(not released yet)'], ['suggest', '(not installed)']]) {
-      const r = runShim(SHIM, [cmd], { home, cwd: home });
+    const future = mod.resolveCommand({ home, cwd: home, cmd: FUTURE });
+    assert.equal(future.status, 'not-installed');
+    assert.equal(future.marker, '(not installed)');
+    for (const [cmd, marker] of [['tasks', '(update progress-tracking to get it)'], ['migrate', '(not released yet)'], [FUTURE, '(not installed)']]) {
+      const r = runShim(file, [cmd], { home, cwd: home });
       assert.equal(r.status, 3, cmd);
-      assert.equal(r.stderr, `${resolveCommand({ home, cwd: home, cmd }).error}\n`, cmd);
-      assert.ok(rowOf(helpText({ home, cwd: home }), cmd).endsWith(` ${marker}`), cmd);
+      assert.equal(r.stderr, `${mod.resolveCommand({ home, cwd: home, cmd }).error}\n`, cmd);
+      assert.ok(rowOf(mod.helpText({ home, cwd: home }), cmd).endsWith(` ${marker}`), cmd);
     }
     // The marketplace copy cannot be read: the installed version is named and no update is suggested.
     rmSync(join(home, '.claude', 'plugins', 'known_marketplaces.json'));
-    const unknown = resolveCommand({ home, cwd: home, cmd: 'upstream-diff' });
+    const unknown = resolveCommand({ home, cwd: home, cmd: 'migrate' });
     assert.equal(unknown.status, 'unknown');
     assert.equal(unknown.marker, '(not in the installed methodology 0.1.2)');
     assert.doesNotMatch(unknown.error, /update/i);
     assert.equal(resolveCommand({ home, cwd: home, cmd: 'tasks' }).marker, '(not in the installed progress-tracking 0.2.0)');
   } finally { rmSync(home, { recursive: true, force: true }); }
-});
+}));
 
 // A command that records every call in the sentinel file and prints a usage on --help.
 const recorder = (sentinel) => `import { appendFileSync } from 'node:fs';\nappendFileSync(${JSON.stringify(sentinel)}, process.argv.slice(2).join(' ') + '\\n');\nif (process.argv.includes('--help')) console.log('usage: recorded');\n`;
 
-test('--help goes only to a plugin listed in HELP_SINCE: an unlisted plugin gets the description only', () => {
-  const home = fixtureHome({ 'skill-suggest': { 'bin/suggest.mjs': '', ...plugin('skill-suggest', '9.9.9') } });
-  writeFileSync(join(home, '.claude', 'plugins', 'cache', BRAND.legacy.marketplace, 'skill-suggest', '0.1.0', 'bin', 'suggest.mjs'), recorder(join(home, 'ran')));
+test('--help goes only to a plugin listed in HELP_SINCE: an unlisted plugin gets the description only', () => withFuture(({ file, mod }) => {
+  const home = fixtureHome({ [FUTURE_PLUGIN]: { [`bin/${FUTURE}.mjs`]: '', ...plugin(FUTURE_PLUGIN, '9.9.9') } });
+  writeFileSync(join(home, '.claude', 'plugins', 'cache', BRAND.legacy.marketplace, FUTURE_PLUGIN, '0.1.0', 'bin', `${FUTURE}.mjs`), recorder(join(home, 'ran')));
   try {
-    marketplaceCopy(home, [...RELEASED, 'skill-suggest']);
-    const help = runShim(SHIM, ['--help'], { home, cwd: home });
+    marketplaceCopy(home, [...RELEASED, FUTURE_PLUGIN]);
+    const help = runShim(file, ['--help'], { home, cwd: home });
     assert.equal(help.status, 0, help.stderr);
-    assert.ok(rowOf(help.stdout, 'suggest').endsWith(DESCRIPTIONS.suggest), rowOf(help.stdout, 'suggest'));
+    assert.ok(rowOf(help.stdout, FUTURE).endsWith(mod.DESCRIPTIONS[FUTURE]), rowOf(help.stdout, FUTURE));
     assert.doesNotMatch(help.stdout, /usage: recorded/);
-    for (const args of [['help', 'suggest'], ['suggest', '--help']]) {
-      const r = runShim(SHIM, args, { home, cwd: home });
+    for (const args of [['help', FUTURE], [FUTURE, '--help']]) {
+      const r = runShim(file, args, { home, cwd: home });
       assert.equal(r.status, 3, args.join(' '));
       assert.doesNotMatch(r.stderr, /update/i, args.join(' '));
     }
     assert.equal(existsSync(join(home, 'ran')), false);
   } finally { rmSync(home, { recursive: true, force: true }); }
-});
+}));
 
 test('--help goes only to an install whose version can be read', () => {
   const home = fixtureHome({ methodology: { 'bin/doctor.mjs': '', '.claude-plugin/plugin.json': '{ not json' } });
@@ -601,6 +620,24 @@ test('--help goes only to an install whose version can be read', () => {
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
+test('triqual suggest gets --help only from methodology 1.0.0 or later, and runs from the methodology plugin', () => {
+  for (const [version, helped] of [['0.9.9', false], ['1.0.0', true]]) {
+    const home = fixtureHome({ methodology: { 'cli/suggest.mjs': '', ...plugin('methodology', version) } });
+    const script = join(home, '.claude', 'plugins', 'cache', BRAND.legacy.marketplace, 'methodology', '0.1.0', 'cli', 'suggest.mjs');
+    writeFileSync(script, recorder(join(home, 'ran')));
+    try {
+      const help = runShim(SHIM, ['suggest', '--help'], { home, cwd: home });
+      assert.equal(help.status, helped ? 0 : 3, `${version}: ${help.stderr}`);
+      assert.equal(help.stdout, helped ? 'usage: recorded\n' : '', version);
+      assert.equal(existsSync(join(home, 'ran')), helped, version);
+      // Without --help it runs whatever the version, with the arguments as given.
+      const ran = runShim(SHIM, ['suggest', 'a request', '--json'], { home, cwd: home });
+      assert.equal(ran.status, 0, ran.stderr);
+      assert.equal(readFileSync(join(home, 'ran'), 'utf8').split('\n').at(helped ? 1 : 0), 'a request --json');
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  }
+});
+
 test('helpText kills a --help that ignores SIGTERM once it times out', () => {
   const stubborn = "process.on('SIGTERM', () => {});\nsetTimeout(() => {}, 4000);\n";
   const home = fixtureHome({ methodology: { 'bin/doctor.mjs': stubborn, ...plugin('methodology', '0.1.2') } });
@@ -614,12 +651,12 @@ test('helpText kills a --help that ignores SIGTERM once it times out', () => {
 
 test('helpText stops spawning once its overall budget is spent: the rest show their description only', () => {
   const hang = "setTimeout(() => console.log('late'), 5000);\n";
-  const home = fixtureHome({ methodology: { 'bin/doctor.mjs': hang, 'bin/sync.mjs': hang, 'bin/upstream-diff.mjs': hang, ...plugin('methodology', '0.1.2') } });
+  const home = fixtureHome({ methodology: { 'bin/doctor.mjs': hang, 'bin/sync.mjs': hang, 'bin/migrate.mjs': hang, ...plugin('methodology', '0.1.2') } });
   try {
     const started = Date.now();
     const help = helpText({ home, cwd: home, timeoutMs: 1000, budgetMs: 300 });
     assert.ok(Date.now() - started < 1500, `took ${Date.now() - started} ms`);
-    for (const cmd of ['doctor', 'sync', 'upstream-diff']) assert.ok(rowOf(help, cmd).endsWith(DESCRIPTIONS[cmd]), cmd);
+    for (const cmd of ['doctor', 'sync', 'migrate']) assert.ok(rowOf(help, cmd).endsWith(DESCRIPTIONS[cmd]), cmd);
     assert.doesNotMatch(help, /late/);
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
