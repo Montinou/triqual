@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { runTest } from '../src/cli/check.mjs';
+import * as selfprotect from '../src/cli/selfprotect.mjs';
 import { CASES_FILE, loadCases, prepareCase, runBuiltinCases } from '../src/cli/selfprotect.mjs';
 
 // Hermetic: every row gets its own synthetic home and repository under one realpath'd temp root.
@@ -125,4 +126,54 @@ test('fence test runs the built-in cases after the policy examples and fails whe
   const n = sink();
   assert.equal(runTest(['--policy', policy], n.io, { home, builtin: false }), 0);
   assert.ok(!n.out.some((l) => l.includes('builtin')), n.out.join('\n'));
+});
+
+// ---- the table under the four example profiles (T8) ----------------------------------------------------
+
+const FOUR = {
+  default: { undecided: 'host', uncertain: 'audit' },
+  strict: { undecided: 'host', uncertain: 'deny' },
+  relaxed: { undecided: 'host', uncertain: 'audit', certain: 'audit' },
+  unattended: { undecided: 'deny', uncertain: 'deny' },
+};
+
+test('the runner carries the spec\'s four example profiles', () => {
+  assert.deepEqual(selfprotect.EXAMPLE_PROFILES, FOUR);
+});
+
+test('every row denies with its rule under all four profiles, and its harmless twin is denied by no rule but builtin:profile', async (t) => {
+  for (const row of CASES) {
+    for (const profile of Object.keys(FOUR)) {
+      await t.test(`${row.id} under ${profile}`, (t2) => {
+        const c = prepareCase(row, { root: TMP });
+        if (c.skip) return t2.skip(c.skip);
+        const attack = c.decide('attack', profile);
+        assert.equal(attack.decision, 'deny', `${row.id}: ${JSON.stringify(attack)}`);
+        assert.equal(attack.rule, row.expectRule, `${row.id}: ${attack.reason}`);
+        const twin = c.decide('harmless', profile);
+        assert.ok(twin.decision !== 'deny' || twin.rule === 'builtin:profile', `${row.id} twin: ${JSON.stringify(twin)}`);
+        if (twin.decision === 'deny') assert.equal(profile, 'unattended', `${row.id} twin denied by builtin:profile outside unattended`);
+      });
+    }
+  }
+});
+
+test('the opaque-command row names its protected target literally', () => {
+  const row = CASES.find((r) => r.id === 'opaque-command');
+  assert.match(row.input.command, /\$\{home\}\/\.claude\/settings\.json/);
+  assert.equal(row.expectRule, 'builtin:opaque');
+});
+
+test('the runner selects each profile with FENCE_PROFILE and fails a row a mode relaxes', () => {
+  // an opaque call whose text names no target is audited under `default`: the row fails there, and the line names the profile
+  const soft = { ...CASES.find((r) => r.id === 'opaque-command'), id: 'soft-opaque', input: { command: 'sh -c "$FENCE_CASE_PAYLOAD"' } };
+  const s = sink();
+  const r = runBuiltinCases(s.io, { cases: [soft] });
+  assert.equal(r.failed, 1, s.out.join('\n'));
+  assert.ok(s.out.some((l) => /^FAIL builtin soft-opaque.*\b(default|relaxed)\b/.test(l)), s.out.join('\n'));
+
+  // the profile is selected by FENCE_PROFILE: a name the policy does not define is the floor deny for it
+  const c = prepareCase(CASES.find((r) => r.id === 'shell-redirect'), { root: TMP });
+  assert.equal(c.decide('attack', 'unattended').rule, 'builtin:self-protection');
+  assert.equal(c.decide('attack', 'nightly').rule, 'builtin:unknown-profile');
 });

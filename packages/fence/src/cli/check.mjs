@@ -16,6 +16,9 @@
 //        log or written-files index of the real install is read or written): a Claude
 //        Bash/Monitor payload, or a Codex payload for a Codex shell tool, with the example
 //        command text (or argv) and the temporary repo as cwd.
+//        Examples are judged against the policy with every mode's audit turned into deny (forceDeny): an example
+//        asks whether the rule would deny the call, whatever mode a session later runs in. The forced policy is
+//        written to a temporary file the engine reads (`--policy`), and loaded back for the other examples.
 //        runTest(args, io, {home}) takes the home directory from its third argument (default
 //        os.homedir()); `fence apply` passes its own so a draft is tested against the same home.
 //        After the examples it runs the built-in self-protection table (selfprotect.mjs), one
@@ -196,10 +199,31 @@ function shellDecision(ex, file, repo, aux, home) {
   return JSON.parse(r.stdout);
 }
 
+// A copy of `policy` in which nothing is audited or switched off: every profile's uncertain categories and
+// constructs, `certain` and `rules` overrides are `deny`, and every rule with `decision: "audit"` is `deny`.
+// `undecided` stays as written. The input is not changed. It reads a policy as written in the file (where
+// `uncertain` may be a single action) and as the loader returns it.
+export function forceDeny(policy) {
+  const forced = JSON.parse(JSON.stringify(policy));
+  for (const profile of Object.values(forced.profiles ?? {})) {
+    if (typeof profile.uncertain === 'string') {
+      profile.uncertain = 'deny';
+    } else if (profile.uncertain !== null && typeof profile.uncertain === 'object') {
+      for (const key of Object.keys(profile.uncertain)) {
+        if (key === 'constructs') for (const name of Object.keys(profile.uncertain.constructs)) profile.uncertain.constructs[name] = 'deny';
+        else profile.uncertain[key] = 'deny';
+      }
+    }
+    if (Object.hasOwn(profile, 'certain')) profile.certain = 'deny';
+    if (profile.rules !== null && typeof profile.rules === 'object') for (const id of Object.keys(profile.rules)) profile.rules[id] = 'deny';
+  }
+  for (const rule of forced.rules ?? []) if (rule.decision === 'audit') rule.decision = 'deny';
+  return forced;
+}
+
 export function runTest(args, io, { home, builtin = true, builtinCases } = {}) {
   const r = load(args, io, home ?? os.homedir());
   if (!r.loaded) return r.code;
-  const { policy } = r.loaded;
   const opts = { profile: 'default', grants: [], ctx: { home: r.home, platform: process.platform, caseInsensitive: false } };
   // A fresh, real repo directory for the examples and a directory for the engine's state and
   // admin paths, both removed afterwards.
@@ -207,7 +231,12 @@ export function runTest(args, io, { home, builtin = true, builtinCases } = {}) {
   const aux = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'fence-test-aux-')));
   try {
     makeExampleRepo(repo);
-    const code = runExamples(policy, opts, r.home, repo, io, { file: r.file, aux });
+    // The forced policy is built from the file as written (its `~` and `${repo}` globs stay for the engine to
+    // expand), written to a temporary file for the engine, and loaded back for the examples run in process.
+    const forcedFile = path.join(aux, 'forced-policy.json');
+    fs.writeFileSync(forcedFile, JSON.stringify(forceDeny(JSON.parse(fs.readFileSync(r.file, 'utf8')))));
+    const { policy } = loadPolicy(forcedFile, { mode: 'user', home: r.home });
+    const code = runExamples(policy, opts, r.home, repo, io, { file: forcedFile, aux });
     if (!builtin) return code;
     // The built-in self-protection table, after the policy examples: independent of the policy under
     // test and judged against a synthetic home and repository (analysis only, see selfprotect.mjs).

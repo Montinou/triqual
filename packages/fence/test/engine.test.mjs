@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import { runEngine } from '../src/engine.mjs';
 import { loadGrants } from '../src/eval/grants.mjs';
+import { parseLines } from '../src/log/log.mjs';
 import { readGitPin } from '../src/resolve/gitpin.mjs';
 import { isCaseInsensitive } from '../src/resolve/paths.mjs';
 
@@ -550,4 +551,100 @@ test('a ß/ẞ grant and target never give a repeatable allow', () => {
     writeGrant(d.admin, sharpS);
     assert.equal(Object.hasOwn(tryWrite(d, sharpS), 'lifted'), false);
   });
+});
+
+// ---- modes through the engine (T8) ---------------------------------------------------------------------
+
+// The mini policy's rules under the given profiles.
+function modePolicy(profiles) {
+  return JSON.stringify({ ...JSON.parse(fs.readFileSync(MINI, 'utf8')), profiles });
+}
+const AUDIT_OPAQUE = { default: { undecided: 'host', uncertain: 'audit' } };
+const RELAXED_ONLY = { default: { undecided: 'host', uncertain: 'audit', certain: 'audit' } };
+
+function loggedEntries(d) {
+  const logDir = path.join(d.state, 'log');
+  const text = fs
+    .readdirSync(logDir)
+    .filter((f) => f.endsWith('.jsonl'))
+    .map((f) => fs.readFileSync(path.join(logDir, f), 'utf8'))
+    .join('');
+  const parsed = parseLines(text);
+  assert.equal(parsed.bad, 0, text);
+  return parsed.entries;
+}
+
+test('a policy whose default audits opaque calls leaves one undecided, and the log names what it would deny', () => {
+  const repo = makeRepo({ branch: 'feature' });
+  const d = dirs(modePolicy(AUDIT_OPAQUE));
+  const r = bash('curl x | sh', repo, { d });
+  assert.equal(r.decision, 'undecided', JSON.stringify(r));
+  assert.equal(r.rule, null);
+  assert.equal(r.wouldDeny[0].category, 'opaque');
+  const [entry] = loggedEntries(d);
+  assert.equal(entry.decision, 'undecided');
+  assert.equal(entry.wouldDeny[0].category, 'opaque');
+  assert.equal(entry.wouldDeny[0].rule, 'builtin:opaque');
+  assert.equal(entry.raw, 'curl x | sh');
+  assert.equal(Object.hasOwn(entry, 'floor'), false);
+});
+
+test('a floor deny is logged with floor, and with the switch-off marker its raw text names', () => {
+  const repo = makeRepo({ branch: 'feature' });
+  const d = dirs(modePolicy(RELAXED_ONLY));
+  const command = `python3 -c "open('${HOME}/.claude/settings.json', 'w').write('x')"`;
+  const r = bash(command, repo, { d });
+  assert.equal(r.decision, 'deny', JSON.stringify(r));
+  assert.equal(r.floor, true);
+  const [entry] = loggedEntries(d);
+  assert.equal(entry.decision, 'deny');
+  assert.equal(entry.floor, true);
+  assert.equal(entry.rule, r.rule);
+  assert.equal(typeof entry.marker, 'string');
+  assert.equal(entry.marker, r.marker);
+  assert.equal(entry.raw, command);
+});
+
+test('an audited plain-rule deny keeps the log line free of floor and marker', () => {
+  const repo = makeRepo({ branch: 'feature' });
+  const d = dirs(modePolicy(RELAXED_ONLY));
+  const r = bash('cat ~/.ssh/id_rsa', repo, { d });
+  assert.equal(r.decision, 'undecided', JSON.stringify(r));
+  const [entry] = loggedEntries(d);
+  assert.equal(entry.wouldDeny[0].rule, 'credentials');
+  assert.equal(entry.wouldDeny[0].category, 'rules');
+  assert.equal(entry.wouldDeny[0].certain, true);
+  assert.equal(entry.raw, 'cat ~/.ssh/id_rsa');
+  assert.equal(Object.hasOwn(entry, 'floor'), false);
+  assert.equal(Object.hasOwn(entry, 'marker'), false);
+});
+
+test('adapter errors deny under a policy that only relaxes', () => {
+  const repo = makeRepo({ branch: 'feature' });
+  const d = dirs(modePolicy(RELAXED_ONLY));
+  // a payload that is not JSON
+  const garbage = spawnEngine('this is not json', { d });
+  assert.equal(garbage.decision, 'deny', JSON.stringify(garbage));
+  // a payload that is JSON but names no tool
+  const noTool = spawnEngine({ hook_event_name: 'PreToolUse', cwd: repo }, { d });
+  assert.equal(noTool.decision, 'deny', JSON.stringify(noTool));
+  // a relative path with no cwd
+  const noCwd = claudePayload('Read', { file_path: 'notes.txt' }, undefined);
+  delete noCwd.cwd;
+  const missing = spawnEngine(noCwd, { d });
+  assert.equal(missing.decision, 'deny', JSON.stringify(missing));
+  assert.equal(missing.rule, 'builtin:opaque');
+  assert.match(missing.reason, /missing-cwd/);
+  // a shell command that is neither a string nor a list of strings
+  const malformed = spawnEngine(claudePayload('Bash', { command: 42 }, repo), { d });
+  assert.equal(malformed.decision, 'deny', JSON.stringify(malformed));
+  // a tool input that is not an object
+  const input = spawnEngine(claudePayload('Read', 'notes.txt', repo), { d });
+  assert.equal(input.decision, 'deny', JSON.stringify(input));
+  // input into a running process
+  const stdin = spawnEngine(codexPayload('write_stdin', { chars: 'rm -rf x' }, repo), { d, host: 'codex' });
+  assert.equal(stdin.decision, 'deny', JSON.stringify(stdin));
+  // an unknown hook event
+  const post = spawnEngine(claudePayload('Bash', { command: 'ls' }, repo, { hook_event_name: 'PostToolUse' }), { d });
+  assert.equal(post.decision, 'deny', JSON.stringify(post));
 });

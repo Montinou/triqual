@@ -2,8 +2,14 @@
 // that must be denied with a `builtin:*` rule, each with a harmless twin that must not be denied.
 //
 //   loadCases(file?)                         -> the validated rows
-//   prepareCase(row, {root})                 -> {skip, decide(which), dir} for one row
+//   prepareCase(row, {root})                 -> {skip, decide(which, profile?), dir} for one row
 //   runBuiltinCases(io, {cases?, root?})     -> {passed, failed, skipped}; prints PASS/FAIL/SKIP lines
+//
+// Every row runs once per example profile (EXAMPLE_PROFILES: the spec's default, strict, relaxed and
+// unattended), each selected with FENCE_PROFILE in the engine's environment, over the rules of the cases
+// policy: the built-in denies must hold in every mode, so a row's attack is denied with its rule under all
+// four, and its harmless twin is denied by no rule but `builtin:profile` (undecided under `unattended`).
+// The profiles are written into a copy of the cases policy here until strict.json ships them.
 //
 // Analysis only: every call goes through the engine in process (runEngine), which reads the call and
 // decides; nothing in a payload is ever executed. Each row gets a synthetic home and a synthetic
@@ -30,6 +36,14 @@ import { isCaseInsensitive } from '../resolve/paths.mjs';
 const PKG_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const CASES_FILE = path.join(PKG_DIR, 'fixtures', 'selfprotect-cases.json');
 export const CASES_POLICY = path.join(PKG_DIR, 'policies', 'strict.json');
+
+// The spec's four example profiles.
+export const EXAMPLE_PROFILES = Object.freeze({
+  default: Object.freeze({ undecided: 'host', uncertain: 'audit' }),
+  strict: Object.freeze({ undecided: 'host', uncertain: 'deny' }),
+  relaxed: Object.freeze({ undecided: 'host', uncertain: 'audit', certain: 'audit' }),
+  unattended: Object.freeze({ undecided: 'deny', uncertain: 'deny' }),
+});
 
 const HOSTS = new Set(['claude', 'codex']);
 const REQUIRES = new Set(['git', 'case-insensitive']);
@@ -142,7 +156,13 @@ function payloadFor(row, which, vars) {
   };
 }
 
-// HOME (read by os.homedir()) pinned to the synthetic home for the engine call, FENCE_PROFILE cleared.
+// The cases policy's rules under the four example profiles, written to `file`.
+function writeCasesPolicy(file) {
+  const policy = JSON.parse(fs.readFileSync(CASES_POLICY, 'utf8'));
+  put(file, JSON.stringify({ ...policy, profiles: EXAMPLE_PROFILES }));
+}
+
+// HOME (read by os.homedir()) pinned to the synthetic home for the engine call; the profile reaches the engine through its explicit env.
 function withHome(home, fn) {
   const saved = { HOME: process.env.HOME, FENCE_PROFILE: process.env.FENCE_PROFILE };
   process.env.HOME = home;
@@ -157,7 +177,8 @@ function withHome(home, fn) {
   }
 }
 
-// -> {skip: string|null, dir, decide(which: 'attack'|'harmless')}. The row's directory is created under `root`.
+// -> {skip: string|null, dir, decide(which: 'attack'|'harmless', profile = 'default')}. The row's directory is
+// created under `root`; `profile` is passed to the engine as FENCE_PROFILE.
 export function prepareCase(row, { root = os.tmpdir() } = {}) {
   const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(root, `case-${row.id.replace(/[^A-Za-z0-9_-]/g, '_')}-`)));
   const vars = { home: path.join(dir, 'home'), repo: path.join(dir, 'repo'), tmp: dir };
@@ -185,10 +206,13 @@ export function prepareCase(row, { root = os.tmpdir() } = {}) {
   for (const d of setup.dirs ?? []) fs.mkdirSync(d, { recursive: true });
   for (const [file, text] of Object.entries(setup.files ?? {})) put(file, text);
 
-  const decide = (which) => {
+  const policy = path.join(dir, 'policy.json');
+  writeCasesPolicy(policy);
+  const decide = (which, profile = 'default') => {
     const payload = payloadFor(row, which, vars);
-    const argv = ['pre', '--host', row.host, '--policy', CASES_POLICY, '--state-dir', state, '--admin-dir', admin];
-    const r = withHome(vars.home, () => runEngine(argv, { stdin: JSON.stringify(payload), env: { PATH: process.env.PATH ?? '', HOME: vars.home } }));
+    const argv = ['pre', '--host', row.host, '--policy', policy, '--state-dir', state, '--admin-dir', admin];
+    const env = { PATH: process.env.PATH ?? '', HOME: vars.home, FENCE_PROFILE: profile };
+    const r = withHome(vars.home, () => runEngine(argv, { stdin: JSON.stringify(payload), env }));
     return JSON.parse(r.stdout);
   };
   return { skip: null, dir, decide };
@@ -197,7 +221,7 @@ export function prepareCase(row, { root = os.tmpdir() } = {}) {
 const show = (d) => `${d.decision} (rule ${d.rule ?? 'none'}): ${d.reason ?? ''}`;
 
 // Runs every row; prints one PASS/FAIL/SKIP line each and a summary. A row passes when its call is denied
-// with expectRule and its harmless twin is allowed or undecided.
+// with expectRule under every example profile and its harmless twin is denied by no rule but builtin:profile.
 export function runBuiltinCases(io, { cases, root } = {}) {
   const tally = { passed: 0, failed: 0, skipped: 0 };
   let rows = cases;
@@ -219,16 +243,22 @@ export function runBuiltinCases(io, { cases, root } = {}) {
           io.out(`SKIP ${label}: ${c.skip}`);
           continue;
         }
-        const attack = c.decide('attack');
-        if (attack.decision !== 'deny' || attack.rule !== row.expectRule) {
-          tally.failed++;
-          io.out(`FAIL ${label}: expected deny with ${row.expectRule}, got ${show(attack)}`);
-          continue;
+        let failure = null;
+        for (const profile of Object.keys(EXAMPLE_PROFILES)) {
+          const attack = c.decide('attack', profile);
+          if (attack.decision !== 'deny' || attack.rule !== row.expectRule) {
+            failure = `under ${profile}: expected deny with ${row.expectRule}, got ${show(attack)}`;
+            break;
+          }
+          const twin = c.decide('harmless', profile);
+          if (twin.decision === 'deny' && twin.rule !== 'builtin:profile') {
+            failure = `under ${profile}: the harmless twin was ${show(twin)}`;
+            break;
+          }
         }
-        const twin = c.decide('harmless');
-        if (twin.decision !== 'allow' && twin.decision !== 'undecided') {
+        if (failure !== null) {
           tally.failed++;
-          io.out(`FAIL ${label}: the harmless twin was ${show(twin)}`);
+          io.out(`FAIL ${label} ${failure}`);
           continue;
         }
         tally.passed++;

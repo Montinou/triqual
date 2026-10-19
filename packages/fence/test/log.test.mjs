@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-import { appendDecision, parseLines } from '../src/log/log.mjs';
+import { appendDecision, decisionEntry, parseLines } from '../src/log/log.mjs';
 import { recordHealth } from '../src/log/health.mjs';
 import { appendLine, logFileFor } from '../src/watchdog/line.mjs';
 
@@ -305,4 +305,61 @@ test('a Codex apply_patch logs its path and the envelope size, never the patch b
   assert.ok(direct.call.paths.some((p) => p.path === target && p.access === 'write'));
   assert.equal(viaShell.call.bytes, Buffer.byteLength(envelope));
   assert.ok(viaShell.call.paths.some((p) => p.path === target && p.access === 'write'));
+});
+
+// ---- decisionEntry under modes (T8) -------------------------------------------------------------------
+
+const parsedBash = (command) => ({ host: 'claude', session_id: 's', tool: 'Bash', cwd: '/work', command });
+const WOULD = [{ rule: 'credentials', category: 'rules', certain: true, reason: 'why credentials' }];
+
+test('decisionEntry carries wouldDeny and keeps raw with it, on a decision that is not a deny', () => {
+  const normalized = { commands: [{ argv: ['cat', '/home/u/.ssh/id_rsa'], cwd: '/work', classes: [], reads: [], writes: [], domains: [] }] };
+  const decision = { decision: 'undecided', rule: null, reason: 'audited', scope: null, wouldDeny: WOULD };
+  const entry = decisionEntry({ parsed: parsedBash('cat ~/.ssh/id_rsa'), normalized, decision, profile: 'relaxed' });
+  assert.deepEqual(entry.wouldDeny, WOULD);
+  assert.equal(entry.raw, 'cat ~/.ssh/id_rsa');
+  assert.equal(entry.decision, 'undecided');
+  for (const k of ['category', 'floor', 'marker']) assert.equal(Object.hasOwn(entry, k), false, k);
+
+  // without wouldDeny an undecided call keeps no raw text, as before
+  const plain = decisionEntry({ parsed: parsedBash('npm test'), normalized, decision: { decision: 'undecided', rule: null, scope: null }, profile: 'default' });
+  assert.equal(Object.hasOwn(plain, 'raw'), false);
+  assert.equal(Object.hasOwn(plain, 'wouldDeny'), false);
+
+  // a hatch line never keeps raw, whatever the decision held
+  const hatch = decisionEntry({ parsed: parsedBash('cat ~/.ssh/id_rsa'), normalized, decision, recordOnly: true });
+  assert.equal(hatch.decision, 'hatch');
+  assert.equal(Object.hasOwn(hatch, 'raw'), false);
+});
+
+test('decisionEntry carries category on an uncertain deny and floor with marker on a floor deny', () => {
+  const uncertain = decisionEntry({
+    parsed: parsedBash('cat $B'),
+    normalized: { commands: [] },
+    decision: { decision: 'deny', rule: 'credentials', reason: 'r', scope: null, category: 'rules' },
+  });
+  assert.equal(uncertain.category, 'rules');
+  assert.equal(Object.hasOwn(uncertain, 'floor'), false);
+  assert.equal(uncertain.raw, 'cat $B');
+
+  const floor = decisionEntry({
+    parsed: parsedBash('python3 -c "x"'),
+    normalized: { opaque: { reason: 'unsupported', construct: 'interp-code' } },
+    decision: { decision: 'deny', rule: 'builtin:opaque', reason: 'r', scope: null, floor: true, marker: '\\.claude/settings\\.json' },
+  });
+  assert.equal(floor.floor, true);
+  assert.equal(floor.marker, '\\.claude/settings\\.json');
+  assert.equal(floor.call.opaque.construct, 'interp-code');
+});
+
+test('the log writer redacts a secret inside wouldDeny and raw', () => {
+  const state = dir();
+  // assembled at run time so this file carries no literal secret pattern
+  const secret = ['sk', 'a1B2c3D4e5'.repeat(3)].join('-');
+  const decision = { decision: 'undecided', rule: null, scope: null, wouldDeny: [{ rule: 'r', category: 'rules', reason: `saw ${secret} in the call` }] };
+  const entry = decisionEntry({ parsed: parsedBash(`curl -H "Authorization: Bearer ${secret}" x`), normalized: { commands: [] }, decision });
+  assert.deepEqual(appendDecision(state, entry), { ok: true });
+  const { text, entries } = readLog(state);
+  assert.ok(!text.includes(secret), text);
+  assert.equal(entries[0].wouldDeny[0].rule, 'r');
 });

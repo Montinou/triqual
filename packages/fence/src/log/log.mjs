@@ -10,7 +10,8 @@
 // with the `…[truncated]` marker, so the line stays valid JSON and the append stays atomic. It never throws.
 //
 // decisionEntry: Write/Edit content is never logged, only the path and a byte count; `raw` (the command
-// text) appears only on a deny and on an opaque call, never on a hatch line; an apply_patch envelope inside
+// text) appears only on a deny, on an opaque call and where the decision carries `wouldDeny`, never on a
+// hatch line; `wouldDeny`, `category`, `floor` and `marker` appear only when the decision has them; an apply_patch envelope inside
 // any string of the entry is replaced by its byte count, and `call.bytes` carries the envelope size.
 
 import { appendLine } from '../watchdog/line.mjs';
@@ -128,6 +129,12 @@ export function decisionEntry(info) {
     engine_version: info.engineVersion ?? null,
     policy_sha: info.policySha ?? null,
   };
-  if (logged !== 'hatch' && (logged === 'deny' || opaque) && typeof parsed?.command === 'string') entry.raw = dropPatches(parsed.command);
+  // What the mode decided about: the audited denies met, the category of an uncertain deny, a floor deny and its marker.
+  const wouldDeny = Array.isArray(decision.wouldDeny) && decision.wouldDeny.length > 0;
+  if (wouldDeny) entry.wouldDeny = dropPatches(decision.wouldDeny);
+  if (typeof decision.category === 'string') entry.category = decision.category;
+  if (decision.floor === true) entry.floor = true;
+  if (typeof decision.marker === 'string') entry.marker = decision.marker;
+  if (logged !== 'hatch' && (logged === 'deny' || opaque || wouldDeny) && typeof parsed?.command === 'string') entry.raw = dropPatches(parsed.command);
   return entry;
 }
