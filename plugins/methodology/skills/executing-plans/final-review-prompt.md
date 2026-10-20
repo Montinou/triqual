@@ -130,7 +130,9 @@ Subagent (roles:final-adversarial-reviewer):
     component and read by another, error paths, concurrency, secrets
     handling, and anything the per-task reviews could not see. For each
     candidate defect, confirm it by tracing the code or running a focused
-    check before reporting it; discard what you cannot substantiate.
+    check before reporting it; discard what you cannot substantiate. In the
+    seams review, Seams Scope overrides this: cross only the phase boundaries it
+    names.
 
     ## The spec is a vision document
 

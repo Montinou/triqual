@@ -16,8 +16,9 @@ findings from `roles:safety-reviewer` go back to it with the second block.
 When both raised findings, dispatch both, in parallel, each with only its own
 findings. When `tier-check` raised the task in this fix round, the re-review
 is the raised tier's full review instead (see SKILL.md, The fix loop). The
-final review's fix wave uses the same prompt, dispatched to
-`roles:final-adversarial-reviewer` (see SKILL.md, Final Review). Pass no
+final review's fix rounds use the same prompt, dispatched to
+`roles:spec-reviewer`, or to `roles:final-adversarial-reviewer` when a finding
+was Critical (see SKILL.md, Final Review). Pass no
 model: each role's definition pins it.
 
 ```

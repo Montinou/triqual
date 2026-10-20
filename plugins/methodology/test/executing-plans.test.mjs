@@ -585,6 +585,96 @@ test('phase fixes: two rounds, own commits, never reopen a task, then a seventh 
   assert.ok(body.includes('seventh stop'), 'the phase review does not name the seventh stop');
 });
 
+// ---- the controller break per phase and lean reading (design: Controller context) ----
+
+const BREAK_LINE = 'Phase N done. Run /clear, then say "continue the plan" (or say "continue" to keep this session).';
+
+test('the continuous-execution rule names the phase break as its one planned pause', () => {
+  const lines = skill().split('\n');
+  const continuous = flat(lines.find((l) => l.startsWith('**Continuous execution:**')) ?? '');
+  assert.ok(continuous, 'no Continuous execution paragraph');
+  assert.ok(continuous.includes('The only reasons to stop are the seven named below'), 'the stop count changed');
+  assert.ok(continuous.includes('the one planned pause') && continuous.includes('the phase break'), ':16 does not name the phase break as the one planned pause');
+  const stops = flat(lines.find((l) => l.startsWith('Seven things stop you')) ?? '');
+  assert.ok(stops, 'no stops paragraph');
+  assert.ok(stops.includes('The phase break is the one planned pause, alongside these stops'), ':20 does not name the phase break as the one planned pause beside the stops');
+  assert.doesNotMatch(stops, /Eight things/, 'the break became an eighth stop');
+});
+
+test('the controller stops after each phase but the last with the break line', () => {
+  const body = phaseReview();
+  const at = body.indexOf('**The break.**');
+  assert.ok(at >= 0, 'step 8 has no The break bullet');
+  const text = body.slice(at);
+  assert.ok(text.includes(`\`${BREAK_LINE}\``), 'the break line is not verbatim');
+  const submit = body.indexOf('`node scripts/stack.mjs submit PLAN_FILE N`');
+  assert.ok(submit >= 0 && submit < at, 'the break does not come after stack.mjs submit');
+  assert.ok(text.includes('After `submit` of every phase except the last'), 'the break is not for every phase but the last');
+  assert.ok(text.includes('no break after the last phase') || text.includes('There is no break after the last phase'), 'the text does not say no break after the last phase');
+  assert.ok(text.includes('the seams review, `--open` and Finish follow'), 'the text does not say what follows the last phase');
+  assert.ok(text.includes('none in a single-phase plan'), 'the text does not say no break in a single-phase plan');
+  assert.ok(text.includes('as after a compaction'), 'the text does not say a fresh session resumes as after a compaction');
+  assert.ok(text.includes('No setting'), 'the break is configurable');
+});
+
+test('the controller reads the plan, the spec Units and the current slice, and the spec sections a ruling depends on', () => {
+  const raw = skill();
+  const readPlan = flat(section(raw, '### Read the plan'));
+  for (const line of ['the plan', 'the spec\'s `## Units`', 'current phase\'s `## Delivery Slices` entry', 'not the whole spec', 'Before writing a `Ruling:`', 'the spec sections the ruling depends on', 'the spec stays binding', 'The phase and seams reviewers get the whole spec']) {
+    assert.ok(readPlan.includes(line), `Read the plan lacks: ${line}`);
+  }
+  assert.ok(readPlan.includes('At setup and at each resume'), 'the lean reading does not cover each resume');
+  assert.doesNotMatch(readPlan, /If the plan names a Spec, read that too/, 'Read the plan still reads the whole spec');
+});
+
+test('the pre-flight scan lists only task pairs that share a file or interface', () => {
+  const scan = flat(section(skill(), '### Pre-flight scan'));
+  assert.ok(scan.includes('One row for every pair of tasks that share a file or an interface'), 'the pair rows are gone');
+  assert.ok(scan.includes('only task pairs that share a file or an interface'), 'the scan does not say it lists only such pairs');
+  assert.doesNotMatch(scan, /One row for every task:/, 'the scan still has one row per task');
+  assert.ok(scan.includes('not one row per task'), 'the scan does not say it has no row per task');
+});
+
+// Leftovers of the final review's two-round fix rule (T6 review), in the files T7 touches.
+
+test('the implementer template describes the final fix as up to two plain commits, not one wave', () => {
+  const text = flat(read(`${EP}/implementer-prompt.md`));
+  assert.doesNotMatch(text, /fix wave, a single plain commit/, 'the implementer template still says a single plain commit');
+  assert.ok(text.includes('the final review\'s fix rounds, up to two, each one plain commit `fix: address final review findings` on the top phase'), 'the implementer template does not describe two plain final fix commits');
+});
+
+test('the re-review of a final fix goes to the spec reviewer, or to the final reviewer on a Critical finding', () => {
+  const text = flat(read(`${EP}/re-review-prompt.md`));
+  assert.doesNotMatch(text, /fix wave uses the same prompt, dispatched to `roles:final-adversarial-reviewer`/, 're-review-prompt still sends every final re-review to the final reviewer');
+  assert.ok(text.includes('final review\'s fix rounds use the same prompt, dispatched to `roles:spec-reviewer`, or to `roles:final-adversarial-reviewer` when a finding was Critical'), 're-review-prompt does not align with SKILL.md');
+});
+
+test('the seams scope overrides the shared method on crossing task boundaries', () => {
+  const prompt = read(`${EP}/final-review-prompt.md`);
+  const method = flat(prompt.slice(prompt.indexOf('    ## Method'), prompt.indexOf('    ## The spec is a vision document')));
+  assert.ok(method.includes('Cross task boundaries'), 'the shared Method lost its task-boundary line');
+  assert.ok(method.includes('In the seams review, Seams Scope overrides this: cross only the phase boundaries it names'), 'the Method has no seams override');
+});
+
+test('the final review fix rounds name the seams exception to the phase review rule', () => {
+  const final = flat(section(skill(), '## Final Review'));
+  const fix = final.slice(final.indexOf('**Fix rounds.**'), final.indexOf('**Submit.**'));
+  for (const line of [
+    'The same rule as the phase review, with one exception',
+    'after round 2 the seams review parks residual findings and hands off to methodology:finishing-branch, while the phase review blocks',
+    'A failing Phase check after round 2 is treated like the residual case',
+  ]) {
+    assert.ok(fix.includes(line), `the final fix rounds lack: ${line}`);
+  }
+});
+
+test('final-escapes is recorded once per multi-phase plan, after the seams review', () => {
+  const records = flat(section(skill(), '## Records'));
+  assert.ok(records.includes('once per multi-phase plan, after the seams review'), 'final-escapes is not once per multi-phase plan');
+  assert.ok(records.includes('a single-phase plan\'s `P1` record stands'), 'Records does not say the single-phase P1 record stands');
+  assert.doesNotMatch(records, /once per plan, after the seams review/, 'final-escapes is still once per plan');
+});
+
 test('the ledger records the phase review and resume re-runs a missing one', () => {
   const vocab = flat(section(skill(), '## Ledger vocabulary'));
   for (const line of [
