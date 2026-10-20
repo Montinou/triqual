@@ -35,8 +35,8 @@ Subagent (roles:spec-reviewer):
   prompt: |
     You are reviewing one task's implementation: first whether it matches its
     requirements, then whether it is well-built. This is a task-scoped gate,
-    not a merge review — a broad whole-branch review happens separately after
-    all tasks are complete.
+    not a merge review — the phase review happens separately, after
+    the phase's tasks are complete.
 
     Task tier: [TIER]
 

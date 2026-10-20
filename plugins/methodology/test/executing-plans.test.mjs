@@ -1544,3 +1544,64 @@ test('the implementer prompt names both the phase-review and final fix rounds as
   assert.match(text, /The exceptions are the phase review's fix rounds, each one plain commit `fix\(\.\.\.\)` on the phase branch, and the final review's fix rounds/);
   assert.match(text, /never folded into a task commit/);
 });
+
+// ---- final review fix wave ----
+
+test('the worked example is a single-phase plan: a phase review, then no seams review', () => {
+  const example = flat(section(skill(), '## Example'));
+  assert.ok(example.includes('[Phase check passes; phase review: 4 hunters + roles:final-adversarial-reviewer → clean; Phase review: P1 clean; hunters and final-escapes records (P1); done; submit]'), 'the example skips the phase review');
+  assert.ok(example.includes('[single-phase plan: the phase review was the final review; no seams review]'), 'the example does not say the phase review was the final review');
+  assert.doesNotMatch(example, /Seams review:/, 'the single-phase example still runs a seams review');
+  assert.ok(example.indexOf('Phase review: P1 clean') < example.indexOf('submit <plansDir>/billing.md 1 --open'), 'the example opens before the phase review');
+});
+
+test('a phase submitted before 1.1.0 gets its phase review before the seams review', () => {
+  const final = flat(section(skill(), '## Final Review'));
+  assert.ok(final.includes('A phase with no `Phase review: P<n>` line (submitted before 1.1.0) gets its phase review (8. Review the phase, on that phase\'s range) before the seams review; its fixes are commits on the top phase.'), 'Final Review does not review a legacy phase first');
+  assert.ok(flat(read(`${EP}/final-review-prompt.md`)).includes('the controller ran the phase review of any phase submitted before 1.1.0 before this one'), 'the seams scope still says every phase passed its own review unconditionally');
+});
+
+test('Finish lists the open deferred Minors beside the rulings', () => {
+  const finish = flat(section(skill(), '## Finish'));
+  assert.ok(finish.includes('under "Minors still open", every `minor (deferred)` line the last review left open'), 'Finish does not list the open deferred Minors');
+});
+
+test('step 8: the phase ledger file, the fixer inputs and the phase re-review inputs', () => {
+  const body = phaseReview();
+  assert.ok(body.includes('for a single-phase plan also every ledger line that names no task: pre-flight, flaky Phase check and submit rulings'), 'the phase ledger file omits the task-less lines of a single-phase plan');
+  for (const line of ['the phase\'s diff package (`node scripts/review-package PLAN_FILE PHASE_BASE HEAD`, in place of a brief)', 'the plan\'s tasks of this phase', '`<workspace>/phase-<N>-report.md`', 'its own plain `fix(...)` commit', 'with the findings, the phase report file and the plan\'s tasks of this phase in place of a brief']) {
+    assert.ok(body.includes(line), `step 8 lacks: ${line}`);
+  }
+  assert.ok(flat(read(`${EP}/re-review-prompt.md`)).includes('phase review\'s fix rounds (8. Review the phase) and the final review\'s fix rounds use the same prompt'), 're-review-prompt does not cover phase-review fix rounds');
+  assert.ok(flat(read(`${EP}/re-review-prompt.md`)).includes('<workspace>/phase-<N>-report.md'), 're-review-prompt does not name the phase report file');
+});
+
+test('a task declared heavy with no reason line takes security by default', () => {
+  const tiers = flat(section(skill(), '## Tiers'));
+  assert.ok(tiers.includes('declared heavy with no reason line (a plan written before 1.0.2)'), 'Tiers does not cover a declared-heavy task with no reason line');
+  assert.ok(tiers.includes('`security` by default'), 'Tiers lost the security default');
+});
+
+test('no template or step still points at a whole-branch or final review after the tasks', () => {
+  for (const f of ['task-reviewer-prompt.md', 're-review-prompt.md', 'safety-review-prompt.md']) {
+    const text = flat(read(`${EP}/${f}`));
+    assert.doesNotMatch(text, /whole-branch review|after all tasks are complete|for the final review/, `${f} still says whole-branch / after all tasks / the final review`);
+    assert.ok(text.includes('phase review'), `${f} does not name the phase review`);
+  }
+  const prompt = flat(read(`${EP}/final-review-prompt.md`));
+  assert.doesNotMatch(prompt, /in one commit on the top phase/, 'the final review prompt still says one commit');
+  assert.ok(prompt.includes('in at most two rounds, each a commit on the top phase'), 'the final review prompt does not say two rounds');
+  const raw = skill();
+  assert.ok(flat(section(raw, '## Final Review')).includes('with the phase fix commits the only commits of the stack that are not tasks'), 'Final Review ignores the phase fix commits');
+  const body = phaseReview();
+  assert.doesNotMatch(body, /beside the six/, 'step 8 still counts six stops');
+  assert.ok(body.includes('the seventh stop, listed at the top of this skill'), 'step 8 does not point at the seven stops');
+});
+
+test('the changelog and the README describe the hunters and the seams review accurately', () => {
+  const changelog = flat(readFileSync(join(PLUGIN, '..', '..', 'CHANGELOG.md'), 'utf8'));
+  assert.ok(changelog.includes('A heavy task\'s hunter candidates are verified by `roles:spec-reviewer` in round 2.'), 'the changelog does not say who verifies the per-task hunters');
+  assert.doesNotMatch(changelog, /hunters' findings are verified by the phase review/, 'the changelog still says the phase review verifies per-task hunters');
+  const readme = flat(readFileSync(join(PLUGIN, 'README.md'), 'utf8'));
+  assert.ok(readme.includes('A `hunters` record takes `P<n>` for a phase review (the seams review writes none)'), 'the README gives the seams review a hunters record');
+});

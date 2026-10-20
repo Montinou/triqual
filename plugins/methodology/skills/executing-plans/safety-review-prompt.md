@@ -21,7 +21,7 @@ Subagent (roles:safety-reviewer):
   prompt: |
     You are running the safety checklist on one task's implementation. This
     is a task-scoped gate: a spec reviewer may judge requirements and design
-    in the next round, and a whole-branch review happens after all tasks are
+    in the next round, and the phase review happens after the phase's tasks are
     complete.
 
     Task tier: [TIER]

@@ -143,7 +143,7 @@ short note).
 these rules:
 
 - The JSON file has no `key` field. Any `key` field is rejected, because the command derives the key.
-- `task` is `T<n>`, `P<n>` or `final`. `provider` is `claude` or `codex`. A `hunters` or `final-escapes` record takes `P<n>` for a phase review and `final` for the seams review.
+- `task` is `T<n>`, `P<n>` or `final`. `provider` is `claude` or `codex`. A `hunters` record takes `P<n>` for a phase review (the seams review writes none); a `final-escapes` record takes `P<n>` for a phase review and `final` for the seams review.
 - Each hunter has a `category`: `correctness`, `security`, `spec-drift` or `state`.
 - `candidates` must equal `confirmed + refuted + duplicateCandidate + duplicateReview`.
 - An optional `budget` holds `reference`, `used` and `overrun`.

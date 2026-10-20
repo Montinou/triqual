@@ -13,7 +13,7 @@ What changed in each plugin, newest first. The plugin version in each entry is t
   that is still blocked after the second round is a seventh stop.
 - **Smaller per-task reviews.** A `heavy` task gets 2 hunters, correctness plus security or state, picked from its
   heavy reason line; a `standard` or `light` task gets none. On a `standard` task the safety gate and the spec review
-  run in parallel. The hunters' findings are verified by the phase review.
+  run in parallel. A heavy task's hunter candidates are verified by `roles:spec-reviewer` in round 2.
 - **The final review is a seams review.** For a plan with several phases it is one `roles:final-adversarial-reviewer`
   and no hunters, and looks only at the interfaces one phase exposes and a later one consumes, cross-phase state and
   every open `Ruling:`, deferred-minor and parked line. In a single-phase plan the phase review is the final review and

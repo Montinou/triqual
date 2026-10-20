@@ -16,10 +16,10 @@ findings from `roles:safety-reviewer` go back to it with the second block.
 When both raised findings, dispatch both, in parallel, each with only its own
 findings. When `tier-check` raised the task in this fix round, the re-review
 is the raised tier's full review instead (see SKILL.md, The fix loop). The
-final review's fix rounds use the same prompt, dispatched to
-`roles:spec-reviewer`, or to `roles:final-adversarial-reviewer` when a finding
-was Critical (see SKILL.md, Final Review). Pass no
-model: each role's definition pins it.
+phase review's fix rounds (8. Review the phase) and the final review's
+fix rounds use the same prompt, dispatched to `roles:spec-reviewer`, or to
+`roles:final-adversarial-reviewer` when a finding was Critical (see SKILL.md,
+Final Review). Pass no model: each role's definition pins it.
 
 ```
 Subagent (roles:spec-reviewer):
@@ -77,7 +77,7 @@ Subagent (roles:spec-reviewer):
     re-review code the fix did not touch: if you notice an issue entirely
     outside the fix diff, report it under Out-of-Scope Observations — it
     does not block this task and does not extend the loop. A broad
-    whole-branch review happens after all tasks are complete.
+    phase review happens after the phase's tasks are complete.
 
     ## Tests
 
@@ -110,7 +110,7 @@ Subagent (roles:spec-reviewer):
     ### Out-of-Scope Observations
 
     Issues you noticed entirely outside the fix diff. Non-blocking; the
-    controller ledgers these for the final review. "None" if none.
+    controller ledgers these for the phase review. "None" if none.
 
     ### Verdict
 
@@ -130,7 +130,7 @@ Subagent (roles:safety-reviewer):
 ```
 
 **Placeholders:**
-- `[BRIEF_FILE]` — the task brief file (same file the implementer worked from)
+- `[BRIEF_FILE]` — the task brief file (same file the implementer worked from); in a phase review's fix round, the plan's tasks of the phase in its place, and `[REPORT_FILE]` is the phase report file `<workspace>/phase-<N>-report.md`
 - `[FINDINGS]` — the Critical/Important findings and spec gaps from the
   previous review, copied verbatim, one per bullet
 - `[REPORT_FILE]` — the implementer's report file (the fixer appends its fix reports)

@@ -96,8 +96,9 @@ Subagent (roles:final-adversarial-reviewer):
     Seams review only; the controller deletes this section from a phase review.
 
     The package covers the whole stack, `trunk..top`; each phase already passed
-    its own review, with its own hunters and its own reviewer: do not review
-    the phases again. Look only at: the interfaces one phase exposes and a
+    its own review, with its own hunters and its own reviewer (the controller
+    ran the phase review of any phase submitted before 1.1.0 before this one):
+    do not review the phases again. Look only at: the interfaces one phase exposes and a
     later one consumes (names, signatures, formats, error paths and the
     assumptions each side makes of the other); cross-phase state (data one
     phase writes and a later one reads, ordering, migrations, defaults a later
@@ -202,7 +203,7 @@ Subagent (roles:final-adversarial-reviewer):
     against each task's review tier, so name a task only when you traced it.
     Name the phase (`Phase <N>`; the package's commit list shows which
     commits belong to which phase, and a plan without phases needs none): the
-    controller fixes every finding in one commit on the top phase and never
+    controller fixes every finding in at most two rounds, each a commit on the top phase, and never
     rewrites a submitted phase, so the phase tells the fixer where the code
     lives.
 
