@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readTasks } from '../skills/executing-plans/scripts/lib/plan.mjs';
 
 const TEST = dirname(fileURLToPath(import.meta.url));
 const SKILLS = join(TEST, '..', 'skills');
@@ -204,10 +205,9 @@ test('## Task Tiers carries the three-tier rubric and its rules', () => {
   const text = lines.join('\n');
   const bullet = (tier) => lines.find((line) => line.startsWith(`- **${tier}** —`)) ?? '';
   for (const phrase of [
-    'security-relevant code (auth, permissions, secrets, sandboxing, policy, parsing untrusted input)',
-    'live state or migrations',
-    'changes spanning more than one plugin or system',
-    'a public interface others depend on (CLI flags and exit codes, file formats, hook contracts, the plan format)',
+    'security-relevant code (auth, permissions, secrets, sandboxing, policy engines, parsing untrusted input, gate/enforcement hooks)',
+    'live state or migrations (stores, schemas, installed setup)',
+    'a contract other code parses (hook I/O, file formats, the plan format, machine-read CLI output)',
     '`roles:complex-implementer`',
   ]) {
     assert.ok(bullet('heavy').includes(phrase), `the heavy bullet lacks "${phrase}"`);
@@ -289,8 +289,9 @@ test('## Task Roles lists the three task roles and keeps review-fixer out', () =
   const text = lines.join(' ');
   assert.ok(lines.some((line) => line.startsWith('Every task gets a `**Role:**` line naming the role that does its work.')), 'the section does not say every task gets a **Role:** line');
   assert.ok(text.includes('A plan without the line reads as `roles:tdd-implementer`, but write it for every task anyway.'), 'the section lost the default-role sentence');
-  // Spec decision 5: live-state work and migrations are heavy; complex-implementer is the usual role for them, not a rule.
-  assert.match(text, /migrations? are never coordinator work: they are `heavy`, `roles:complex-implementer` is the usual role for them/, 'the section does not say live-state work and migrations are heavy, with complex-implementer the usual role');
+  // Spec decision 5: live-state work and migrations are heavy and never coordinator work; the role follows the complex-implementer criteria, not a blanket rule.
+  assert.match(text, /migrations? are never coordinator work: they are `heavy`, and the role is chosen by the criteria above/, 'the section does not say live-state work and migrations are heavy, with the role chosen by the criteria above');
+  assert.doesNotMatch(text, /usual role/, 'the section still names complex-implementer as the usual role for live-state work');
   assert.doesNotMatch(text, /migrations?\b[^.]*\btake `roles:complex-implementer`/, 'the section makes complex-implementer mandatory for live-state work and migrations');
   assert.match(text, /`## After Merge`/, 'the section does not send merged-trunk operations to ## After Merge');
   assert.ok(!bullets.some((line) => line.includes('review-fixer')), '`roles:review-fixer` is still listed as a task role');
@@ -362,4 +363,54 @@ test('plans are saved by tracking mode: not opted in writes no tracking file', (
   for (const phrase of ['triqual tasks paths --json', '"optedIn": true', '`plansDir`', '`docs/plans/`', 'never create `progress.md`', 'exit 3', 'handle it as not opted in', '"mode": "local"', 'mktemp -d', 'triqual tracking write plan <draft>', '"mode": "store"', 'Never write or edit under `.git/`']) {
     assert.ok(head.includes(phrase), `the save-plans text does not say "${phrase}"`);
   }
+});
+
+// Leaner execution (spec: Planning): heavy is narrow and carries a one-line reason; complex-implementer needs a named reason.
+const RUBRIC_PHRASES = ['a contract other code parses', 'the line under'];
+test('## Task Tiers: heavy is security, live state, a parsed contract or complex-implementer, with a reason line', () => {
+  const tiers = section(PLANS, '## Task Tiers').join('\n');
+  for (const phrase of RUBRIC_PHRASES) assert.ok(tiers.includes(phrase), `## Task Tiers lacks "${phrase}"`);
+  assert.ok(!tiers.includes('changes spanning more than one plugin or system'), '## Task Tiers still makes a multi-plugin change heavy');
+  assert.ok(!tiers.includes('a public interface others depend on'), '## Task Tiers still makes any public interface heavy');
+  const rubric = readFileSync(join(SKILLS, 'executing-plans/SKILL.md'), 'utf8').split('\n').find((line) => line.startsWith('- **The tier rubric**'));
+  assert.ok(rubric, 'executing-plans has no tier rubric line');
+  for (const phrase of [...RUBRIC_PHRASES, 'gate/enforcement hooks']) assert.ok(rubric.includes(phrase), `the executing-plans rubric lacks "${phrase}"`);
+  assert.ok(!rubric.includes('changes spanning more than one plugin or system'), 'the executing-plans rubric still makes a multi-plugin change heavy');
+});
+
+test('complex-implementer needs a named reason', () => {
+  const text = section(PLANS, '## Task Roles').join(' ');
+  for (const phrase of ['a live-state migration', 'one brief cannot describe']) assert.ok(text.includes(phrase), `## Task Roles lacks "${phrase}"`);
+});
+
+test('the Task Structure template and Self-Review ask for the reason line', () => {
+  const template = section(PLANS, '## Task Structure');
+  const tier = template.indexOf('**Tier:** heavy');
+  assert.ok(/^[^*\s]/.test(template[tier + 1]) && template[tier + 1] !== '', 'the template has no reason line directly under **Tier:** heavy');
+  const item = section(PLANS, '## Self-Review').find((line) => line.startsWith('**7. Tiers:**'));
+  assert.match(item, /reason line/, 'Self-Review item 7 does not ask for the reason line');
+});
+
+test('a reason line under Tier and Role is ignored by the plan parser', () => {
+  const plan = (reasons) => [
+    '# X Implementation Plan',
+    '',
+    '### Task 1: First',
+    '',
+    '**Tier:** heavy',
+    ...(reasons ? ['Security: parses hook input.'] : []),
+    '**Role:** roles:complex-implementer',
+    ...(reasons ? ['Live-state migration of the store.'] : []),
+    '',
+    '### Task 2: Second',
+    '',
+    '**Tier:** light',
+    '**Role:** coordinator',
+    '',
+  ].join('\n');
+  const [t1] = readTasks(plan(true));
+  assert.equal(t1.tier, 'heavy');
+  assert.equal(t1.role, 'roles:complex-implementer');
+  const strip = ({ start, end, ...rest }) => rest;
+  assert.deepEqual(readTasks(plan(true)).map(strip), readTasks(plan(false)).map(strip));
 });
