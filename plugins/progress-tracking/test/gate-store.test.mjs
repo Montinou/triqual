@@ -14,7 +14,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
-import { loadSqlite, openStore } from '../lib/store.mjs';
+import { loadSqlite, openStore, SCHEMA_TOO_NEW } from '../lib/store.mjs';
+import { SCHEMA_VERSION } from '../lib/store-schema.mjs';
 import { EXEMPT, NO_PENDING, STORE_HOOK_LINES, stopVerdictStore } from '../lib/store-hooks.mjs';
 
 const PLUGIN = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -226,6 +227,18 @@ test('stopVerdictStore: a store error blocks once per change set, naming the fai
   assert.equal(stopVerdictStore({ ...base, lastFingerprint: 'f1' }), null);
   assert.equal(stopVerdictStore({ ...base, lastFingerprint: 'f0' }).decision, 'block');
   assert.equal(stopVerdictStore({ ...base, input: { stop_hook_active: true } }), null);
+});
+
+test('stopVerdictStore: a store newer than this triqual warns once per change set and never blocks', () => {
+  const err = { code: SCHEMA_TOO_NEW, message: 'schema version 3, newer than the 2 this triqual knows', where: '/x/tracking.db' };
+  const base = { dirty: ['a.txt'], input: {}, pending: [], storeError: err, fingerprint: 'f1', lastFingerprint: null };
+  const v = stopVerdictStore(base);
+  assert.equal(v.decision, undefined, JSON.stringify(v));
+  assert.ok(v.systemMessage.startsWith('Stop (progress-tracking, store mode): the tracking store at /x/tracking.db failed (schema-too-new)'), v.systemMessage);
+  assert.match(v.systemMessage, /\/reload-plugins/);
+  assert.equal(stopVerdictStore({ ...base, lastFingerprint: 'f1' }), null);
+  assert.equal(stopVerdictStore({ ...base, input: { stop_hook_active: true } }), null);
+  assert.equal(stopVerdictStore({ ...base, dirty: [] }), null);
 });
 
 // ---- pre-commit and post-commit across two worktrees ----
@@ -613,6 +626,37 @@ for (const broken of BROKEN) {
     committedGatesUnchanged(s, c);
   }));
 }
+
+test(`a store written by a newer triqual (schema ${SCHEMA_VERSION + 1}): Stop and session-start warn, the pre-commit still fails closed`, () => withSetup((s) => {
+  s.storeOn();
+  s.add(s.repo);
+  const holder = openStore({ home: s.home, env: { TRIQUAL_TRACKING_DB: s.dbFile } });
+  try {
+    holder.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION + 1}`);
+  } finally {
+    holder.close();
+  }
+
+  writeFileSync(join(s.repo, 'a.txt'), 'staged\n');
+  s.git(s.repo, 'add', 'a.txt');
+  const r = s.gitRun(s.repo, ['commit', '-m', 'blocked on purpose']);
+  assert.equal(r.status, 1, r.stderr);
+  assert.ok(r.stderr.includes(`(${SCHEMA_TOO_NEW})`), r.stderr);
+  assert.match(r.stderr, /\/reload-plugins/);
+
+  const payload = { session_id: 'newer-schema' };
+  const v = blockOf(s.stop(s.repo, payload));
+  assert.equal(v.decision, undefined, JSON.stringify(v));
+  assert.ok(v.systemMessage.includes(`(${SCHEMA_TOO_NEW})`), v.systemMessage);
+  assert.ok(!v.systemMessage.includes(MESSAGE), v.systemMessage);
+  assert.equal(blockOf(s.stop(s.repo, payload)), null);
+
+  const start = spawnSync(process.execPath, [GATE, 'session-start'], {
+    cwd: s.repo, input: JSON.stringify({ cwd: s.repo }), encoding: 'utf8', env: s.env(),
+  });
+  assert.equal(start.status, 0, start.stderr);
+  assert.match(JSON.parse(start.stdout).hookSpecificOutput.additionalContext, /\(schema-too-new\).*\/reload-plugins/);
+}));
 
 // ---- the read-only open of the gates and a writer racing it ----
 

@@ -18,6 +18,13 @@ export class StoreError extends Error {
   }
 }
 
+// The code of the StoreError for a database written by a newer triqual than this one: the Stop gate fails open on it
+// (an older plugin still loaded by a long session must not block it) and the recovery advice is to update, never restore.
+export const SCHEMA_TOO_NEW = 'schema-too-new';
+
+const openFailure = (file, e) => new StoreError(e instanceof SchemaTooNew ? SCHEMA_TOO_NEW : 'open',
+  `cannot open the tracking database ${file}: ${e.message}`);
+
 // relocateRepo's refusal: `reason` says why nothing was changed.
 export class RelocateRefused extends Error {
   constructor(reason) {
@@ -212,7 +219,7 @@ export function openStore({ home, env, create = false, readOnly = false }) {
     } catch (e) {
       try { db?.close(); } catch { /* never opened */ }
       if (e instanceof StoreError) throw e;
-      throw new StoreError('open', `cannot open the tracking database ${file}: ${e.message}`);
+      throw openFailure(file, e);
     }
   }
   try {
@@ -223,7 +230,7 @@ export function openStore({ home, env, create = false, readOnly = false }) {
     migrate(db);
   } catch (e) {
     try { db?.close(); } catch { /* never opened */ }
-    throw new StoreError('open', `cannot open the tracking database ${file}: ${e.message}`);
+    throw openFailure(file, e);
   }
   return new Store(db, file);
 }

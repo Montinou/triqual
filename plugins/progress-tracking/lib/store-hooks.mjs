@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { BRAND } from './brand.mjs';
 import { writeAtomic } from './fsx.mjs';
-import { loadSqlite, storePaths } from './store.mjs';
+import { loadSqlite, SCHEMA_TOO_NEW, storePaths } from './store.mjs';
 import { storeContext, storeTracking } from './tracking.mjs';
 
 const GIT_TIMEOUT_MS = 10000;
@@ -59,6 +59,8 @@ export function storeWhere({ home, env }) {
 }
 
 const RESTORE = `${BRAND.cli} tracking restore`;
+const UPDATE_ADVICE = '; this plugin is older than the database: update progress-tracking and run /reload-plugins '
+  + `(or restart the session); do not run \`${RESTORE}\`, it would discard newer entries`;
 
 // One line on a store failure: where the store is (when known), the error's code and the recovery command (added
 // unless the error's own message already names it). `err` is a StoreError or anything a query threw after the open
@@ -66,7 +68,7 @@ const RESTORE = `${BRAND.cli} tracking restore`;
 function failureText(err, where) {
   const code = typeof err?.code === 'string' && err.code ? err.code : 'error';
   const message = err?.message ?? String(err);
-  const recover = message.includes(RESTORE) ? ''
+  const recover = code === SCHEMA_TOO_NEW ? UPDATE_ADVICE : message.includes(RESTORE) ? ''
     : `; recover with \`${RESTORE} <snapshot>\` (snapshots are kept in backups/ beside the database)`;
   return `the tracking store${where ? ` at ${where}` : ''} failed (${code}): ${message}${recover}`;
 }
@@ -93,11 +95,14 @@ const block = (reason) => ({ decision: 'block', reason });
 // when the store could not be read (`storeError`: the error, with the store's path as `where` when the caller knows
 // it): pending entries were never read then, and `tracking add` would fail on the same store. Both block once per
 // change set: a `fingerprint` equal to the session's `lastFingerprint` (the change set already blocked) lets the turn
-// end.
+// end. A store newer than this triqual (`storeError.code` SCHEMA_TOO_NEW) does not block: it returns a systemMessage
+// warning, once per change set the same way, since no write by this triqual could succeed and the user cannot clear it
+// from inside the session.
 export function stopVerdictStore({ dirty, input, pending, storeError, fingerprint, lastFingerprint }) {
   if (input?.stop_hook_active || !dirty.length) return null;
   if (!storeError && pending.length) return null;
   if (fingerprint !== null && fingerprint !== undefined && fingerprint === lastFingerprint) return null;
+  if (storeError?.code === SCHEMA_TOO_NEW) return { systemMessage: `${STOP}: ${failureText(storeError, storeError.where)}` };
   return block(storeError ? `${STOP}: ${failureText(storeError, storeError.where)}` : NO_PENDING);
 }
 
