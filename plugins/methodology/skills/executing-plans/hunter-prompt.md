@@ -1,8 +1,9 @@
 # Hunter Prompt Template
 
 Use this template to dispatch a hunter, `roles:hunter`, in round 1 of a heavy
-or standard task's review (the tier matrix in SKILL.md sets how many and which
-categories; a light task sends none), for each of a phase review's 4 hunters
+task's review (the tier matrix in SKILL.md sets how many and which categories:
+2, `correctness` plus `security` or `state`; a standard or light task sends
+none), for each of a phase review's 4 hunters
 and for each of the final review's 3 hunters. One hunter looks at one category of defect in one review package and
 writes its candidates to one file; `roles:spec-reviewer` (or, in a phase
 review and the final review, `roles:final-adversarial-reviewer`) verifies them in round 2. The

@@ -69,14 +69,14 @@ const U4_HEADER = ['Effective tier', 'Round 1 (together)', 'Round 2', 'Fix-round
 const U4_ROWS = [
   [
     'heavy',
-    '4 hunters: correctness, security, spec-drift, state + safety gate',
+    '2 hunters: `correctness` + `security` or `state`, picked from the task\'s heavy reason line + safety gate',
     '`roles:spec-reviewer` on every candidate and spec fit',
     'scoped re-review by the raising role(s), always',
   ],
   [
     'standard',
-    "2 hunters: correctness + the category the plan's Review Focus names for the task, else the riskiest for the diff (security by default) + safety gate",
-    '`roles:spec-reviewer`',
+    'safety gate + `roles:spec-reviewer`, in parallel; no hunters',
+    'none: the spec review ran with the gate',
     'scoped re-review, except a fix that applies an approved `Ruling:` verbatim and touches no security logic',
   ],
   [
@@ -97,6 +97,65 @@ test('the tier matrix in the skill equals spec U4', () => {
   const rows = [];
   for (let i = at + 2; i < lines.length && lines[i].startsWith('|'); i++) rows.push(cells(lines[i]));
   assert.deepEqual(rows, U4_ROWS);
+});
+
+// ---- per-task review sizes (design: Review structure, "Per task") ----
+
+test('per-task hunters: heavy 2 picked from the reason, standard 0, light 0', () => {
+  const lines = skill().split('\n');
+  const at = lines.findIndex((l) => l.startsWith('|') && cells(l).join('|') === U4_HEADER.join('|'));
+  const rows = Object.fromEntries(lines.slice(at + 2, at + 5).map((l) => [cells(l)[0], cells(l)[1]]));
+  assert.ok(rows.heavy.startsWith('2 hunters:'), 'the heavy row does not send 2 hunters');
+  for (const category of ['`correctness`', '`security`', '`state`']) assert.ok(rows.heavy.includes(category), `the heavy row lacks ${category}`);
+  assert.ok(rows.heavy.includes("heavy reason line"), 'the heavy row does not pick the category from the reason line');
+  assert.doesNotMatch(rows.heavy, /spec-drift/, 'the heavy row still names spec-drift');
+  assert.ok(rows.standard.includes('no hunters'), 'the standard row sends hunters');
+  assert.doesNotMatch(rows.light, /hunter/, 'the light row names hunters');
+  const pick = flat(section(skill(), '## Tiers'));
+  assert.ok(pick.includes('`security` when the reason line names security code'), 'Tiers does not map security code to the security hunter');
+  assert.ok(pick.includes('`state` when it names live state or a parsed contract'), 'Tiers does not map live state or a parsed contract to the state hunter');
+  assert.ok(pick.includes("never send fewer than the tier's count"), 'the Budget rule does not forbid fewer than the tier count');
+  assert.doesNotMatch(pick, /a standard task sends exactly two|heavy four/, 'the old hunter counts remain');
+  const round1 = flat(section(skill(), '#### Round 1'));
+  assert.doesNotMatch(round1, /Review Focus names for the task/, 'Round 1 still picks a standard hunter from the Review Focus');
+});
+
+test('standard dispatches the gate and the spec review in parallel', () => {
+  const round1 = flat(section(skill(), '#### Round 1'));
+  const standard = round1.slice(round1.indexOf('**Standard:**'), round1.indexOf('**Light:**'));
+  assert.ok(standard.includes('**Standard:**') && standard.includes('`roles:safety-reviewer`') && standard.includes('`roles:spec-reviewer`'), 'Round 1 does not dispatch the gate and the spec reviewer for standard');
+  assert.ok(standard.includes('together') && standard.includes('in one message'), 'the standard dispatch is not one message');
+  assert.ok(standard.includes('no hunters'), 'the standard dispatch does not say there are no hunters');
+  const heavy = round1.slice(round1.indexOf('**Heavy:**'), round1.indexOf('**Standard:**'));
+  assert.ok(heavy.includes('`roles:hunter`') && heavy.includes('`roles:safety-reviewer`'), 'the heavy dispatch lost its hunters or gate');
+  const round2 = flat(section(skill(), '#### Round 2'));
+  assert.ok(round2.includes('**Heavy:**'), 'Round 2 does not scope the candidate verdicts to heavy');
+  assert.ok(round2.includes('**Standard:**') && round2.includes('already ran'), 'Round 2 does not say the standard spec review already ran');
+});
+
+test('Minor findings are deferred to the phase review', () => {
+  const loop = flat(section(skill(), '### 5. The fix loop'));
+  assert.ok(loop.includes('`Task <N>: minor (deferred): <one-liner>`, and the phase review (see 8. Review the phase) rules on them'), 'the fix loop does not defer Minor findings to the phase review');
+  assert.doesNotMatch(loop, /the final review triages them/, 'the fix loop still defers Minor findings to the final review');
+});
+
+test('the spec reviewer prompt has no candidates section without hunters', () => {
+  const raw = read(`${EP}/task-reviewer-prompt.md`);
+  const text = flat(raw);
+  const at = raw.indexOf('## Candidates to Verify');
+  assert.ok(at >= 0, 'no Candidates to Verify section');
+  const marker = flat(raw.slice(raw.lastIndexOf('\n', raw.lastIndexOf('\n', at) - 1), at));
+  assert.ok(/include this section only when hunters ran/.test(marker), 'the candidates section is not conditional on hunters');
+  assert.ok(text.includes('Drop the Candidates to Verify section and the Candidate Verdicts section for a standard or light task'), 'the header does not say to drop the candidates sections');
+  assert.ok(/\[CANDIDATE_VERDICTS[^\]]*only when hunters ran[^\]]*\]/.test(text), 'the Candidate Verdicts output section is not conditional on hunters');
+  assert.ok(text.includes('only when hunters ran'), 'the CANDIDATES_FILES placeholder is not conditional');
+  assert.doesNotMatch(text, /"None" when there are no candidates\./, 'the verdicts section still answers None without hunters');
+});
+
+test('the Finish hunter reference uses the new counts', () => {
+  const finish = flat(section(skill(), '## Finish'));
+  assert.ok(finish.includes('2 per heavy task, 0 per standard and light task, plus 4 per phase, 0 for the seams review'), 'Finish does not state the per-task and phase counts');
+  assert.doesNotMatch(finish, /4 per heavy task, 2 per standard/, 'Finish still states the old counts');
 });
 
 test('the invariants are stated in the skill', () => {
