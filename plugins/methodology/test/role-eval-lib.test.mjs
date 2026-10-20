@@ -124,6 +124,27 @@ test('validateRecord accepts one valid record of each kind', () => {
   }
 });
 
+test('validateRecord: hunters and final-escapes accept a phase id P<n>', () => {
+  assert.deepEqual(validateRecord(huntersRecord({ task: 'P2' })), { ok: true });
+  assert.deepEqual(validateRecord(escapesRecord({ task: 'P2' })), { ok: true });
+  for (const task of ['P', 'p2', 'X2']) {
+    assert.deepEqual(validateRecord(huntersRecord({ task })), { ok: false, field: 'task' }, `hunters ${task}`);
+    assert.deepEqual(validateRecord(escapesRecord({ task })), { ok: false, field: 'task' }, `final-escapes ${task}`);
+  }
+});
+
+test('validateRecord: task-review rejects a phase id and final', () => {
+  assert.deepEqual(validateRecord(taskReviewRecord({ task: 'P2' })), { ok: false, field: 'task' });
+  assert.deepEqual(validateRecord(taskReviewRecord({ task: 'final' })), { ok: false, field: 'task' });
+});
+
+test('validateRecord: a P2 hunters record with an unknown category is rejected', () => {
+  assert.deepEqual(
+    validateRecord(huntersRecord({ task: 'P2', hunters: [HUNTER({ category: 'style' })] })),
+    { ok: false, field: 'hunters.0.category' },
+  );
+});
+
 const HUNTERS_BAD = (over) => huntersRecord({ hunters: [HUNTER(over)] });
 const REJECTIONS = [
   // [name, record, expected field]
@@ -354,6 +375,12 @@ test('recordKey: a task-review key includes the attempt, any other kind ignores 
     assert.equal(recordKey({ ...fields, attempt: 2 }), recordKey(fields), kind);
     assert.equal(recordKey(fields), createHash('sha256').update(`/r/.git\0p.md\0final\0${kind}`).digest('hex'), kind);
   }
+});
+
+test('recordKey: P1, P2 and final are distinct keys', () => {
+  const base = { commonDir: '/r/.git', plan: '/r/docs/plans/p.md', kind: 'hunters' };
+  const keys = ['P1', 'P2', 'final'].map((task) => recordKey({ ...base, task }));
+  assert.equal(new Set(keys).size, 3);
 });
 
 test('recordKey: an escape ref drops one leading # and surrounding spaces, so #128 and 128 are one escape', () => {
@@ -784,6 +811,15 @@ test('summarizeByTier: per tier, the hand-computed counts and rates of the six-l
   assert.deepEqual(result.light, {
     tasks: 2, raised: 0, hunterConfirmedRate: 1, specConfirmedPerTask: 0, fixRoundsPerTask: 0.5, blocked: 0, escapesPerTask: 1,
   });
+});
+
+test('summarizeByTier: phase records are not counted as tasks', () => {
+  const text = [
+    taskReviewRecord({ task: 'T1', tier: 'heavy', declaredTier: 'heavy', raised: false }),
+    huntersRecord({ task: 'P1' }),
+    escapesRecord({ task: 'P1', escapes: [] }),
+  ].map((r, i) => rec({ ...r, key: `key-phase-${i}` })).join('\n') + '\n';
+  assert.equal(summarizeByTier(text, {}).heavy.tasks, 1);
 });
 
 test('summarizeByTier: a later attempt adds its counts but is not another task or another raise', () => {

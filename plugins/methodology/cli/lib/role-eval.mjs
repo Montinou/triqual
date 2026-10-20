@@ -60,7 +60,7 @@ const NOTE_MAX = 200;
 export const RETIRED_KINDS = Object.freeze(['safety-shadow']);
 export const CATEGORIES = ['correctness', 'security', 'spec-drift', 'state'];
 const SEVERITIES = ['critical', 'important', 'minor'];
-const TASK = /^(T[0-9]+|final)$/;
+const TASK = /^(T[0-9]+|P[0-9]+|final)$/;
 const MODEL = /^(sonnet|opus|haiku|claude-[a-z0-9-]+|gpt-[0-9.]+-[a-z]+)$/;
 const AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 const ITEM_COUNT = 6;
@@ -210,7 +210,7 @@ function validateSpec(spec) {
 }
 
 function validateTaskReview(obj) {
-  if (obj.task === 'final') fail('task');
+  if (!/^T[0-9]+$/.test(obj.task)) fail('task');
   if (!Number.isSafeInteger(obj.attempt) || obj.attempt < 1) fail('attempt');
   tier(obj, 'tier', '', { nullable: false });
   tier(obj, 'declaredTier', '', { nullable: true });
@@ -234,7 +234,7 @@ function validateTaskReview(obj) {
 }
 
 function validateFinalEscapes(obj) {
-  if (obj.task !== 'final') fail('task');
+  if (obj.task !== 'final' && !/^P[0-9]+$/.test(obj.task)) fail('task');
   if (!Array.isArray(obj.escapes)) fail('escapes');
   obj.escapes.forEach((e, i) => {
     const path = `escapes.${i}`;
