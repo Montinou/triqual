@@ -3,6 +3,18 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## progress-tracking 0.5.2
+
+### Fixed
+
+- **A database written by a newer progress-tracking no longer blocks the Stop hook.** A long session still running the
+  hooks of an older plugin version after a release migrated `tracking.db` to a newer schema used to block every turn
+  with "schema version N, newer than the M this triqual knows" and advise `triqual tracking restore`, which would have
+  discarded the newer entries. The open now fails with its own code, `schema-too-new`; the Stop hook warns once per
+  change set and lets the turn end, and the advice is to update the plugin and run `/reload-plugins`. The `pre-commit`
+  still refuses, and every other store failure still blocks. Only sessions running 0.5.2 or later benefit: a session on
+  an older version keeps blocking until it reloads.
+
 ## methodology 1.0.1
 
 ### Changed

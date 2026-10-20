@@ -651,6 +651,11 @@ The date an entry shows is the draft's heading date. The entry is ordered by the
   the higher effective tier.
 - **Store mode fails closed.** A database that cannot be read blocks the Stop hook and the `pre-commit`, and both name
   `triqual tracking restore`. A disabled store (`TRIQUAL_TRACKING_DB` not absolute) blocks the same way.
+  The one exception is a database written by a newer progress-tracking than the one running (error code
+  `schema-too-new`, for example a long session still on the plugin version it started with after a schema bump): the
+  Stop hook then warns, once per change set, and lets the turn end, and the session-start notice says the same. The
+  advice is to update the plugin and run `/reload-plugins`, never to restore a snapshot. The `pre-commit` still refuses
+  the commit, but it runs through the installed `triqual`, which is the newest version.
 - **The store is one file per user.** Nothing in git holds it. Use `tracking export` for an off-store copy, and the
   daily snapshots for the last 7 days.
 - **`restore` is not per repo.** It replaces the rows of every repo in the database. It cannot recover a database file
