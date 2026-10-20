@@ -3,6 +3,21 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## methodology 1.0.2
+
+### Changed
+
+- **`heavy` is narrow and carries a reason.** `writing-plans` and the `executing-plans` rubric make a task `heavy` only for
+  security-relevant code, live state or migrations, a contract other code parses, or `roles:complex-implementer`; a
+  change that only spans more than one plugin or only touches a public interface is not heavy by that alone. A `heavy`
+  task puts a one-line reason as plain text under `**Tier:**`, and a `roles:complex-implementer` task (a live-state
+  migration, or a change across systems that one brief cannot describe) puts its reason under `**Role:**`. The plan
+  parser reads only the tier word and the role, so the reason line is not a new field.
+- **The plan audit checks tiers both ways.** Besides a task tiered lower than its content justifies, it flags a task
+  tiered higher than the rubric justifies and a `heavy` or `roles:complex-implementer` task whose reason line is missing
+  or does not match the rubric. The controller writes both tier checks into its dispatch to the auditor; the shared
+  audit prompt is unchanged.
+
 ## progress-tracking 0.5.2
 
 ### Fixed

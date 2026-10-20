@@ -414,3 +414,10 @@ test('a reason line under Tier and Role is ignored by the plan parser', () => {
   const strip = ({ start, end, ...rest }) => rest;
   assert.deepEqual(readTasks(plan(true)).map(strip), readTasks(plan(false)).map(strip));
 });
+
+test('the plan audit flags over-tiering and unjustified complex-implementer', () => {
+  const audit = section(PLANS, '## Plan Audit').join(' ').replace(/\s+/g, ' ');
+  assert.ok(audit.includes('tiered higher than'), 'the Plan Audit does not flag a task tiered higher than its content justifies');
+  assert.match(audit, /complex-implementer[^.]*reason/, 'the Plan Audit does not flag a complex-implementer task without a matching reason');
+  assert.match(audit, /both tier checks[^.]*dispatch[^.]*auditor/, 'the Plan Audit does not say the dispatch to the auditor states both tier checks');
+});

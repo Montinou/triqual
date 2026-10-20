@@ -250,7 +250,7 @@ If you find issues, fix them inline. No need to re-review — just fix and move 
 
 ## Plan Audit
 
-After the self-review, dispatch `roles:final-adversarial-reviewer` with `../brainstorming/spec-document-reviewer-prompt.md` on the plan and its spec: the adversarial audit runs on every plan, and no other reviewer takes its place. The audit checks the tiers too: a task tiered lower than its content justifies by the Task Tiers rubric is a finding.
+After the self-review, dispatch `roles:final-adversarial-reviewer` with `../brainstorming/spec-document-reviewer-prompt.md` on the plan and its spec: the adversarial audit runs on every plan, and no other reviewer takes its place. The audit checks the tiers both ways: a task tiered lower than its content justifies by the Task Tiers rubric is a finding, and so is a task tiered higher than the rubric justifies. A `heavy` task, or a `roles:complex-implementer` task, whose reason line is missing or does not match the rubric's criteria for it is a finding too. The shared audit prompt stays as it is, so write both tier checks into your dispatch message to the auditor.
 
 Fix the findings in the plan. Name, in your message to your human partner, each finding you did not fix and why.
 
