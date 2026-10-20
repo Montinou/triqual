@@ -1522,3 +1522,25 @@ test('every script that takes PLAN_FILE accepts a plan path outside the repo, an
     rmSync(outside, { recursive: true, force: true });
   }
 });
+
+// Leaner execution, T8: three sentences that had drifted from the per-task and per-phase review sizes.
+test('the safety-review prompt sends hunters only with a heavy task, and runs a standard task in parallel with the spec review', () => {
+  const intro = flat(read(`${EP}/safety-review-prompt.md`).split('\n').slice(0, 14).join('\n'));
+  assert.match(intro, /heavy task it runs together with the hunters/);
+  assert.match(intro, /standard task it runs in parallel with the spec reviewer/);
+  assert.doesNotMatch(intro, /heavy or standard task it runs together with the hunters/);
+});
+
+test('the final-escapes record is written for a multi-phase plan only, in Process step 4 and the Final Review Records bullet', () => {
+  const text = skill();
+  const end = flat(text.split('\n').find((l) => l.startsWith('4. **End:**')));
+  assert.match(end, /the `final-escapes` record \(multi-phase plans only; a single-phase plan's `P1` record stands\)/);
+  const records = flat(section(text, '## Final Review').split('\n').find((l) => l.startsWith('- **Records:**')));
+  assert.match(records, /for a multi-phase plan only \(a single-phase plan's `P1` record stands\)/);
+});
+
+test('the implementer prompt names both the phase-review and final fix rounds as plain fix commits, the exceptions to --fixup', () => {
+  const text = flat(read(`${EP}/implementer-prompt.md`));
+  assert.match(text, /The exceptions are the phase review's fix rounds, each one plain commit `fix\(\.\.\.\)` on the phase branch, and the final review's fix rounds/);
+  assert.match(text, /never folded into a task commit/);
+});

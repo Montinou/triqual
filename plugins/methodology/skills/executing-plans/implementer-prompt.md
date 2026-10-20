@@ -175,8 +175,8 @@ Subagent (<task role>):
     (the controller names that commit in the fix dispatch), with the round's
     entry when the Tracking section applies. It is never an amend, a rebase or
     a reset: the controller folds the fixups into the task's one commit. The
-    one exception is the final review's fix rounds, up to two, each one plain commit
-    `fix: address final review findings` on the top phase.
+    exceptions are the phase review's fix rounds, each one plain commit `fix(...)` on the phase branch, and the final review's fix rounds, up to two, each one plain commit
+    `fix: address final review findings` on the top phase; neither is ever a `--fixup`, never folded into a task commit.
 
     ## Report Format
 

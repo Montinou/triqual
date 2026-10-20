@@ -25,7 +25,7 @@
       "name": "methodology",
       "source": "./plugins/methodology",
       "description": "Methodology core: triqual's own orchestrator, workflow skills that dispatch the roles agents and drive progress tracking (task ledger), global rules, triqual sync and doctor, drift notices; installs the other plugins",
-      "version": "1.0.2"
+      "version": "1.1.0"
     },
     {
       "name": "memory-report",

@@ -143,7 +143,7 @@ short note).
 these rules:
 
 - The JSON file has no `key` field. Any `key` field is rejected, because the command derives the key.
-- `task` is `T<n>` or `final`. `provider` is `claude` or `codex`.
+- `task` is `T<n>`, `P<n>` or `final`. `provider` is `claude` or `codex`. A `hunters` or `final-escapes` record takes `P<n>` for a phase review and `final` for the seams review.
 - Each hunter has a `category`: `correctness`, `security`, `spec-drift` or `state`.
 - `candidates` must equal `confirmed + refuted + duplicateCandidate + duplicateReview`.
 - An optional `budget` holds `reference`, `used` and `overrun`.
@@ -151,7 +151,7 @@ these rules:
   each reopen of the task), the `tier` the task completed at, its `declaredTier` (`null` for a tierless task), `raised`,
   its `hunters`, the `gate` findings, the `spec` review, `fixRounds`, `blocked` and `coordinator`. A `tier` below the
   declared one is refused, and `raised` must say exactly that the tier is above it.
-- A `final-escapes` (`v` 2, task `final`) lists the `tier` and `severity` of each final-review finding traced to a task.
+- A `final-escapes` (`v` 2, task `P<n>` or `final`) lists the `tier` and `severity` of each phase-review or seams-review finding traced to a task.
 - An `escape` (`v` 2, no `provider`) is a defect that reached trunk after the plan merged: `source` is `post-merge-fix`,
   `red-ci` or `bug-report`, `ref` the commit sha or PR number (a string), with an optional `task` (`T<n>`), `tier` and
   `note` (at most 200 characters, one line, no secrets). `record` stores the plan file's base name in it. With a `task`
