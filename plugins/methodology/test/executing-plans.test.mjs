@@ -129,6 +129,7 @@ test('TDD is required for every task, in the skill and the implementer template'
 test('the role-eval record examples in the skill validate, and cover task-review, final-escapes, the final hunters and a post-merge escape', () => {
   const blocks = [...skill().matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => JSON.parse(m[1]));
   assert.ok(blocks.length >= 3, 'fewer than three record examples');
+  assert.ok(blocks.some((r) => r.task === 'P1'), 'no P1 phase record example');
   for (const record of blocks) assert.deepEqual(validateRecord(record), { ok: true }, JSON.stringify(record));
   const kinds = blocks.map((r) => `${r.kind}:${r.task === 'final' ? 'final' : 'task'}`);
   for (const k of ['task-review:task', 'final-escapes:final', 'hunters:final', 'escape:task']) assert.ok(kinds.includes(k), `no ${k} example`);
@@ -301,8 +302,11 @@ test('the kept SDD behaviors are in their own sections', () => {
       "Run the phase's `**Phase check:**` command at the tip of the phase branch",
       'A failure that passes on one re-run is flaky',
       '`triqual tasks reopen T<N> "<reason>" --plan <plan>`',
+    ],
+    '### 8. Review the phase': [
       '`node scripts/stack.mjs done PLAN_FILE N`',
       '`node scripts/stack.mjs submit PLAN_FILE N`',
+      'submit` exits 5',
     ],
     '## Finish': ['re-run `triqual role-eval record --plan <plan file> <json-file>` for every record that has an `Unrecorded:` line'],
   };
@@ -394,6 +398,131 @@ test('the final review names the task of each traceable finding and records fina
   assert.ok(text.includes('`final-escapes`'));
   assert.ok(text.includes('3 hunters'));
   assert.ok(text.includes('`roles:final-adversarial-reviewer`'));
+});
+
+// ---- the phase review (design: Review structure) ----
+
+const PHASE_HEADING = '### 8. Review the phase';
+const phaseReview = () => flat(section(skill(), PHASE_HEADING));
+
+test('the phase review runs between the Phase check and done/submit', () => {
+  const raw = skill();
+  const check = raw.indexOf('**Phase check.**');
+  const heading = raw.indexOf(PHASE_HEADING);
+  assert.ok(check >= 0 && heading > check, 'the phase review heading does not follow the Phase check');
+  const body = phaseReview();
+  const review = body.indexOf('phase review');
+  const done = body.indexOf('`node scripts/stack.mjs done PLAN_FILE N`');
+  const submit = body.indexOf('`node scripts/stack.mjs submit PLAN_FILE N`');
+  assert.ok(review >= 0 && done > review && submit > done, 'the order is not phase review → done → submit');
+  const seven = flat(section(raw, '### 7. End the phase'));
+  assert.doesNotMatch(seven, /stack\.mjs (done|submit)/, 'done and submit stayed in step 7');
+  for (const category of ['`correctness`', '`security`', '`spec-drift`', '`state`']) assert.ok(body.includes(category), `no hunter category ${category}`);
+  assert.ok(body.includes('`roles:final-adversarial-reviewer`'), 'the phase reviewer is not named');
+  assert.ok(body.includes('Phase check'), 'the phase review does not name the Phase check');
+  const process = flat(section(raw, '## The Process'));
+  assert.ok(process.includes('the phase review'), 'The Process does not name the phase review');
+  assert.ok(process.indexOf('the phase review') < process.indexOf('`node scripts/stack.mjs done PLAN_FILE N`'), 'The Process puts the phase review after done');
+  assert.ok(flat(section(raw, '### 4. Review the task')).includes('once per phase'), 'step 4 still says the broad review happens once, at the final review');
+});
+
+test('phase fixes: two rounds, own commits, never reopen a task, then a seventh stop', () => {
+  const body = phaseReview();
+  for (const line of ['at most two', '`fix(', 'never folded into a task commit', 'never reopens a task', '`roles:review-fixer`', '`roles:spec-reviewer`']) {
+    assert.ok(body.includes(line), `the phase review lacks: ${line}`);
+  }
+  const para = flat(skill().split('\n').find((l) => l.startsWith('Seven things stop you')) ?? '');
+  assert.ok(para, 'the stops paragraph does not say Seven things stop you');
+  const stops = para.split(': ')[1].split('. For those')[0].split(';').map((s) => s.trim());
+  assert.equal(stops.length, 7, `${stops.length} stops: ${JSON.stringify(stops)}`);
+  assert.ok(stops.some((s) => /phase review/.test(s) && /second fix round/.test(s)), 'no stop for a blocked phase review');
+  assert.ok(flat(skill()).includes('The only reasons to stop are the seven named below'), 'the continuous-execution paragraph still counts six');
+  assert.ok(body.includes('seventh stop'), 'the phase review does not name the seventh stop');
+});
+
+test('the ledger records the phase review and resume re-runs a missing one', () => {
+  const vocab = flat(section(skill(), '## Ledger vocabulary'));
+  for (const line of [
+    '`Round 1: P<n> — hunters <done>/<sent>`',
+    '`Round 2: P<n> — verdicts <n>/<n>`',
+    '`Phase review: P<n> clean | fixed | blocked`',
+  ]) {
+    assert.ok(vocab.includes(line), `the vocabulary lacks ${line}`);
+  }
+  const ws = flat(section(skill(), '### Workspace and ledger'));
+  assert.ok(
+    ws.includes('a phase whose tasks are all done and that has no `Phase review: P<n>` line gets its review run (again) before anything else'),
+    'the resume rule does not re-run a missing phase review',
+  );
+  assert.ok(ws.includes('`blocked` resumes only on the human\'s word'), 'the resume rule lets a blocked phase review resume alone');
+  assert.match(
+    ws,
+    /unless it already has a `Phase <N>: submitted` or `Phase <N>: complete` line/,
+    'the resume rule re-reviews a phase that is already submitted or complete',
+  );
+  const body = phaseReview();
+  for (const line of ['`Round 1: P<n>', '`Round 2: P<n>', '`Phase review: P<n> clean`', '`Phase review: P<n> fixed`', '`Phase review: P<n> blocked`']) {
+    assert.ok(body.includes(line), `step 8 does not write ${line}`);
+  }
+});
+
+test('the phase reviewer rules on the phase ledger lines', () => {
+  const prompt = read(`${EP}/final-review-prompt.md`);
+  const at = prompt.indexOf('## Phase Scope');
+  assert.ok(at >= 0, 'the final review prompt has no phase scope');
+  const next = prompt.indexOf('\n    ## ', at + 1);
+  const scope = flat(prompt.slice(at, next));
+  for (const line of ['one phase', '`Ruling:`', 'deferred', 'parked', '[PHASE_RANGE]', '[PHASE_TASKS]', '[PHASE_LEDGER_LINES]']) {
+    assert.ok(scope.includes(line), `the phase scope lacks: ${line}`);
+  }
+  assert.match(scope, /range only/, 'the phase scope does not say the range only');
+  const body = phaseReview();
+  assert.ok(body.includes('`Ruling:`') && body.includes('Minor'), 'step 8 does not send Minor findings and Ruling: lines to the phase reviewer');
+});
+
+test('the controller writes the phase ledger file before the phase reviewer is dispatched', () => {
+  const body = phaseReview();
+  const round2 = body.slice(body.indexOf('**Round 2, the reviewer.**'), body.indexOf('**Findings.**'));
+  const write = round2.indexOf('`<workspace>/phase-<N>-ledger.md`');
+  assert.ok(write >= 0, 'step 8 never writes <workspace>/phase-<N>-ledger.md');
+  assert.ok(write < round2.indexOf('dispatch `roles:final-adversarial-reviewer`'), 'the phase ledger file is written after the dispatch');
+  const text = flat(round2);
+  for (const form of ['`Ruling:`', 'minor (deferred)', 'parked']) assert.ok(text.includes(form), `the phase ledger file lacks ${form}`);
+});
+
+test('in a phase review the reviewer triages the phase ledger lines, not the workspace ledger', () => {
+  const prompt = read(`${EP}/final-review-prompt.md`);
+  const at = prompt.indexOf('## The Ledger');
+  assert.ok(at >= 0, 'no ## The Ledger');
+  const next = prompt.indexOf('\n    ## ', at + 1);
+  const ledger = flat(prompt.slice(at, next));
+  assert.match(ledger, /In a phase review[^.]*\[PHASE_LEDGER_LINES\][^.]*instead[^.]*triage/i, 'The Ledger does not send a phase review to [PHASE_LEDGER_LINES]');
+});
+
+test('phase records use P<n>', () => {
+  const records = section(skill(), '## Records');
+  const phase = [...records.matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => JSON.parse(m[1])).filter((r) => r.task === 'P1');
+  assert.deepEqual(phase.map((r) => r.kind).sort(), ['final-escapes', 'hunters'], 'Records lacks the P1 hunters and final-escapes examples');
+  assert.ok(records.includes('"task": "P1"'));
+  const text = flat(records);
+  assert.ok(text.includes('Plan <name> · P<n> fix'), 'Records does not name the phase-fix progress entry');
+  assert.ok(text.includes('`task: "P<n>"`'), 'Records does not say the phase review records with task P<n>');
+});
+
+test('an escape counts only a finding no earlier review recorded', () => {
+  const text = flat(section(skill(), '## Records'));
+  assert.ok(text.includes('only a finding no earlier review recorded'), 'Records does not limit what an escape counts');
+  assert.ok(text.includes('a deferred Minor confirmed again is not an escape'), 'Records counts a re-confirmed deferred Minor');
+});
+
+test('phase hunters write phase-<N>-candidates-<category>.md', () => {
+  const text = flat(read(`${EP}/hunter-prompt.md`));
+  assert.ok(text.includes('**Phase review:**'), 'the hunter template has no phase mode');
+  assert.ok(text.includes('`<workspace>/phase-<N>-candidates-<category>.md`'), 'the phase mode does not name the candidates file');
+  const mode = text.slice(text.indexOf('**Phase review:**'), text.indexOf('**Placeholders:**'));
+  assert.ok(mode.includes('Spec: [SPEC_PATH]') && mode.includes('Plan: [PLAN_PATH]'), 'the phase mode does not give the spec and the plan');
+  assert.ok(mode.includes('the `Task brief` line'), 'the phase mode does not drop the brief');
+  assert.ok(mode.includes('`state`'), 'the phase mode lacks the state category');
 });
 
 test('worktrees only on request, as a section of the orchestrator', () => {

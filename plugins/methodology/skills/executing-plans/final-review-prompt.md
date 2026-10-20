@@ -70,6 +70,24 @@ Subagent (roles:final-adversarial-reviewer):
     review incomplete, and the controller sends it back. When the line above
     says none, there are no candidates: write "None" under Candidate Verdicts.
 
+    ## Phase Scope
+
+    Phase review only; the controller deletes this section from the final
+    review and the seams review.
+
+    This dispatch covers one phase's range only: [PHASE_RANGE] (phase base..phase
+    top, the range of the package). Review nothing outside it, and ignore the
+    rest of the branch. Every candidate comes from four hunters
+    (`correctness`, `security`, `spec-drift`, `state`) who read this range.
+
+    The phase's tasks, from the plan: [PHASE_TASKS]
+
+    The ledger lines of this phase, in the file [PHASE_LEDGER_LINES]: the
+    `Ruling:` lines, the deferred Minor findings and the parked findings of
+    its tasks. In a phase review these lines are your ledger: rule on every
+    `Ruling:`, deferred and parked line of the phase in Ledger Triage, as below;
+    no other ledger line is yours to triage.
+
     ## The Ledger
 
     Read the workspace ledger: [SDD_LEDGER_PATH]
@@ -80,6 +98,9 @@ Subagent (roles:final-adversarial-reviewer):
     task loops left open. Triage every one of them: must fix before merge,
     or accept with a one-line reason. A ruling you think is wrong is a
     finding.
+
+    In a phase review, read [PHASE_LEDGER_LINES] instead of the workspace
+    ledger (the line above says none) and triage those lines.
 
     ## Method
 
@@ -194,9 +215,14 @@ Subagent (roles:final-adversarial-reviewer):
 - `[PLAN_PATH]` — the plan file
 - `[SPEC_PATH]` — the spec the plan names; "none" when the plan has no reachable spec
 - `[REVIEW_FOCUS]` — the plan's Review Focus section, copied verbatim; "none" when the plan has none
-- `[SDD_LEDGER_PATH]` — the workspace ledger, `sdd-ledger.md`; the reviewer reads its `Ruling:`, deferred-minor and parked lines
+- `[SDD_LEDGER_PATH]` — the workspace ledger, `sdd-ledger.md`; the reviewer reads its `Ruling:`, deferred-minor and parked lines; "none" in a phase review (see Phase Scope)
+- `[PHASE_RANGE]` — phase review only: the phase base..phase top range of the package (the phase base is the
+  previous phase's branch tip, or `git merge-base <trunk> HEAD` for phase 1)
+- `[PHASE_TASKS]` — phase review only: this phase's tasks, as the plan states them (the task headings and goals)
+- `[PHASE_LEDGER_LINES]` — phase review only: the file `<workspace>/phase-<N>-ledger.md`, holding this phase's
+  `Ruling:`, deferred-minor and parked ledger lines, which the controller copies there
 - `[CANDIDATES_PATHS]` — every `final-candidates-<category>.md` the final hunters
-  returned; "none" when the hunters were skipped or returned no file
+  (or, in a phase review, every `phase-<N>-candidates-<category>.md`) returned; "none" when the hunters were skipped or returned no file
 
 **Final reviewer returns:** findings by severity, each with the task it traces
 to (or `untraced`) and its phase, a verdict for every candidate, the ledger triage, the declined-to-judge list, and a merge verdict

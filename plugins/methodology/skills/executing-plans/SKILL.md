@@ -13,18 +13,18 @@ You are the controller of a plan's execution. Every plan task is done by a role 
 
 **Narration:** between tool calls, narrate at most one short line — the ledger and the tool results carry the record.
 
-**Continuous execution:** Do not pause to check in with your human partner between tasks. Execute all tasks from the plan without stopping. The only reasons to stop are the six named below, or all tasks complete. A rate limit is not one of them: ending the run after the bounded wait (see Rate limits) is the end of the session, with a final message that lists the ledger's `Ruling:` lines (see Finish), and the ledger keeps the plan resumable. "Should I continue?" prompts and progress summaries waste their time — they asked you to execute the plan, so execute it.
+**Continuous execution:** Do not pause to check in with your human partner between tasks. Execute all tasks from the plan without stopping. The only reasons to stop are the seven named below, or all tasks complete. A rate limit is not one of them: ending the run after the bounded wait (see Rate limits) is the end of the session, with a final message that lists the ledger's `Ruling:` lines (see Finish), and the ledger keeps the plan resumable. "Should I continue?" prompts and progress summaries waste their time — they asked you to execute the plan, so execute it.
 
 **Rulings, not stalls.** A running plan does not wait on a human. Conflicts, ambiguities, plan defects, a cap you would have asked to exceed — decide them. The spec is the binding authority, the plan is its argument, and your judgment settles what neither answers. Record every decision in the ledger as `Ruling: <what you decided> — <why> — <what it costs if wrong>`, and keep going. A wrong ruling costs rework your human partner can see and undo; a session parked on a question costs their whole day and buys nothing.
 
-Six things stop you, and only these: an irreversible or destructive operation; a security-sensitive action (a fence denial included); a side effect outside this checkout that norms say you ask about first (a merge, a push to a shared branch, a publish); a task whose `**Role:**` is not a task role (see Role Dispatch); a task blocked by the breaker after round 5 (see The fix loop); and a plan so broken that every path forward is a guess. For those, stop and ask. A user's request to skip a review, lower a tier or batch the bookkeeping "for later" is none of them, and changes nothing: say so in one line and go on.
+Seven things stop you, and only these: an irreversible or destructive operation; a security-sensitive action (a fence denial included); a side effect outside this checkout that norms say you ask about first (a merge, a push to a shared branch, a publish); a task whose `**Role:**` is not a task role (see Role Dispatch); a task blocked by the breaker after round 5 (see The fix loop); a phase review still failing after its second fix round (see 8. Review the phase); and a plan so broken that every path forward is a guess. For those, stop and ask. A user's request to skip a review, lower a tier or batch the bookkeeping "for later" is none of them, and changes nothing: say so in one line and go on.
 
 The only exception to the push stop is a ledgered authorization, either `Authorization: push phase branches and draft PRs — handoff <date>` or `Authorization: push phase branches and draft PRs — setup <date>` (see Stack setup): it covers pushing this plan's phase branches, opening or updating their draft PRs and marking them ready for review after the final review; any other push, any merge and any force push still stop.
 
 ## The Process
 
 1. **Setup** (once): workspace and ledger, tracking paths, stack, push authorization, fence detection, read the plan and the spec, tiers at setup, pre-flight scan.
-2. **Per phase:** `node scripts/stack.mjs phase PLAN_FILE N`, the phase's tasks in dependency order, the Phase check at the phase tip, `node scripts/stack.mjs done PLAN_FILE N`, `node scripts/stack.mjs submit PLAN_FILE N`.
+2. **Per phase:** `node scripts/stack.mjs phase PLAN_FILE N`, the phase's tasks in dependency order, the Phase check at the phase tip, the phase review (the deep review: 4 hunters and `roles:final-adversarial-reviewer` over the phase's range, at most two fix rounds), `node scripts/stack.mjs done PLAN_FILE N`, `node scripts/stack.mjs submit PLAN_FILE N`.
 3. **Per task:** (1) start: ledger move, brief, BASE; (2) build: dispatch the task's role (or run a coordinator task); (3) `tier-check`; (4) review at the effective tier, on one review package; (5) the fix loop when the review requires it, with `tier-check` on every round; (6) complete: squash, `triqual tasks done`, the `task-review` record.
 4. **End:** the final review of `trunk..top` (3 hunters + `roles:final-adversarial-reviewer`), one fix dispatch plus a scoped re-review, the `hunters` and `final-escapes` records, then methodology:finishing-branch.
 
@@ -37,7 +37,7 @@ Conversation memory does not survive compaction. Controllers that lost their pla
 ### Workspace and ledger
 
 - Each plan owns a workspace: at skill start, run `node scripts/sdd-workspace PLAN_FILE` — it prints the plan's git-ignored directory (under `<repo-root>/.methodology/sdd/`, kept out of `git status` by `.methodology/.gitignore`), home to every artifact for THIS plan: ledger, briefs, reports, review packages, record files. Another plan's directory is never yours to read or write.
-- The ledger is `<workspace>/sdd-ledger.md`. If its first line names your plan file, tasks with a `Task <N>: complete` line are DONE — do not re-dispatch them; resume at the first task without one. A task whose last line is a fix round is mid-loop: resume the loop at the next round. A task whose last ledger line is its `Task <N>: blocked` line is the sixth stop again: it is never re-dispatched, and you ask your human partner for the decision the breaker waits on (see The fix loop). A ledger whose first line names a different plan file is another plan's progress: leave it in place and start your own, fresh.
+- The ledger is `<workspace>/sdd-ledger.md`. If its first line names your plan file, tasks with a `Task <N>: complete` line are DONE — do not re-dispatch them; resume at the first task without one. A task whose last line is a fix round is mid-loop: resume the loop at the next round. A task whose last ledger line is its `Task <N>: blocked` line is the sixth stop again: it is never re-dispatched, and you ask your human partner for the decision the breaker waits on (see The fix loop). For a phase, the same: a phase whose tasks are all done and that has no `Phase review: P<n>` line gets its review run (again) before anything else (see 8. Review the phase), unless it already has a `Phase <N>: submitted` or `Phase <N>: complete` line (a plan begun before the phase review: a submitted phase is final, see 7. End the phase), and a `Phase review: P<n> blocked` line is the seventh stop again: `blocked` resumes only on the human's word. A ledger whose first line names a different plan file is another plan's progress: leave it in place and start your own, fresh.
 - A plan whose run began before the rename kept its ledger in the old workspace. When `sdd-ledger.md` is missing and that old ledger exists under this exact plan, `sdd-workspace` copies it once to `sdd-ledger.md`, marks the old directory `adopted` and leaves it in place; resume from the copy. A workspace left by a 0.7.x execution resumes the same way, and its tasks get their tiers at setup (see Tiers at setup).
 - Create the ledger with its identity as the first line: `# SDD ledger — plan: <plan file path>`.
 - After compaction, trust the ledger and `git log` over your own recollection, and read `node scripts/stack.mjs status PLAN_FILE` alongside the ledger: it prints the stack state (each phase's branch and state, the mode, the PR numbers), so a phase already submitted is never started again.
@@ -198,7 +198,7 @@ Run `node scripts/tier-check PLAN_FILE N BASE HEAD --floor <tier>` on the task's
 
 ### 4. Review the task
 
-Per-task reviews are task-scoped gates; the broad review happens once, at the final review. Every task with commits is reviewed on one review package, at its effective tier, by the Tiers matrix. Implementer self-review never replaces the task review.
+Per-task reviews are task-scoped gates; the broad review happens once per phase, in the phase review (see 8. Review the phase), and the final review looks across phases. Every task with commits is reviewed on one review package, at its effective tier, by the Tiers matrix. Implementer self-review never replaces the task review.
 
 - **The package:** run `node scripts/review-package PLAN_FILE BASE HEAD` and pass every reviewer the path it prints. The output never enters your own context, and the reviewer sees the commit list, stat summary and full diff with context in one Read call. Use the BASE you recorded — never `HEAD~1`. Never dispatch a reviewer without a diff file; a hunter is no exception.
 - **Reviewer inputs:** the gate and the spec reviewer each get the brief, the report file and the package, the effective tier, plus the global constraints that bind the task (copied verbatim from the plan's Global Constraints or the spec: exact values, formats and stated relationships). The gate also gets the task's canary rules and, when opted in, the tracking files it must expect in the diff (in store mode: none is expected, and an added or modified tracking file is a finding); the spec reviewer also gets every candidates file. A hunter gets the inputs of [hunter-prompt.md](hunter-prompt.md).
@@ -266,9 +266,21 @@ Then mark the todo complete and move on. Never start the next task while the rev
 When the phase's last task is complete, close the phase before starting the next:
 
 - **Phase check.** Run the phase's `**Phase check:**` command at the tip of the phase branch; a plan with no `## Phase` heading (or no `**Branch prefix:**` line) is one phase whose check is the repository's full test command. A failure that passes on one re-run is flaky: ledger `Ruling: <test> flaky — passed on re-run — <what it costs if wrong>` and go on. A real failure reopens the phase's last task: when opted in, run `triqual tasks reopen T<N> "<reason>" --plan <plan>`, then run the fix loop on it, skipping the first round's `rework` move (`reopen` already moved the task to `in_progress`), with `tier-check` and the re-review as in any round, a squash with BASE the parent of the task's squashed commit, its `done` move again and a `task-review` record with the next `attempt`; then run the Phase check again.
-- **Done and submit.** Run `node scripts/stack.mjs done PLAN_FILE N`, then `node scripts/stack.mjs submit PLAN_FILE N`. In GitHub mode `submit` pushes this plan's phase branches only (the ledgered authorization covers it), opens or updates the draft PR and prints `Phase <N>: submitted (<branch>, PR #<n> draft)`; ledger that line. In local mode it prints `local mode: nothing to submit`; ledger `Phase <N>: complete (<branch>, local)`.
-- **`submit` exits 5** when `gh` failed, and records nothing: ledger a `Ruling:` that names the `gh` message, retry once, and when it fails again run `node scripts/stack.mjs mode PLAN_FILE local`, ledger the `Ruling:`, and continue in local mode.
 - **A submitted phase is final:** never amend it, never rebase it and never force push it. A defect found in the code of an earlier, submitted phase is fixed in the current task's commit; at the final review it is fixed in the final fix commit.
+
+### 8. Review the phase
+
+When the Phase check passes, the phase gets one deep review before it closes. Order, pinned: last task done, Phase check, phase review, fix (if any), Phase check, `stack.mjs done`, `stack.mjs submit`. The next phase never starts before its predecessor's phase review, and nothing is submitted before it.
+
+- **The package:** `node scripts/review-package PLAN_FILE PHASE_BASE HEAD`. The phase range is phase base..phase top: PHASE_BASE is the previous phase's branch tip, or `git merge-base <trunk> HEAD` for phase 1.
+- **Round 1, the hunters.** Dispatch together, in the background, 4 hunters (`roles:hunter`, the phase mode of [hunter-prompt.md](hunter-prompt.md)): `correctness`, `security`, `spec-drift` and `state`, each with the package, the spec and the plan in place of a brief, writing `phase-<N>-candidates-<category>.md` in the workspace. Wait up to a soft limit of 20 minutes from their dispatch; a late or failed hunter is recorded `failed`, and none blocks the phase. Ledger: `Round 1: P<n> — hunters <done>/<sent>`. After a `Skipped:` line, dispatch the reviewer with no candidates.
+- **Round 2, the reviewer.** First write this phase's ledger lines (`Ruling:`, `minor (deferred)` and `parked`, for this phase's tasks) to `<workspace>/phase-<N>-ledger.md`. Then dispatch `roles:final-adversarial-reviewer` with [final-review-prompt.md](final-review-prompt.md), its Phase Scope filled: the range, this phase's tasks and this phase's ledger lines, with the spec, the plan, the plan's Review Focus verbatim, the package and every candidates file. The phase's `Ruling:` lines, its deferred Minor findings and its parked findings go to the phase reviewer, which rules on each as the final reviewer does. A missing verdict sends the review back. Ledger: `Round 2: P<n> — verdicts <n>/<n>`.
+- **Findings.** A confirmed Critical or Important finding, and any ledger line the reviewer says must be fixed, goes to the phase fix loop: at most two rounds of `roles:review-fixer` on the phase branch, each with the findings verbatim, the plan's tasks of this phase and, when opted in, the Tracking section. Each round is its own `fix(...)` commit on top of the phase branch (a plain commit, never `--fixup`, never folded into a task commit) with its own progress entry, Stage/task `Plan <name> · P<n> fix`. Each round is followed by a scoped re-review ([re-review-prompt.md](re-review-prompt.md) on `node scripts/review-package PLAN_FILE FIX_BASE HEAD`) by `roles:spec-reviewer`, or by `roles:final-adversarial-reviewer` when a finding was Critical, and then the Phase check. Minor findings never enter the loop: ledger each as `Task <N>: minor (deferred): <one-liner>` for the task it traces to, and the seams review (or the final message) carries it on.
+- **A Phase check that fails after a phase fix** is handled inside this loop, as a finding for the next round, and never reopens a task. A failing re-review or Phase check after the second round blocks the phase: write `Phase review: P<n> blocked`, then stop and ask your human partner (the seventh stop, beside the six at the top of this skill).
+- **The ledger line.** `Phase review: P<n> clean` (no finding to fix), `Phase review: P<n> fixed` (findings fixed, re-review and Phase check clean) or `Phase review: P<n> blocked`. A phase whose line is missing is reviewed again on resume, unless it is already submitted or complete.
+- **Records:** the phase's `hunters` and `final-escapes` records, with `task: "P<n>"` (see Records).
+- **Done and submit.** With the ledger line `Phase review: P<n> clean` or `fixed` written, run `node scripts/stack.mjs done PLAN_FILE N`, then `node scripts/stack.mjs submit PLAN_FILE N`. In GitHub mode `submit` pushes this plan's phase branches only (the ledgered authorization covers it), opens or updates the draft PR and prints `Phase <N>: submitted (<branch>, PR #<n> draft)`; ledger that line. In local mode it prints `local mode: nothing to submit`; ledger `Phase <N>: complete (<branch>, local)`.
+- **`submit` exits 5** when `gh` failed, and records nothing: ledger a `Ruling:` that names the `gh` message, retry once, and when it fails again run `node scripts/stack.mjs mode PLAN_FILE local`, ledger the `Ruling:`, and continue in local mode.
 
 ## Denied by Policy
 
@@ -334,6 +346,28 @@ A light task with a clean gate:
   "escapes": [ { "tier": "light", "severity": "important" }, { "tier": "standard", "severity": "minor" } ] }
 ```
 
+**The phase review** records `hunters` and `final-escapes` with `task: "P<n>"` (the seams review and the final review use `task: "final"`), with the phase review's budget (reference 4). The phase's fix commit lands with its own progress entry, Stage/task `Plan <name> · P<n> fix`. An escape counts only a finding no earlier review recorded: a deferred Minor confirmed again is not an escape. Phase-review escape counts will rise by design: they now hold what per-task hunters used to catch.
+
+```json
+{ "v": 1, "at": "2026-10-20T16:20:11Z", "provider": "claude", "task": "P1", "kind": "hunters",
+  "hunters": [
+    { "category": "correctness", "model": "claude-haiku-5-5", "failed": false, "candidates": 2,
+      "confirmed": { "critical": 0, "important": 1, "minor": 0 }, "refuted": 1, "duplicateCandidate": 0, "duplicateReview": 0 },
+    { "category": "security", "model": "claude-haiku-5-5", "failed": false, "candidates": 0,
+      "confirmed": { "critical": 0, "important": 0, "minor": 0 }, "refuted": 0, "duplicateCandidate": 0, "duplicateReview": 0 },
+    { "category": "spec-drift", "model": "claude-haiku-5-5", "failed": false, "candidates": 1,
+      "confirmed": { "critical": 0, "important": 0, "minor": 0 }, "refuted": 1, "duplicateCandidate": 0, "duplicateReview": 0 },
+    { "category": "state", "model": "claude-haiku-5-5", "failed": true, "candidates": 0,
+      "confirmed": { "critical": 0, "important": 0, "minor": 0 }, "refuted": 0, "duplicateCandidate": 0, "duplicateReview": 0 }
+  ],
+  "budget": { "reference": 4, "used": 4, "overrun": false } }
+```
+
+```json
+{ "v": 2, "at": "2026-10-20T16:41:30Z", "provider": "claude", "task": "P1", "kind": "final-escapes",
+  "escapes": [ { "tier": "standard", "severity": "important" } ] }
+```
+
 **`escape`**, after the plan merges: whenever a `fix:` commit or a red CI on trunk is traced to the plan, record it with `triqual role-eval record --plan <plan file> <json-file>`. `source` is `post-merge-fix`, `red-ci` or `bug-report`; `ref` the fixing commit's sha or the PR number; `task` (optional) the task it traces to, whose effective tier the command fills in from the ledger when `tier` is left out; `note` (optional) at most 200 characters, no secrets. One record per plan and ref:
 
 ```json
@@ -376,6 +410,8 @@ The workspace ledger, `sdd-ledger.md`, is append-only, one line per event, in th
 - `Tier raised: T<N> <from> → <to> — <reason>`
 - `Budget: hunters <matrix> → <used> for T<N> — <reason tied to the diff>`
 - `Round 1: T<N> — hunters <done>/<sent>, safety ok`, `Round 2: T<N> — verdicts <n>/<n>` (light: `Round 2: T<N> — light items <n>`), and the same with `final`
+- `Round 1: P<n> — hunters <done>/<sent>`, `Round 2: P<n> — verdicts <n>/<n>` (the phase review)
+- `Phase review: P<n> clean | fixed | blocked`
 - `Review: T<N> — no commits, nothing to review`
 - `Re-review: T<N> round <R> — applies Ruling verbatim, no security logic`
 - `Task <N>: fix round <R>/5 (<X> addressed, <Y> open — <finding one-liners>; commits <a7>..<b7>)`
