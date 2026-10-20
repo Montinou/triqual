@@ -5,7 +5,7 @@ description: Use when executing an implementation plan in the current session �
 
 # Executing Plans
 
-You are the controller of a plan's execution. Every plan task is done by a role agent (`roles:tdd-implementer` or `roles:complex-implementer`), except `coordinator` tasks, which you run yourself (see Coordinator tasks). You never run a plan inline: never run a plan inline as its implementer, whatever the plan's size, and a harness that cannot dispatch a named role agent stops and asks its human partner. Each task's review is sized by its **tier** (`heavy`, `standard`, `light`): declared by the plan, raised (never lowered) by `scripts/tier-check` from the task's real diff. Execution is stacked: each plan phase is one git branch on top of the previous phase's (and, in GitHub mode, one draft PR), and each task is exactly one commit on its phase branch, driven by `scripts/stack.mjs`. At the end one final whole-branch review runs for every plan.
+You are the controller of a plan's execution. Every plan task is done by a role agent (`roles:tdd-implementer` or `roles:complex-implementer`), except `coordinator` tasks, which you run yourself (see Coordinator tasks). You never run a plan inline: never run a plan inline as its implementer, whatever the plan's size, and a harness that cannot dispatch a named role agent stops and asks its human partner. Each task's review is sized by its **tier** (`heavy`, `standard`, `light`): declared by the plan, raised (never lowered) by `scripts/tier-check` from the task's real diff. Execution is stacked: each plan phase is one git branch on top of the previous phase's (and, in GitHub mode, one draft PR), and each task is exactly one commit on its phase branch, driven by `scripts/stack.mjs`. At the end one final review runs for every plan: the seams review across phases, and in a single-phase plan the phase review itself (a single-phase plan's phase review is its final review).
 
 **Why role agents:** each task gets a fresh agent whose context holds only its brief and the interfaces it touches; your own context stays clean for coordination across the whole plan. Every dispatch goes to a `roles:*` agent and passes no model (see Role Dispatch).
 
@@ -26,7 +26,7 @@ The only exception to the push stop is a ledgered authorization, either `Authori
 1. **Setup** (once): workspace and ledger, tracking paths, stack, push authorization, fence detection, read the plan and the spec, tiers at setup, pre-flight scan.
 2. **Per phase:** `node scripts/stack.mjs phase PLAN_FILE N`, the phase's tasks in dependency order, the Phase check at the phase tip, the phase review (the deep review: 4 hunters and `roles:final-adversarial-reviewer` over the phase's range, at most two fix rounds), `node scripts/stack.mjs done PLAN_FILE N`, `node scripts/stack.mjs submit PLAN_FILE N`.
 3. **Per task:** (1) start: ledger move, brief, BASE; (2) build: dispatch the task's role (or run a coordinator task); (3) `tier-check`; (4) review at the effective tier, on one review package; (5) the fix loop when the review requires it, with `tier-check` on every round; (6) complete: squash, `triqual tasks done`, the `task-review` record.
-4. **End:** the final review of `trunk..top` (3 hunters + `roles:final-adversarial-reviewer`), one fix dispatch plus a scoped re-review, the `hunters` and `final-escapes` records, then methodology:finishing-branch.
+4. **End:** the seams review of `trunk..top` (`roles:final-adversarial-reviewer` alone, no hunters; in a single-phase plan the phase review is the final review and no second review runs), at most two fix rounds with a scoped re-review each, the `final-escapes` record, `node scripts/stack.mjs submit PLAN_FILE <top N> --open`, then methodology:finishing-branch.
 
 ## Setup
 
@@ -116,7 +116,7 @@ Every dispatch goes to a `roles:*` agent (plugin `roles`), and no dispatch passe
 - **Reviews:** by the task's effective tier (see Tiers), never the task's own role: `roles:hunter` ([hunter-prompt.md](hunter-prompt.md)), `roles:safety-reviewer` ([safety-review-prompt.md](safety-review-prompt.md)), `roles:spec-reviewer` ([task-reviewer-prompt.md](task-reviewer-prompt.md)).
 - **Re-reviews:** the role or roles that raised the findings ([re-review-prompt.md](re-review-prompt.md)).
 - **Fix rounds:** `roles:review-fixer`; a `roles:complex-implementer` task keeps its own role.
-- **Final review:** `roles:final-adversarial-reviewer`, once per plan ([final-review-prompt.md](final-review-prompt.md)).
+- **Seams review:** `roles:final-adversarial-reviewer`, once per multi-phase plan ([final-review-prompt.md](final-review-prompt.md), its Seams Scope).
 - **Briefs:** `node scripts/task-brief PLAN_FILE N` extracts each brief mechanically, at no cost. Dispatch `roles:brief-writer` only when a task's plan text lacks interfaces that must come from the current code.
 
 **Turn count beats token price.** Wall-clock and context cost scale with how many turns a subagent takes. The role pins the model; what you control is the dispatch: a brief that carries the exact values, the interfaces the task touches, and nothing else.
@@ -268,7 +268,7 @@ Then mark the todo complete and move on. Never start the next task while the rev
 When the phase's last task is complete, close the phase before starting the next:
 
 - **Phase check.** Run the phase's `**Phase check:**` command at the tip of the phase branch; a plan with no `## Phase` heading (or no `**Branch prefix:**` line) is one phase whose check is the repository's full test command. A failure that passes on one re-run is flaky: ledger `Ruling: <test> flaky — passed on re-run — <what it costs if wrong>` and go on. A real failure reopens the phase's last task: when opted in, run `triqual tasks reopen T<N> "<reason>" --plan <plan>`, then run the fix loop on it, skipping the first round's `rework` move (`reopen` already moved the task to `in_progress`), with `tier-check` and the re-review as in any round, a squash with BASE the parent of the task's squashed commit, its `done` move again and a `task-review` record with the next `attempt`; then run the Phase check again.
-- **A submitted phase is final:** never amend it, never rebase it and never force push it. A defect found in the code of an earlier, submitted phase is fixed in the current task's commit; at the final review it is fixed in the final fix commit.
+- **A submitted phase is final:** never amend it, never rebase it and never force push it. A defect found in the code of an earlier, submitted phase is fixed in the current task's commit; at the final review it is fixed in a final fix commit.
 
 ### 8. Review the phase
 
@@ -326,29 +326,14 @@ A light task with a clean gate:
   "fixRounds": 0, "blocked": false, "coordinator": false }
 ```
 
-**`hunters`** with task `final`, for the final hunters (see Final Review), with the final review's budget (reference 3):
-
-```json
-{ "v": 1, "at": "2026-10-18T18:12:40Z", "provider": "claude", "task": "final", "kind": "hunters",
-  "hunters": [
-    { "category": "correctness", "model": "claude-haiku-5-5", "failed": false, "candidates": 1,
-      "confirmed": { "critical": 0, "important": 1, "minor": 0 }, "refuted": 0, "duplicateCandidate": 0, "duplicateReview": 0 },
-    { "category": "security", "model": "claude-haiku-5-5", "failed": false, "candidates": 0,
-      "confirmed": { "critical": 0, "important": 0, "minor": 0 }, "refuted": 0, "duplicateCandidate": 0, "duplicateReview": 0 },
-    { "category": "spec-drift", "model": "claude-haiku-5-5", "failed": false, "candidates": 1,
-      "confirmed": { "critical": 0, "important": 0, "minor": 0 }, "refuted": 1, "duplicateCandidate": 0, "duplicateReview": 0 }
-  ],
-  "budget": { "reference": 3, "used": 3, "overrun": false } }
-```
-
-**`final-escapes`**, once per plan, after the final review: one entry per final-review finding (a confirmed candidate included) that the final reviewer traced to a task, with that task's effective tier and the finding's severity; `untraced` findings are not entries, and a final review with none writes `"escapes": []`:
+**`final-escapes`**, once per plan, after the seams review: one entry per seams-review finding that the final reviewer traced to a task, with that task's effective tier and the finding's severity; `untraced` findings are not entries, and a final review with none writes `"escapes": []`:
 
 ```json
 { "v": 2, "at": "2026-10-18T18:30:05Z", "provider": "claude", "task": "final", "kind": "final-escapes",
   "escapes": [ { "tier": "light", "severity": "important" }, { "tier": "standard", "severity": "minor" } ] }
 ```
 
-**The phase review** records `hunters` and `final-escapes` with `task: "P<n>"` (the seams review and the final review use `task: "final"`), with the phase review's budget (reference 4). The phase's fix commit lands with its own progress entry, Stage/task `Plan <name> · P<n> fix`. An escape counts only a finding no earlier review recorded: a deferred Minor confirmed again is not an escape. Phase-review escape counts will rise by design: they now hold what per-task hunters used to catch.
+**The phase review** records `hunters` and `final-escapes` with `task: "P<n>"` (the seams review records only `final-escapes`, with `task: "final"`), with the phase review's budget (reference 4). The phase's fix commit lands with its own progress entry, Stage/task `Plan <name> · P<n> fix`. An escape counts only a finding no earlier review recorded: a deferred Minor confirmed again is not an escape. Phase-review escape counts will rise by design: they now hold what per-task hunters used to catch.
 
 ```json
 { "v": 1, "at": "2026-10-20T16:20:11Z", "provider": "claude", "task": "P1", "kind": "hunters",
@@ -379,14 +364,13 @@ A light task with a clean gate:
 
 ## Final Review
 
-The final review always runs: for every plan, whatever its tiers, after the last phase is submitted.
+The final review always runs: for every plan, whatever its tiers, after the last phase is submitted. In a plan with several phases it is the **seams review**, below: one `roles:final-adversarial-reviewer` and no hunters, because every phase already had its deep review. In a single-phase plan the phase review is the final review: its range is `trunk..top`, no seams review runs, its `P1` records stand, and the plan goes on to the Submit step below.
 
 - **The package:** run `node scripts/review-package PLAN_FILE MERGE_BASE HEAD`, with MERGE_BASE the commit the stack started from (`git merge-base <trunk> HEAD`): the review covers `trunk..top`, every phase.
-- **First, the final hunters.** Dispatch together, in the background, 3 hunters (`roles:hunter`, [hunter-prompt.md](hunter-prompt.md)): `correctness` across tasks, `security` and `spec-drift`, each with the package, the spec and the plan in place of a brief, writing `final-candidates-<category>.md` in the workspace; wait up to a soft limit of 20 minutes from their dispatch. A late or failed hunter is recorded `failed`. Ledger: `Round 1: final — hunters <done>/<sent>`. After a `Skipped:` line, dispatch the final reviewer with no candidates.
-- **Then** dispatch `roles:final-adversarial-reviewer` with [final-review-prompt.md](final-review-prompt.md), filled with the package path, the plan, the spec, the plan's Review Focus verbatim, every final candidates file, and the workspace ledger (`sdd-ledger.md`). It verifies every candidate, names the task (not only the phase) of each finding it can trace, and triages every `Ruling:`, deferred-minor and parked line. A missing verdict sends the review back. Ledger: `Round 2: final — verdicts <n>/<n>`.
-- **Records:** the final hunters' `hunters` record (task `final`) and the plan's `final-escapes` record, counting each traced finding against its task's effective tier: its `effectiveTier` in `triqual tasks export --json` (opted in), else the ledger's last `Tier:` or `Tier raised:` line for that task. `Unrecorded:` on a failure.
-- **Fix wave.** If the final review returns findings, dispatch ONE `roles:review-fixer` with the complete findings list — not one fixer per finding. It carries the Tracking section when opted in (Stage/task `Plan <topic> · final fix`). The fix wave is one plain commit on the top phase (`fix: address final review findings`), the only commit of the stack that is not a task, never a `--fixup`. Then run exactly one scoped re-review of the fix range by `roles:final-adversarial-reviewer` with [re-review-prompt.md](re-review-prompt.md) (`node scripts/review-package PLAN_FILE FIX_BASE HEAD`). There is no second fix wave: residual findings are parked with rulings, or ruled on when load-bearing, and surface to your human partner through methodology:finishing-branch.
-- **Submit.** Run the top phase's Phase check again, then `node scripts/stack.mjs submit PLAN_FILE <top N> --open`, which pushes the fix commit and marks every phase's PR ready for review. A clean final review with no fix wave goes straight to that `submit` with `--open`. When residual Critical or Important findings remain open after the re-review, push the fix commit without marking anything ready, with `node scripts/stack.mjs push PLAN_FILE <top N>` (it refreshes the PR body and never changes the draft state), and leave the ready decision to your human partner.
+- **The reviewer.** Dispatch `roles:final-adversarial-reviewer` once, with no hunters and so no candidates, with [final-review-prompt.md](final-review-prompt.md), its Seams Scope filled (the controller deletes the Phase Scope): the spec, the plan, the full `trunk..top` package and the workspace ledger (`sdd-ledger.md`), and the plan's Review Focus verbatim. Tell it that each phase already passed its own review, and that it looks only at the interfaces one phase exposes and a later one consumes, at cross-phase state, and at every `Ruling:`, deferred-minor and parked line still open (ruling on each: must fix before merge, or accept with a reason). It names the task and the phase of each finding it can trace. A missing verdict sends the review back. Ledger: `Round 2: final — verdicts <n>/<n>`.
+- **Records:** the plan's `final-escapes` record with `task: "final"`, never a `hunters` record, counting each traced finding against its task's effective tier: its `effectiveTier` in `triqual tasks export --json` (opted in), else the ledger's last `Tier:` or `Tier raised:` line for that task. `Unrecorded:` on a failure.
+- **Fix rounds.** The same rule as the phase review: a confirmed Critical or Important finding, and any ledger line the reviewer says must be fixed, goes to at most two rounds of `roles:review-fixer` with the complete findings list, never one fixer per finding. It carries the Tracking section when opted in (Stage/task `Plan <topic> · final fix`). Each round is a plain commit on the top phase (`fix: address final review findings`), the only commits of the stack that are not tasks, never a `--fixup`. Each round is followed by a scoped re-review of the fix range ([re-review-prompt.md](re-review-prompt.md) on `node scripts/review-package PLAN_FILE FIX_BASE HEAD`) by `roles:spec-reviewer`, or by `roles:final-adversarial-reviewer` when a finding was Critical, and then the Phase check. Minor findings never enter the loop. A finding still open after the second round is parked with a ruling, or ruled on when load-bearing, and surfaces to your human partner through methodology:finishing-branch.
+- **Submit.** Run the top phase's Phase check again, then `node scripts/stack.mjs submit PLAN_FILE <top N> --open`, which pushes the fix commit and marks every phase's PR ready for review. A clean final review with no fix round goes straight to that `submit` with `--open`. When residual Critical or Important findings remain open after the re-review, push the fix commit without marking anything ready, with `node scripts/stack.mjs push PLAN_FILE <top N>` (it refreshes the PR body and never changes the draft state), and leave the ready decision to your human partner.
 
 ## Worktrees
 
@@ -411,8 +395,9 @@ The workspace ledger, `sdd-ledger.md`, is append-only, one line per event, in th
 - `Tier: T<N> <tier>`
 - `Tier raised: T<N> <from> → <to> — <reason>`
 - `Budget: hunters <matrix> → <used> for T<N> — <reason tied to the diff>`
-- `Round 1: T<N> — hunters <done>/<sent>, safety ok`, `Round 2: T<N> — verdicts <n>/<n>` (light: `Round 2: T<N> — light items <n>`), and the same with `final`
+- `Round 1: T<N> — hunters <done>/<sent>, safety ok`, `Round 2: T<N> — verdicts <n>/<n>` (light: `Round 2: T<N> — light items <n>`)
 - `Round 1: P<n> — hunters <done>/<sent>`, `Round 2: P<n> — verdicts <n>/<n>` (the phase review)
+- `Round 2: final — verdicts <n>/<n>` (the seams review: no hunters, so no `Round 1: final`)
 - `Phase review: P<n> clean | fixed | blocked`
 - `Review: T<N> — no commits, nothing to review`
 - `Re-review: T<N> round <R> — applies Ruling verbatim, no security logic`
@@ -434,7 +419,7 @@ Before you delete anything, collect every ledger line containing `Ruling:` — p
 
 Before the totals, re-run `triqual role-eval record --plan <plan file> <json-file>` for every record that has an `Unrecorded:` line, writing its JSON to a file first; `already recorded` is fine. List every record that still fails in your final message under "Unrecorded records", each with its JSON: the workspace takes the line with it.
 
-Total the review from the ledger before you delete the workspace: actual hunters, the sum of `<sent>` over every `Round 1:` line (the phases' and the final one's included), against the matrix's reference (2 per heavy task, 0 per standard and light task, plus 4 per phase, 0 for the seams review; a task counts by its final effective tier, which is its `effectiveTier` in `triqual tasks export --json` (opted in), else the ledger's last `Tier:` or `Tier raised:` line), and the tasks per effective tier with how many were raised. When opted in, the closing `progress.md` entry (written under methodology:finishing-branch) states them.
+Total the review from the ledger before you delete the workspace: actual hunters, the sum of `<sent>` over every `Round 1:` line (the phases' included; the seams review sends none), against the matrix's reference (2 per heavy task, 0 per standard and light task, plus 4 per phase, 0 for the seams review; a task counts by its final effective tier, which is its `effectiveTier` in `triqual tasks export --json` (opted in), else the ledger's last `Tier:` or `Tier raised:` line), and the tasks per effective tier with how many were raised. When opted in, the closing `progress.md` entry (written under methodology:finishing-branch) states them.
 
 When the final review is clean and its fixes are pushed, delete this plan's workspace (`rm -rf <workspace>`) — the git history is the record now. Sibling directories belong to other plans; leave them alone.
 
@@ -491,6 +476,6 @@ Task 3 (light) — resumed, not re-dispatched
 [standard review: gate + roles:spec-reviewer in parallel → clean; squash; done; record]
 
 [Phase check passes; node scripts/stack.mjs done <plansDir>/billing.md 1; node scripts/stack.mjs submit <plansDir>/billing.md 1]
-[Final review: 3 hunters + roles:final-adversarial-reviewer → clean, no traced findings; hunters and final-escapes records]
+[Seams review: roles:final-adversarial-reviewer alone → clean, no traced findings; final-escapes record]
 [node scripts/stack.mjs submit <plansDir>/billing.md 1 --open; final message with Rulings and After Merge; methodology:finishing-branch]
 ```
