@@ -29,6 +29,7 @@ const TEMPLATES = [
   'task-reviewer-prompt.md',
   're-review-prompt.md',
   'final-review-prompt.md',
+  'orchestrator-prompt.md',
 ];
 // The implementer's `<task role>` placeholder is a valid dispatch type in its own template only.
 const TASK_ROLE_TEMPLATES = new Set([`${EP}/implementer-prompt.md`]);
@@ -790,7 +791,7 @@ const DENIAL_RULE = 'A refusal that names fence, a policy or a protected path, o
 // agent definition (a fix dispatch and a brief-writer dispatch have no template of their own).
 const RULE_TEMPLATES = [
   'implementer-prompt.md', 're-review-prompt.md', 'task-reviewer-prompt.md', 'safety-review-prompt.md', 'hunter-prompt.md',
-  'final-review-prompt.md',
+  'final-review-prompt.md', 'orchestrator-prompt.md',
 ];
 
 test('the denial rule is in the orchestrator and in every dispatch template', () => {
@@ -805,7 +806,7 @@ test('the denial rule is in the orchestrator and in every dispatch template', ()
 
 test('every role agent definition carries the denial rule and says how it asks the human', () => {
   const files = readdirSync(AGENTS).filter((n) => n.endsWith('.md'));
-  assert.equal(files.length, 8, files.join(', '));
+  assert.equal(files.length, 9, files.join(', '));
   for (const file of files) {
     const agent = flat(readFileSync(join(AGENTS, file), 'utf8'));
     assert.ok(agent.includes(DENIAL_RULE), `${file} lacks the denial rule`);
@@ -1704,4 +1705,226 @@ test('the ledger vocabulary has BASE, Prep and Error lines, and Finish lists Err
   assert.ok(finish.includes('under "Errors and fallbacks"'), 'Finish does not list Errors and fallbacks');
   assert.ok(finish.includes('every ledger line that starts with `Error:`'), 'Finish does not collect the Error: lines');
   assert.ok(finish.includes('the closing `progress.md` entry') && finish.includes('the count of `Error:` and fallback lines'), 'the closing progress entry does not count the Error: and fallback lines');
+});
+
+// ---- thin controller, slice 2: a per-phase orchestrator runs the task loop (spec U5) ------------------------------
+
+const THIN = '## The Thin Controller';
+const thin = () => flat(section(skill(), THIN));
+
+test('the main session dispatches one orchestrator per phase and never reads code, diffs or reports', () => {
+  const body = thin();
+  for (const line of [
+    'dispatches one `roles:phase-orchestrator` per phase',
+    '[orchestrator-prompt.md](orchestrator-prompt.md)',
+    'waits for it once',
+    'never reads code, diffs or reports',
+    'a Phase check failure\'s reopen and a phase-review fix go to an orchestrator or a fixer it dispatches',
+    '`Orchestrator: P<n> — <summary first line>`',
+  ]) assert.ok(body.includes(line), `The Thin Controller lacks: ${line}`);
+  const process = flat(section(skill(), '## The Process'));
+  const phase = process.indexOf('`node scripts/stack.mjs phase PLAN_FILE N`');
+  const dispatch = process.indexOf('`roles:phase-orchestrator`');
+  const check = process.indexOf('the Phase check');
+  assert.ok(phase >= 0 && dispatch > phase && check > dispatch, 'The Process does not run stack.mjs phase, then the orchestrator, then the Phase check');
+  assert.ok(flat(section(skill(), '## Role Dispatch')).includes('`roles:phase-orchestrator`'), 'Role Dispatch does not name the orchestrator');
+  assert.ok(flat(section(skill(), '## Role Dispatch')).includes('never a task\'s role'), 'Role Dispatch lets a task name the orchestrator as its role');
+});
+
+const SUMMARY_CONTRACT = [
+  'at most 20 lines',
+  '`Phase: P<n> <done|blocked>`',
+  '`Tasks: T<N> <sha>, ...`',
+  '`BLOCKED: <stop> — <details>`',
+  '`Rulings I made:`',
+  '`Open minors:`',
+  '`Errors and fallbacks:`',
+  '`none`',
+];
+
+test('the orchestrator prompt carries the summary contract and the denial rule', () => {
+  const raw = read(`${EP}/orchestrator-prompt.md`);
+  const first = raw.split('\n').find((l) => /Subagent\s*\(/.test(l));
+  assert.equal(first?.trim(), 'Subagent (roles:phase-orchestrator):');
+  const [body, defs] = raw.split('**Placeholders:**');
+  for (const name of ['PLAN_FILE', 'PHASE', 'LEDGER_PATH', 'GLOBAL_CONSTRAINTS', 'RESUME_NOTE']) {
+    assert.ok(body.includes(`[${name}]`), `the prompt does not use [${name}]`);
+    assert.ok(defs.includes(`- \`[${name}]\``), `[${name}] is not defined`);
+  }
+  const text = flat(body);
+  for (const line of SUMMARY_CONTRACT) assert.ok(text.includes(line), `the prompt's summary contract lacks: ${line}`);
+  const final = text.slice(text.indexOf('## Your Final Message'));
+  const order = ['`Phase: P<n>', '`Tasks: T<N>', '`BLOCKED: <stop>', '`Rulings I made:`', '`Open minors:`', '`Errors and fallbacks:`'].map((k) => final.indexOf(k));
+  assert.ok(order[0] >= 0 && order.every((at, i) => i === 0 || at > order[i - 1]), `the summary contract is out of order: ${order}`);
+  assert.ok(flat(raw).includes(DENIAL_RULE), 'the prompt lacks the denial rule');
+  for (const line of ['Follow `methodology:executing-plans` for this phase only', 'never edit product code', 'nothing new', '`Task <N>: awaiting landing`', 'wait the seconds the denial names and retry']) {
+    assert.ok(text.includes(line), `the prompt lacks: ${line}`);
+  }
+});
+
+test('on BLOCKED the main session asks, writes the decision and the move, then re-dispatches', () => {
+  const body = thin();
+  const at = body.indexOf('**On `BLOCKED`.**');
+  assert.ok(at >= 0, 'no On BLOCKED bullet');
+  const text = body.slice(at);
+  const ask = text.indexOf('asks your human partner');
+  const ruling = text.indexOf('`Task <N>: Ruling: <finding> — <decision> — <why> — <what it costs if wrong>`');
+  const start = text.indexOf('`triqual tasks start T<N> --plan <plan>`');
+  const redispatch = text.indexOf('dispatches a new orchestrator for the same phase');
+  assert.ok(ask >= 0 && ruling > ask && start > ruling && redispatch > start, 'the order is not ask, ledger the decision, make the move, re-dispatch');
+  assert.ok(text.includes('resumes from the ledger'), 'the new orchestrator does not resume from the ledger');
+  assert.ok(text.includes('begins with `BLOCKED` instead of `Phase:`') && text.includes('a denial'), 'a final message that begins with BLOCKED is not handled as a denial');
+});
+
+test('a stop drains running agents and writes awaiting landing', () => {
+  const body = thin();
+  const at = body.indexOf('**A stop.**');
+  assert.ok(at >= 0, 'no A stop bullet');
+  const text = body.slice(at);
+  const order = ['starts nothing new', 'lets running agents finish their current step', '`Task <N>: awaiting landing`', 'returns `BLOCKED: <stop> — <details>`'].map((line) => {
+    assert.ok(text.includes(line), `the stop bullet lacks: ${line}`);
+    return text.indexOf(line);
+  });
+  assert.ok(order.every((n, i) => i === 0 || n > order[i - 1]), `the stop bullet is out of order (start nothing, drain, awaiting landing, return): ${order}`);
+  assert.ok(flat(section(skill(), '## Ledger vocabulary')).includes('`Task <N>: awaiting landing`'), 'the ledger vocabulary lacks awaiting landing');
+});
+
+test('nested dispatch unavailable is an announced fallback, and a failed orchestrator dispatch is detected by the main session itself', () => {
+  const body = thin();
+  const at = body.indexOf('**Fallback.**');
+  assert.ok(at >= 0, 'no Fallback bullet');
+  const text = body.slice(at);
+  for (const line of [
+    'the main session sees the failed dispatch itself',
+    '`BLOCKED: nested dispatch unavailable`',
+    '`Error: orchestrator P<n> — exit 1 — <first line of the error>`',
+    'runs the phase loop itself with the same scripts',
+    'Announced, never silent',
+  ]) assert.ok(text.includes(line), `the fallback bullet lacks: ${line}`);
+  assert.ok(flat(section(skill(), '## Ledger vocabulary')).includes('`Orchestrator: P<n> — <summary first line>`'), 'the ledger vocabulary lacks the Orchestrator line');
+});
+
+test('a workflow-gate cap denial is retried after the named seconds, never a stop or a fallback', () => {
+  const body = thin();
+  const at = body.indexOf('**A cap denial.**');
+  assert.ok(at >= 0, 'no A cap denial bullet');
+  const text = body.slice(at);
+  for (const line of ['workflow-gate', 'wait the seconds the denial names and retry', 'neither a stop nor a fallback', 'both levels']) {
+    assert.ok(text.includes(line), `the cap denial bullet lacks: ${line}`);
+  }
+});
+
+test('the 1.1.0 wait rule holds for both levels', () => {
+  const loop = flat(section(skill(), '## The Task Loop'));
+  const at = loop.indexOf('**Waiting on dispatched subagents:**');
+  assert.ok(at >= 0, 'the wait rule is gone');
+  const text = loop.slice(at, loop.indexOf('**Rate limits.**'));
+  for (const line of ['never poll a wait interface with short timeouts', 'bounded stretches (five to ten minutes', 'reconcile your live children', 'Both levels follow it', '`wait_agent`']) {
+    assert.ok(text.includes(line), `the wait rule lacks: ${line}`);
+  }
+  const rate = loop.slice(loop.indexOf('**Rate limits.**'), loop.indexOf('### Start the phase'));
+  assert.ok(rate.includes('When the orchestrator meets it, it follows the same stretches') && rate.includes('returns `BLOCKED: rate limit — <role> T<N>`'), 'the rate-limit rule does not say what the orchestrator does');
+});
+
+test('a phase submitted before 1.1.0 gets rounds 1-2 and fix rounds of the phase review without done, submit or break, and the top phase\'s Phase check after each fix', () => {
+  const final = flat(section(skill(), '## Final Review'));
+  const at = final.indexOf('A phase with no `Phase review: P<n>` line');
+  assert.ok(at >= 0, 'no legacy phase rule');
+  const text = final.slice(at, final.indexOf('- **The package:**'));
+  for (const line of ['rounds 1 and 2 and the fix rounds of 8. Review the phase', 'no `stack.mjs done`, no `submit` and no break', 'the top phase\'s Phase check after each fix round']) {
+    assert.ok(text.includes(line), `the legacy phase rule lacks: ${line}`);
+  }
+});
+
+test('Finish carries the Errors and fallbacks of both levels', () => {
+  const finish = flat(section(skill(), '## Finish'));
+  assert.ok(finish.includes('the orchestrators\' errors and fallbacks'), 'Finish does not take the orchestrators\' errors and fallbacks from the ledger');
+  assert.ok(finish.includes('beside "Rulings I made"'), 'Errors and fallbacks does not sit beside Rulings I made');
+});
+
+// ---- thin controller, fix round 1 ------------------------------------------------------------------------------------
+
+const ORCHESTRATOR_ROLE = () => flat(readFileSync(join(AGENTS, 'phase-orchestrator.md'), 'utf8'));
+const PROMPT = () => flat(read(`${EP}/orchestrator-prompt.md`));
+
+test('the role file, the dispatch prompt and the skill agree: the main session runs the Phase check and the phase review', () => {
+  const role = ORCHESTRATOR_ROLE();
+  assert.ok(!/its Phase check|its phase review/.test(role), 'the role file tells the orchestrator to follow its own Phase check or phase review');
+  assert.ok(role.includes('the Phase check and the phase review stay with the main session'), 'the role file does not leave the Phase check and the phase review to the main session');
+  assert.ok(PROMPT().includes('Do not run the Phase check, the phase review, `stack.mjs done` or `stack.mjs submit`'), 'the prompt does not keep the Phase check and the phase review from the orchestrator');
+  const step4 = thin().slice(thin().indexOf('4. Read its summary'), thin().indexOf('**The summary.**'));
+  assert.ok(step4.includes('goes on to the Phase check, the phase review'), 'the skill does not give the Phase check and the phase review to the main session');
+  assert.ok(flat(section(skill(), '## The Process')).includes('then the Phase check at the phase tip, the phase review'), 'The Process does not run the Phase check and the phase review after the orchestrator');
+});
+
+test('only a stop goes to On BLOCKED: nested dispatch, rate limit and a coordinator handoff have their own route and no question to the owner', () => {
+  const body = thin();
+  const step4 = body.slice(body.indexOf('4. Read its summary'), body.indexOf('**The summary.**'));
+  const route = {
+    '`BLOCKED: nested dispatch unavailable`': 'Fallback',
+    '`BLOCKED: rate limit — <role> T<N>`': 'Rate limits',
+    '`BLOCKED: coordinator task T<N>': 'Coordinator tasks',
+  };
+  for (const [kind, target] of Object.entries(route)) {
+    const at = step4.indexOf(kind);
+    assert.ok(at >= 0, `step 4 does not name ${kind}`);
+    assert.ok(step4.slice(at, at + 160).includes(target), `step 4 does not route ${kind} to ${target}`);
+    assert.ok(at < step4.indexOf('goes to On `BLOCKED`'), `${kind} is not routed before On BLOCKED`);
+  }
+  assert.ok(step4.includes('never asks your human partner and writes no ruling'), 'step 4 lets the non-stop kinds ask the owner');
+  assert.ok(step4.includes('Any other `BLOCKED:` line, a stop or a script error the steps cannot resolve, goes to On `BLOCKED`'), 'step 4 does not send a stop or a script error to On BLOCKED');
+  // A stop and the three kinds are the BLOCKED line of a summary that begins with Phase:; only a final message that
+  // begins with BLOCKED is a denial.
+  for (const [name, text] of [['skill', body], ['prompt', PROMPT()], ['role', ORCHESTRATOR_ROLE()]]) {
+    assert.ok(text.includes('BLOCKED line'), `the ${name} does not say a stop is the BLOCKED line of the summary`);
+  }
+  assert.ok(body.includes('`Phase: P<n> blocked` first'), 'the skill does not say a blocked summary begins with the Phase line');
+  assert.ok(PROMPT().includes('`BLOCKED: nested dispatch unavailable — <error text>`'), 'the prompt does not return nested dispatch unavailable in the summary');
+});
+
+test('a Ruling written for a human decision carries the why and the cost if wrong, in every place it is written', () => {
+  const form = '`Task <N>: Ruling: <finding> — <decision> — <why> — <what it costs if wrong>`';
+  for (const [where, text] of [
+    ['On BLOCKED', thin()],
+    ['the breaker', flat(section(skill(), '### 5. The fix loop'))],
+    ['the ledger vocabulary', flat(section(skill(), '## Ledger vocabulary'))],
+  ]) assert.ok(text.includes(form), `${where} does not write the human's ruling as ${form}`);
+  assert.ok(!skill().includes('`Task <N>: Ruling: <finding> — <decision>`'), 'a two-part human ruling form is left in the skill');
+});
+
+test('a task with a complete line is never dispatched again unless the resume note reopens it', () => {
+  const unless = 'unless the resume note reopens it';
+  assert.ok(thin().includes(unless), 'On BLOCKED does not except a reopened task');
+  assert.ok(PROMPT().includes(unless), 'the prompt does not except a reopened task');
+  assert.ok(flat(section(skill(), '## Setup')).includes('unless a Phase check reopened it'), 'the resume rule of Setup does not except a reopened task');
+  assert.ok(flat(section(skill(), '### 7. End the phase')).includes('writes no ledger line'), 'the Phase check reopen does not say it leaves the complete line in place');
+});
+
+test('a coordinator task runs in the main session, and the orchestrator hands over one that edits a file', () => {
+  const coord = flat(section(skill(), '### Coordinator tasks'));
+  assert.ok(!coord.includes('runs in this session, by you'), 'Coordinator tasks still says it runs in this session, by you');
+  for (const line of ['run by the controller, the main session, never by the phase orchestrator', 'hands over one that edits a file']) {
+    assert.ok(coord.includes(line), `Coordinator tasks lacks: ${line}`);
+  }
+  const handoff = thin().slice(thin().indexOf('**Coordinator tasks.**'));
+  assert.ok(!handoff.includes('has no edit tool'), 'the handoff still rests on a tool the role does not lack');
+  for (const line of ['its role disallows `Edit` and `NotebookEdit`', 'never edits product code', '`BLOCKED: coordinator task T<N> — edits files, run it in the main session`', 'not one of the seven stops']) {
+    assert.ok(handoff.includes(line), `the coordinator handoff lacks: ${line}`);
+  }
+  assert.ok(PROMPT().includes('`BLOCKED: coordinator task T<N> — edits files, run it in the main session`'), 'the prompt does not tell the orchestrator about the handoff');
+  const log = readFileSync(join(PLUGIN, '..', '..', 'CHANGELOG.md'), 'utf8');
+  const from = log.indexOf('\n## methodology 1.3.0');
+  assert.ok(from >= 0, 'no methodology 1.3.0 CHANGELOG entry');
+  const entry = flat(log.slice(from, log.indexOf('\n## ', from + 4)));
+  assert.ok(entry.includes('coordinator task') && entry.includes('main session'), 'the 1.3.0 CHANGELOG entry does not mention the coordinator handoff');
+});
+
+test('the summary has an overflow rule and the main session reads nothing of the loop outside the fallback', () => {
+  const overflow = '`+<k> more in the ledger`';
+  for (const [name, text] of [['skill', thin()], ['prompt', PROMPT()], ['role', ORCHESTRATOR_ROLE()]]) {
+    assert.ok(text.includes(overflow), `the ${name} has no summary overflow rule`);
+  }
+  const body = thin();
+  assert.ok(body.includes('and in the phase review (step 8) only the reviewers\' verdicts'), 'the never-reads rule does not allow the phase review verdicts');
+  assert.ok(body.includes('The fallback is the exception'), 'the never-reads rule has no fallback exception');
 });

@@ -3,6 +3,46 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## methodology 1.3.0
+
+### Changed
+
+- **A per-phase orchestrator runs the task loop.** `executing-plans` now dispatches one `roles:phase-orchestrator` per
+  phase ([orchestrator-prompt.md](plugins/methodology/skills/executing-plans/orchestrator-prompt.md)) and the main
+  session only decides: it runs `stack.mjs phase`, waits for the orchestrator once, reads its summary (at most 20
+  lines: `Phase:`, `Tasks:`, `BLOCKED:`, `Rulings I made:`, `Open minors:`, `Errors and fallbacks:`), writes
+  `Orchestrator: P<n> — <summary first line>` to the ledger, and runs the Phase check, the phase review, `done`,
+  `submit` and the break as before. It never reads code, diffs or reports; a Phase check failure's reopen and a
+  phase-review fix go to an orchestrator or a fixer. There is one set of rules: the orchestrator follows the skill.
+- **Stops are decided by the main session.** On any of the seven stops the orchestrator starts nothing new, lets
+  running agents finish their current step, writes `Task <N>: awaiting landing` for a finished but unlanded task and
+  returns `BLOCKED: <stop> — <details>`. The main session asks, writes `Task <N>: Ruling: …` and the ledger move the
+  decision implies (`triqual tasks start T<N> --plan <plan>` for a blocked task), then dispatches a new orchestrator for
+  the same phase, which resumes from the ledger. A final message that begins with `BLOCKED` instead of `Phase:` is a
+  denial and is relayed verbatim.
+- **Announced fallback.** When the orchestrator cannot be dispatched (role missing) or cannot dispatch (`BLOCKED:
+  nested dispatch unavailable`), the main session writes `Error: orchestrator P<n> — exit 1 — <first line of the
+  error>`, says so, and runs the phase loop itself with the same scripts. A workflow-gate cap denial is neither a stop
+  nor a fallback: wait the seconds it names and retry.
+- **The wait rule holds at both levels** (bounded stretches, never short polling, reconcile live children; `wait_agent`
+  in Codex), and a rate-limited orchestrator returns `BLOCKED: rate limit` after about 6 stretches.
+- **Routing of a blocked summary.** A stop (or a script error the steps cannot resolve) goes to the owner; the three
+  `BLOCKED:` kinds that are not stops (`nested dispatch unavailable`, `rate limit`, `coordinator task`) go to the
+  fallback, the end of the run and the coordinator handoff, with no question and no ruling. A human decision is ledgered
+  as `Task <N>: Ruling: <finding> — <decision> — <why> — <what it costs if wrong>`, and a task with a `complete` line is
+  not dispatched again unless the resume note reopens it (a Phase check failure's reopen).
+- **Coordinator tasks stay with the main session.** The orchestrator never edits product code (its role disallows
+  `Edit` and `NotebookEdit`), so it runs a coordinator task only when the task edits no file; one that does is handed
+  over with `BLOCKED: coordinator task T<N> — edits files, run it in the main session`, and the main session runs it
+  and dispatches a new orchestrator for the rest of the phase. The `phase-orchestrator` role file now agrees with the
+  skill: the Phase check and the phase review stay with the main session. A summary over 20 lines keeps its first
+  lines and `+<k> more in the ledger`.
+- **A phase submitted before 1.1.0** gets rounds 1 and 2 and the fix rounds of the phase review, without `done`,
+  `submit` or the break, and the top phase's Phase check after each fix round.
+- The ledger vocabulary gains `Task <N>: awaiting landing` and `Orchestrator: P<n> — <summary first line>`, and Finish
+  lists the orchestrators' errors and fallbacks beside "Rulings I made". The role `roles:phase-orchestrator` needs
+  roles 0.4.0.
+
 ## roles 0.4.0
 
 ### Added

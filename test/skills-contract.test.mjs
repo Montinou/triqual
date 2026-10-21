@@ -502,7 +502,8 @@ test('no skill or template names fence hatch except in the clause that forbids s
   assert.deepEqual(carriers, [
     'brainstorming/spec-document-reviewer-prompt.md',
     'executing-plans/SKILL.md', 'executing-plans/final-review-prompt.md', 'executing-plans/hunter-prompt.md',
-    'executing-plans/implementer-prompt.md', 'executing-plans/re-review-prompt.md', 'executing-plans/safety-review-prompt.md',
+    'executing-plans/implementer-prompt.md', 'executing-plans/orchestrator-prompt.md', 'executing-plans/re-review-prompt.md',
+    'executing-plans/safety-review-prompt.md',
     'executing-plans/task-reviewer-prompt.md', 'finishing-branch/SKILL.md', 'reviewing-code/reviewer-prompt.md',
   ]);
   // The role agents are outside the skills; their definitions are checked the same way.
