@@ -127,15 +127,15 @@ owns the code, in that task's own step style.]
 
 Every task gets a `**Role:**` line naming the role that does its work. Choosing the role:
 - `roles:tdd-implementer` is the default: code and tests written test-first. Most tasks take it.
-- `roles:complex-implementer` takes a task where a mistake is costly: multi-system changes, migrations of live state, or other work that needs the stronger model. Same test-first discipline; mark only the tasks that need it, and tier them `heavy`.
+- `roles:complex-implementer` takes a task that is a live-state migration, or a change across systems that one brief cannot describe. Name which on the plain-text line under `**Role:**`, not starting with `**`. Same test-first discipline; everything else is `roles:tdd-implementer`; tier these tasks `heavy`.
 - `coordinator` takes work the controller must do itself: probes, rollout steps (deploys, env vars, status updates), user checkpoints, and anything that needs your human partner in the loop. It may also take a small, low-risk fix, within the `light` code allowance; every `coordinator` task is `light`.
 
-Live-state work and migrations are never coordinator work: they are `heavy`, `roles:complex-implementer` is the usual role for them, and a production operation that needs the merged trunk is an `## After Merge` item. `roles:review-fixer` is never a task role: the orchestrator dispatches it for fix rounds, so a plan never plans one. Reviewer roles and the brief writer serve a task and are never its role either. A plan without the line reads as `roles:tdd-implementer`, but write it for every task anyway.
+Live-state work and migrations are never coordinator work: they are `heavy`, and the role is chosen by the criteria above, and a production operation that needs the merged trunk is an `## After Merge` item. `roles:review-fixer` is never a task role: the orchestrator dispatches it for fix rounds, so a plan never plans one. Reviewer roles and the brief writer serve a task and are never its role either. A plan without the line reads as `roles:tdd-implementer`, but write it for every task anyway.
 
 ## Task Tiers
 
 Every task gets a `**Tier:**` line, `heavy`, `standard` or `light`, set by what the task's work touches:
-- **heavy** — any of: security-relevant code (auth, permissions, secrets, sandboxing, policy, parsing untrusted input), live state or migrations, changes spanning more than one plugin or system, a public interface others depend on (CLI flags and exit codes, file formats, hook contracts, the plan format), `roles:complex-implementer`.
+- **heavy** — any of: security-relevant code (auth, permissions, secrets, sandboxing, policy engines, parsing untrusted input, gate/enforcement hooks), live state or migrations (stores, schemas, installed setup), a contract other code parses (hook I/O, file formats, the plan format, machine-read CLI output), `roles:complex-implementer`. A change that only spans more than one plugin, or only touches a public interface, is not heavy by that alone. Every heavy task carries a one-line reason as plain text on the line under `**Tier:**`, naming which criterion applies; the plan parser reads only the tier word on the `**Tier:**` line, so the reason is not a new field.
 - **light** — only: docs, comments, config values, version bumps, renames with no behavior change, and small code fixes within the light code allowance (at most 20 added+removed lines in total, test lines included, no new file, no prompt-like Markdown, no sensitive path).
 - **standard** — everything else.
 
@@ -149,6 +149,7 @@ Tiers are all-or-none per plan: every task carries one, or none does. `coordinat
 ### Task N: [Component Name]
 
 **Tier:** heavy
+Security: parses untrusted hook input.
 **Depends on:** T1, T3
 **Skills:** slug-a, slug-b
 **Role:** roles:tdd-implementer
@@ -197,10 +198,10 @@ git commit -m "feat: add specific feature"
 ````
 
 The lines under the heading follow the task ledger's plan format:
-- `**Tier:**` names the task's tier (see Task Tiers); it is the first line.
+- `**Tier:**` names the task's tier (see Task Tiers); it is the first line. A `heavy` task puts its one-line reason on the plain-text line directly under it.
 - `**Depends on:**` lists the tasks that must be done first, as `T1, T3`; omit the line when a task has none.
 - `**Skills:**` lists the vault skills the task needs. When headjack is installed, run `triqual suggest "<the task's text>" --json` per task and keep the fitting `suggestions[].slug` values. On a non-zero exit from `triqual suggest` (exit 3: headjack is not installed), on empty output, or when `triqual` is not on `PATH` (`command -v triqual` fails, or exit 127), omit the line silently.
-- `**Role:**` names the task's role (see Task Roles).
+- `**Role:**` names the task's role (see Task Roles). A `roles:complex-implementer` task puts its reason, the live-state migration or the change across systems that one brief cannot describe, on the plain-text line directly under it. Reason lines never start with `**`.
 
 Test-first applies to every task that changes behavior, at any tier. A task with no behavior change (docs, config values, a rollout step) replaces the test steps with a verification step: the command to run and the output that means it passed.
 
@@ -243,13 +244,13 @@ After writing the complete plan, look at the spec with fresh eyes and check the 
 
 **6. Phases:** Does each phase map to a slice of the spec? Does any task depend on a later phase? Does every phase have a branch, a PR title, a Phase check and a task that commits? Is anything that needs the merged trunk a task instead of an `## After Merge` item?
 
-**7. Tiers:** Does every task carry a `**Tier:**` (all or none)? Is each tier the one the rubric gives for what the task touches, with no task tiered lower than its content justifies? Is every `coordinator` task `light` and every `roles:complex-implementer` task `heavy`? Is every task that touches a sensitive path (the default set plus the header's `**Sensitive paths:**`) or whose diff will have more than 300 changed lines `heavy`? When more than 80% of the plan's tasks are `heavy` in a plan of at least 5 tasks, re-check each tier, since heavy review costs the most and registering the plan prints a warning.
+**7. Tiers:** Does every task carry a `**Tier:**` (all or none)? Is each tier the one the rubric gives for what the task touches, with no task tiered lower than its content justifies? Is every `coordinator` task `light` and every `roles:complex-implementer` task `heavy`? Does every `heavy` task have its reason line under `**Tier:**`, and every `roles:complex-implementer` task its reason line under `**Role:**`, each naming a criterion the rubric gives? Is every task that touches a sensitive path (the default set plus the header's `**Sensitive paths:**`) or whose diff will have more than 300 changed lines `heavy`? When more than 80% of the plan's tasks are `heavy` in a plan of at least 5 tasks, re-check each tier, since heavy review costs the most and registering the plan prints a warning.
 
 If you find issues, fix them inline. No need to re-review — just fix and move on. If you find a spec requirement with no task, add the task.
 
 ## Plan Audit
 
-After the self-review, dispatch `roles:final-adversarial-reviewer` with `../brainstorming/spec-document-reviewer-prompt.md` on the plan and its spec: the adversarial audit runs on every plan, and no other reviewer takes its place. The audit checks the tiers too: a task tiered lower than its content justifies by the Task Tiers rubric is a finding.
+After the self-review, dispatch `roles:final-adversarial-reviewer` with `../brainstorming/spec-document-reviewer-prompt.md` on the plan and its spec: the adversarial audit runs on every plan, and no other reviewer takes its place. The audit checks the tiers both ways: a task tiered lower than its content justifies by the Task Tiers rubric is a finding, and so is a task tiered higher than the rubric justifies. A `heavy` task, or a `roles:complex-implementer` task, whose reason line is missing or does not match the rubric's criteria for it is a finding too. The shared audit prompt stays as it is, so write both tier checks into your dispatch message to the auditor.
 
 Fix the findings in the plan. Name, in your message to your human partner, each finding you did not fix and why.
 

@@ -83,7 +83,7 @@ effort parameter). Coordination and rulings stay with the session model.
 | Spec compliance and test honesty | `roles:spec-reviewer` | sonnet | medium | `methodology:executing-plans`, `methodology:reviewing-code` | judgment and branch tracing |
 | Review-round fixer | `roles:review-fixer` | sonnet | high | `methodology:executing-plans` (fix rounds) | must refute the reviewer when warranted |
 | Final adversarial whole-branch review | `roles:final-adversarial-reviewer` | opus | high | `methodology:executing-plans`, `methodology:brainstorming` (spec audit), `methodology:writing-plans` (plan audit) | one pass, the most valuable one |
-| Candidate findings (hunter) | `roles:hunter` | claude-haiku-5-5 | medium | `methodology:executing-plans`, `methodology:reviewing-code` | cheap candidates, every one verified by the Sonnet spec reviewer (by the Opus final reviewer in the final review) |
+| Candidate findings (hunter) | `roles:hunter` | claude-haiku-5-5 | medium | `methodology:executing-plans`, `methodology:reviewing-code` | cheap candidates, every one verified by the Sonnet spec reviewer (by the Opus final reviewer in the phase review) |
 | Coordination and decisions | (session) | session model | — | — | never delegated |
 
 Methodology's skills dispatch `roles:*` and pass no model: the role's definition carries it.

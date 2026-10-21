@@ -59,11 +59,14 @@ In a plan with tiers a `roles:complex-implementer` task is `heavy` and a `coordi
 
 | Tier | `hunter` | `safety-reviewer` | `spec-reviewer` |
 |---|---|---|---|
-| heavy | 4: correctness, security, spec-drift, state | yes | every candidate and the spec fit |
-| standard | 2: correctness and the category the plan's Review Focus names, else the riskiest | yes | yes |
+| heavy | 2: correctness, and security or state, picked from the task's heavy reason line | yes | every candidate and the spec fit |
+| standard | none | yes, in parallel with the spec reviewer | yes, in parallel with the gate |
 | light | none | yes | only on a finding or `Cannot verify` from the gate |
 
-The final review of a plan, whatever its tiers, runs 3 hunters and the `final-adversarial-reviewer`.
+Each phase of a plan also gets a deep review before it is submitted: 4 hunters (correctness, security, spec-drift,
+state) and the `final-adversarial-reviewer` over the phase diff. The final review of a plan with several phases is a
+seams review by the `final-adversarial-reviewer` alone, with no hunters; in a single-phase plan the phase review is the
+final review.
 
 ## Codex and Grok
 

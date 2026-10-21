@@ -1,20 +1,23 @@
 # Final Review Prompt Template
 
-Use this template once per plan, after every task is complete, to dispatch
-the final whole-branch review to `roles:final-adversarial-reviewer`
-(methodology:executing-plans, Final Review). The final review runs for every
-plan, at every tier mix. Pass no model: the role's definition pins it.
+Use this template to dispatch `roles:final-adversarial-reviewer`
+(methodology:executing-plans): once per phase for the phase review (8. Review the
+phase, its Phase Scope), and once at the end of a multi-phase plan for the
+seams review (Final Review, its Seams Scope). Pass no model: the role's
+definition pins it.
 
-**Purpose:** Try to break the whole branch against its spec, across task
-boundaries no per-task review could see, verify every candidate the final
-hunters ([hunter-prompt.md](hunter-prompt.md)) found, and triage every
-deferred and parked ledger item before merge.
+**Purpose:** Try to break the range under review against its spec, across task
+boundaries no per-task review could see, verify every candidate the hunters
+([hunter-prompt.md](hunter-prompt.md)) of a phase review found, and triage the
+deferred and parked ledger items before merge. The seams review has no hunters
+and reads only what the phase reviews could not see.
 
 ```
 Subagent (roles:final-adversarial-reviewer):
-  description: "Final review of the branch"
+  description: "Review of the range under review"
   prompt: |
-    You are reviewing an entire branch once, adversarially, before merge.
+    You are reviewing one range of commits once, adversarially, before merge:
+    one phase, or, in the seams review, every phase of the stack.
     Every task on it already passed a task-scoped spec review and safety
     review. Your job is what those could not see.
 
@@ -39,18 +42,19 @@ Subagent (roles:final-adversarial-reviewer):
 
     **Package:** [PACKAGE_PATH]
 
-    Read the package once: it holds the branch's commit list, a stat summary
-    and the full diff with context (MERGE_BASE..HEAD). In stacked execution
-    that range is `trunk..top`: every phase of the stack, in order, one commit
-    per task. Do not re-derive the branch diff with git commands. Inspect code outside the diff to confirm
+    Read the package once: it holds the range's commit list, a stat summary
+    and the full diff with context. In a phase review that range is the
+    phase's (phase base..phase top); in the seams review it is `trunk..top`:
+    every phase of the stack, in order, one commit per task. Do not re-derive
+    the diff with git commands. Inspect code outside the diff to confirm
     a concrete candidate defect you can name, and say what you checked.
 
     ## Candidates to Verify
 
-    Candidates files from the final hunters: [CANDIDATES_PATHS]
+    Candidates files from the hunters: [CANDIDATES_PATHS]
 
-    Three hunters (a cheaper model) read the whole branch for `correctness`
-    across tasks, `security` and `spec-drift`. Each candidate in their files
+    The hunters (a cheaper model) of a phase review read the phase's range,
+    one category each. Each candidate in their files
     is an unverified claim of a defect, with an id (`<category>-<k>`), a
     `file:line`, a one-sentence claim and how to reproduce or refute it.
     Verify each one yourself against the package and the code: a candidate is
@@ -70,6 +74,41 @@ Subagent (roles:final-adversarial-reviewer):
     review incomplete, and the controller sends it back. When the line above
     says none, there are no candidates: write "None" under Candidate Verdicts.
 
+    ## Phase Scope
+
+    Phase review only; the controller deletes this section from the seams review.
+
+    This dispatch covers one phase's range only: [PHASE_RANGE] (phase base..phase
+    top, the range of the package). Review nothing outside it, and ignore the
+    rest of the branch. Every candidate comes from four hunters
+    (`correctness`, `security`, `spec-drift`, `state`) who read this range.
+
+    The phase's tasks, from the plan: [PHASE_TASKS]
+
+    The ledger lines of this phase, in the file [PHASE_LEDGER_LINES]: the
+    `Ruling:` lines, the deferred Minor findings and the parked findings of
+    its tasks. In a phase review these lines are your ledger: rule on every
+    `Ruling:`, deferred and parked line of the phase in Ledger Triage, as below;
+    no other ledger line is yours to triage.
+
+    ## Seams Scope
+
+    Seams review only; the controller deletes this section from a phase review.
+
+    The package covers the whole stack, `trunk..top`; each phase already passed
+    its own review, with its own hunters and its own reviewer (the controller
+    ran the phase review of any phase submitted before 1.1.0 before this one):
+    do not review the phases again. Look only at: the interfaces one phase exposes and a
+    later one consumes (names, signatures, formats, error paths and the
+    assumptions each side makes of the other); cross-phase state (data one
+    phase writes and a later one reads, ordering, migrations, defaults a later
+    phase changed under an earlier one); and every `Ruling:`, deferred-minor
+    and parked line of the workspace ledger still open. Review nothing else:
+    a defect that sits inside one phase is out of scope, and goes in Declined
+    to Judge. There are no candidates in this review (no hunters ran): write
+    "None" under Candidate Verdicts. The ledger to triage is the whole
+    workspace ledger, [SDD_LEDGER_PATH].
+
     ## The Ledger
 
     Read the workspace ledger: [SDD_LEDGER_PATH]
@@ -81,6 +120,10 @@ Subagent (roles:final-adversarial-reviewer):
     or accept with a one-line reason. A ruling you think is wrong is a
     finding.
 
+    In a phase review, read [PHASE_LEDGER_LINES] instead of the workspace
+    ledger (the line above says none) and triage those lines. In the seams
+    review, triage every such line of the workspace ledger still open.
+
     ## Method
 
     Assume the branch is wrong and try to prove it. Cross task boundaries:
@@ -88,7 +131,9 @@ Subagent (roles:final-adversarial-reviewer):
     component and read by another, error paths, concurrency, secrets
     handling, and anything the per-task reviews could not see. For each
     candidate defect, confirm it by tracing the code or running a focused
-    check before reporting it; discard what you cannot substantiate.
+    check before reporting it; discard what you cannot substantiate. In the
+    seams review, Seams Scope overrides this: cross only the phase boundaries it
+    names.
 
     ## The spec is a vision document
 
@@ -158,7 +203,7 @@ Subagent (roles:final-adversarial-reviewer):
     against each task's review tier, so name a task only when you traced it.
     Name the phase (`Phase <N>`; the package's commit list shows which
     commits belong to which phase, and a plan without phases needs none): the
-    controller fixes every finding in one commit on the top phase and never
+    controller fixes every finding in at most two rounds, each a commit on the top phase, and never
     rewrites a submitted phase, so the phase tells the fixer where the code
     lives.
 
@@ -189,14 +234,20 @@ Subagent (roles:final-adversarial-reviewer):
 ```
 
 **Placeholders:**
-- `[PACKAGE_PATH]` — the path `node scripts/review-package PLAN_FILE MERGE_BASE HEAD`
-  printed (MERGE_BASE: the commit the branch started from, e.g. `git merge-base <trunk> HEAD`)
+- `[PACKAGE_PATH]` — the path `node scripts/review-package PLAN_FILE BASE HEAD` printed: in a phase
+  review, the package of the phase's range (BASE the phase base); in the seams review, the package of
+  `trunk..top` (BASE the commit the branch started from, e.g. `git merge-base <trunk> HEAD`)
 - `[PLAN_PATH]` — the plan file
 - `[SPEC_PATH]` — the spec the plan names; "none" when the plan has no reachable spec
 - `[REVIEW_FOCUS]` — the plan's Review Focus section, copied verbatim; "none" when the plan has none
-- `[SDD_LEDGER_PATH]` — the workspace ledger, `sdd-ledger.md`; the reviewer reads its `Ruling:`, deferred-minor and parked lines
-- `[CANDIDATES_PATHS]` — every `final-candidates-<category>.md` the final hunters
-  returned; "none" when the hunters were skipped or returned no file
+- `[SDD_LEDGER_PATH]` — the workspace ledger, `sdd-ledger.md`; the reviewer reads its `Ruling:`, deferred-minor and parked lines (see Seams Scope); "none" in a phase review (see Phase Scope)
+- `[PHASE_RANGE]` — phase review only: the phase base..phase top range of the package (the phase base is the
+  previous phase's branch tip, or `git merge-base <trunk> HEAD` for phase 1)
+- `[PHASE_TASKS]` — phase review only: this phase's tasks, as the plan states them (the task headings and goals)
+- `[PHASE_LEDGER_LINES]` — phase review only: the file `<workspace>/phase-<N>-ledger.md`, holding this phase's
+  `Ruling:`, deferred-minor and parked ledger lines, which the controller copies there
+- `[CANDIDATES_PATHS]` — in a phase review, every `phase-<N>-candidates-<category>.md` the hunters
+  returned; "none" when the hunters were skipped or returned no file, and always "none" in the seams review
 
 **Final reviewer returns:** findings by severity, each with the task it traces
 to (or `untraced`) and its phase, a verdict for every candidate, the ledger triage, the declined-to-judge list, and a merge verdict

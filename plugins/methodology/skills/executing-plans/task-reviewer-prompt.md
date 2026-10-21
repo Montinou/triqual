@@ -1,19 +1,24 @@
 # Task Reviewer Prompt Template
 
 Use this template to dispatch the task's spec reviewer, `roles:spec-reviewer`,
-in round 2 of a heavy or standard task's review. The reviewer reads the task's
-diff once and returns two verdicts, spec compliance and code quality, and one
-verdict per candidate that round 1 produced (the hunters of
-[hunter-prompt.md](hunter-prompt.md)). Dispatch it after round 1, on the same
-review package as the safety gate
-([safety-review-prompt.md](safety-review-prompt.md), `roles:safety-reviewer`).
-Pass no model: the role's definition pins it.
+for a heavy or standard task. The reviewer reads the task's diff once and
+returns two verdicts, spec compliance and code quality, and, when hunters ran,
+one verdict per candidate that round 1 produced (the hunters of
+[hunter-prompt.md](hunter-prompt.md)). A heavy task dispatches it in round 2,
+after round 1's hunters and gate; a standard task has no hunters and
+dispatches it in round 1, in parallel with the safety gate
+([safety-review-prompt.md](safety-review-prompt.md), `roles:safety-reviewer`),
+on the same review package. Pass no model: the role's definition pins it.
+
+**Candidates only when hunters ran.** Only a heavy task sends hunters. Drop the
+Candidates to Verify section and the Candidate Verdicts section for a standard
+or light task: with no candidates there is nothing to verdict, and the
+reviewer is never asked for an empty verdict list.
 
 **Light tier.** A light task has no round 2, unless the gate reported a
 finding or a `Cannot verify` item: then dispatch this template with the Light
-Items section kept and filled with those items, and `[CANDIDATES_FILES]` set
-to none; the reviewer judges those items only. Drop the Light Items section
-for a heavy or standard task.
+Items section kept and filled with those items; the reviewer judges those
+items only. Drop the Light Items section for a heavy or standard task.
 
 Keep the Safety Checklist sections only when the ledger holds the
 `Skipped: hunters and …` line (see SKILL.md, When the stage does
@@ -22,7 +27,7 @@ the same review, with the gate's inputs; drop both otherwise.
 
 **Purpose:** Verify one task's implementation matches its requirements (nothing
 more, nothing less) and is well-built (clean, tested, maintainable), and
-verify every candidate defect round 1 found.
+verify every candidate defect round 1 found, when hunters ran.
 
 ```
 Subagent (roles:spec-reviewer):
@@ -30,8 +35,8 @@ Subagent (roles:spec-reviewer):
   prompt: |
     You are reviewing one task's implementation: first whether it matches its
     requirements, then whether it is well-built. This is a task-scoped gate,
-    not a merge review — a broad whole-branch review happens separately after
-    all tasks are complete.
+    not a merge review — the phase review happens separately, after
+    the phase's tasks are complete.
 
     Task tier: [TIER]
 
@@ -42,7 +47,7 @@ Subagent (roles:spec-reviewer):
     for the items below, which the gate reported. Judge each one against the
     diff and the brief: a real defect (with a severity) or not, with
     file:line evidence. Answer Spec Compliance and Task quality for these
-    items only, and write "None" under Candidate Verdicts.
+    items only.
 
     ## What Was Requested
 
@@ -55,6 +60,7 @@ Subagent (roles:spec-reviewer):
 
     Read the implementer's report: [REPORT_FILE]
 
+    [CANDIDATES — include this section only when hunters ran (a heavy task); drop it, and the Candidate Verdicts section below, for a standard or light task]
     ## Candidates to Verify
 
     Candidates files from round 1: [CANDIDATES_FILES]
@@ -77,7 +83,7 @@ Subagent (roles:spec-reviewer):
     A candidate with no location (`file:line`) or no reproduction is
     `refuted` for that reason. A candidate left without a verdict makes your
     review incomplete, and the controller sends it back. When the line above
-    says none, there are no candidates: write "None" under Candidate Verdicts.
+    says none, round 1 produced no file: there are no candidates to verdict.
 
     ## Diff Under Review
 
@@ -248,6 +254,7 @@ Subagent (roles:spec-reviewer):
     For each issue: file:line, what's wrong, why it matters, how to fix
     (if not obvious).
 
+    [CANDIDATE_VERDICTS — include this section only when hunters ran; drop it otherwise]
     ### Candidate Verdicts
 
     One line per candidate, in file order, each with exactly one verdict:
@@ -257,7 +264,7 @@ Subagent (roles:spec-reviewer):
     - `<candidate id>`: duplicate-candidate of `<other candidate id>`
     - `<candidate id>`: duplicate-review of your finding `<file:line>`
 
-    "None" when there are no candidates.
+    "None" when round 1 produced no candidate.
 
     ### Safety Checklist
 
@@ -281,9 +288,13 @@ Subagent (roles:spec-reviewer):
   are already in this template)
 - `[REPORT_FILE]` — REQUIRED: the file the implementer wrote its detailed
   report to
-- `[CANDIDATES_FILES]` — every candidates file of round 1: the hunters'
-  `task-<N>-candidates-<category>.md` that returned one; "none" when the
-  stage was skipped or round 1 produced no file
+- `[CANDIDATES]` and `[CANDIDATE_VERDICTS]` — the marker lines of the two
+  sections that exist only for candidates: keep the section when hunters ran (a
+  heavy task), drop it with its marker line otherwise
+- `[CANDIDATES_FILES]` — only when hunters ran (a heavy task): every candidates
+  file of round 1, the hunters' `task-<N>-candidates-<category>.md` that
+  returned one; "none" when the stage was skipped or round 1 produced no file.
+  A standard or light task has no hunters: drop the section
 - `[SAFETY_TEMPLATE]` — only with the Safety Checklist sections: the
   absolute path of this skill's [safety-review-prompt.md](safety-review-prompt.md), whose checklist the
   reviewer reads (the items are kept there, not copied here)
@@ -301,5 +312,5 @@ Subagent (roles:spec-reviewer):
   path it wrote; the package never enters the controller's context)
 
 **Reviewer returns:** Spec Compliance verdict (✅/❌/⚠️), Strengths, Issues
-(Critical/Important/Minor), a verdict for every candidate, the checklist verdicts and the `Safety:` verdict when the
+(Critical/Important/Minor), a verdict for every candidate (when hunters ran), the checklist verdicts and the `Safety:` verdict when the
 Safety Checklist sections are kept, Task quality verdict

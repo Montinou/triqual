@@ -2,10 +2,11 @@
 
 Use this template to dispatch the task's safety reviewer, the gate
 (`roles:safety-reviewer`), in round 1 of every task's review, at every tier.
-For a heavy or standard task it runs together with the hunters
+For a heavy task it runs together with the hunters
 ([hunter-prompt.md](hunter-prompt.md)) on the same review package, and the
 spec reviewer ([task-reviewer-prompt.md](task-reviewer-prompt.md),
-`roles:spec-reviewer`) runs in round 2. For a light task the gate is the whole
+`roles:spec-reviewer`) runs in round 2. For a standard task it runs in parallel
+with the spec reviewer, with no hunters. For a light task the gate is the whole
 review, unless it reports a finding or a `Cannot verify` item: then the spec
 reviewer runs on that item. The safety reviewer runs a fixed checklist on the
 diff and judges no design. Pass no model: the role's definition pins it.
@@ -20,7 +21,7 @@ Subagent (roles:safety-reviewer):
   prompt: |
     You are running the safety checklist on one task's implementation. This
     is a task-scoped gate: a spec reviewer may judge requirements and design
-    in the next round, and a whole-branch review happens after all tasks are
+    in the next round, and the phase review happens after the phase's tasks are
     complete.
 
     Task tier: [TIER]

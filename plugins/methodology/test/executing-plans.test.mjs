@@ -69,14 +69,14 @@ const U4_HEADER = ['Effective tier', 'Round 1 (together)', 'Round 2', 'Fix-round
 const U4_ROWS = [
   [
     'heavy',
-    '4 hunters: correctness, security, spec-drift, state + safety gate',
+    '2 hunters: `correctness` + `security` or `state`, picked from the task\'s heavy reason line + safety gate',
     '`roles:spec-reviewer` on every candidate and spec fit',
     'scoped re-review by the raising role(s), always',
   ],
   [
     'standard',
-    "2 hunters: correctness + the category the plan's Review Focus names for the task, else the riskiest for the diff (security by default) + safety gate",
-    '`roles:spec-reviewer`',
+    'safety gate + `roles:spec-reviewer`, in parallel; no hunters',
+    'none: the spec review ran with the gate',
     'scoped re-review, except a fix that applies an approved `Ruling:` verbatim and touches no security logic',
   ],
   [
@@ -97,6 +97,65 @@ test('the tier matrix in the skill equals spec U4', () => {
   const rows = [];
   for (let i = at + 2; i < lines.length && lines[i].startsWith('|'); i++) rows.push(cells(lines[i]));
   assert.deepEqual(rows, U4_ROWS);
+});
+
+// ---- per-task review sizes (design: Review structure, "Per task") ----
+
+test('per-task hunters: heavy 2 picked from the reason, standard 0, light 0', () => {
+  const lines = skill().split('\n');
+  const at = lines.findIndex((l) => l.startsWith('|') && cells(l).join('|') === U4_HEADER.join('|'));
+  const rows = Object.fromEntries(lines.slice(at + 2, at + 5).map((l) => [cells(l)[0], cells(l)[1]]));
+  assert.ok(rows.heavy.startsWith('2 hunters:'), 'the heavy row does not send 2 hunters');
+  for (const category of ['`correctness`', '`security`', '`state`']) assert.ok(rows.heavy.includes(category), `the heavy row lacks ${category}`);
+  assert.ok(rows.heavy.includes("heavy reason line"), 'the heavy row does not pick the category from the reason line');
+  assert.doesNotMatch(rows.heavy, /spec-drift/, 'the heavy row still names spec-drift');
+  assert.ok(rows.standard.includes('no hunters'), 'the standard row sends hunters');
+  assert.doesNotMatch(rows.light, /hunter/, 'the light row names hunters');
+  const pick = flat(section(skill(), '## Tiers'));
+  assert.ok(pick.includes('`security` when the reason line names security code'), 'Tiers does not map security code to the security hunter');
+  assert.ok(pick.includes('`state` when it names live state or a parsed contract'), 'Tiers does not map live state or a parsed contract to the state hunter');
+  assert.ok(pick.includes("never send fewer than the tier's count"), 'the Budget rule does not forbid fewer than the tier count');
+  assert.doesNotMatch(pick, /a standard task sends exactly two|heavy four/, 'the old hunter counts remain');
+  const round1 = flat(section(skill(), '#### Round 1'));
+  assert.doesNotMatch(round1, /Review Focus names for the task/, 'Round 1 still picks a standard hunter from the Review Focus');
+});
+
+test('standard dispatches the gate and the spec review in parallel', () => {
+  const round1 = flat(section(skill(), '#### Round 1'));
+  const standard = round1.slice(round1.indexOf('**Standard:**'), round1.indexOf('**Light:**'));
+  assert.ok(standard.includes('**Standard:**') && standard.includes('`roles:safety-reviewer`') && standard.includes('`roles:spec-reviewer`'), 'Round 1 does not dispatch the gate and the spec reviewer for standard');
+  assert.ok(standard.includes('together') && standard.includes('in one message'), 'the standard dispatch is not one message');
+  assert.ok(standard.includes('no hunters'), 'the standard dispatch does not say there are no hunters');
+  const heavy = round1.slice(round1.indexOf('**Heavy:**'), round1.indexOf('**Standard:**'));
+  assert.ok(heavy.includes('`roles:hunter`') && heavy.includes('`roles:safety-reviewer`'), 'the heavy dispatch lost its hunters or gate');
+  const round2 = flat(section(skill(), '#### Round 2'));
+  assert.ok(round2.includes('**Heavy:**'), 'Round 2 does not scope the candidate verdicts to heavy');
+  assert.ok(round2.includes('**Standard:**') && round2.includes('already ran'), 'Round 2 does not say the standard spec review already ran');
+});
+
+test('Minor findings are deferred to the phase review', () => {
+  const loop = flat(section(skill(), '### 5. The fix loop'));
+  assert.ok(loop.includes('`Task <N>: minor (deferred): <one-liner>`, and the phase review (see 8. Review the phase) rules on them'), 'the fix loop does not defer Minor findings to the phase review');
+  assert.doesNotMatch(loop, /the final review triages them/, 'the fix loop still defers Minor findings to the final review');
+});
+
+test('the spec reviewer prompt has no candidates section without hunters', () => {
+  const raw = read(`${EP}/task-reviewer-prompt.md`);
+  const text = flat(raw);
+  const at = raw.indexOf('## Candidates to Verify');
+  assert.ok(at >= 0, 'no Candidates to Verify section');
+  const marker = flat(raw.slice(raw.lastIndexOf('\n', raw.lastIndexOf('\n', at) - 1), at));
+  assert.ok(/include this section only when hunters ran/.test(marker), 'the candidates section is not conditional on hunters');
+  assert.ok(text.includes('Drop the Candidates to Verify section and the Candidate Verdicts section for a standard or light task'), 'the header does not say to drop the candidates sections');
+  assert.ok(/\[CANDIDATE_VERDICTS[^\]]*only when hunters ran[^\]]*\]/.test(text), 'the Candidate Verdicts output section is not conditional on hunters');
+  assert.ok(text.includes('only when hunters ran'), 'the CANDIDATES_FILES placeholder is not conditional');
+  assert.doesNotMatch(text, /"None" when there are no candidates\./, 'the verdicts section still answers None without hunters');
+});
+
+test('the Finish hunter reference uses the new counts', () => {
+  const finish = flat(section(skill(), '## Finish'));
+  assert.ok(finish.includes('2 per heavy task, 0 per standard and light task, plus 4 per phase, 0 for the seams review'), 'Finish does not state the per-task and phase counts');
+  assert.doesNotMatch(finish, /4 per heavy task, 2 per standard/, 'Finish still states the old counts');
 });
 
 test('the invariants are stated in the skill', () => {
@@ -126,12 +185,14 @@ test('TDD is required for every task, in the skill and the implementer template'
   assert.doesNotMatch(impl, /following TDD if task says to/);
 });
 
-test('the role-eval record examples in the skill validate, and cover task-review, final-escapes, the final hunters and a post-merge escape', () => {
+test('the role-eval record examples in the skill validate, and cover task-review, final-escapes and a post-merge escape (no final hunters)', () => {
   const blocks = [...skill().matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => JSON.parse(m[1]));
   assert.ok(blocks.length >= 3, 'fewer than three record examples');
+  assert.ok(blocks.some((r) => r.task === 'P1'), 'no P1 phase record example');
   for (const record of blocks) assert.deepEqual(validateRecord(record), { ok: true }, JSON.stringify(record));
   const kinds = blocks.map((r) => `${r.kind}:${r.task === 'final' ? 'final' : 'task'}`);
-  for (const k of ['task-review:task', 'final-escapes:final', 'hunters:final', 'escape:task']) assert.ok(kinds.includes(k), `no ${k} example`);
+  for (const k of ['task-review:task', 'final-escapes:final', 'escape:task']) assert.ok(kinds.includes(k), `no ${k} example`);
+  assert.ok(!kinds.includes('hunters:final'), 'Records still carries a final hunters example');
   assert.ok(flat(skill()).includes('`triqual role-eval record --plan <plan file> <json-file>`'));
 });
 
@@ -301,8 +362,11 @@ test('the kept SDD behaviors are in their own sections', () => {
       "Run the phase's `**Phase check:**` command at the tip of the phase branch",
       'A failure that passes on one re-run is flaky',
       '`triqual tasks reopen T<N> "<reason>" --plan <plan>`',
+    ],
+    '### 8. Review the phase': [
       '`node scripts/stack.mjs done PLAN_FILE N`',
       '`node scripts/stack.mjs submit PLAN_FILE N`',
+      'submit` exits 5',
     ],
     '## Finish': ['re-run `triqual role-eval record --plan <plan file> <json-file>` for every record that has an `Unrecorded:` line'],
   };
@@ -392,8 +456,308 @@ test('the final review names the task of each traceable finding and records fina
   assert.ok(prompt.includes('the task it traces to'), 'the final review prompt does not ask for the task');
   const text = flat(section(skill(), '## Final Review'));
   assert.ok(text.includes('`final-escapes`'));
-  assert.ok(text.includes('3 hunters'));
   assert.ok(text.includes('`roles:final-adversarial-reviewer`'));
+});
+
+// ---- the seams review (design: Review structure, "Seams review" and "Recording") ----
+
+test('the final review is a seams review with no hunters', () => {
+  const raw = skill();
+  const final = flat(section(raw, '## Final Review'));
+  // no final hunters: no hunter dispatch, no hunters record, no final candidates files
+  assert.doesNotMatch(final, /3 hunters|the final hunters|final-candidates|`roles:hunter`/, 'the final review still dispatches hunters');
+  assert.ok(final.includes('seams review') && final.includes('no hunters'), 'the final review does not say it is a seams review with no hunters');
+  assert.doesNotMatch(flat(section(raw, '## Records')), /\*\*`hunters`\*\* with task `final`/, 'Records still has the final hunters example');
+  // inputs: the spec, the plan, the full trunk..top package and the workspace ledger
+  for (const line of ['the spec, the plan, the full `trunk..top` package and the workspace ledger (`sdd-ledger.md`)', 'node scripts/review-package PLAN_FILE MERGE_BASE HEAD']) {
+    assert.ok(final.includes(line), `the seams review lacks the input: ${line}`);
+  }
+  // seams-only instruction
+  for (const line of ['each phase already passed its own review', 'only at the interfaces one phase exposes and a later one consumes', 'cross-phase state', 'every `Ruling:`, deferred-minor and parked line still open']) {
+    assert.ok(final.includes(line), `the seams-only instruction lacks: ${line}`);
+  }
+  // the same two-round fix rule as the phase review, then submit --open
+  const fix = final.slice(final.indexOf('**Fix rounds.**'), final.indexOf('**Submit.**'));
+  assert.ok(fix.length > 0, 'the seams review has no Fix rounds step before Submit');
+  for (const line of ['at most two rounds of `roles:review-fixer`', 'a plain commit', '`fix: address final review findings`', 'never a `--fixup`', 'a scoped re-review', '[re-review-prompt.md](re-review-prompt.md)', '`roles:spec-reviewer`', '`roles:final-adversarial-reviewer` when a finding was Critical']) {
+    assert.ok(fix.includes(line), `the seams fix rule lacks: ${line}`);
+  }
+  assert.doesNotMatch(fix, /no second fix wave|exactly one scoped re-review/, 'the seams review kept the one-wave fix rule');
+  const submit = final.slice(final.indexOf('**Submit.**'));
+  assert.ok(submit.includes('`node scripts/stack.mjs submit PLAN_FILE <top N> --open`'), 'the seams review does not end with submit --open');
+  assert.ok(final.indexOf('**Fix rounds.**') < final.indexOf('**Submit.**'), 'submit --open does not come after the fix rounds');
+  // recording: only final-escapes with task final, never a hunters record
+  const records = flat(section(raw, '## Records'));
+  const rec = final.slice(final.indexOf('**Records:**'), final.indexOf('**Fix rounds.**'));
+  assert.ok(rec.includes('`final-escapes`') && rec.includes('`task: "final"`'), 'the seams review does not record final-escapes with task final');
+  assert.ok(rec.includes('never a `hunters` record'), 'the seams review does not forbid a hunters record');
+  assert.ok(records.includes('`task: "P<n>"` (the seams review records only `final-escapes`, with `task: "final"`)'), 'Records does not say the seams review records only final-escapes');
+  // the process, the ledger vocabulary and the worked example agree
+  const process = flat(section(raw, '## The Process'));
+  assert.ok(process.includes('the seams review of `trunk..top`'), 'The Process step 4 does not name the seams review');
+  assert.doesNotMatch(process, /3 hunters/, 'The Process still sends 3 final hunters');
+  assert.doesNotMatch(flat(section(raw, '## Ledger vocabulary')), /and the same with `final`/, 'the ledger vocabulary still has Round 1/2 lines for final');
+  assert.doesNotMatch(flat(raw), /Final review: 3 hunters/, 'the worked example still has 3 final hunters');
+});
+
+test('the seams scope of the final review prompt reads only the cross-phase interfaces, state and open ledger lines', () => {
+  const prompt = read(`${EP}/final-review-prompt.md`);
+  const at = prompt.indexOf('## Seams Scope');
+  assert.ok(at >= 0, 'the final review prompt has no seams scope');
+  const phaseAt = prompt.indexOf('## Phase Scope');
+  assert.ok(phaseAt >= 0 && phaseAt < at, 'the seams scope does not sit beside the phase scope, after it');
+  const scope = flat(prompt.slice(at, prompt.indexOf('\n    ## ', at + 1)));
+  for (const line of ['Seams review only', 'each phase already passed its own review', 'interfaces one phase exposes and a later one consumes', 'cross-phase state', '`Ruling:`', 'deferred', 'parked', 'no candidates', '[SDD_LEDGER_PATH]']) {
+    assert.ok(scope.includes(line), `the seams scope lacks: ${line}`);
+  }
+  assert.match(scope, /Review nothing else/, 'the seams scope does not bar a re-review of the phases');
+  // the two scopes are exclusive: each says which review deletes it
+  assert.match(flat(prompt.slice(phaseAt, at)), /deletes this section from the seams review/, 'the phase scope is not deleted from the seams review');
+  assert.match(scope, /deletes this section from a phase review/, 'the seams scope is not deleted from a phase review');
+  // the shared body is range-neutral and hunter-neutral
+  const body = flat(prompt.split('**Placeholders:**')[0]);
+  assert.doesNotMatch(body, /entire branch|Three hunters|the final hunters|whole-branch/, 'the shared body still says entire branch / Three hunters / the final hunters');
+  assert.doesNotMatch(flat(prompt), /final-candidates/, 'the prompt still names final candidates files');
+});
+
+test('the hunter template has no final mode', () => {
+  const raw = read(`${EP}/hunter-prompt.md`);
+  const text = flat(raw);
+  assert.doesNotMatch(text, /\*\*Final review:\*\*/, 'the hunter template still has a final mode');
+  assert.doesNotMatch(text, /final review's 3 hunters|final-candidates|in the final review|final review only|final or phase review/, 'the hunter template still mentions the final review');
+  assert.ok(text.includes('**Phase review:**'), 'the hunter template lost its phase mode');
+  assert.ok(text.includes('a phase review sends four hunters') || text.includes('A phase review sends four hunters'), 'the hunter template lost the phase hunter count');
+});
+
+test('a single-phase plan: its phase review is the final review', () => {
+  const raw = skill();
+  const intro = flat(raw.split('\n').find((l) => l.startsWith('You are the controller of a plan')) ?? '');
+  assert.ok(intro, 'no intro paragraph');
+  assert.ok(intro.includes('a single-phase plan\'s phase review is its final review'), ':8 does not say a single-phase plan\'s phase review is its final review');
+  assert.ok(intro.includes('the seams review'), ':8 does not name the seams review');
+  assert.doesNotMatch(intro, /one final whole-branch review runs for every plan/, ':8 still says one final whole-branch review');
+  const final = flat(section(raw, '## Final Review'));
+  assert.ok(final.includes('The final review always runs: for every plan'), 'the final review no longer runs for every plan');
+  assert.ok(final.includes('In a single-phase plan the phase review is the final review'), 'Final Review does not say the phase review is the final review of a single-phase plan');
+  assert.ok(final.includes('no seams review runs'), 'Final Review does not say no second review runs');
+  assert.ok(final.includes('its `P1` records stand'), 'Final Review does not say the single-phase records are the phase records');
+  const process = flat(section(raw, '## The Process'));
+  assert.ok(process.includes('in a single-phase plan the phase review is the final review'), 'The Process does not say it');
+});
+
+// ---- the phase review (design: Review structure) ----
+
+const PHASE_HEADING = '### 8. Review the phase';
+const phaseReview = () => flat(section(skill(), PHASE_HEADING));
+
+test('the phase review runs between the Phase check and done/submit', () => {
+  const raw = skill();
+  const check = raw.indexOf('**Phase check.**');
+  const heading = raw.indexOf(PHASE_HEADING);
+  assert.ok(check >= 0 && heading > check, 'the phase review heading does not follow the Phase check');
+  const body = phaseReview();
+  const review = body.indexOf('phase review');
+  const done = body.indexOf('`node scripts/stack.mjs done PLAN_FILE N`');
+  const submit = body.indexOf('`node scripts/stack.mjs submit PLAN_FILE N`');
+  assert.ok(review >= 0 && done > review && submit > done, 'the order is not phase review → done → submit');
+  const seven = flat(section(raw, '### 7. End the phase'));
+  assert.doesNotMatch(seven, /stack\.mjs (done|submit)/, 'done and submit stayed in step 7');
+  for (const category of ['`correctness`', '`security`', '`spec-drift`', '`state`']) assert.ok(body.includes(category), `no hunter category ${category}`);
+  assert.ok(body.includes('`roles:final-adversarial-reviewer`'), 'the phase reviewer is not named');
+  assert.ok(body.includes('Phase check'), 'the phase review does not name the Phase check');
+  const process = flat(section(raw, '## The Process'));
+  assert.ok(process.includes('the phase review'), 'The Process does not name the phase review');
+  assert.ok(process.indexOf('the phase review') < process.indexOf('`node scripts/stack.mjs done PLAN_FILE N`'), 'The Process puts the phase review after done');
+  assert.ok(flat(section(raw, '### 4. Review the task')).includes('once per phase'), 'step 4 still says the broad review happens once, at the final review');
+});
+
+test('phase fixes: two rounds, own commits, never reopen a task, then a seventh stop', () => {
+  const body = phaseReview();
+  for (const line of ['at most two', '`fix(', 'never folded into a task commit', 'never reopens a task', '`roles:review-fixer`', '`roles:spec-reviewer`']) {
+    assert.ok(body.includes(line), `the phase review lacks: ${line}`);
+  }
+  const para = flat(skill().split('\n').find((l) => l.startsWith('Seven things stop you')) ?? '');
+  assert.ok(para, 'the stops paragraph does not say Seven things stop you');
+  const stops = para.split(': ')[1].split('. For those')[0].split(';').map((s) => s.trim());
+  assert.equal(stops.length, 7, `${stops.length} stops: ${JSON.stringify(stops)}`);
+  assert.ok(stops.some((s) => /phase review/.test(s) && /second fix round/.test(s)), 'no stop for a blocked phase review');
+  assert.ok(flat(skill()).includes('The only reasons to stop are the seven named below'), 'the continuous-execution paragraph still counts six');
+  assert.ok(body.includes('seventh stop'), 'the phase review does not name the seventh stop');
+});
+
+// ---- the controller break per phase and lean reading (design: Controller context) ----
+
+const BREAK_LINE = 'Phase N done. Run /clear, then say "continue the plan" (or say "continue" to keep this session).';
+
+test('the continuous-execution rule names the phase break as its one planned pause', () => {
+  const lines = skill().split('\n');
+  const continuous = flat(lines.find((l) => l.startsWith('**Continuous execution:**')) ?? '');
+  assert.ok(continuous, 'no Continuous execution paragraph');
+  assert.ok(continuous.includes('The only reasons to stop are the seven named below'), 'the stop count changed');
+  assert.ok(continuous.includes('the one planned pause') && continuous.includes('the phase break'), ':16 does not name the phase break as the one planned pause');
+  const stops = flat(lines.find((l) => l.startsWith('Seven things stop you')) ?? '');
+  assert.ok(stops, 'no stops paragraph');
+  assert.ok(stops.includes('The phase break is the one planned pause, alongside these stops'), ':20 does not name the phase break as the one planned pause beside the stops');
+  assert.doesNotMatch(stops, /Eight things/, 'the break became an eighth stop');
+});
+
+test('the controller stops after each phase but the last with the break line', () => {
+  const body = phaseReview();
+  const at = body.indexOf('**The break.**');
+  assert.ok(at >= 0, 'step 8 has no The break bullet');
+  const text = body.slice(at);
+  assert.ok(text.includes(`\`${BREAK_LINE}\``), 'the break line is not verbatim');
+  const submit = body.indexOf('`node scripts/stack.mjs submit PLAN_FILE N`');
+  assert.ok(submit >= 0 && submit < at, 'the break does not come after stack.mjs submit');
+  assert.ok(text.includes('After `submit` of every phase except the last'), 'the break is not for every phase but the last');
+  assert.ok(text.includes('no break after the last phase') || text.includes('There is no break after the last phase'), 'the text does not say no break after the last phase');
+  assert.ok(text.includes('the seams review, `--open` and Finish follow'), 'the text does not say what follows the last phase');
+  assert.ok(text.includes('none in a single-phase plan'), 'the text does not say no break in a single-phase plan');
+  assert.ok(text.includes('as after a compaction'), 'the text does not say a fresh session resumes as after a compaction');
+  assert.ok(text.includes('No setting'), 'the break is configurable');
+});
+
+test('the controller reads the plan, the spec Units and the current slice, and the spec sections a ruling depends on', () => {
+  const raw = skill();
+  const readPlan = flat(section(raw, '### Read the plan'));
+  for (const line of ['the plan', 'the spec\'s `## Units`', 'current phase\'s `## Delivery Slices` entry', 'not the whole spec', 'Before writing a `Ruling:`', 'the spec sections the ruling depends on', 'the spec stays binding', 'The phase and seams reviewers get the whole spec']) {
+    assert.ok(readPlan.includes(line), `Read the plan lacks: ${line}`);
+  }
+  assert.ok(readPlan.includes('At setup and at each resume'), 'the lean reading does not cover each resume');
+  assert.doesNotMatch(readPlan, /If the plan names a Spec, read that too/, 'Read the plan still reads the whole spec');
+});
+
+test('the pre-flight scan lists only task pairs that share a file or interface', () => {
+  const scan = flat(section(skill(), '### Pre-flight scan'));
+  assert.ok(scan.includes('One row for every pair of tasks that share a file or an interface'), 'the pair rows are gone');
+  assert.ok(scan.includes('only task pairs that share a file or an interface'), 'the scan does not say it lists only such pairs');
+  assert.doesNotMatch(scan, /One row for every task:/, 'the scan still has one row per task');
+  assert.ok(scan.includes('not one row per task'), 'the scan does not say it has no row per task');
+});
+
+// Leftovers of the final review's two-round fix rule (T6 review), in the files T7 touches.
+
+test('the implementer template describes the final fix as up to two plain commits, not one wave', () => {
+  const text = flat(read(`${EP}/implementer-prompt.md`));
+  assert.doesNotMatch(text, /fix wave, a single plain commit/, 'the implementer template still says a single plain commit');
+  assert.ok(text.includes('the final review\'s fix rounds, up to two, each one plain commit `fix: address final review findings` on the top phase'), 'the implementer template does not describe two plain final fix commits');
+});
+
+test('the re-review of a final fix goes to the spec reviewer, or to the final reviewer on a Critical finding', () => {
+  const text = flat(read(`${EP}/re-review-prompt.md`));
+  assert.doesNotMatch(text, /fix wave uses the same prompt, dispatched to `roles:final-adversarial-reviewer`/, 're-review-prompt still sends every final re-review to the final reviewer');
+  assert.ok(text.includes('final review\'s fix rounds use the same prompt, dispatched to `roles:spec-reviewer`, or to `roles:final-adversarial-reviewer` when a finding was Critical'), 're-review-prompt does not align with SKILL.md');
+});
+
+test('the seams scope overrides the shared method on crossing task boundaries', () => {
+  const prompt = read(`${EP}/final-review-prompt.md`);
+  const method = flat(prompt.slice(prompt.indexOf('    ## Method'), prompt.indexOf('    ## The spec is a vision document')));
+  assert.ok(method.includes('Cross task boundaries'), 'the shared Method lost its task-boundary line');
+  assert.ok(method.includes('In the seams review, Seams Scope overrides this: cross only the phase boundaries it names'), 'the Method has no seams override');
+});
+
+test('the final review fix rounds name the seams exception to the phase review rule', () => {
+  const final = flat(section(skill(), '## Final Review'));
+  const fix = final.slice(final.indexOf('**Fix rounds.**'), final.indexOf('**Submit.**'));
+  for (const line of [
+    'The same rule as the phase review, with one exception',
+    'after round 2 the seams review parks residual findings and hands off to methodology:finishing-branch, while the phase review blocks',
+    'A failing Phase check after round 2 is treated like the residual case',
+  ]) {
+    assert.ok(fix.includes(line), `the final fix rounds lack: ${line}`);
+  }
+});
+
+test('final-escapes is recorded once per multi-phase plan, after the seams review', () => {
+  const records = flat(section(skill(), '## Records'));
+  assert.ok(records.includes('once per multi-phase plan, after the seams review'), 'final-escapes is not once per multi-phase plan');
+  assert.ok(records.includes('a single-phase plan\'s `P1` record stands'), 'Records does not say the single-phase P1 record stands');
+  assert.doesNotMatch(records, /once per plan, after the seams review/, 'final-escapes is still once per plan');
+});
+
+test('the ledger records the phase review and resume re-runs a missing one', () => {
+  const vocab = flat(section(skill(), '## Ledger vocabulary'));
+  for (const line of [
+    '`Round 1: P<n> — hunters <done>/<sent>`',
+    '`Round 2: P<n> — verdicts <n>/<n>`',
+    '`Phase review: P<n> clean | fixed | blocked`',
+  ]) {
+    assert.ok(vocab.includes(line), `the vocabulary lacks ${line}`);
+  }
+  const ws = flat(section(skill(), '### Workspace and ledger'));
+  assert.ok(
+    ws.includes('a phase whose tasks are all done and that has no `Phase review: P<n>` line gets its review run (again) before anything else'),
+    'the resume rule does not re-run a missing phase review',
+  );
+  assert.ok(ws.includes('`blocked` resumes only on the human\'s word'), 'the resume rule lets a blocked phase review resume alone');
+  assert.match(
+    ws,
+    /unless it already has a `Phase <N>: submitted` or `Phase <N>: complete` line/,
+    'the resume rule re-reviews a phase that is already submitted or complete',
+  );
+  const body = phaseReview();
+  for (const line of ['`Round 1: P<n>', '`Round 2: P<n>', '`Phase review: P<n> clean`', '`Phase review: P<n> fixed`', '`Phase review: P<n> blocked`']) {
+    assert.ok(body.includes(line), `step 8 does not write ${line}`);
+  }
+});
+
+test('the phase reviewer rules on the phase ledger lines', () => {
+  const prompt = read(`${EP}/final-review-prompt.md`);
+  const at = prompt.indexOf('## Phase Scope');
+  assert.ok(at >= 0, 'the final review prompt has no phase scope');
+  const next = prompt.indexOf('\n    ## ', at + 1);
+  const scope = flat(prompt.slice(at, next));
+  for (const line of ['one phase', '`Ruling:`', 'deferred', 'parked', '[PHASE_RANGE]', '[PHASE_TASKS]', '[PHASE_LEDGER_LINES]']) {
+    assert.ok(scope.includes(line), `the phase scope lacks: ${line}`);
+  }
+  assert.match(scope, /range only/, 'the phase scope does not say the range only');
+  const body = phaseReview();
+  assert.ok(body.includes('`Ruling:`') && body.includes('Minor'), 'step 8 does not send Minor findings and Ruling: lines to the phase reviewer');
+});
+
+test('the controller writes the phase ledger file before the phase reviewer is dispatched', () => {
+  const body = phaseReview();
+  const round2 = body.slice(body.indexOf('**Round 2, the reviewer.**'), body.indexOf('**Findings.**'));
+  const write = round2.indexOf('`<workspace>/phase-<N>-ledger.md`');
+  assert.ok(write >= 0, 'step 8 never writes <workspace>/phase-<N>-ledger.md');
+  assert.ok(write < round2.indexOf('dispatch `roles:final-adversarial-reviewer`'), 'the phase ledger file is written after the dispatch');
+  const text = flat(round2);
+  for (const form of ['`Ruling:`', 'minor (deferred)', 'parked']) assert.ok(text.includes(form), `the phase ledger file lacks ${form}`);
+});
+
+test('in a phase review the reviewer triages the phase ledger lines, not the workspace ledger', () => {
+  const prompt = read(`${EP}/final-review-prompt.md`);
+  const at = prompt.indexOf('## The Ledger');
+  assert.ok(at >= 0, 'no ## The Ledger');
+  const next = prompt.indexOf('\n    ## ', at + 1);
+  const ledger = flat(prompt.slice(at, next));
+  assert.match(ledger, /In a phase review[^.]*\[PHASE_LEDGER_LINES\][^.]*instead[^.]*triage/i, 'The Ledger does not send a phase review to [PHASE_LEDGER_LINES]');
+});
+
+test('phase records use P<n>', () => {
+  const records = section(skill(), '## Records');
+  const phase = [...records.matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => JSON.parse(m[1])).filter((r) => r.task === 'P1');
+  assert.deepEqual(phase.map((r) => r.kind).sort(), ['final-escapes', 'hunters'], 'Records lacks the P1 hunters and final-escapes examples');
+  assert.ok(records.includes('"task": "P1"'));
+  const text = flat(records);
+  assert.ok(text.includes('Plan <name> · P<n> fix'), 'Records does not name the phase-fix progress entry');
+  assert.ok(text.includes('`task: "P<n>"`'), 'Records does not say the phase review records with task P<n>');
+});
+
+test('an escape counts only a finding no earlier review recorded', () => {
+  const text = flat(section(skill(), '## Records'));
+  assert.ok(text.includes('only a finding no earlier review recorded'), 'Records does not limit what an escape counts');
+  assert.ok(text.includes('a deferred Minor confirmed again is not an escape'), 'Records counts a re-confirmed deferred Minor');
+});
+
+test('phase hunters write phase-<N>-candidates-<category>.md', () => {
+  const text = flat(read(`${EP}/hunter-prompt.md`));
+  assert.ok(text.includes('**Phase review:**'), 'the hunter template has no phase mode');
+  assert.ok(text.includes('`<workspace>/phase-<N>-candidates-<category>.md`'), 'the phase mode does not name the candidates file');
+  const mode = text.slice(text.indexOf('**Phase review:**'), text.indexOf('**Placeholders:**'));
+  assert.ok(mode.includes('Spec: [SPEC_PATH]') && mode.includes('Plan: [PLAN_PATH]'), 'the phase mode does not give the spec and the plan');
+  assert.ok(mode.includes('the `Task brief` line'), 'the phase mode does not drop the brief');
+  assert.ok(mode.includes('`state`'), 'the phase mode lacks the state category');
 });
 
 test('worktrees only on request, as a section of the orchestrator', () => {
@@ -1157,4 +1521,87 @@ test('every script that takes PLAN_FILE accepts a plan path outside the repo, an
     r.cleanup();
     rmSync(outside, { recursive: true, force: true });
   }
+});
+
+// Leaner execution, T8: three sentences that had drifted from the per-task and per-phase review sizes.
+test('the safety-review prompt sends hunters only with a heavy task, and runs a standard task in parallel with the spec review', () => {
+  const intro = flat(read(`${EP}/safety-review-prompt.md`).split('\n').slice(0, 14).join('\n'));
+  assert.match(intro, /heavy task it runs together with the hunters/);
+  assert.match(intro, /standard task it runs in parallel with the spec reviewer/);
+  assert.doesNotMatch(intro, /heavy or standard task it runs together with the hunters/);
+});
+
+test('the final-escapes record is written for a multi-phase plan only, in Process step 4 and the Final Review Records bullet', () => {
+  const text = skill();
+  const end = flat(text.split('\n').find((l) => l.startsWith('4. **End:**')));
+  assert.match(end, /the `final-escapes` record \(multi-phase plans only; a single-phase plan's `P1` record stands\)/);
+  const records = flat(section(text, '## Final Review').split('\n').find((l) => l.startsWith('- **Records:**')));
+  assert.match(records, /for a multi-phase plan only \(a single-phase plan's `P1` record stands\)/);
+});
+
+test('the implementer prompt names both the phase-review and final fix rounds as plain fix commits, the exceptions to --fixup', () => {
+  const text = flat(read(`${EP}/implementer-prompt.md`));
+  assert.match(text, /The exceptions are the phase review's fix rounds, each one plain commit `fix\(\.\.\.\)` on the phase branch, and the final review's fix rounds/);
+  assert.match(text, /never folded into a task commit/);
+});
+
+// ---- final review fix wave ----
+
+test('the worked example is a single-phase plan: a phase review, then no seams review', () => {
+  const example = flat(section(skill(), '## Example'));
+  assert.ok(example.includes('[Phase check passes; phase review: 4 hunters + roles:final-adversarial-reviewer → clean; Phase review: P1 clean; hunters and final-escapes records (P1); done; submit]'), 'the example skips the phase review');
+  assert.ok(example.includes('[single-phase plan: the phase review was the final review; no seams review]'), 'the example does not say the phase review was the final review');
+  assert.doesNotMatch(example, /Seams review:/, 'the single-phase example still runs a seams review');
+  assert.ok(example.indexOf('Phase review: P1 clean') < example.indexOf('submit <plansDir>/billing.md 1 --open'), 'the example opens before the phase review');
+});
+
+test('a phase submitted before 1.1.0 gets its phase review before the seams review', () => {
+  const final = flat(section(skill(), '## Final Review'));
+  assert.ok(final.includes('A phase with no `Phase review: P<n>` line (submitted before 1.1.0) gets its phase review (8. Review the phase, on that phase\'s range) before the seams review; its fixes are commits on the top phase.'), 'Final Review does not review a legacy phase first');
+  assert.ok(flat(read(`${EP}/final-review-prompt.md`)).includes('the controller ran the phase review of any phase submitted before 1.1.0 before this one'), 'the seams scope still says every phase passed its own review unconditionally');
+});
+
+test('Finish lists the open deferred Minors beside the rulings', () => {
+  const finish = flat(section(skill(), '## Finish'));
+  assert.ok(finish.includes('under "Minors still open", every `minor (deferred)` line the last review left open'), 'Finish does not list the open deferred Minors');
+});
+
+test('step 8: the phase ledger file, the fixer inputs and the phase re-review inputs', () => {
+  const body = phaseReview();
+  assert.ok(body.includes('for a single-phase plan also every ledger line that names no task: pre-flight, flaky Phase check and submit rulings'), 'the phase ledger file omits the task-less lines of a single-phase plan');
+  for (const line of ['the phase\'s diff package (`node scripts/review-package PLAN_FILE PHASE_BASE HEAD`, in place of a brief)', 'the plan\'s tasks of this phase', '`<workspace>/phase-<N>-report.md`', 'its own plain `fix(...)` commit', 'with the findings, the phase report file and the plan\'s tasks of this phase in place of a brief']) {
+    assert.ok(body.includes(line), `step 8 lacks: ${line}`);
+  }
+  assert.ok(flat(read(`${EP}/re-review-prompt.md`)).includes('phase review\'s fix rounds (8. Review the phase) and the final review\'s fix rounds use the same prompt'), 're-review-prompt does not cover phase-review fix rounds');
+  assert.ok(flat(read(`${EP}/re-review-prompt.md`)).includes('<workspace>/phase-<N>-report.md'), 're-review-prompt does not name the phase report file');
+});
+
+test('a task declared heavy with no reason line takes security by default', () => {
+  const tiers = flat(section(skill(), '## Tiers'));
+  assert.ok(tiers.includes('declared heavy with no reason line (a plan written before 1.0.2)'), 'Tiers does not cover a declared-heavy task with no reason line');
+  assert.ok(tiers.includes('`security` by default'), 'Tiers lost the security default');
+});
+
+test('no template or step still points at a whole-branch or final review after the tasks', () => {
+  for (const f of ['task-reviewer-prompt.md', 're-review-prompt.md', 'safety-review-prompt.md']) {
+    const text = flat(read(`${EP}/${f}`));
+    assert.doesNotMatch(text, /whole-branch review|after all tasks are complete|for the final review/, `${f} still says whole-branch / after all tasks / the final review`);
+    assert.ok(text.includes('phase review'), `${f} does not name the phase review`);
+  }
+  const prompt = flat(read(`${EP}/final-review-prompt.md`));
+  assert.doesNotMatch(prompt, /in one commit on the top phase/, 'the final review prompt still says one commit');
+  assert.ok(prompt.includes('in at most two rounds, each a commit on the top phase'), 'the final review prompt does not say two rounds');
+  const raw = skill();
+  assert.ok(flat(section(raw, '## Final Review')).includes('with the phase fix commits the only commits of the stack that are not tasks'), 'Final Review ignores the phase fix commits');
+  const body = phaseReview();
+  assert.doesNotMatch(body, /beside the six/, 'step 8 still counts six stops');
+  assert.ok(body.includes('the seventh stop, listed at the top of this skill'), 'step 8 does not point at the seven stops');
+});
+
+test('the changelog and the README describe the hunters and the seams review accurately', () => {
+  const changelog = flat(readFileSync(join(PLUGIN, '..', '..', 'CHANGELOG.md'), 'utf8'));
+  assert.ok(changelog.includes('A heavy task\'s hunter candidates are verified by `roles:spec-reviewer` in round 2.'), 'the changelog does not say who verifies the per-task hunters');
+  assert.doesNotMatch(changelog, /hunters' findings are verified by the phase review/, 'the changelog still says the phase review verifies per-task hunters');
+  const readme = flat(readFileSync(join(PLUGIN, 'README.md'), 'utf8'));
+  assert.ok(readme.includes('A `hunters` record takes `P<n>` for a phase review (the seams review writes none)'), 'the README gives the seams review a hunters record');
 });

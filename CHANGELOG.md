@@ -3,6 +3,42 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## methodology 1.1.0
+
+### Changed
+
+- **A deep review per phase.** After a phase's Phase check and before `stack.mjs done` and `submit`, `executing-plans`
+  runs 4 hunters (correctness, security, spec-drift, state) and one Opus `roles:final-adversarial-reviewer` over the
+  phase diff, with at most two fix rounds, each a separate `fix(...)` commit with a scoped re-review. A phase review
+  that is still blocked after the second round is a seventh stop.
+- **Smaller per-task reviews.** A `heavy` task gets 2 hunters, correctness plus security or state, picked from its
+  heavy reason line; a `standard` or `light` task gets none. On a `standard` task the safety gate and the spec review
+  run in parallel. A heavy task's hunter candidates are verified by `roles:spec-reviewer` in round 2.
+- **The final review is a seams review.** For a plan with several phases it is one `roles:final-adversarial-reviewer`
+  and no hunters, and looks only at the interfaces one phase exposes and a later one consumes, cross-phase state and
+  every open `Ruling:`, deferred-minor and parked line. In a single-phase plan the phase review is the final review and
+  no second review runs; its `P1` records stand.
+- **A `/clear` break per phase.** Every phase but the last ends with a break, so the next phase starts from a clean
+  context.
+- **Leaner controller reading.** The controller reads only the plan, the spec's Units and the current slice.
+- **`triqual role-eval` takes phase ids.** A `hunters` or `final-escapes` record accepts `P<n>` as its task, beside
+  `T<n>` and `final`.
+
+## methodology 1.0.2
+
+### Changed
+
+- **`heavy` is narrow and carries a reason.** `writing-plans` and the `executing-plans` rubric make a task `heavy` only for
+  security-relevant code, live state or migrations, a contract other code parses, or `roles:complex-implementer`; a
+  change that only spans more than one plugin or only touches a public interface is not heavy by that alone. A `heavy`
+  task puts a one-line reason as plain text under `**Tier:**`, and a `roles:complex-implementer` task (a live-state
+  migration, or a change across systems that one brief cannot describe) puts its reason under `**Role:**`. The plan
+  parser reads only the tier word and the role, so the reason line is not a new field.
+- **The plan audit checks tiers both ways.** Besides a task tiered lower than its content justifies, it flags a task
+  tiered higher than the rubric justifies and a `heavy` or `roles:complex-implementer` task whose reason line is missing
+  or does not match the rubric. The controller writes both tier checks into its dispatch to the auditor; the shared
+  audit prompt is unchanged.
+
 ## progress-tracking 0.5.2
 
 ### Fixed
