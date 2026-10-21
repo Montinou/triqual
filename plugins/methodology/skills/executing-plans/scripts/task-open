@@ -1,0 +1,61 @@
+#!/usr/bin/env node
+// Start a task in one call: the `start` move on the tracking ledger (when the repo is opted in and the task is not
+// started already), the task's brief, and the task's BASE.
+//
+// Usage: task-open PLAN_FILE N
+// Prints, in this order:
+//   brief: <workspace>/task-<N>-brief.md   (written)
+//   report: <workspace>/task-<N>-report.md (the implementer's report file; not created)
+//   base: <sha>                            (the LAST `BASE: T<N> <sha>` ledger line; recorded from HEAD when there is none)
+//
+// A task that is in progress, in review or done is not moved again; a task that is pending or blocked is started; any
+// other state (dropped) is refused. Run from the main checkout.
+//
+// Exit codes: 0 ok, 2 usage / no such plan file / malformed plan, 3 refused (linked worktree, unknown task, a move the
+// ledger refuses), 1 any other failure. A failure appends `Error: task-open T<N> — exit <code> — <cause>` to the ledger.
+//
+// Dynamic imports only: the file has no extension, so Node may load it as CommonJS or as an ES module depending on the
+// nearest package.json.
+(async () => {
+  const { realpathSync } = await import('node:fs');
+  const { basename, dirname, join } = await import('node:path');
+  const { pathToFileURL } = await import('node:url');
+  const common = await import(pathToFileURL(join(dirname(realpathSync(process.argv[1])), 'lib', 'task-common.mjs')).href);
+  const { ScriptError, EXIT_USAGE, EXIT_REFUSED } = common;
+
+  const STEP = 'task-open';
+  const STARTABLE = ['pending', 'blocked'];
+  const STARTED = ['in_progress', 'in_review', 'done'];
+  let n = null;
+  let workspace;
+  try {
+    const [plan, taskArg, ...extra] = process.argv.slice(2);
+    n = common.taskNumber(taskArg);
+    if (plan === undefined || n === null || extra.length > 0) throw new ScriptError(EXIT_USAGE, 'usage: task-open PLAN_FILE N');
+    common.assertMainCheckout();
+    workspace = common.workspaceOf(plan);
+    common.readPlanTask(plan, n);
+
+    const planName = basename(plan);
+    const state = common.taskState(planName, n);
+    if (state && STARTABLE.includes(state.status)) common.taskMove('start', n, planName);
+    else if (state && !STARTED.includes(state.status)) throw new ScriptError(EXIT_REFUSED, `T${n} is ${state.status}; cannot start`);
+
+    const brief = join(workspace, `task-${n}-brief.md`);
+    const made = common.runScript('task-brief', [plan, String(n), brief]);
+    if (made.status !== 0) throw common.scriptError('task-brief', made);
+
+    let base = common.lastBase(common.ledgerLines(workspace), n);
+    if (base === null) {
+      base = common.git(['rev-parse', 'HEAD']);
+      common.appendLedger(workspace, `BASE: T${n} ${base}`);
+    }
+    process.stdout.write(`brief: ${brief}\nreport: ${join(workspace, `task-${n}-report.md`)}\nbase: ${base}\n`);
+  } catch (e) {
+    const err = e instanceof ScriptError ? e : new ScriptError(1, `${STEP}: ${e.message}`);
+    common.fail(STEP, n, err.code, err.message, workspace);
+  }
+})().catch((e) => {
+  process.stderr.write(`task-open: ${e.stack ?? e}\n`);
+  process.exit(1);
+});

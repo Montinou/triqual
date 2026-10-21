@@ -1,0 +1,185 @@
+#!/usr/bin/env node
+// Prepare a task's review in one call: the ledger moves (`review`; with --fix-round `rework` then `review`), the tier
+// check with its raise, the hunter pick and the review package.
+//
+// Usage: task-prep PLAN_FILE N [--fix-round] [--head <sha>]
+// Prints, in this order:
+//   tier: <tier>                       the effective tier after the check
+//   hunters: <category,category|none>  heavy first round: `correctness` plus `security` or `state`; else none
+//   package: <path|none>               the review package; none when the range holds no commit
+//   round: <R>                         the review round: 1, then the last `Prep:` round + 1 with --fix-round
+//   full-review: <yes|no>              yes only when this fix round raised the tier: the raised tier's full review is due
+//
+// The range is BASE..<head> (BASE: the last `BASE: T<N>` line); with --fix-round it is the last `Prep: T<N>` head..<head>.
+// <head> is HEAD of the main checkout, or --head <sha> for a task built in a worktree. The floor handed to tier-check is
+// the tracking ledger's effective tier, else the last `Tier:` / `Tier raised:` line for the task, else none. A fix round
+// runs tier-check twice with that floor, on the round's range with --fix-round and on the cumulative BASE..<head> without
+// it, and the higher tier wins. A raise is recorded: the `Tier raised:` ledger line first, then `triqual tasks retier`
+// when opted in. A fix round that raises the tier prints `full-review: yes`, the cumulative BASE..<head> package and that
+// tier's hunters (its round 1 never ran on this task). The second hunter is picked from the plain line under the task's
+// `**Tier:**` line: `Security` -> security, `Live state` or `Contract` -> state, anything else (or no line) -> security.
+// Appends `Prep: T<N> r<R> <head sha>` last, and `Review: T<N> — no commits, nothing to review` for an empty first range.
+//
+// A call at the head of the last `Prep:` line is a rerun: it reuses that round, prints the same and appends no second
+// `Prep:` line. Any other call once a `Prep:` line exists must be `--fix-round`.
+//
+// Exit codes: 0 ok, 2 usage / no such plan file / bad --head, 3 refused (linked worktree, unknown task, no BASE, no earlier
+// Prep for --fix-round, a plain call at a new head after a Prep, a fix round with no new commit, a move the ledger
+// refuses), 1 any other failure. A failure appends
+// `Error: task-prep T<N> — exit <code> — <cause>` to the ledger.
+//
+// Dynamic imports only: the file has no extension, so Node may load it as CommonJS or as an ES module depending on the
+// nearest package.json.
+(async () => {
+  const { realpathSync } = await import('node:fs');
+  const { basename, dirname, join } = await import('node:path');
+  const { pathToFileURL } = await import('node:url');
+  const common = await import(pathToFileURL(join(dirname(realpathSync(process.argv[1])), 'lib', 'task-common.mjs')).href);
+  const { ScriptError, EXIT_USAGE, EXIT_REFUSED, TIERS } = common;
+
+  const STEP = 'task-prep';
+  const USAGE = 'usage: task-prep PLAN_FILE N [--fix-round] [--head <sha>]';
+  const tierPattern = TIERS.join('|');
+
+  // The plain line directly under the task's `**Tier:**` line (outside a fence), else null.
+  const reasonLine = ({ task, lines }) => {
+    let fenced = false;
+    for (let i = task.start - 1; i < task.end; i++) {
+      if (/^(```|~~~)/.test(lines[i])) fenced = !fenced;
+      if (fenced || !/^\*\*Tier:\*\*/.test(lines[i])) continue;
+      const next = (lines[i + 1] ?? '').trim();
+      return next === '' || next.startsWith('**') ? null : next;
+    }
+    return null;
+  };
+  const hunterPick = (reason) => `correctness,${/^(live state|contract)\b/i.test(reason ?? '') ? 'state' : 'security'}`;
+
+  // The last `Tier:` / `Tier raised:` line of the task, else null.
+  const ledgerTier = (lines, n) => {
+    const re = new RegExp(`^(?:Tier: T${n} (${tierPattern})\\b|Tier raised: T${n} \\S+ → (${tierPattern})\\b)`);
+    const hits = lines.map((l) => re.exec(l)).filter(Boolean);
+    return hits.length ? hits.at(-1)[1] ?? hits.at(-1)[2] : null;
+  };
+  // Every `Prep: T<N> r<R> <sha>` line as { round, head, index }, in order.
+  const prepsOf = (lines, n) => {
+    const re = new RegExp(`^Prep: T${n} r(\\d+) (\\S+)\\s*$`);
+    return lines.flatMap((l, index) => {
+      const m = re.exec(l);
+      return m ? [{ round: Number(m[1]), head: m[2], index }] : [];
+    });
+  };
+  const rank = (tier) => TIERS.indexOf(tier); // TIERS runs heavy first: the lower index is the higher tier
+
+  let n = null;
+  let workspace;
+  try {
+    const positional = [];
+    let fixRound = false;
+    let headArg = null;
+    const argv = process.argv.slice(2);
+    for (let i = 0; i < argv.length; i++) {
+      if (argv[i] === '--fix-round') fixRound = true;
+      else if (argv[i] === '--head') {
+        if (i + 1 >= argv.length) throw new ScriptError(EXIT_USAGE, '--head needs a sha');
+        headArg = argv[++i];
+      } else if (argv[i].startsWith('--head=')) headArg = argv[i].slice('--head='.length);
+      else if (argv[i].startsWith('--')) throw new ScriptError(EXIT_USAGE, `unknown option: ${argv[i]}`);
+      else positional.push(argv[i]);
+    }
+    n = common.taskNumber(positional[1]);
+    if (positional.length !== 2 || n === null) throw new ScriptError(EXIT_USAGE, USAGE);
+    const plan = positional[0];
+
+    common.assertMainCheckout();
+    workspace = common.workspaceOf(plan);
+    const planTask = common.readPlanTask(plan, n);
+    const planName = basename(plan);
+
+    const ledger = common.ledgerLines(workspace);
+    const base = common.lastBase(ledger, n);
+    if (base === null) throw new ScriptError(EXIT_REFUSED, `no BASE recorded for T${n}: run task-open first`);
+    const preps = prepsOf(ledger, n);
+    const prev = preps.at(-1) ?? null;
+    if (fixRound && prev === null) throw new ScriptError(EXIT_REFUSED, `no Prep line for T${n}: run task-prep without --fix-round first`);
+    const head = common.commitOf(headArg ?? 'HEAD');
+    if (head === null) throw new ScriptError(EXIT_USAGE, `bad --head: ${headArg ?? 'HEAD'}`);
+
+    // The round to prepare, the range it reviews, and the ledger lines written during it (a raise there makes it a full review).
+    let round = 1;
+    let rangeBase = base;
+    let rerun = false;
+    let window = [];
+    if (prev !== null) {
+      if (prev.head === head && (!fixRound || prev.round >= 2)) {
+        // A rerun of the last round: the same round and range, nothing appended twice.
+        rerun = true;
+        round = prev.round;
+        const before = preps.at(-2) ?? null;
+        rangeBase = before ? before.head : base;
+        window = before ? ledger.slice(before.index + 1, prev.index) : [];
+      } else if (!fixRound) {
+        throw new ScriptError(EXIT_REFUSED, `T${n} has a Prep line at ${prev.head.slice(0, 7)} and ${head.slice(0, 7)} is a new head: use --fix-round`);
+      } else {
+        round = prev.round + 1;
+        rangeBase = prev.head;
+        window = ledger.slice(prev.index + 1);
+      }
+    }
+    const commits = Number(common.git(['rev-list', '--count', `${rangeBase}..${head}`]));
+    if (fixRound && !rerun && commits === 0) throw new ScriptError(EXIT_REFUSED, `fix round ${round} of T${n} has no commit since ${rangeBase.slice(0, 7)}`);
+
+    const state = common.taskState(planName, n);
+    if (state) {
+      if (fixRound) common.taskMove('rework', n, planName);
+      common.taskMove('review', n, planName);
+    }
+
+    // The round's check (with --fix-round on a fix round), then on a fix round the cumulative one; the higher result wins.
+    const floor = state?.effectiveTier ?? ledgerTier(ledger, n);
+    const check = (from, extra) => {
+      const checked = common.runScript('tier-check', [plan, String(n), from, head, ...(floor ? ['--floor', floor] : []), ...extra]);
+      if (checked.status !== 0) throw common.scriptError('tier-check', checked);
+      const verdict = checked.stdout.trim();
+      const kept = new RegExp(`^ok (${tierPattern})$`).exec(verdict);
+      const raise = new RegExp(`^raise (${tierPattern}) (${tierPattern}): (.+)$`).exec(verdict);
+      if (!kept && !raise) throw new ScriptError(1, `tier-check: unexpected output: ${verdict}`);
+      return kept ? { tier: kept[1], raise: null } : { tier: raise[2], raise: { from: raise[1], to: raise[2], why: raise[3] } };
+    };
+    const fixed = round >= 2; // a fix round, however it was called
+    const results = [check(rangeBase, fixed ? ['--fix-round'] : [])];
+    if (fixed) results.push(check(base, []));
+    const best = results.reduce((a, b) => (rank(b.tier) < rank(a.tier) ? b : a));
+    const tier = best.tier;
+    if (best.raise) {
+      const { from, to, why } = best.raise;
+      const line = `Tier raised: T${n} ${from} → ${to} — ${why}`;
+      const last = ledger.filter((l) => l.startsWith(`Tier raised: T${n} `)).at(-1);
+      if (last !== line) common.appendLedger(workspace, line);
+      if (state) common.taskMove('retier', n, planName, [to, '--reason', why]);
+    }
+    // A fix round that raised the tier (now, or in an earlier run of this round) owes the raised tier's full review.
+    const fullReview = fixed && (best.raise !== null || window.some((l) => l.startsWith(`Tier raised: T${n} `)));
+
+    // The full review of a raised tier reviews everything since BASE; any other round reviews its own range.
+    const reviewBase = fullReview ? base : rangeBase;
+    const reviewed = fullReview ? Number(common.git(['rev-list', '--count', `${base}..${head}`])) : commits;
+    let pkg = 'none';
+    if (reviewed > 0) {
+      pkg = join(workspace, `review-${reviewBase.slice(0, 7)}..${head.slice(0, 7)}.diff`);
+      const made = common.runScript('review-package', [plan, reviewBase, head, pkg]);
+      if (made.status !== 0) throw common.scriptError('review-package', made);
+    } else if (!rerun) {
+      common.appendLedger(workspace, `Review: T${n} — no commits, nothing to review`);
+    }
+    const hunters = tier === 'heavy' && (!fixed || fullReview) && reviewed > 0 ? hunterPick(reasonLine(planTask)) : 'none';
+
+    if (!rerun) common.appendLedger(workspace, `Prep: T${n} r${round} ${head}`);
+    process.stdout.write(`tier: ${tier}\nhunters: ${hunters}\npackage: ${pkg}\nround: ${round}\nfull-review: ${fullReview ? 'yes' : 'no'}\n`);
+  } catch (e) {
+    const err = e instanceof ScriptError ? e : new ScriptError(1, `${STEP}: ${e.message}`);
+    common.fail(STEP, n, err.code, err.message, workspace);
+  }
+})().catch((e) => {
+  process.stderr.write(`task-prep: ${e.stack ?? e}\n`);
+  process.exit(1);
+});
