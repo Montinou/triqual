@@ -7,7 +7,7 @@
 // defaulted or swallowed: a step that cannot run throws a ScriptError, and the script's one catch turns it into `fail`.
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PlanError, readTasks } from './plan.mjs';
 
@@ -110,6 +110,15 @@ export function lastBase(lines, n) {
   return hits.length ? hits.at(-1)[1] : null;
 }
 
+// Every `Prep: T<N> r<R> <sha>` line of `lines` as { round, head, index }, in order.
+export function prepsOf(lines, n) {
+  const re = new RegExp(`^Prep: T${n} r(\\d+) (\\S+)\\s*$`);
+  return lines.flatMap((l, index) => {
+    const m = re.exec(l);
+    return m ? [{ round: Number(m[1]), head: m[2], index }] : [];
+  });
+}
+
 // ---- the plan ----
 
 // `3` or `T3` -> 3; anything else null.
@@ -197,8 +206,10 @@ export function taskState(planName, n) {
   return { status: task.status, tier: task.tier ?? null, effectiveTier: task.effectiveTier ?? null };
 }
 
-// `triqual tasks <command> T<N> [extra...] --plan <plan file name>`; a move the ledger refuses is exit 3.
-export function taskMove(command, n, planName, extra = []) {
-  const res = exec('triqual', ['tasks', command, `T${n}`, ...extra, '--plan', planName]);
+// `triqual tasks <command> T<N> [extra...] --plan <plan path>`; a move the ledger refuses is exit 3. The plan goes as an absolute
+// path: store mode matches it by file name, and local and committed mode resolve it against the working directory, where a bare
+// file name finds no ledger.
+export function taskMove(command, n, plan, extra = []) {
+  const res = exec('triqual', ['tasks', command, `T${n}`, ...extra, '--plan', resolve(plan)]);
   if (res.status !== 0) throw triqualError(`triqual tasks ${command}`, res);
 }

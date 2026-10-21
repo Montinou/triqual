@@ -5,7 +5,7 @@
 // Usage: task-prep PLAN_FILE N [--fix-round] [--head <sha>]
 // Prints, in this order:
 //   tier: <tier>                       the effective tier after the check
-//   hunters: <category,category|none>  heavy first round: `correctness` plus `security` or `state`; else none
+//   hunters: <category,category|none>  heavy first round: `correctness` plus `security` or `state`; else none (and none after `Skipped: hunters`)
 //   package: <path|none>               the review package; none when the range holds no commit
 //   round: <R>                         the review round: 1, then the last `Prep:` round + 1 with --fix-round
 //   full-review: <yes|no>              yes only when this fix round raised the tier: the raised tier's full review is due
@@ -35,20 +35,12 @@
   const { basename, dirname, join } = await import('node:path');
   const { pathToFileURL } = await import('node:url');
   const common = await import(pathToFileURL(join(dirname(realpathSync(process.argv[1])), 'lib', 'task-common.mjs')).href);
-  const { ScriptError, EXIT_USAGE, EXIT_REFUSED, TIERS, reasonLine, hunterPick, ledgerTier } = common;
+  const { ScriptError, EXIT_USAGE, EXIT_REFUSED, TIERS, reasonLine, hunterPick, ledgerTier, prepsOf } = common;
 
   const STEP = 'task-prep';
   const USAGE = 'usage: task-prep PLAN_FILE N [--fix-round] [--head <sha>]';
   const tierPattern = TIERS.join('|');
 
-  // Every `Prep: T<N> r<R> <sha>` line as { round, head, index }, in order.
-  const prepsOf = (lines, n) => {
-    const re = new RegExp(`^Prep: T${n} r(\\d+) (\\S+)\\s*$`);
-    return lines.flatMap((l, index) => {
-      const m = re.exec(l);
-      return m ? [{ round: Number(m[1]), head: m[2], index }] : [];
-    });
-  };
   const rank = (tier) => TIERS.indexOf(tier); // TIERS runs heavy first: the lower index is the higher tier
 
   let n = null;
@@ -111,8 +103,8 @@
 
     const state = common.taskState(planName, n);
     if (state) {
-      if (fixRound) common.taskMove('rework', n, planName);
-      common.taskMove('review', n, planName);
+      if (fixRound) common.taskMove('rework', n, plan);
+      common.taskMove('review', n, plan);
     }
 
     // The round's check (with --fix-round on a fix round), then on a fix round the cumulative one; the higher result wins.
@@ -136,7 +128,7 @@
       const line = `Tier raised: T${n} ${from} → ${to} — ${why}`;
       const last = ledger.filter((l) => l.startsWith(`Tier raised: T${n} `)).at(-1);
       if (last !== line) common.appendLedger(workspace, line);
-      if (state) common.taskMove('retier', n, planName, [to, '--reason', why]);
+      if (state) common.taskMove('retier', n, plan, [to, '--reason', why]);
     }
     // A fix round that raised the tier (now, or in an earlier run of this round) owes the raised tier's full review.
     const fullReview = fixed && (best.raise !== null || window.some((l) => l.startsWith(`Tier raised: T${n} `)));
@@ -152,7 +144,8 @@
     } else if (!rerun) {
       common.appendLedger(workspace, `Review: T${n} — no commits, nothing to review`);
     }
-    const hunters = tier === 'heavy' && (!fixed || fullReview) && reviewed > 0 ? hunterPick(reasonLine(planTask)) : 'none';
+    const skippedHunters = ledger.some((l) => /^Skipped: hunters\b/.test(l)); // plan-wide, as task-close reads it
+    const hunters = tier === 'heavy' && !skippedHunters && (!fixed || fullReview) && reviewed > 0 ? hunterPick(reasonLine(planTask)) : 'none';
 
     if (!rerun) common.appendLedger(workspace, `Prep: T${n} r${round} ${head}`);
     process.stdout.write(`tier: ${tier}\nhunters: ${hunters}\npackage: ${pkg}\nround: ${round}\nfull-review: ${fullReview ? 'yes' : 'no'}\n`);

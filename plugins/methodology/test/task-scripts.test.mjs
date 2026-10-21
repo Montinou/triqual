@@ -96,12 +96,6 @@ const [command, ...rest] = process.argv.slice(2);
 const cli = { tasks: ${JSON.stringify(PT_CLI)} + '/tasks.mjs', tracking: ${JSON.stringify(PT_CLI)} + '/tracking.mjs', 'role-eval': ${JSON.stringify(ROLE_EVAL_CLI)} }[command];
 if (!cli) { process.stderr.write('triqual: unknown command ' + command + '\\n'); process.exit(1); }
 appendFileSync(process.env.TRIQUAL_CALL_LOG, [command, ...rest].join(' ') + '\\n');
-// Local mode only: \`tasks --plan <bare name>\` resolves against the cwd, which is the repo and not the plans directory, so the
-// rig hands the CLI the plan's absolute path instead (the scripts' own calls are logged above, unchanged).
-if (process.env.TRIQUAL_LOCAL_PLANS) {
-  const at = rest.indexOf('--plan');
-  if (at >= 0 && !rest[at + 1].includes('/')) rest[at + 1] = process.env.TRIQUAL_LOCAL_PLANS + '/' + rest[at + 1];
-}
 // A test makes a move fail by creating "<log>.fail-<subcommand>".
 if (existsSync(process.env.TRIQUAL_CALL_LOG + '.fail-' + rest[0])) { process.stderr.write('triqual: forced failure of ' + rest[0] + '\\n'); process.exit(1); }
 const res = spawnSync(process.execPath, [cli, ...rest], { stdio: 'inherit' });
@@ -127,7 +121,7 @@ function rig({ store = true, local = false } = {}) {
   writeFileSync(installed, JSON.stringify({ version: 2, plugins: { 'roles@triqual': [{ scope: 'user', installPath: rolesDir, version: '9.9.9', lastUpdated: '2026-10-19T15:07:03.965Z' }] } }));
   writeFileSync(join(bin, 'triqual'), WRAPPER, { mode: 0o755 });
   writeFileSync(log, '');
-  const env = cleanEnv(home, { ...dbEnv, ...(local ? { TRIQUAL_LOCAL_PLANS: join(dir, '.git', 'methodology', 'plans') } : {}), ROLE_EVAL_FILE: evalFile, PATH: `${bin}${delimiter}${process.env.PATH}`, TRIQUAL_CALL_LOG: log });
+  const env = cleanEnv(home, { ...dbEnv, ROLE_EVAL_FILE: evalFile, PATH: `${bin}${delimiter}${process.env.PATH}`, TRIQUAL_CALL_LOG: log });
   const git = (...args) => execFileSync('git', args, { cwd: dir, env, encoding: 'utf8' });
   const triqual = (...args) => spawnSync(join(bin, 'triqual'), args, { cwd: dir, env, encoding: 'utf8' });
   git('init', '-q', '-b', 'main');
@@ -316,7 +310,7 @@ test('task-prep: a raise retiers and writes the Tier raised line', () => withRig
   assert.equal(r.taskState(1).effectiveTier, 'heavy');
   const raised = r.ledger().filter((l) => l.startsWith('Tier raised:'));
   assert.deepEqual(raised, ['Tier raised: T1 standard → heavy — 301 changed lines (over 300): src/big.js']);
-  assert.ok(r.calls().includes('tasks retier T1 heavy --reason 301 changed lines (over 300): src/big.js --plan demo-plan.md'));
+  assert.ok(r.calls().includes(`tasks retier T1 heavy --reason 301 changed lines (over 300): src/big.js --plan ${r.plan}`));
   assert.deepEqual(r.ledger().filter((l) => l.startsWith('Prep:')), [`Prep: T1 r1 ${big}`]);
   assert.equal(o.base, r.git('rev-parse', `${big}~1`).trim());
 
@@ -357,7 +351,7 @@ test('task-prep --fix-round: rework then review, package from the last Prep head
   assert.equal(o.package, join(r.workspace, `review-${first.slice(0, 7)}..${fix.slice(0, 7)}.diff`));
   assert.match(readFileSync(o.package, 'utf8'), new RegExp(`^# Review package: ${first}\\.\\.${fix}`));
   assert.notEqual(o.package, one.package);
-  assert.deepEqual(r.calls().filter((c) => /^tasks (rework|review) /.test(c)), ['tasks rework T1 --plan demo-plan.md', 'tasks review T1 --plan demo-plan.md']);
+  assert.deepEqual(r.calls().filter((c) => /^tasks (rework|review) /.test(c)), [`tasks rework T1 --plan ${r.plan}`, `tasks review T1 --plan ${r.plan}`]);
   assert.equal(r.taskState(1).status, 'in_review');
   assert.deepEqual(r.ledger().filter((l) => l.startsWith('Prep:')), [`Prep: T1 r1 ${first}`, `Prep: T1 r2 ${fix}`]);
 }));
@@ -700,7 +694,7 @@ test('task-close: builds the record, squashes, marks done, writes the complete l
   assert.equal(r.git('rev-parse', `${got.sha}^`).trim(), base, 'one commit on top of BASE');
   assert.equal(r.git('rev-list', '--count', `${base}..HEAD`).trim(), '1');
   assert.equal(r.taskState(2).status, 'done');
-  assert.ok(r.calls().includes(`tasks done T2 --commit ${got.sha} --plan ${PLAN_NAME}`), r.calls().join('\n'));
+  assert.ok(r.calls().includes(`tasks done T2 --commit ${got.sha} --plan ${r.plan}`), r.calls().join('\n'));
   assert.equal(r.ledger().at(-1), `Task 2: complete (commits ${sha7(base)}..${sha7(got.sha)}, review clean)`);
   noError(r);
 
@@ -1186,4 +1180,243 @@ test('task-close: a repo that is not opted in makes no tracking call', () => wit
   assert.deepEqual(validateRecord(record), { ok: true });
   assert.equal(record.tier, 'standard');
   assert.equal(storedRecords(r).length, 1);
+}));
+
+// ---- phase 1 fix round 1 ----
+
+test('opted-in moves work in local tracking mode: the scripts pass the plan path, never a bare file name', () => withRig({ local: true }, (r) => {
+  startStack(r);
+  open(r, 1);
+  assert.equal(r.taskState(1).status, 'in_progress');
+  r.commit('src/t1-local.js', 'export const local = 1;\n', 'feat: t1');
+  ok(r.run('task-prep', r.plan, '1'));
+  assert.equal(r.taskState(1).status, 'in_review');
+  save(r, 1, 'safety-reviewer', 1, footerText('safety-reviewer'));
+  save(r, 1, 'spec-reviewer', 1, footerText('spec-reviewer'));
+  ok(r.run('task-close', r.plan, '1'));
+  assert.equal(r.taskState(1).status, 'done');
+  const moves = r.calls().filter((c) => /^tasks (start|review|rework|done|retier) /.test(c));
+  assert.equal(moves.length, 3, moves.join('\n'));
+  for (const move of moves) assert.ok(move.endsWith(` --plan ${r.plan}`), `a move without the plan path: ${move}`);
+  noError(r);
+}));
+
+test('task-close: commits made after a no-commit prep are never closed unreviewed', () => {
+  for (const n of [1, 2]) { // 1 is standard, 2 heavy
+    withRig({}, (r) => {
+      startStack(r);
+      const base = open(r, n).base;
+      assert.equal(out(ok(r.run('task-prep', r.plan, String(n)))).package, 'none');
+      const late = r.commit(`src/late-${n}.js`, 'export const late = 1;\n', `feat: t${n}`);
+      const res = closeOf(r, n);
+      assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+      assert.match(res.stderr, /commits after the last review.*task-prep --fix-round/);
+      assert.match(r.ledger().at(-1), new RegExp(`^Error: task-close T${n} — exit 3 — .*commits after the last review`));
+      assert.equal(r.head(), late, 'the stack was rewritten');
+      assert.equal(r.git('rev-list', '--count', `${base}..HEAD`).trim(), '1');
+      assert.equal(r.taskState(n).status, 'in_review');
+      assert.equal(r.ledger().filter((l) => l.startsWith(`Task ${n}: complete`)).length, 0);
+      assert.equal(existsSync(join(r.workspace, `task-${n}-record.json`)), false);
+
+      // The path the error names: the fix-round prep prints a real package, and the close then needs the reviewers' outputs.
+      assert.notEqual(out(ok(r.run('task-prep', r.plan, String(n), '--fix-round'))).package, 'none');
+      const bare = closeOf(r, n);
+      assert.equal(bare.status, 1);
+      assert.match(bare.stderr, /no saved safety-reviewer output/);
+    });
+  }
+});
+
+test('task-close: a commit made after the last Prep head is refused, not squashed in', () => withRig({}, (r) => {
+  const { base } = prepared(r, 1);
+  save(r, 1, 'safety-reviewer', 1, footerText('safety-reviewer'));
+  save(r, 1, 'spec-reviewer', 1, footerText('spec-reviewer'));
+  const late = r.commit('src/late.js', 'export const late = 1;\n', 'fixup! feat');
+  const res = closeOf(r, 1);
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /commits after the last review/);
+  assert.equal(r.head(), late);
+  assert.equal(r.git('rev-list', '--count', `${base}..HEAD`).trim(), '3', 'the commits were squashed');
+  assert.equal(r.taskState(1).status, 'in_review');
+
+  // Reviewed through a fix round, the same commit closes.
+  ok(r.run('task-prep', r.plan, '1', '--fix-round'));
+  save(r, 1, 'safety-reviewer', 2, footerText('safety-reviewer'));
+  save(r, 1, 'spec-reviewer', 2, footerText('spec-reviewer'));
+  ok(r.run('task-close', r.plan, '1'));
+  assert.equal(r.taskState(1).status, 'done');
+}));
+
+test('task-close: a rerun of a closed task with no commits still resumes after later commits landed', () => withRig({}, (r) => {
+  startStack(r);
+  open(r, 6);
+  ok(r.run('task-prep', r.plan, '6'));
+  const first = out(ok(closeOf(r, 6)));
+  r.commit('src/next.js', 'export const next = 1;\n', 'feat: next task');
+  const again = out(ok(closeOf(r, 6)));
+  assert.equal(again.sha, first.sha);
+  assert.equal(again.record, 'already recorded');
+}));
+
+test('task-close: no commits is decided from git, not from a Review line of the ledger', () => withRig({}, (r) => {
+  startStack(r);
+  open(r, 1);
+  r.appendLedger('Review: T1 — no commits, nothing to review');
+  r.commit('src/real.js', 'export const real = 1;\n', 'feat: t1');
+  ok(r.run('task-prep', r.plan, '1', '--head', r.head()));
+  const bare = closeOf(r, 1);
+  assert.equal(bare.status, 1, 'a stale Review line waved a real commit through');
+  assert.match(bare.stderr, /no saved safety-reviewer output/);
+}));
+
+test('task-open: a started task with no BASE line is refused, never given HEAD as BASE', () => {
+  for (const status of ['in_progress', 'in_review', 'done']) {
+    withRig({}, (r) => {
+      r.seedLedger('Tier: T1 standard'); // a 1.1.0 ledger: BASE was free text there
+      ok(r.triqual('tasks', 'start', 'T1', '--plan', PLAN_NAME));
+      r.commit('src/old.js', 'export const old = 1;\n', 'feat: t1 under 1.1.0');
+      if (status !== 'in_progress') ok(r.triqual('tasks', 'review', 'T1', '--plan', PLAN_NAME));
+      if (status === 'done') ok(r.triqual('tasks', 'done', 'T1', '--commit', 'HEAD', '--plan', PLAN_NAME));
+      const res = r.run('task-open', r.plan, '1');
+      assert.equal(res.status, 3, `${status}: ${res.stdout}\n${res.stderr}`);
+      assert.match(res.stderr, /no BASE recorded for a started task.*BASE: T1 <sha>/);
+      assert.match(r.ledger().at(-1), /^Error: task-open T1 — exit 3 — no BASE recorded for a started task/);
+      assert.equal(r.ledger().filter((l) => l.startsWith('BASE:')).length, 0, `${status}: a BASE line was invented`);
+      assert.equal(r.taskState(1).status, status);
+
+      // With the line the human appends, the resume goes on.
+      const base = r.git('rev-parse', 'HEAD~1').trim();
+      r.appendLedger(`BASE: T1 ${base}`);
+      assert.equal(out(ok(r.run('task-open', r.plan, '1'))).base, base);
+    });
+  }
+});
+
+test('task-open: a failed brief leaves the BASE in the ledger, and the rerun reuses it', () => withRig({}, (r) => {
+  const base = r.head();
+  mkdirSync(join(r.workspace, 'task-1-brief.md'), { recursive: true }); // the brief cannot be written over a directory
+  const failed = r.run('task-open', r.plan, '1');
+  assert.equal(failed.status, 1, `${failed.stdout}\n${failed.stderr}`);
+  assert.match(failed.stderr, /^task-brief: cannot write /);
+  assert.match(r.ledger().at(-1), /^Error: task-open T1 — exit 1 — task-brief: cannot write /);
+  assert.equal(r.taskState(1).status, 'in_progress');
+
+  rmSync(join(r.workspace, 'task-1-brief.md'), { recursive: true });
+  r.commit('src/after.js', 'export const after = 1;\n'); // HEAD moved: the rerun must not take it as BASE
+  assert.equal(out(ok(r.run('task-open', r.plan, '1'))).base, base);
+  assert.equal(r.ledger().filter((l) => l.startsWith('BASE:')).length, 1);
+}));
+
+test('task-prep: a tier-check failure is exit 2 with the cause and an Error line', () => withRig({}, (r) => {
+  const { head } = firstRound(r, 1);
+  r.git('reset', '-q', '--hard', 'HEAD~1'); // history rewritten: the last Prep head is no ancestor of the new head
+  r.commit('src/other.js', 'export const other = 1;\n', 'feat: other');
+  const res = r.run('task-prep', r.plan, '1', '--fix-round');
+  assert.equal(res.status, 2, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /^tier-check: .*HEAD is not a descendant of BASE/);
+  assert.match(r.ledger().at(-1), /^Error: task-prep T1 — exit 2 — tier-check: .*HEAD is not a descendant of BASE/);
+  assert.deepEqual(prepLines(r), [`Prep: T1 r1 ${head}`], 'a Prep line was written for the failed round');
+}));
+
+test('task-prep: a review-package failure is exit 1 with the cause and an Error line, and the rerun finishes', () => withRig({}, (r) => {
+  const o = open(r, 1);
+  const head = r.commit('src/t1.js', 'export const t1 = 1;\n');
+  const pkg = join(r.workspace, `review-${o.base.slice(0, 7)}..${head.slice(0, 7)}.diff`);
+  mkdirSync(pkg, { recursive: true }); // the package cannot be written over a directory
+  const res = r.run('task-prep', r.plan, '1');
+  assert.equal(res.status, 1, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /^review-package: cannot write /);
+  assert.match(r.ledger().at(-1), /^Error: task-prep T1 — exit 1 — review-package: cannot write /);
+  assert.deepEqual(prepLines(r), [], 'a Prep line was written for the failed round');
+
+  rmSync(pkg, { recursive: true });
+  assert.equal(out(ok(r.run('task-prep', r.plan, '1'))).package, pkg);
+  assert.deepEqual(prepLines(r), [`Prep: T1 r1 ${head}`]);
+}));
+
+test('task-close: a refused squash (dirty tree) is exit 3 with an Error line, and nothing is moved or recorded', () => withRig({}, (r) => {
+  const { base } = prepared(r, 2);
+  HEAVY_OUTPUTS(r);
+  const head = r.head();
+  writeFileSync(join(r.dir, 'README.md'), '# repo, edited and not committed\n');
+  r.clearCalls();
+  const res = closeOf(r, 2);
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /^stack\.mjs squash: /);
+  assert.match(r.ledger().at(-1), /^Error: task-close T2 — exit 3 — stack\.mjs squash: /);
+  assert.equal(r.head(), head);
+  assert.equal(r.git('rev-list', '--count', `${base}..HEAD`).trim(), '2');
+  assert.equal(r.taskState(2).status, 'in_review');
+  assert.equal(r.ledger().filter((l) => l.startsWith('Task 2: complete')).length, 0);
+  assert.equal(existsSync(join(r.workspace, 'task-2-record.json')), false);
+  assert.deepEqual(r.calls().filter((c) => /^(tasks done|role-eval|tracking add)/.test(c)), []);
+
+  r.git('checkout', '--', 'README.md');
+  ok(closeOf(r, 2));
+  assert.equal(r.taskState(2).status, 'done');
+}));
+
+test('task-prep: after a Skipped: hunters line no hunter is picked', () => withRig({}, (r) => {
+  open(r, 2);
+  r.appendLedger('Skipped: hunters — no Haiku quota');
+  r.commit('src/t2.js', 'export const t2 = 2;\n');
+  const got = out(ok(r.run('task-prep', r.plan, '2')));
+  assert.equal(got.tier, 'heavy');
+  assert.equal(got.hunters, 'none');
+}));
+
+// A hunter budget outside the tier's count: `Budget: hunters <tier count> → <used> for T<N> — <reason>`.
+const budgetClose = (r, n, budget, footer, files) => {
+  r.appendLedger(budget);
+  save(r, n, 'safety-reviewer', 1, footerText('safety-reviewer'));
+  save(r, n, 'spec-reviewer', 1, footer);
+  for (const [category, ids] of files) candidatesFile(r, n, category, ids);
+  return closeOf(r, n);
+};
+
+test('task-close: a Budget line with more hunters than the tier count takes the categories from the hunter files', () => withRig({}, (r) => {
+  prepared(r, 1); // standard: no hunter by default
+  const res = budgetClose(r, 1, 'Budget: hunters 0 → 1 for T1 — risky diff', footerText('spec-reviewer', [0, 0, 0], [['correctness-1', 'refuted']]), [['correctness', ['correctness-1']]]);
+  ok(res);
+  const record = recordOf(r, 1);
+  assert.deepEqual(validateRecord(record), { ok: true });
+  assert.deepEqual(record.hunters.map((h) => [h.category, h.failed, h.candidates, h.refuted]), [['correctness', false, 1, 1]]);
+  noError(r);
+}));
+
+test('task-close: a Budget line that names more hunters than there are files is an Error and writes nothing', () => withRig({}, (r) => {
+  prepared(r, 1);
+  const res = budgetClose(r, 1, 'Budget: hunters 0 → 1 for T1 — risky diff', footerText('spec-reviewer'), []);
+  assert.equal(res.status, 1, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /Budget: hunters 0 → 1 for T1.*1 hunter.*0 candidates files/);
+  assert.equal(r.taskState(1).status, 'in_review');
+  assert.equal(existsSync(join(r.workspace, 'task-1-record.json')), false);
+}));
+
+test('task-close: a heavy task with a Budget above the tier count records the extra hunter', () => withRig({}, (r) => {
+  prepared(r, 2);
+  const res = budgetClose(r, 2, 'Budget: hunters 2 → 3 for T2 — wide diff', footerText('spec-reviewer', [0, 0, 0], [
+    ['correctness-1', 'refuted'], ['security-1', 'refuted'], ['state-1', 'confirmed minor'],
+  ]), [['correctness', ['correctness-1']], ['security', ['security-1']], ['state', ['state-1']]]);
+  ok(res);
+  const record = recordOf(r, 2);
+  assert.deepEqual(validateRecord(record), { ok: true });
+  assert.deepEqual(record.hunters.map((h) => h.category), ['correctness', 'security', 'state']);
+  assert.deepEqual(record.hunters.map((h) => h.failed), [false, false, false]);
+}));
+
+test('task-close: a Budget line below the tier count records only the hunters that were sent, none failed', () => withRig({}, (r) => {
+  prepared(r, 2);
+  const res = budgetClose(r, 2, 'Budget: hunters 2 → 1 for T2 — owner request, review cost', footerText('spec-reviewer', [0, 0, 0], [['correctness-1', 'refuted']]), [['correctness', ['correctness-1']]]);
+  ok(res);
+  const record = recordOf(r, 2);
+  assert.deepEqual(validateRecord(record), { ok: true });
+  assert.deepEqual(record.hunters.map((h) => [h.category, h.failed]), [['correctness', false]]);
+}));
+
+test('task-close: a Budget line below the tier count keeps the hunter that has a file, whichever category it is', () => withRig({}, (r) => {
+  prepared(r, 2);
+  const res = budgetClose(r, 2, 'Budget: hunters 2 → 1 for T2 — owner request', footerText('spec-reviewer', [0, 0, 0], [['security-1', 'refuted']]), [['security', ['security-1']]]);
+  ok(res);
+  assert.deepEqual(recordOf(r, 2).hunters.map((h) => [h.category, h.failed]), [['security', false]]);
 }));

@@ -9,10 +9,12 @@
 //   base: <sha>                            (the LAST `BASE: T<N> <sha>` ledger line; recorded from HEAD when there is none)
 //
 // A task that is in progress, in review or done is not moved again; a task that is pending or blocked is started; any
-// other state (dropped) is refused. Run from the main checkout.
+// other state (dropped) is refused. BASE is recorded right after the move and before the brief, so a rerun after a failed brief reuses it. A
+// task the tracking ledger shows as started with no `BASE:` line (a 1.1.0 ledger resumed mid-task) is refused: its first
+// commit is not HEAD, and HEAD as BASE would close it with no review. Run from the main checkout.
 //
-// Exit codes: 0 ok, 2 usage / no such plan file / malformed plan, 3 refused (linked worktree, unknown task, a move the
-// ledger refuses), 1 any other failure. A failure appends `Error: task-open T<N> — exit <code> — <cause>` to the ledger.
+// Exit codes: 0 ok, 2 usage / no such plan file / malformed plan, 3 refused (linked worktree, unknown task, a started task
+// with no BASE line, a move the ledger refuses), 1 any other failure. A failure appends `Error: task-open T<N> — exit <code> — <cause>` to the ledger.
 //
 // Dynamic imports only: the file has no extension, so Node may load it as CommonJS or as an ES module depending on the
 // nearest package.json.
@@ -38,18 +40,22 @@
 
     const planName = basename(plan);
     const state = common.taskState(planName, n);
-    if (state && STARTABLE.includes(state.status)) common.taskMove('start', n, planName);
-    else if (state && !STARTED.includes(state.status)) throw new ScriptError(EXIT_REFUSED, `T${n} is ${state.status}; cannot start`);
-
-    const brief = join(workspace, `task-${n}-brief.md`);
-    const made = common.runScript('task-brief', [plan, String(n), brief]);
-    if (made.status !== 0) throw common.scriptError('task-brief', made);
+    if (state && !STARTABLE.includes(state.status) && !STARTED.includes(state.status)) throw new ScriptError(EXIT_REFUSED, `T${n} is ${state.status}; cannot start`);
 
     let base = common.lastBase(common.ledgerLines(workspace), n);
+    if (base === null && state && STARTED.includes(state.status)) {
+      throw new ScriptError(EXIT_REFUSED, `no BASE recorded for a started task (T${n} is ${state.status}): append "BASE: T${n} <sha>" to ${join(workspace, 'sdd-ledger.md')}, the sha being the commit before the task's first commit`);
+    }
+    if (state && STARTABLE.includes(state.status)) common.taskMove('start', n, plan);
+    // BASE goes in before the brief: a brief that fails must not leave the rerun to take a later HEAD.
     if (base === null) {
       base = common.git(['rev-parse', 'HEAD']);
       common.appendLedger(workspace, `BASE: T${n} ${base}`);
     }
+
+    const brief = join(workspace, `task-${n}-brief.md`);
+    const made = common.runScript('task-brief', [plan, String(n), brief]);
+    if (made.status !== 0) throw common.scriptError('task-brief', made);
     process.stdout.write(`brief: ${brief}\nreport: ${join(workspace, `task-${n}-report.md`)}\nbase: ${base}\n`);
   } catch (e) {
     const err = e instanceof ScriptError ? e : new ScriptError(1, `${STEP}: ${e.message}`);

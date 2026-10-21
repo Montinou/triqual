@@ -8,16 +8,20 @@
 //   record: <recorded|already recorded>   what `triqual role-eval record` said
 //
 // Inputs, all read before anything is written (a missing or malformed one is an Error and nothing changes):
-//   - the ledger: BASE, the effective tier, `Skipped:` and `Review: T<N> — no commits` lines, `Round 2: T<N> — light items`,
-//     and this attempt's `Task <N>:` fix round, parked and blocked lines (an attempt runs from the task's previous
+//   - git: whether BASE..HEAD holds a commit (a task with none needs no reviewer output), and, for a task with commits, that
+//     HEAD is the head of the attempt's last `Prep:` line (else exit 3: commits no reviewer saw are never squashed; a reopened
+//     task, reviewed by hand, is checked only when it ran task-prep);
+//   - the ledger: BASE, the effective tier, `Skipped:` lines, `Round 2: T<N> — light items`, the last `Budget: hunters <tier
+//     count> → <used> for T<N>` line of the attempt, and this attempt's `Task <N>:` fix round, parked and blocked lines (an attempt runs from the task's previous
 //     `Task <N>: complete` line; `attempt` is 1 + the number of earlier ones);
 //   - the saved reviewer outputs `<workspace>/task-<N>-<role>-r<R>.md`, parsed with lib/footer.mjs: the gate
 //     (safety-reviewer) and the spec reviewer, of the lowest round saved for each role. Heavy and standard tasks need both;
 //     a light task needs the gate, and the spec reviewer only when its Round 2 had light items; after `Skipped: hunters and
 //     safety gate` the safety checklist sits in the spec output and no gate output is needed; a task with no commits needs
 //     none. Candidate verdicts are read from every saved spec reviewer output;
-//   - the hunters' `task-<N>-candidates-<category>.md` (heavy tasks, unless hunters were skipped): a missing or blank file is a
-//     hunter recorded `failed`; every candidate id a file holds needs a verdict in a spec footer, and every candidate a footer
+//   - the hunters' `task-<N>-candidates-<category>.md` (heavy tasks, unless hunters were skipped; a Budget line above the tier's
+//     count adds the categories whose files exist, and one below it keeps only the first <used>, files first, none of the
+//     others recorded failed): a missing or blank file is a hunter recorded `failed`; every candidate id a file holds needs a verdict in a spec footer, and every candidate a footer
 //     names needs a hunter file that holds it;
 //   - the hunter model: with `--provider codex` the Codex routing value of `hunter`; otherwise (claude, the default) the `model:`
 //     line of agents/hunter.md in the roles plugin's installPath from ~/.claude/plugins/installed_plugins.json.
@@ -36,8 +40,8 @@
 // `<workspace>/task-<N>-closed-<attempt>`, and an attempt after the first takes only the outputs (gate, spec, hunters) saved
 // after the marker of the attempt before. A stale or missing one is an Error naming it: attempt 1's counts are never reused.
 //
-// Exit codes: 0 ok, 2 usage / no such plan file, 3 refused (linked worktree, unknown task, no BASE, a move or the squash
-// refused), 1 any other failure. A failure appends `Error: task-close T<N> — exit <code> — <cause>` to the ledger.
+// Exit codes: 0 ok, 2 usage / no such plan file, 3 refused (linked worktree, unknown task, no BASE, commits after the last
+// Prep, a move or the squash refused), 1 any other failure. A failure appends `Error: task-close T<N> — exit <code> — <cause>` to the ledger.
 //
 // Dynamic imports only: the file has no extension, so Node may load it as CommonJS or as an ES module depending on the
 // nearest package.json.
@@ -51,7 +55,7 @@
   const common = await load('lib', 'task-common.mjs');
   const { FooterError, parseFooter, candidateIds } = await load('lib', 'footer.mjs');
   const { codexRoleModel } = await load('..', '..', '..', 'cli', 'lib', 'agents.mjs');
-  const { validateRecord, TIERS } = await load('..', '..', '..', 'cli', 'lib', 'role-eval.mjs');
+  const { validateRecord, TIERS, CATEGORIES } = await load('..', '..', '..', 'cli', 'lib', 'role-eval.mjs');
   const { ScriptError, EXIT_OTHER, EXIT_USAGE, EXIT_REFUSED } = common;
 
   const STEP = 'task-close';
@@ -138,13 +142,34 @@
       throw new ScriptError(EXIT_OTHER, `no tier for T${n}: not in the tracking ledger, in a Tier: line of the ledger or in the plan (write 'Tier: T${n} <tier>' first)`);
     }
     const declaredTier = planTask.task.tier;
-    const noCommits = count(`Review: T${n} — no commits`) > 0;
     const skippedHunters = ledger.some((l) => /^Skipped: hunters\b/.test(l));
     const skippedGate = ledger.some((l) => l.startsWith('Skipped: hunters and safety gate'));
     const lightItems = window.map((l) => new RegExp(`^Round 2: T${n} — light items (\\d+)$`).exec(l)).filter(Boolean).at(-1);
+
+    // Whether the task has commits is git's word, never a ledger line: a `Review: T<N> — no commits` line goes stale the
+    // moment the implementer commits. A resumed close counts up to the commit it squashed to, not to a HEAD later tasks moved.
+    let resumedSha = null;
+    if (resumed) {
+      const short = /\.\.([0-9a-f]{7,40})[,)]/.exec(ledger[lastComplete]);
+      resumedSha = short && common.commitOf(short[1]);
+      if (!resumedSha) throw new ScriptError(EXIT_OTHER, `cannot resolve the commit of the line: ${ledger[lastComplete]}`);
+    }
+    const head = common.commitOf('HEAD');
+    if (head === null) throw new ScriptError(EXIT_OTHER, 'cannot resolve HEAD');
+    const noCommits = Number(common.git(['rev-list', '--count', `${base}..${resumedSha ?? head}`])) === 0;
+    // The commits a close squashes are the commits a reviewer saw: the last `Prep:` head of the attempt is HEAD. A reopened
+    // task (attempt 2 and later) may be reviewed by hand (SKILL step 8), so it is checked only when it ran task-prep.
+    if (!resumed && !noCommits) {
+      const last = common.prepsOf(window, n).at(-1) ?? null;
+      if (last === null && attempt === 1) {
+        throw new ScriptError(EXIT_REFUSED, `T${n} has commits and no Prep line: run task-prep and review them first`);
+      }
+      if (last !== null && last.head !== head) {
+        throw new ScriptError(EXIT_REFUSED, `T${n} has commits after the last review (Prep r${last.round} at ${last.head.slice(0, 7)}, HEAD ${head.slice(0, 7)}): run task-prep --fix-round and review them first`);
+      }
+    }
     const needGate = !noCommits && !skippedGate;
     const needSpec = !noCommits && (skippedGate || tier !== 'light' || (lightItems !== undefined && Number(lightItems[1]) > 0));
-    const categories = tier === 'heavy' && !skippedHunters && !noCommits ? common.hunterPick(common.reasonLine(planTask)).split(',') : [];
 
     // Attempt 2 and later: only outputs saved after the previous attempt's close marker belong to this attempt.
     const markerOf = (a) => join(workspace, `task-${n}-closed-${a}`);
@@ -191,6 +216,29 @@
     const gate = needGate ? required('safety-reviewer')[0] : null;
     const specs = needSpec ? required('spec-reviewer') : [];
     const spec = specs[0] ?? null;
+
+    // The hunters sent: the heavy tier's pick, unless the ledger skipped them or the task has no commits, and then the task's last
+    // `Budget: hunters <tier count> → <used> for T<N>` line of this attempt: more than the tier's count adds the categories whose
+    // candidates files exist, fewer keeps the first <used>, those with a file first. Hunters the budget did not send are not
+    // recorded as failed.
+    const tierPick = tier === 'heavy' ? common.hunterPick(common.reasonLine(planTask)).split(',') : [];
+    const budget = window.map((l) => new RegExp(`^Budget: hunters (\\d+) → (\\d+) for T${n}\\b`).exec(l)).filter(Boolean).at(-1);
+    let categories = skippedHunters || noCommits ? [] : tierPick;
+    if (budget && !skippedHunters && !noCommits) {
+      const withFile = CATEGORIES.filter((category) => {
+        const file = join(workspace, `task-${n}-candidates-${category}.md`);
+        return existsSync(file) && !isStale(file);
+      });
+      const used = Number(budget[2]);
+      if (used > tierPick.length) {
+        categories = [...tierPick, ...withFile.filter((category) => !tierPick.includes(category))];
+        if (categories.length < used) {
+          throw new ScriptError(EXIT_OTHER, `${budget[0]} names ${used} hunter${used === 1 ? '' : 's'}, but ${withFile.length} candidates file${withFile.length === 1 ? '' : 's'} exist${withFile.length === 1 ? 's' : ''} for T${n} (a hunter that found nothing leaves a blank file)`);
+        }
+      } else {
+        categories = [...tierPick.filter((category) => withFile.includes(category)), ...tierPick.filter((category) => !withFile.includes(category))].slice(0, used);
+      }
+    }
 
     // The hunters: one entry per category sent; the verdicts come from the spec reviewer's footers.
     const verdicts = new Map(specs.flatMap((s) => s.candidates).map((c) => [c.id, c]));
@@ -251,15 +299,13 @@
     // ---- write: squash, done, the complete line, the record, the entry ----
     let sha;
     if (resumed) {
-      const short = /\.\.([0-9a-f]{7,40})[,)]/.exec(ledger[lastComplete]);
-      sha = short && common.commitOf(short[1]);
-      if (!sha) throw new ScriptError(EXIT_OTHER, `cannot resolve the commit of the line: ${ledger[lastComplete]}`);
+      sha = resumedSha;
     } else {
       const squashed = common.runScript('stack.mjs', ['squash', plan, base]);
       if (squashed.status !== 0) throw common.scriptError('stack.mjs squash', squashed);
       const printed = squashed.stdout.trim();
       sha = printed === 'no commits' ? common.git(['rev-parse', 'HEAD']) : printed;
-      if (state && state.status !== 'done') common.taskMove('done', n, planName, ['--commit', sha]);
+      if (state && state.status !== 'done') common.taskMove('done', n, plan, ['--commit', sha]);
       common.appendLedger(workspace, `Task ${n}: complete (commits ${base.slice(0, 7)}..${sha.slice(0, 7)}, ${parked > 0 ? `${parked} parked` : 'review clean'})`);
     }
 
