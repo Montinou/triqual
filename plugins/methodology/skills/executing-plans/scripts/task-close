@@ -1,0 +1,323 @@
+#!/usr/bin/env node
+// Close a reviewed task in one call: squash the task's commits, the `done` move on the tracking ledger, the
+// `Task <N>: complete` line, the `task-review` record built from the saved reviewer outputs, and the review progress entry.
+//
+// Usage: task-close PLAN_FILE N [--provider claude|codex]
+// Prints, in this order:
+//   sha: <sha>                         the squashed commit (HEAD when the task made no commit)
+//   record: <recorded|already recorded>   what `triqual role-eval record` said
+//
+// Inputs, all read before anything is written (a missing or malformed one is an Error and nothing changes):
+//   - the ledger: BASE, the effective tier, `Skipped:` and `Review: T<N> — no commits` lines, `Round 2: T<N> — light items`,
+//     and this attempt's `Task <N>:` fix round, parked and blocked lines (an attempt runs from the task's previous
+//     `Task <N>: complete` line; `attempt` is 1 + the number of earlier ones);
+//   - the saved reviewer outputs `<workspace>/task-<N>-<role>-r<R>.md`, parsed with lib/footer.mjs: the gate
+//     (safety-reviewer) and the spec reviewer, of the lowest round saved for each role. Heavy and standard tasks need both;
+//     a light task needs the gate, and the spec reviewer only when its Round 2 had light items; after `Skipped: hunters and
+//     safety gate` the safety checklist sits in the spec output and no gate output is needed; a task with no commits needs
+//     none. Candidate verdicts are read from every saved spec reviewer output;
+//   - the hunters' `task-<N>-candidates-<category>.md` (heavy tasks, unless hunters were skipped): a missing or blank file is a
+//     hunter recorded `failed`; every candidate id a file holds needs a verdict in a spec footer, and every candidate a footer
+//     names needs a hunter file that holds it;
+//   - the hunter model: with `--provider codex` the Codex routing value of `hunter`; otherwise (claude, the default) the `model:`
+//     line of agents/hunter.md in the roles plugin's installPath from ~/.claude/plugins/installed_plugins.json.
+//
+// Then, in this order: `stack.mjs squash PLAN BASE`, `triqual tasks done T<N> --commit <sha>` (not when the ledger already
+// shows the task done), the complete line, `triqual role-eval record`, and the progress entry (store mode: `tracking add
+// --commit <sha>`; local mode: `tracking write entry`; committed mode or not opted in: none).
+//
+// A rerun is a resume: when the task's last ledger line is its complete line (an `Error: task-close T<N>` line may follow it),
+// the squash, the `done` move and the line are skipped, the attempt of that line is reused, and the record and the entry are
+// made again if they are missing (record: already recorded). The entry is looked up before it is added, in store mode with
+// `tracking log` (a failed lookup is an Error) and in local mode in the progress file, so a first run that failed after the
+// complete line still gets its entry on the rerun, and exactly once.
+//
+// Reopened tasks (attempt 2 and later): the saved outputs carry the round, not the attempt, so each close leaves a marker file
+// `<workspace>/task-<N>-closed-<attempt>`, and an attempt after the first takes only the outputs (gate, spec, hunters) saved
+// after the marker of the attempt before. A stale or missing one is an Error naming it: attempt 1's counts are never reused.
+//
+// Exit codes: 0 ok, 2 usage / no such plan file, 3 refused (linked worktree, unknown task, no BASE, a move or the squash
+// refused), 1 any other failure. A failure appends `Error: task-close T<N> — exit <code> — <cause>` to the ledger.
+//
+// Dynamic imports only: the file has no extension, so Node may load it as CommonJS or as an ES module depending on the
+// nearest package.json.
+(async () => {
+  const { existsSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } = await import('node:fs');
+  const { homedir } = await import('node:os');
+  const { basename, dirname, join } = await import('node:path');
+  const { pathToFileURL } = await import('node:url');
+  const scripts = dirname(realpathSync(process.argv[1]));
+  const load = (...parts) => import(pathToFileURL(join(scripts, ...parts)).href);
+  const common = await load('lib', 'task-common.mjs');
+  const { FooterError, parseFooter, candidateIds } = await load('lib', 'footer.mjs');
+  const { codexRoleModel } = await load('..', '..', '..', 'cli', 'lib', 'agents.mjs');
+  const { validateRecord, TIERS } = await load('..', '..', '..', 'cli', 'lib', 'role-eval.mjs');
+  const { ScriptError, EXIT_OTHER, EXIT_USAGE, EXIT_REFUSED } = common;
+
+  const STEP = 'task-close';
+  const USAGE = 'usage: task-close PLAN_FILE N [--provider claude|codex]';
+  const PROVIDERS = ['claude', 'codex'];
+  const SEVERITIES = ['critical', 'important', 'minor'];
+  const zero = () => ({ critical: 0, important: 0, minor: 0 });
+  const sum = (counts) => SEVERITIES.reduce((total, s) => total + counts[s], 0);
+  const rank = (tier) => TIERS.indexOf(tier); // TIERS runs heavy first: the lower index is the higher tier
+  const readText = (file, what) => {
+    try {
+      return readFileSync(file, 'utf8');
+    } catch (e) {
+      throw new ScriptError(EXIT_OTHER, `cannot read ${what} ${file}: ${e.code ?? e.message}`);
+    }
+  };
+
+  // The hunter model of the default provider: the `model:` line of the roles plugin's hunter agent file.
+  const claudeHunterModel = () => {
+    const installed = join(homedir(), '.claude', 'plugins', 'installed_plugins.json');
+    let plugins;
+    try {
+      plugins = JSON.parse(readText(installed, 'the plugin registry')).plugins ?? {};
+    } catch (e) {
+      if (e instanceof ScriptError) throw e;
+      throw new ScriptError(EXIT_OTHER, `${installed} is not JSON`);
+    }
+    const installs = Object.entries(plugins).filter(([key]) => key.startsWith('roles@')).flatMap(([, list]) => list ?? [])
+      .filter((entry) => typeof entry?.installPath === 'string')
+      .sort((a, b) => String(b.lastUpdated ?? '').localeCompare(String(a.lastUpdated ?? '')));
+    if (installs.length === 0) throw new ScriptError(EXIT_OTHER, `${installed} lists no install of the roles plugin`);
+    const agent = join(installs[0].installPath, 'agents', 'hunter.md');
+    const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(readText(agent, 'the hunter agent file'));
+    const line = front && /^model:\s*(.+?)\s*$/m.exec(front[1]);
+    if (!line) throw new ScriptError(EXIT_OTHER, `${agent} has no model: line in its frontmatter`);
+    return line[1].replace(/^(["'])(.*)\1$/, '$2');
+  };
+
+  let n = null;
+  let workspace;
+  try {
+    const positional = [];
+    let provider = 'claude';
+    const argv = process.argv.slice(2);
+    for (let i = 0; i < argv.length; i++) {
+      if (argv[i] === '--provider') {
+        if (i + 1 >= argv.length) throw new ScriptError(EXIT_USAGE, '--provider needs claude or codex');
+        provider = argv[++i];
+      } else if (argv[i].startsWith('--provider=')) provider = argv[i].slice('--provider='.length);
+      else if (argv[i].startsWith('--')) throw new ScriptError(EXIT_USAGE, `unknown option: ${argv[i]}`);
+      else positional.push(argv[i]);
+    }
+    n = common.taskNumber(positional[1]);
+    if (positional.length !== 2 || n === null) throw new ScriptError(EXIT_USAGE, USAGE);
+    if (!PROVIDERS.includes(provider)) throw new ScriptError(EXIT_USAGE, `--provider is ${PROVIDERS.join(' or ')}, not ${provider}`);
+    const plan = positional[0];
+
+    common.assertMainCheckout();
+    workspace = common.workspaceOf(plan);
+    const planTask = common.readPlanTask(plan, n);
+    const planName = basename(plan);
+    const stem = planName.replace(/\.md$/, '');
+
+    // ---- read everything: nothing is written before the record is built and valid ----
+    const ledger = common.ledgerLines(workspace);
+    const base = common.lastBase(ledger, n);
+    if (base === null) throw new ScriptError(EXIT_REFUSED, `no BASE recorded for T${n}: run task-open first`);
+
+    // This attempt's window of the ledger: after the task's previous complete line, up to the line being reused (if any).
+    // The tracking row is read first: a task that was reopened since its complete line is not `done`, so it is no resume.
+    const state = common.taskState(planName, n);
+    const completeAt = ledger.flatMap((l, i) => (l.startsWith(`Task ${n}: complete (commits `) ? [i] : []));
+    const lastComplete = completeAt.at(-1) ?? -1;
+    const resumed = lastComplete >= 0 && (state === null || state.status === 'done')
+      && ledger.slice(lastComplete + 1).every((l) => l.startsWith(`Error: ${STEP} T${n} `));
+    const earlier = resumed ? completeAt.slice(0, -1) : completeAt;
+    const attempt = earlier.length + 1;
+    const window = ledger.slice((earlier.at(-1) ?? -1) + 1, resumed ? lastComplete : ledger.length);
+    const count = (prefix) => window.filter((l) => l.startsWith(prefix)).length;
+
+    const { optedIn, mode, progress } = common.tracking();
+    const tier = state?.effectiveTier ?? common.ledgerTier(ledger, n) ?? planTask.task.tier ?? null;
+    if (tier === null) {
+      throw new ScriptError(EXIT_OTHER, `no tier for T${n}: not in the tracking ledger, in a Tier: line of the ledger or in the plan (write 'Tier: T${n} <tier>' first)`);
+    }
+    const declaredTier = planTask.task.tier;
+    const noCommits = count(`Review: T${n} — no commits`) > 0;
+    const skippedHunters = ledger.some((l) => /^Skipped: hunters\b/.test(l));
+    const skippedGate = ledger.some((l) => l.startsWith('Skipped: hunters and safety gate'));
+    const lightItems = window.map((l) => new RegExp(`^Round 2: T${n} — light items (\\d+)$`).exec(l)).filter(Boolean).at(-1);
+    const needGate = !noCommits && !skippedGate;
+    const needSpec = !noCommits && (skippedGate || tier !== 'light' || (lightItems !== undefined && Number(lightItems[1]) > 0));
+    const categories = tier === 'heavy' && !skippedHunters && !noCommits ? common.hunterPick(common.reasonLine(planTask)).split(',') : [];
+
+    // Attempt 2 and later: only outputs saved after the previous attempt's close marker belong to this attempt.
+    const markerOf = (a) => join(workspace, `task-${n}-closed-${a}`);
+    let cutoff;
+    const cutoffOf = () => {
+      if (attempt === 1) return null;
+      if (cutoff === undefined) {
+        try {
+          cutoff = statSync(markerOf(attempt - 1)).mtimeMs;
+        } catch (e) {
+          throw new ScriptError(EXIT_OTHER, e.code === 'ENOENT'
+            ? `T${n} attempt ${attempt}: ${markerOf(attempt - 1)} is missing, so this attempt's outputs cannot be told from attempt ${attempt - 1}'s`
+            : `cannot read ${markerOf(attempt - 1)}: ${e.code ?? e.message}`);
+        }
+      }
+      return cutoff;
+    };
+    const isStale = (file) => cutoffOf() !== null && statSync(file).mtimeMs <= cutoffOf();
+
+    // The saved outputs of a role, by round; the first (lowest round) one carries the review's counts.
+    const saved = readdirSync(workspace);
+    const outputsOf = (role) => saved
+      .map((name) => new RegExp(`^task-${n}-${role}-r(\\d+)\\.md$`).exec(name)).filter(Boolean)
+      .filter(([name]) => !isStale(join(workspace, name)))
+      .sort((a, b) => Number(a[1]) - Number(b[1]))
+      .map(([name]) => {
+        const text = readText(join(workspace, name), 'the saved reviewer output');
+        try {
+          const footer = parseFooter(text);
+          if (footer.role !== role) throw new FooterError(`the footer is for ${footer.role}, not ${role}`);
+          return footer;
+        } catch (e) {
+          if (e instanceof FooterError) throw new ScriptError(EXIT_OTHER, `${name}: ${e.message}`);
+          throw e;
+        }
+      });
+    const required = (role) => {
+      const outputs = outputsOf(role);
+      if (outputs.length === 0) {
+        throw new ScriptError(EXIT_OTHER, `no saved ${role} output for T${n}${attempt > 1 ? ` in attempt ${attempt} (saved after ${markerOf(attempt - 1)})` : ''}: expected ${join(workspace, `task-${n}-${role}-r1.md`)} with the v1 footer`);
+      }
+      return outputs;
+    };
+    const gate = needGate ? required('safety-reviewer')[0] : null;
+    const specs = needSpec ? required('spec-reviewer') : [];
+    const spec = specs[0] ?? null;
+
+    // The hunters: one entry per category sent; the verdicts come from the spec reviewer's footers.
+    const verdicts = new Map(specs.flatMap((s) => s.candidates).map((c) => [c.id, c]));
+    const model = categories.length === 0 ? null : provider === 'codex' ? codexRoleModel('hunter') : claudeHunterModel();
+    const known = new Set();
+    const hunters = categories.map((category) => {
+      const file = join(workspace, `task-${n}-candidates-${category}.md`);
+      let text = null;
+      try {
+        text = readFileSync(file, 'utf8');
+      } catch (e) {
+        if (e.code !== 'ENOENT') throw new ScriptError(EXIT_OTHER, `cannot read the candidates file ${file}: ${e.code ?? e.message}`);
+      }
+      if (text !== null && isStale(file)) {
+        throw new ScriptError(EXIT_OTHER, `${basename(file)} is from before attempt ${attempt} started (older than ${markerOf(attempt - 1)}): run the hunter again or remove the file`);
+      }
+      if (text === null || text.trim() === '') {
+        return { category, model, failed: true, candidates: 0, confirmed: zero(), refuted: 0, duplicateCandidate: 0, duplicateReview: 0 };
+      }
+      const ids = candidateIds(text, category);
+      const hunter = { category, model, failed: false, candidates: ids.length, confirmed: zero(), refuted: 0, duplicateCandidate: 0, duplicateReview: 0 };
+      for (const id of ids) {
+        known.add(id);
+        const verdict = verdicts.get(id);
+        if (!verdict) throw new ScriptError(EXIT_OTHER, `the spec reviewer's footer gives no verdict for candidate ${id} of ${basename(file)}`);
+        if (verdict.verdict === 'confirmed') hunter.confirmed[verdict.severity] += 1;
+        else if (verdict.verdict === 'refuted') hunter.refuted += 1;
+        else if (verdict.verdict === 'duplicate-candidate') hunter.duplicateCandidate += 1;
+        else hunter.duplicateReview += 1;
+      }
+      return hunter;
+    });
+    const stray = [...verdicts.keys()].find((id) => !known.has(id));
+    if (stray !== undefined) throw new ScriptError(EXIT_OTHER, `the spec reviewer's footer names candidate ${stray}, which no hunter file has`);
+
+    const record = {
+      v: 2,
+      at: new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
+      provider,
+      task: `T${n}`,
+      kind: 'task-review',
+      attempt,
+      tier,
+      declaredTier,
+      // A tierless task counts as standard here: the contract (SKILL.md, task-review) and validateRecord both say so.
+      raised: rank(tier) < rank(declaredTier ?? 'standard'),
+      hunters,
+      gate: { findings: gate ? sum(gate.findings) : 0 },
+      spec: { ran: spec !== null, confirmed: spec ? { ...spec.findings } : zero() },
+      fixRounds: count(`Task ${n}: fix round `),
+      blocked: count(`Task ${n}: blocked at fix round `) > 0,
+      coordinator: planTask.task.role === 'coordinator',
+    };
+    const valid = validateRecord(record);
+    if (!valid.ok) throw new ScriptError(EXIT_OTHER, `the task-review record is invalid: field ${valid.field}`);
+    const parked = count(`Task ${n}: parked`);
+
+    // ---- write: squash, done, the complete line, the record, the entry ----
+    let sha;
+    if (resumed) {
+      const short = /\.\.([0-9a-f]{7,40})[,)]/.exec(ledger[lastComplete]);
+      sha = short && common.commitOf(short[1]);
+      if (!sha) throw new ScriptError(EXIT_OTHER, `cannot resolve the commit of the line: ${ledger[lastComplete]}`);
+    } else {
+      const squashed = common.runScript('stack.mjs', ['squash', plan, base]);
+      if (squashed.status !== 0) throw common.scriptError('stack.mjs squash', squashed);
+      const printed = squashed.stdout.trim();
+      sha = printed === 'no commits' ? common.git(['rev-parse', 'HEAD']) : printed;
+      if (state && state.status !== 'done') common.taskMove('done', n, planName, ['--commit', sha]);
+      common.appendLedger(workspace, `Task ${n}: complete (commits ${base.slice(0, 7)}..${sha.slice(0, 7)}, ${parked > 0 ? `${parked} parked` : 'review clean'})`);
+    }
+
+    // The close marker of this attempt (see the header): the cutoff for the next attempt's outputs.
+    if (!existsSync(markerOf(attempt))) writeFileSync(markerOf(attempt), `${sha}\n`);
+
+    const recordFile = join(workspace, `task-${n}-record.json`);
+    writeFileSync(recordFile, `${JSON.stringify(record, null, 2)}\n`);
+    const recorded = common.exec('triqual', ['role-eval', 'record', '--plan', plan, recordFile]);
+    if (recorded.status !== 0) throw new ScriptError(EXIT_OTHER, `triqual role-eval record: ${recorded.stderr.split('\n').find((l) => l.trim() !== '')?.trim() ?? `exited ${recorded.status}`}`);
+    const said = recorded.stdout.trim();
+    if (said !== 'recorded' && said !== 'already recorded') throw new ScriptError(EXIT_OTHER, `triqual role-eval record: unexpected output: ${said}`);
+
+    // The review entry, in the tracking mode of the repo.
+    if (optedIn && (mode === 'store' || mode === 'local')) {
+      const short = sha.slice(0, 7);
+      const title = `T${n} review closed at ${short}`;
+      // Only a rerun can find the entry already there. A failed lookup is an Error, never "no entry yet".
+      const entryPresent = () => {
+        if (mode === 'local') {
+          const text = progress && existsSync(progress) ? readText(progress, 'the progress file') : '';
+          return text.split('\n').some((l) => new RegExp(`^## \\d{4}-\\d{2}-\\d{2} — ${title}\\s*$`).test(l));
+        }
+        const logged = common.exec('triqual', ['tracking', 'log', '--plan', stem, '--grep', title, '--json']);
+        if (logged.status !== 0) throw new ScriptError(EXIT_OTHER, `triqual tracking log: ${logged.stderr.split('\n').find((l) => l.trim() !== '')?.trim() ?? `exited ${logged.status}`}`);
+        let rows;
+        try {
+          rows = JSON.parse(logged.stdout);
+        } catch {
+          rows = null;
+        }
+        if (!Array.isArray(rows)) throw new ScriptError(EXIT_OTHER, 'triqual tracking log: the output is not a JSON array');
+        return rows.length > 0;
+      };
+      if (!(resumed && entryPresent())) {
+        const draft = join(workspace, `task-${n}-close-entry.md`);
+        const found = (h) => `${h.category} ${sum(h.confirmed)} confirmed of ${h.candidates}${h.failed ? ' (failed)' : ''}`;
+        writeFileSync(draft, [
+          `## ${record.at.slice(0, 10)} — ${title}`,
+          `- **Stage/task:** Plan ${stem} · T${n} · review`,
+          `- **Done:** T${n} reviewed at tier ${tier} (attempt ${attempt}) and squashed to ${short}; the task-review record is ${said}.`,
+          '- **Files:** none (review bookkeeping)',
+          `- **Verification:** gate findings ${record.gate.findings}; spec ${spec ? SEVERITIES.map((s) => `${s} ${spec.findings[s]}`).join(', ') : 'did not run'}; hunters ${hunters.length ? hunters.map(found).join('; ') : 'none'}; fix rounds ${record.fixRounds}.`,
+          '- **Next:** the next task of the phase.',
+          '',
+        ].join('\n'));
+        const added = mode === 'store'
+          ? common.exec('triqual', ['tracking', 'add', draft, '--commit', sha])
+          : common.exec('triqual', ['tracking', 'write', 'entry', draft]);
+        if (added.status !== 0) throw new ScriptError(EXIT_OTHER, `triqual tracking: ${added.stderr.split('\n').find((l) => l.trim() !== '')?.trim() ?? `exited ${added.status}`}`);
+      }
+    }
+    process.stdout.write(`sha: ${sha}\nrecord: ${said}\n`);
+  } catch (e) {
+    const err = e instanceof ScriptError ? e : new ScriptError(1, `${STEP}: ${e.message}`);
+    common.fail(STEP, n, err.code, err.message, workspace);
+  }
+})().catch((e) => {
+  process.stderr.write(`task-close: ${e.stack ?? e}\n`);
+  process.exit(1);
+});

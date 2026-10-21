@@ -33,6 +33,9 @@ const CODEX_ROLE_ROUTING = Object.freeze({
   'final-adversarial-reviewer': { model: 'gpt-6-astra', effort: 'medium' },
 });
 
+// The Codex model of a shipped role (`hunter` -> `gpt-6-luna`), or null for a role with no routing entry.
+export const codexRoleModel = (name) => (Object.hasOwn(CODEX_ROLE_ROUTING, name) ? CODEX_ROLE_ROUTING[name].model : null);
+
 // Claude tool names → the Codex tools that do the same; `null` is a Claude-only tool with no Codex equivalent, left out
 // of the Codex list. Any other name passes through unchanged. `apply_patch` both edits and creates files, so it is
 // forbidden outright only when both Edit and Write are; one of them alone forbids that use of it (see codexTools).

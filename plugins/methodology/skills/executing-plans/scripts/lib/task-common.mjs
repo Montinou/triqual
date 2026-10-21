@@ -1,4 +1,4 @@
-// What task-open and task-prep share: the workspace and its ledger, the failure contract, the tracking calls and the plan's
+// What task-open, task-prep and task-close share: the workspace and its ledger, the failure contract, the tracking calls and the plan's
 // tasks. Plain Node, node: built-ins and the plan reader next to it only.
 //
 // Failure contract (every script of the thin controller): exit 0 ok, 2 usage, 3 refused precondition, 1 any other
@@ -11,7 +11,9 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PlanError, readTasks } from './plan.mjs';
 
-export { TIERS } from './plan.mjs';
+import { TIERS } from './plan.mjs';
+
+export { TIERS };
 
 const SCRIPTS = join(dirname(fileURLToPath(import.meta.url)), '..');
 const LEDGER = 'sdd-ledger.md';
@@ -136,6 +138,29 @@ export function readPlanTask(planFile, n) {
   return { task, lines: text.split('\n') };
 }
 
+// The plain line directly under the task's `**Tier:**` line (outside a fence), else null. `planTask` is readPlanTask's result.
+export function reasonLine({ task, lines }) {
+  let fenced = false;
+  for (let i = task.start - 1; i < task.end; i++) {
+    if (/^(```|~~~)/.test(lines[i])) fenced = !fenced;
+    if (fenced || !/^\*\*Tier:\*\*/.test(lines[i])) continue;
+    const next = (lines[i + 1] ?? '').trim();
+    return next === '' || next.startsWith('**') ? null : next;
+  }
+  return null;
+}
+
+// The hunter categories of a heavy first round: `correctness` plus `state` for a Live state or Contract reason, else `security`.
+export const hunterPick = (reason) => `correctness,${/^(live state|contract)\b/i.test(reason ?? '') ? 'state' : 'security'}`;
+
+// The tier of the last `Tier: T<N> <tier>` / `Tier raised: T<N> <from> → <to>` line of the task, else null.
+export function ledgerTier(lines, n) {
+  const tierPattern = TIERS.join('|');
+  const re = new RegExp(`^(?:Tier: T${n} (${tierPattern})\\b|Tier raised: T${n} \\S+ → (${tierPattern})\\b)`);
+  const hits = lines.map((l) => re.exec(l)).filter(Boolean);
+  return hits.length ? hits.at(-1)[1] ?? hits.at(-1)[2] : null;
+}
+
 // ---- tracking (the `triqual tasks` ledger) ----
 
 const triqualError = (label, res) => new ScriptError(
@@ -154,10 +179,10 @@ function triqualJson(args) {
   }
 }
 
-// Whether this repo is opted in to tracking, and its mode (null when not opted in).
+// Whether this repo is opted in to tracking, its mode (null when not opted in) and, in local mode, the progress file.
 export function tracking() {
   const paths = triqualJson(['tasks', 'paths', '--json']);
-  return { optedIn: paths.optedIn === true, mode: paths.mode ?? null };
+  return { optedIn: paths.optedIn === true, mode: paths.mode ?? null, progress: paths.progress ?? null };
 }
 
 // The task's row in the tracking ledger, or null when the repo is not opted in. A plan or task the ledger does not know
