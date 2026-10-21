@@ -64,6 +64,11 @@ The gate compares the declared number with the number of `agent()` call sites pe
 source. It does not count launches: a call site inside a loop or a `.map` counts once. The
 fan-out rule is what bounds the lists.
 
+The count covers the script's own call sites only. An agent such as `roles:phase-orchestrator` dispatches
+agents of its own, and those starts are in no script's budget: the `Agent` burst cap (below) is what bounds
+them, per session. methodology never dispatches the orchestrator from a Workflow script; a script that does
+has its `MAX_AGENTS` budget bound only on the orchestrator itself.
+
 ### Fan-out rule
 
 `pipeline(x, ...)`, `parallel(x)` and `.map(` over a dynamic list that launch non-Haiku agents

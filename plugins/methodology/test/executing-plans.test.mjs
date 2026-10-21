@@ -1897,7 +1897,40 @@ test('a task with a complete line is never dispatched again unless the resume no
   assert.ok(thin().includes(unless), 'On BLOCKED does not except a reopened task');
   assert.ok(PROMPT().includes(unless), 'the prompt does not except a reopened task');
   assert.ok(flat(section(skill(), '## Setup')).includes('unless a Phase check reopened it'), 'the resume rule of Setup does not except a reopened task');
-  assert.ok(flat(section(skill(), '### 7. End the phase')).includes('writes no ledger line'), 'the Phase check reopen does not say it leaves the complete line in place');
+  assert.ok(flat(section(skill(), '### 7. End the phase')).includes('the task\'s `Task <N>: complete` line stays'), 'the Phase check reopen does not say it leaves the complete line in place');
+});
+
+test('a Phase check failure and its reopen are ledgered, and the main session runs the reopen move', () => {
+  const reopened = '`Task <N>: reopened — Phase check failed — <command>`';
+  const seven = flat(section(skill(), '### 7. End the phase'));
+  assert.ok(seven.includes(reopened), 'the Phase check does not write the reopen line');
+  assert.ok(seven.includes('the main session runs the reopen'), 'the Phase check does not say who runs the reopen');
+  assert.ok(seven.includes('the orchestrator runs the fix loop'), 'the Phase check does not say who runs the fix loop');
+  assert.ok(!seven.includes('writes no ledger line'), 'the Phase check still says the reopen writes no ledger line');
+  assert.ok(flat(section(skill(), '## Ledger vocabulary')).includes(reopened), 'the ledger vocabulary lacks the reopen line');
+  assert.ok(thin().includes(reopened), 'On BLOCKED does not name the reopen line');
+  assert.ok(flat(section(skill(), '## Setup')).includes('`Task <N>: reopened —` line'), 'the resume rule of Setup does not read the reopen line');
+  assert.ok(PROMPT().includes('`Task <N>: reopened —`'), 'the prompt does not read the reopen line');
+  assert.ok(PROMPT().includes('the main session has already run'), 'the prompt does not say the main session ran the reopen');
+});
+
+test('a task-close rerun after a BLOCKED round trip is a resume, and the skill says which lines leave it one', () => {
+  const six = flat(section(skill(), '### 6. Complete the task'));
+  for (const line of [
+    'A rerun is a resume while',
+    '`Task <N>: Ruling:`',
+    '`Task <N>: awaiting landing`',
+    '`Orchestrator:`',
+    '`Prep:`',
+    '`Task <N>: reopened`',
+  ]) assert.ok(six.includes(line), `step 6 does not say what a resume is: ${line}`);
+  assert.ok(thin().includes('a rerun of `task-close` after them is a resume'), 'On BLOCKED does not say the ruling leaves a rerun a resume');
+});
+
+test('a harness that cannot dispatch a task role stops and asks, a missing orchestrator is the announced Fallback', () => {
+  const head = flat(skill().split('\n').find((l) => l.startsWith('You are the controller')) ?? '');
+  assert.ok(head.includes('a harness that cannot dispatch a named task role agent stops and asks'), 'the opening does not scope the stop to task roles');
+  assert.ok(head.includes('a missing `roles:phase-orchestrator` is the Fallback'), 'the opening does not point the orchestrator at the Fallback');
 });
 
 test('a coordinator task runs in the main session, and the orchestrator hands over one that edits a file', () => {

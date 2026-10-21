@@ -31,6 +31,11 @@ What changed in each plugin, newest first. The plugin version in each entry is t
   fallback, the end of the run and the coordinator handoff, with no question and no ruling. A human decision is ledgered
   as `Task <N>: Ruling: <finding> — <decision> — <why> — <what it costs if wrong>`, and a task with a `complete` line is
   not dispatched again unless the resume note reopens it (a Phase check failure's reopen).
+- **A rerun of `task-close` after a BLOCKED round trip resumes.** The `Orchestrator:` line, the task's `Task <N>:
+  Ruling:`, `awaiting landing` and `minor (deferred)` lines and every line that names no `T<N>` no longer make it a
+  reopen; `Prep:`, `BASE:`, `Task <N>: fix round` and the new `Task <N>: reopened — Phase check failed — <command>`
+  still do. The main session runs a Phase check failure's reopen and writes that line; the orchestrator runs the fix
+  loop. `triqual doctor` says `unset` for an `[agents]` table defined by a dotted or inline key without `max_depth`.
 - **Coordinator tasks stay with the main session.** The orchestrator never edits product code (its role disallows
   `Edit` and `NotebookEdit`), so it runs a coordinator task only when the task edits no file; one that does is handed
   over with `BLOCKED: coordinator task T<N> — edits files, run it in the main session`, and the main session runs it

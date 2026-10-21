@@ -1059,6 +1059,62 @@ test('task-close: a reopen with no ledger line since the complete line is not a 
   assert.notEqual(first.sha, fix);
 }));
 
+test('task-close: lines the controller writes after a failed close do not turn the rerun into a reopen', () => withRig({}, (r) => {
+  prepared(r, 2);
+  HEAVY_OUTPUTS(r);
+  r.failMove('record');
+  assert.equal(r.run('task-close', r.plan, '2').status, 1);
+  const completeSha = r.head();
+  assert.equal(r.ledger().filter((l) => l.startsWith('Task 2: complete')).length, 1);
+
+  // What an On BLOCKED round trip leaves between the complete line and the rerun (SKILL.md, The Thin Controller and
+  // Ledger vocabulary), plus other tasks' own lines: none of them is new work on T2.
+  r.allowMove('record');
+  r.appendLedger(
+    'Task 2: awaiting landing',
+    'Orchestrator: P1 — Phase: P1 blocked',
+    'Denied by policy: triqual role-eval record — /somewhere',
+    'Task 2: Ruling: record failed — rerun task-close — the store was locked — none',
+    'Ruling: human granted 2 rounds for T3 — the breaker — none',
+    'Task 2: minor (deferred): a nit',
+    'Error: orchestrator P1 — exit 1 — nested dispatch unavailable',
+    'RateLimit: roles:hunter 10:00',
+    'Task 3: minor (deferred): a nit of another task',
+    'BASE: T3 ' + completeSha,
+  );
+  r.clearCalls();
+  const again = ok(r.run('task-close', r.plan, '2'));
+  assert.equal(out(again).record, 'recorded');
+  assert.equal(out(again).sha, completeSha, 'no second squash');
+  assert.equal(r.head(), completeSha);
+  assert.equal(r.ledger().filter((l) => l.startsWith('Task 2: complete')).length, 1, 'a second complete line');
+  assert.equal(recordOf(r, 2).attempt, 1);
+  assert.equal(storedRecords(r).length, 1);
+  assert.deepEqual(r.calls().filter((c) => c.startsWith('tasks done')), [], 'done moved again');
+}));
+
+test('task-close: new work on the task after its complete line is a reopen, not a resume', () => {
+  const lines = [
+    ['a Phase check reopen line', (r) => `Task 2: reopened — Phase check failed — npm test`],
+    ['a fix round line', (r) => 'Task 2: fix round 1/5 (1 addressed, 0 open — a; commits aaaaaaa..bbbbbbb)'],
+    ['a new Prep line', (r) => `Prep: T2 r2 ${r.head()}`],
+    ['a new BASE line', (r) => `BASE: T2 ${r.git('rev-parse', 'HEAD~1').trim()}`],
+  ];
+  for (const [what, line] of lines) {
+    withRig({ store: false }, (r) => {
+      prepared(r, 2);
+      HEAVY_OUTPUTS(r);
+      const first = out(ok(r.run('task-close', r.plan, '2')));
+      r.appendLedger('Orchestrator: P1 — Phase: P1 done', line(r));
+      const res = r.run('task-close', r.plan, '2');
+      assert.equal(res.status, 1, `${what}: ${res.stdout}\n${res.stderr}`);
+      assert.match(res.stderr, /attempt 2/, what);
+      assert.equal(r.head(), first.sha, `${what}: the stack was rewritten`);
+      assert.equal(storedRecords(r).length, 1, `${what}: a second record`);
+    });
+  }
+});
+
 test('task-close: local mode writes the entry on the rerun of a first run that failed at the record step', () => withRig({ local: true }, (r) => {
   const progress = () => {
     const file = JSON.parse(r.triqual('tasks', 'paths', '--json').stdout).progress;

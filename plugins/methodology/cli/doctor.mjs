@@ -917,7 +917,7 @@ function codexDepthCheck(path, failures) {
   if (depth.state === 'number' && depth.value >= 2) return;
   // Sync cannot fix a value it will not edit: say to edit it by hand instead of recommending a sync that fails.
   if (depth.foreign) {
-    const shown = depth.state === 'number' ? String(depth.value) : 'not a readable number';
+    const shown = depth.state === 'number' ? String(depth.value) : depth.state === 'unset' ? 'unset' : 'not a readable number';
     failures.push(`Codex [agents] max_depth is ${shown}, in a dotted or inline key that sync cannot edit: set it to 2 or more by hand`);
   } else if (depth.state === 'other') {
     failures.push('Codex [agents] max_depth is not a number: set it to 2 or more by hand');

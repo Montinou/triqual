@@ -1792,7 +1792,9 @@ test('Codex depth check: an [agents] max_depth below 2, or unset, fails with the
     for (const [text, shown] of [
       [`agents.max_depth = 1\n${synced.replace('[agents]\nmax_depth = 2\n', '')}`, '1'],
       [`agents = { max_depth = 1 }\n${synced.replace('[agents]\nmax_depth = 2\n', '')}`, '1'],
-      [`agents.max_threads = 4\n${synced.replace('[agents]\nmax_depth = 2\n', '')}`, 'not a readable number'],
+      [`agents.max_threads = 4\n${synced.replace('[agents]\nmax_depth = 2\n', '')}`, 'unset'],
+      [`agents = { other = 1 }\n${synced.replace('[agents]\nmax_depth = 2\n', '')}`, 'unset'],
+      [`agents.max_depth = "deep"\n${synced.replace('[agents]\nmax_depth = 2\n', '')}`, 'not a readable number'],
     ]) {
       writeFileSync(config, text);
       assert.deepEqual((await harnessDoctor(ctx)).failures, byHand(shown), text.split('\n')[0]);

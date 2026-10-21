@@ -405,13 +405,13 @@ function tomlInteger(text) {
 
 // config.toml's [agents] max_depth: { state: 'unset' }, { state: 'number', value } or { state: 'other' } for a value
 // that is not a TOML integer. `foreign: true` when it is set by a top-level dotted or inline key (`agents.max_depth =
-// 3`, `agents = { max_depth = 3 }`) that the edit helpers cannot change; then `other` also covers a definition of
-// [agents] with no max_depth in it. A read only: setTableKey's result is dropped.
+// 3`, `agents = { max_depth = 3 }`) that the edit helpers cannot change; a definition of [agents] with no max_depth in
+// it is `unset` and foreign. A read only: setTableKey's result is dropped.
 export function codexMaxDepth(text) {
   const { was } = setTableKey(text, 'agents', 'max_depth', String(DEPTH_WANTED));
   const foreign = was === null ? foreignTableKey(text, 'agents', 'max_depth') : null;
   const raw = foreign ? foreign.value : was;
-  if (raw === null) return foreign ? { state: 'other', foreign: true } : { state: 'unset' };
+  if (raw === null) return foreign ? { state: 'unset', foreign: true } : { state: 'unset' };
   const value = tomlInteger(raw);
   const seen = value === null ? { state: 'other' } : { state: 'number', value };
   return foreign ? { ...seen, foreign: true } : seen;

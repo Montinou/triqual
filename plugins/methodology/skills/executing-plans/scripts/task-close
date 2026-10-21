@@ -129,8 +129,16 @@
     const state = common.taskState(planName, n);
     const completeAt = ledger.flatMap((l, i) => (l.startsWith(`Task ${n}: complete (commits `) ? [i] : []));
     const lastComplete = completeAt.at(-1) ?? -1;
+    // A rerun resumes unless a line after the complete line is new work on THIS task. Lines the controller and the
+    // orchestrator write around a failed close are not (SKILL.md, The Thin Controller): this step's own `Error:` lines,
+    // the task's `Ruling:`, `awaiting landing` and `minor (deferred)` lines, and every line that names no T<N> or
+    // `Task <N>:` (`Orchestrator:`, `Denied by policy:`, `Ruling:`, `RateLimit:`, other tasks' lines). Everything else
+    // that names this task (`Prep:`, `BASE:`, `Task <N>: fix round`, `Task <N>: reopened`, ...) marks a reopen.
+    const ownScope = new RegExp(`^(?:Task ${n}: |(?:Prep|BASE|Tier|Tier raised|Review|Re-review|Round [12]|Skills): T${n}\\b|Error: [a-z-]+ T${n} |Budget: .* for T${n} )`);
+    const ownQuiet = new RegExp(`^(?:Error: ${STEP} T${n} |Task ${n}: (?:Ruling: |awaiting landing$|minor \\(deferred\\)))`);
+    const notNewWork = (l) => ownQuiet.test(l) || !ownScope.test(l);
     const resumed = lastComplete >= 0 && (state === null || state.status === 'done')
-      && ledger.slice(lastComplete + 1).every((l) => l.startsWith(`Error: ${STEP} T${n} `));
+      && ledger.slice(lastComplete + 1).every(notNewWork);
     const earlier = resumed ? completeAt.slice(0, -1) : completeAt;
     const attempt = earlier.length + 1;
     const window = ledger.slice((earlier.at(-1) ?? -1) + 1, resumed ? lastComplete : ledger.length);

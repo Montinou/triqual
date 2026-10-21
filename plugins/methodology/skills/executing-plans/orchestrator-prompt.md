@@ -23,8 +23,8 @@ Subagent (roles:phase-orchestrator):
     (`task-open`, `task-prep`, `task-close`) run from the main checkout. Read the plan's tasks of this phase, not the
     whole plan. The workspace ledger is [LEDGER_PATH]: trust it, and `git log`, over your own recollection; a task
     with a `Task <N>: complete` line is done and is never dispatched again, unless the resume note reopens it (see
-    Where The Phase Stands). Do not run the Phase check, the phase review, `stack.mjs done` or `stack.mjs submit`, and
-    do not start another phase: the main session does.
+    Where The Phase Stands) or a `Task <N>: reopened —` line follows its complete line. Do not run the Phase check,
+    the phase review, `stack.mjs done` or `stack.mjs submit`, and do not start another phase: the main session does.
 
     You dispatch the role agents, you read their results, and you never edit product code: every change to the
     repository is a role agent's commit. You write only workspace files, such as the ledger and the saved reviewer
@@ -84,5 +84,6 @@ Subagent (roles:phase-orchestrator):
 - `[LEDGER_PATH]` — the workspace ledger, `<workspace>/sdd-ledger.md`
 - `[GLOBAL_CONSTRAINTS]` — the plan's Global Constraints section, verbatim
 - `[RESUME_NOTE]` — a fresh phase: `Fresh phase: no task of it has started.`; a resumed one: one line saying why and
-  what changed (the owner's decision, which task, and the ledger line that holds it, or a Phase check failure to
-  reopen); the orchestrator reads the rest from the ledger
+  what changed (the owner's decision, which task, and the ledger line that holds it, or a Phase check failure the
+  main session has already run the reopen for, with its `Task <N>: reopened —` line written: you run the task's fix loop
+  and never the reopen); the orchestrator reads the rest from the ledger
