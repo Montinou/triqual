@@ -104,7 +104,7 @@ process.exit(res.status ?? 1);
 
 // A repo with one commit holding the plan (store: the plan lives in the store's plans directory and is registered, the repo
 // is opted in; otherwise it is committed under docs/plans and the repo is not opted in). `r.plan` is the PLAN_FILE argument.
-function rig({ store = true, local = false } = {}) {
+function rig({ store = true, local = false, planText = PLAN } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'task-scripts-')));
   const home = join(root, 'home');
   const dir = join(root, 'repo');
@@ -137,7 +137,7 @@ function rig({ store = true, local = false } = {}) {
     writeFileSync(join(methodology, 'progress.md'), '# Progress\n');
     writeFileSync(join(methodology, 'status.md'), '# Status\n');
     plan = join(methodology, 'plans', PLAN_NAME);
-    writeFileSync(plan, PLAN);
+    writeFileSync(plan, planText);
     const init = triqual('tasks', 'init', plan);
     assert.equal(init.status, 0, init.stderr);
   } else if (store) {
@@ -146,13 +146,13 @@ function rig({ store = true, local = false } = {}) {
     const plansDir = JSON.parse(triqual('tasks', 'paths', '--json').stdout).plansDir;
     mkdirSync(plansDir, { recursive: true });
     plan = join(plansDir, PLAN_NAME);
-    writeFileSync(plan, PLAN);
+    writeFileSync(plan, planText);
     const init = triqual('tasks', 'init', plan);
     assert.equal(init.status, 0, init.stderr);
   } else {
     mkdirSync(join(dir, 'docs', 'plans'), { recursive: true });
     plan = join('docs', 'plans', PLAN_NAME);
-    writeFileSync(join(dir, plan), PLAN);
+    writeFileSync(join(dir, plan), planText);
   }
   git('add', '-A');
   git('commit', '-q', '-m', 'plan');
@@ -161,7 +161,7 @@ function rig({ store = true, local = false } = {}) {
   const ledgerPath = join(workspace, 'sdd-ledger.md');
   const runIn = (cwd, script, ...args) => spawnSync(process.execPath, [join(SCRIPTS, script), ...args], { cwd, env, encoding: 'utf8' });
   return {
-    root, dir, git, plan, workspace, triqual, installed, evalFile,
+    root, dir, git, env, plan, workspace, triqual, installed, evalFile,
     run: (script, ...args) => runIn(dir, script, ...args),
     runIn,
     head: () => git('rev-parse', 'HEAD').trim(),
@@ -1475,4 +1475,795 @@ test('task-close: a Budget line below the tier count keeps the hunter that has a
   const res = budgetClose(r, 2, 'Budget: hunters 2 → 1 for T2 — owner request', footerText('spec-reviewer', [0, 0, 0], [['security-1', 'refuted']]), [['security', ['security-1']]]);
   ok(res);
   assert.deepEqual(recordOf(r, 2).hunters.map((h) => [h.category, h.failed]), [['security', false]]);
+}));
+
+// ---- worktree tasks: task-open --worktree and the land-first task-close (thin controller, T8) ----
+
+const WT_PLAN = `# Worktree plan
+
+## Global Constraints
+
+- Nothing.
+
+### Task 1: First
+
+**Tier:** standard
+**Role:** roles:tdd-implementer
+
+**Files:**
+- Create: \`src/t1.js\`
+- Test: \`test/one.test.mjs\`
+
+- [ ] **Step 1:** one.
+
+### Task 2: Second
+
+**Tier:** standard
+**Role:** roles:tdd-implementer
+
+**Files:**
+- Create: \`src/t2.js\`
+- Test: \`test/two.test.mjs\`
+
+- [ ] **Step 1:** two.
+
+### Task 3: No Test path
+
+**Tier:** standard
+**Role:** roles:tdd-implementer
+
+**Files:**
+- Create: \`src/t3.js\`
+
+- [ ] **Step 1:** three.
+
+### Task 4: A Test path that node does not run
+
+**Tier:** standard
+**Role:** roles:tdd-implementer
+
+**Files:**
+- Test: \`test/four.test.ts\`
+
+- [ ] **Step 1:** four.
+
+### Task 5: A Test path outside the repository
+
+**Tier:** standard
+**Role:** roles:tdd-implementer
+
+**Files:**
+- Test: \`../escape.test.mjs\`
+
+- [ ] **Step 1:** five.
+
+### Task 6: A glob Test path
+
+**Tier:** standard
+**Role:** roles:tdd-implementer
+
+**Files:**
+- Test: \`test/*.test.mjs\`
+
+- [ ] **Step 1:** six.
+`;
+const TEST_FILE = { 1: 'test/one.test.mjs', 2: 'test/two.test.mjs' };
+const PASSING_TEST = "import { test } from 'node:test';\ntest('ok', () => {});\n";
+const FAILING_TEST = "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('bad', () => { assert.equal(1, 2); });\n";
+
+const wtPath = (r, n) => join(r.dir, '.claude', 'worktrees', `demo-plan-t${n}`);
+const wtBranch = (n) => `wt/demo-plan-t${n}`;
+const wtGit = (r, n, ...args) => execFileSync('git', args, { cwd: wtPath(r, n), env: r.env, encoding: 'utf8' });
+// A commit made inside the task's worktree, by its implementer (a different author than the repo's committer).
+const wtCommit = (r, n, file, text, message = `feat: t${n}`) => {
+  mkdirSync(dirname(join(wtPath(r, n), file)), { recursive: true });
+  writeFileSync(join(wtPath(r, n), file), text);
+  wtGit(r, n, 'add', '-A');
+  wtGit(r, n, '-c', 'user.name=Alice', '-c', 'user.email=alice@example.invalid', 'commit', '-q', '--author', 'Alice <alice@example.invalid>', '-m', message);
+  return wtGit(r, n, 'rev-parse', 'HEAD').trim();
+};
+const wtOpen = (r, n) => out(ok(r.run('task-open', r.plan, String(n), '--worktree')));
+// A worktree task built and reviewed: a source commit and a Test-file commit in its worktree, task-prep at that head, the
+// reviewers' outputs saved. Returns the reviewed head.
+const wtReview = (r, n, { source = [`src/t${n}.js`, `export const t${n} = ${n};\n`], test = PASSING_TEST } = {}) => {
+  wtCommit(r, n, source[0], source[1], `feat: t${n}`);
+  const head = wtCommit(r, n, TEST_FILE[n], test, `test: t${n}`);
+  ok(r.run('task-prep', r.plan, String(n), '--head', head));
+  save(r, n, 'safety-reviewer', 1, footerText('safety-reviewer'));
+  save(r, n, 'spec-reviewer', 1, footerText('spec-reviewer'));
+  return head;
+};
+const worktrees = (r) => r.git('worktree', 'list', '--porcelain').split('\n').filter((l) => l.startsWith('worktree ')).map((l) => l.slice('worktree '.length));
+const wtBranches = (r) => r.git('branch', '--list', 'wt/*').trim();
+const landedOf = (r, n) => r.ledger().filter((l) => l.startsWith(`Landed: T${n} `)).map((l) => l.split(' ')[2]);
+const tracked = (r, rev) => r.git('ls-tree', '-r', '--name-only', rev).split('\n').filter(Boolean);
+// Stand-ins for the package managers, on the private PATH: each call is logged with its directory, and a test makes them fail
+// by creating "<log>.fail-install".
+const fakeInstallers = (r) => {
+  const script = `#!/usr/bin/env node
+import { appendFileSync, existsSync } from 'node:fs';
+import { basename } from 'node:path';
+appendFileSync(process.env.TRIQUAL_CALL_LOG + '.install', basename(process.argv[1]) + ' ' + process.argv.slice(2).join(' ') + ' @ ' + process.cwd() + '\\n');
+if (existsSync(process.env.TRIQUAL_CALL_LOG + '.fail-install')) { process.stderr.write('ERR! boom\\n'); process.exit(1); }
+`;
+  for (const name of ['npm', 'pnpm', 'yarn']) writeFileSync(join(r.root, 'bin', name), script, { mode: 0o755 });
+  const log = join(r.root, 'triqual.log.install');
+  return {
+    calls: () => (existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : []),
+    fail: () => writeFileSync(join(r.root, 'triqual.log.fail-install'), ''),
+    heal: () => rmSync(join(r.root, 'triqual.log.fail-install'), { force: true }),
+  };
+};
+
+test('two worktree tasks land in plan order and leave no worktree or temp branch', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  const o1 = wtOpen(r, 1);
+  const o2 = wtOpen(r, 2);
+  assert.deepEqual(Object.keys(o1), ['brief', 'report', 'base', 'workdir']);
+  assert.equal(o1.workdir, wtPath(r, 1));
+  assert.equal(o2.workdir, wtPath(r, 2));
+  assert.equal(o1.base, tip);
+  assert.equal(wtGit(r, 1, 'rev-parse', '--abbrev-ref', 'HEAD').trim(), wtBranch(1));
+  assert.equal(wtGit(r, 1, 'rev-parse', 'HEAD').trim(), tip, 'the worktree starts at the phase tip');
+  // Built in reverse order of landing: the later task is reviewed first.
+  const h2 = wtReview(r, 2);
+  const h1 = wtReview(r, 1);
+  assert.match(readFileSync(join(r.workspace, `review-${tip.slice(0, 7)}..${h1.slice(0, 7)}.diff`), 'utf8'), /src\/t1\.js/, 'the review package is BASE..<worktree head>');
+  assert.equal(r.head(), tip, 'the phase branch moved before any close');
+
+  const first = ok(closeOf(r, 1));
+  assert.deepEqual(keys(first), ['sha', 'record']);
+  const c1 = out(first);
+  assert.equal(c1.sha, r.head(), 'the closed commit is the landed one');
+  assert.ok(r.git('cat-file', 'commit', c1.sha).endsWith('\n\nfeat: t1\n'), 'the landed message is the first commit message, ending in exactly one newline');
+  assert.equal(r.git('rev-parse', `${c1.sha}^`).trim(), tip, 'one commit on top of the phase tip');
+  assert.equal(r.git('log', '-1', '--format=%s', c1.sha).trim(), 'feat: t1', "the task's first commit message");
+  assert.equal(r.git('log', '-1', '--format=%an', c1.sha).trim(), 'Alice', "the task's first commit author");
+  assert.deepEqual(landedOf(r, 1), [c1.sha]);
+  const at = r.ledger().indexOf(`Landed: T1 ${c1.sha}`);
+  assert.equal(r.ledger()[at + 1], `Prep: T1 r1 ${c1.sha}`, 'the landing re-states the Prep head, so the close check passes at the landed tip');
+  assert.equal(r.ledger().at(-1), `Task 1: complete (commits ${sha7(tip)}..${sha7(c1.sha)}, review clean)`);
+  assert.equal(r.taskState(1).status, 'done');
+  assert.ok(r.calls().includes(`tasks done T1 --commit ${c1.sha} --plan ${r.plan}`), r.calls().join('\n'));
+  assert.deepEqual(worktrees(r), [r.dir, wtPath(r, 2)], 'the first task still has a worktree');
+
+  const c2 = out(ok(closeOf(r, 2)));
+  assert.equal(c2.sha, r.head());
+  assert.equal(r.git('rev-parse', `${c2.sha}^`).trim(), c1.sha, 'the second task lands on the first');
+  assert.equal(r.git('rev-list', '--count', `${tip}..HEAD`).trim(), '2');
+  assert.ok(['src/t1.js', 'src/t2.js', TEST_FILE[1], TEST_FILE[2]].every((f) => tracked(r, 'HEAD').includes(f)), tracked(r, 'HEAD').join('\n'));
+  assert.equal(r.taskState(2).status, 'done');
+  assert.deepEqual(worktrees(r), [r.dir]);
+  assert.equal(wtBranches(r), '');
+  assert.equal(existsSync(wtPath(r, 2)), false);
+  assert.notEqual(c2.sha, h2, 'the landed commit is a new commit');
+  assert.equal(spawnSync('git', ['merge-base', '--is-ancestor', h2, 'HEAD'], { cwd: r.dir, env: r.env }).status, 1, "the task's own commits are not in the phase history, only the landed one");
+  noError(r);
+}));
+
+test('a task that finished first waits: task-close refuses with exit 3 while an earlier task has not landed', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  wtOpen(r, 1);
+  wtOpen(r, 2);
+  wtReview(r, 2);
+  const before = r.ledger();
+  const res = closeOf(r, 2);
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /T1/);
+  assert.deepEqual(r.ledger(), before, 'a wait writes no ledger line, no Error: line either');
+  assert.equal(res.stdout, '');
+  assert.equal(r.taskState(2).status, 'in_review');
+  assert.equal(worktrees(r).length, 3, 'a worktree was removed');
+
+  wtReview(r, 1);
+  ok(closeOf(r, 1));
+  ok(closeOf(r, 2));
+  assert.equal(r.taskState(2).status, 'done');
+  assert.deepEqual(landedOf(r, 2).length, 1);
+}));
+
+test('a dropped earlier task does not block landing', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  wtOpen(r, 2);
+  ok(r.triqual('tasks', 'drop', 'T1', 'not needed', '--plan', PLAN_NAME));
+  wtReview(r, 2);
+  const c2 = out(ok(closeOf(r, 2)));
+  assert.equal(r.git('rev-parse', `${c2.sha}^`).trim(), tip);
+  assert.equal(r.taskState(2).status, 'done');
+}));
+
+test('without tracking an earlier task is done when its complete line is in the ledger', () => withRig({ store: false, planText: WT_PLAN }, (r) => {
+  startStack(r);
+  wtOpen(r, 1);
+  wtOpen(r, 2);
+  wtReview(r, 2);
+  assert.equal(closeOf(r, 2).status, 3);
+  wtReview(r, 1);
+  ok(closeOf(r, 1));
+  ok(closeOf(r, 2));
+  assert.equal(r.ledger().filter((l) => l.startsWith('Task 2: complete')).length, 1);
+}));
+
+test('a rerun after the landing skips it (Landed line) and finishes', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  wtOpen(r, 1);
+  wtReview(r, 1);
+  r.failMove('done');
+  const first = closeOf(r, 1);
+  assert.equal(first.status, 1, `${first.stdout}\n${first.stderr}`);
+  const [landed] = landedOf(r, 1);
+  assert.ok(landed, 'no Landed line');
+  assert.equal(r.head(), landed, 'the phase branch is at the landed commit');
+  assert.equal(r.ledger().filter((l) => l.startsWith('Task 1: complete')).length, 0);
+  assert.equal(worktrees(r).length, 2, 'the worktree is removed only after the close');
+
+  r.allowMove('done');
+  const again = out(ok(closeOf(r, 1)));
+  assert.equal(again.sha, landed, 'a second landing made a second commit');
+  assert.deepEqual(landedOf(r, 1), [landed]);
+  assert.equal(r.git('rev-list', '--count', `${tip}..HEAD`).trim(), '1');
+  assert.equal(r.ledger().filter((l) => l.startsWith('Task 1: complete')).length, 1);
+  assert.equal(r.ledger().filter((l) => l.startsWith('Prep: T1 ')).length, 2, 'the landing Prep line is written once');
+  assert.equal(r.taskState(1).status, 'done');
+  assert.deepEqual(worktrees(r), [r.dir]);
+  assert.equal(wtBranches(r), '');
+}));
+
+test('a rerun after the close finishes the clean-up of the worktree and its branch', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  wtOpen(r, 1);
+  wtReview(r, 1);
+  const first = out(ok(closeOf(r, 1)));
+  // The clean-up of a first run that died after the complete line: the worktree and its branch are back.
+  r.git('branch', wtBranch(1), first.sha);
+  r.git('worktree', 'add', '-q', wtPath(r, 1), wtBranch(1));
+  const again = out(ok(closeOf(r, 1)));
+  assert.equal(again.sha, first.sha);
+  assert.deepEqual(worktrees(r), [r.dir]);
+  assert.equal(wtBranches(r), '');
+}));
+
+test('--head defaults to the wt branch tip', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  wtOpen(r, 1);
+  const reviewed = wtReview(r, 1);
+  const later = wtCommit(r, 1, 'src/later.js', 'export const later = 1;\n', 'fix: later');
+  // No --head: the wt branch tip is the head, and it is a commit no reviewer saw.
+  const bare = closeOf(r, 1);
+  assert.equal(bare.status, 3, `${bare.stdout}\n${bare.stderr}`);
+  assert.match(bare.stderr, new RegExp(`commits after the last review.*HEAD ${later.slice(0, 7)}`));
+  assert.equal(r.head(), tip, 'the phase branch moved');
+  assert.deepEqual(landedOf(r, 1), []);
+
+  const res = out(ok(closeOf(r, 1, '--head', reviewed)));
+  assert.equal(r.git('rev-parse', `${res.sha}^`).trim(), tip);
+  assert.equal(tracked(r, 'HEAD').includes('src/later.js'), false, 'the commit past --head was landed');
+  assert.ok(tracked(r, 'HEAD').includes('src/t1.js'));
+}));
+
+test('an overlapping change is undone, moved back and logged', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  r.commit('src/shared.js', 'a\nb\nc\n', 'chore: shared');
+  wtOpen(r, 1);
+  wtOpen(r, 2);
+  wtReview(r, 1, { source: ['src/shared.js', 'A\nb\nc\n'] });
+  wtReview(r, 2, { source: ['src/shared.js', 'X\nb\nc\n'] });
+  const c1 = out(ok(closeOf(r, 1)));
+  r.clearCalls();
+
+  const res = closeOf(r, 2);
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /landing conflict.*src\/shared\.js/);
+  assert.equal(r.head(), c1.sha, 'the phase branch is not at the previous tip');
+  assert.equal(r.git('status', '--porcelain', '--untracked-files=no').trim(), '');
+  assert.equal(r.git('show', 'HEAD:src/shared.js'), 'A\nb\nc\n');
+  assert.deepEqual(r.ledger().slice(-3, -1), [`BASE: T2 ${c1.sha}`, 'Task 2: landing conflict — re-run sequential']);
+  assert.match(r.ledger().at(-1), /^Error: task-close T2 — exit 3 — .*landing conflict/);
+  assert.deepEqual(landedOf(r, 2), [], 'a conflict is no landing');
+  assert.equal(r.taskState(2).status, 'in_progress', 'rework');
+  assert.ok(r.calls().some((c) => c.startsWith('tasks rework T2 ')), r.calls().join('\n'));
+  assert.deepEqual(worktrees(r), [r.dir]);
+  assert.equal(wtBranches(r), '');
+  assert.equal(existsSync(wtPath(r, 2)), false);
+}));
+
+test('a failing Test file after landing is undone, moved back and logged', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  wtOpen(r, 1);
+  wtReview(r, 1, { test: FAILING_TEST });
+  const res = closeOf(r, 1);
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /node --test/);
+  assert.equal(r.head(), tip, 'the phase branch is not back at the previous tip');
+  assert.equal(r.git('status', '--porcelain', '--untracked-files=no').trim(), '');
+  assert.equal(tracked(r, 'HEAD').includes('src/t1.js'), false, 'the landed files are still in the tree');
+  assert.equal(landedOf(r, 1).length, 1, 'the landing was ledgered before the tests ran');
+  assert.deepEqual(r.ledger().slice(-3, -1), [`BASE: T1 ${tip}`, 'Task 1: landing conflict — re-run sequential']);
+  assert.match(r.ledger().at(-1), /^Error: task-close T1 — exit 3 — /);
+  assert.equal(r.ledger().filter((l) => l.startsWith('Task 1: complete')).length, 0);
+  assert.equal(r.taskState(1).status, 'in_progress');
+  assert.deepEqual(worktrees(r), [r.dir]);
+  assert.equal(wtBranches(r), '');
+}));
+
+test('a Test file that does not exist at the landed tip is a failure, never a pass', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  wtOpen(r, 1);
+  const head = wtCommit(r, 1, 'src/t1.js', 'export const t1 = 1;\n'); // the Test file was never committed
+  ok(r.run('task-prep', r.plan, '1', '--head', head));
+  save(r, 1, 'safety-reviewer', 1, footerText('safety-reviewer'));
+  save(r, 1, 'spec-reviewer', 1, footerText('spec-reviewer'));
+  const res = closeOf(r, 1);
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /test\/one\.test\.mjs/);
+  assert.equal(r.head(), tip);
+  assert.equal(r.taskState(1).status, 'in_progress');
+}));
+
+test('the undo appends a fresh BASE line, and the sequential re-run closes from it', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  wtOpen(r, 1);
+  wtReview(r, 1, { test: FAILING_TEST });
+  assert.equal(closeOf(r, 1).status, 3);
+  assert.equal(r.ledger().filter((l) => l === `BASE: T1 ${tip}`).length, 2, 'no fresh BASE line');
+
+  // The stale Landed line and the Prep lines of the worktree attempt belong to the attempt the BASE line ended.
+  const o = open(r, 1);
+  assert.equal(o.base, tip);
+  assert.equal(Object.hasOwn(o, 'workdir'), false);
+  r.commit('src/t1.js', 'export const t1 = 1;\n', 'feat: t1 again');
+  const prep = out(ok(r.run('task-prep', r.plan, '1')));
+  assert.equal(prep.round, '1', 'the new BASE starts the review rounds again');
+  assert.notEqual(prep.package, 'none');
+  save(r, 1, 'safety-reviewer', 1, footerText('safety-reviewer'));
+  save(r, 1, 'spec-reviewer', 1, footerText('spec-reviewer'));
+  const closed = out(ok(closeOf(r, 1)));
+  assert.equal(closed.sha, r.head());
+  assert.equal(r.git('rev-parse', `${closed.sha}^`).trim(), tip);
+  assert.equal(r.git('log', '-1', '--format=%s').trim(), 'feat: t1 again');
+  assert.equal(r.ledger().at(-1), `Task 1: complete (commits ${sha7(tip)}..${sha7(closed.sha)}, review clean)`);
+  assert.equal(recordOf(r, 1).attempt, 1);
+}));
+
+test('task-close: Landed and the landing Prep line after the complete line are the same attempt, not a reopen', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  wtOpen(r, 1);
+  wtReview(r, 1);
+  const first = out(ok(closeOf(r, 1)));
+  r.appendLedger(`Landed: T1 ${first.sha}`, `Prep: T1 r1 ${first.sha}`, 'Task 1: awaiting landing');
+  r.clearCalls();
+  const again = out(ok(closeOf(r, 1)));
+  assert.equal(again.sha, first.sha, 'a second landing or squash');
+  assert.equal(again.record, 'already recorded');
+  assert.equal(r.head(), first.sha);
+  assert.equal(r.ledger().filter((l) => l.startsWith('Task 1: complete')).length, 1);
+  assert.equal(recordOf(r, 1).attempt, 1);
+  assert.deepEqual(r.calls().filter((c) => c.startsWith('tasks done')), []);
+  // A Prep line at any other head is still new work on the task: not a resume, so the head check runs again and refuses.
+  r.appendLedger(`Prep: T1 r2 ${r.git('rev-parse', 'HEAD~1').trim()}`);
+  const reopened = closeOf(r, 1);
+  assert.equal(reopened.status, 3, `${reopened.stdout}\n${reopened.stderr}`);
+  assert.match(reopened.stderr, /commits after the last review/);
+  assert.equal(r.ledger().filter((l) => l.startsWith('Task 1: complete')).length, 1);
+}));
+
+test('task-close: a dirty phase branch is refused before anything lands', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  wtOpen(r, 1);
+  wtReview(r, 1);
+  writeFileSync(join(r.dir, 'README.md'), '# repo, edited\n');
+  const before = r.head();
+  const res = closeOf(r, 1);
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /not clean/);
+  assert.equal(r.head(), before);
+  assert.deepEqual(landedOf(r, 1), []);
+  assert.equal(worktrees(r).length, 2);
+}));
+
+test('a task with no Test path is refused for a worktree', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  for (const [n, why] of [[3, /Test/], [4, /test\/four\.test\.ts.*\.mjs/]]) {
+    const res = r.run('task-open', r.plan, String(n), '--worktree');
+    assert.equal(res.status, 3, `T${n}: ${res.stdout}\n${res.stderr}`);
+    assert.match(res.stderr, why, `T${n}`);
+    assert.equal(res.stdout, '', `T${n}`);
+    assert.match(r.ledger().at(-1), new RegExp(`^Error: task-open T${n} — exit 3 — `), `T${n}`);
+    assert.equal(existsSync(wtPath(r, n)), false, `T${n}: a worktree was made`);
+    assert.equal(r.taskState(n).status, 'pending', `T${n}: the task was started`);
+    assert.equal(r.ledger().some((l) => l.startsWith(`BASE: T${n} `)), false, `T${n}: BASE was recorded`);
+  }
+  // The same tasks run in place as usual.
+  assert.deepEqual(keys(ok(r.run('task-open', r.plan, '3'))), ['brief', 'report', 'base']);
+}));
+
+test('task-open --worktree adds the exclude entry once and reuses the worktree on a second run', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const exclude = join(r.dir, '.git', 'info', 'exclude');
+  const entries = () => readFileSync(exclude, 'utf8').split('\n').filter((l) => l === '.claude/worktrees/');
+  assert.deepEqual(entries(), []);
+  const first = wtOpen(r, 1);
+  assert.deepEqual(entries(), ['.claude/worktrees/']);
+  assert.equal(existsSync(join(first.workdir, '.git')), true);
+  assert.equal(r.git('status', '--porcelain').includes('.claude'), false, 'the worktrees are not excluded from git status');
+
+  const mine = wtCommit(r, 1, 'src/t1.js', 'export const t1 = 1;\n');
+  const second = wtOpen(r, 1);
+  assert.deepEqual(second, first, 'a second run prints something else');
+  assert.equal(wtGit(r, 1, 'rev-parse', 'HEAD').trim(), mine, 'the worktree was made again');
+  assert.deepEqual(worktrees(r), [r.dir, wtPath(r, 1)]);
+  assert.equal(r.ledger().filter((l) => l.startsWith('BASE: T1 ')).length, 1);
+
+  wtOpen(r, 2);
+  assert.deepEqual(entries(), ['.claude/worktrees/'], 'a second entry');
+  assert.deepEqual(worktrees(r), [r.dir, wtPath(r, 1), wtPath(r, 2)]);
+}));
+
+test('an install failure is an Error line and exit 1', () => withRig({ planText: WT_PLAN }, (r) => {
+  const installer = fakeInstallers(r);
+  r.commit('package-lock.json', '{}\n', 'chore: lockfile');
+  startStack(r);
+  installer.fail();
+  const res = r.run('task-open', r.plan, '1', '--worktree');
+  assert.equal(res.status, 1, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /npm ci.*boom/);
+  assert.equal(res.stdout, '');
+  assert.match(r.ledger().at(-1), /^Error: task-open T1 — exit 1 — .*boom/);
+
+  // The rerun reuses the worktree and installs again: a failed install is never taken for a done one.
+  installer.heal();
+  const again = wtOpen(r, 1);
+  assert.equal(again.workdir, wtPath(r, 1));
+  assert.deepEqual(installer.calls(), [`npm ci @ ${wtPath(r, 1)}`, `npm ci @ ${wtPath(r, 1)}`]);
+  wtOpen(r, 1);
+  assert.equal(installer.calls().length, 2, 'a worktree that installed was installed again');
+}));
+
+test('the install command follows the lockfile', () => {
+  const cases = [
+    [['package-lock.json'], 'npm ci'],
+    [['pnpm-lock.yaml'], 'pnpm install --frozen-lockfile'],
+    [['yarn.lock'], 'yarn install --frozen-lockfile'],
+    [[], null],
+  ];
+  for (const [lockfiles, command] of cases) {
+    withRig({ planText: WT_PLAN }, (r) => {
+      const installer = fakeInstallers(r);
+      for (const f of lockfiles) r.commit(f, '\n', `chore: ${f}`);
+      startStack(r);
+      const o = wtOpen(r, 1);
+      assert.deepEqual(installer.calls(), command ? [`${command} @ ${o.workdir}`] : [], lockfiles.join());
+    });
+  }
+});
+
+// ---- worktree tasks: fix round 1 (the crash windows of the landing, the phase-branch guard, paths, timeout, stale outputs) ----
+
+// A Test file that counts its runs in <root>/ran.log, and fails while <root>/fail.flag exists.
+const countingTest = (r) => `import { test } from 'node:test';
+import { appendFileSync, existsSync } from 'node:fs';
+import assert from 'node:assert/strict';
+appendFileSync(${JSON.stringify(join(r.root, 'ran.log'))}, 'x\\n');
+test('counted', () => { assert.equal(existsSync(${JSON.stringify(join(r.root, 'fail.flag'))}), false); });
+`;
+const testRuns = (r) => (existsSync(join(r.root, 'ran.log')) ? readFileSync(join(r.root, 'ran.log'), 'utf8').split('\n').filter(Boolean).length : 0);
+const ledgerPath = (r) => join(r.workspace, 'sdd-ledger.md');
+const editLedger = (r, keep) => writeFileSync(ledgerPath(r), `${readFileSync(ledgerPath(r), 'utf8').split('\n').filter((l) => l !== '' && keep(l)).join('\n')}\n`);
+const testedOf = (r, n) => r.ledger().filter((l) => l.startsWith(`Tested: T${n} `)).map((l) => l.split(' ')[2]);
+// A first close that dies right after the landing (`triqual tasks done` fails): the landing is ledgered and tested, nothing is closed.
+const crashedAfterLanding = (r, n = 1) => {
+  r.failMove('done');
+  const first = closeOf(r, n);
+  assert.equal(first.status, 1, `${first.stdout}\n${first.stderr}`);
+  r.allowMove('done');
+  const [landed] = landedOf(r, n);
+  assert.ok(landed, 'no Landed line');
+  return landed;
+};
+const noComplete = (r, n = 1) => assert.equal(r.ledger().filter((l) => l.startsWith(`Task ${n}: complete`)).length, 0, 'the task was closed');
+const closeWithEnv = (r, n, extraEnv) => spawnSync(process.execPath, [join(SCRIPTS, 'task-close'), r.plan, String(n)], { cwd: r.dir, env: { ...r.env, ...extraEnv }, encoding: 'utf8' });
+
+test('a green landing is ledgered as Tested, and a rerun with no Tested line runs the Test files again before it closes', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  wtOpen(r, 1);
+  wtReview(r, 1, { test: countingTest(r) });
+  const landed = crashedAfterLanding(r);
+  assert.equal(testRuns(r), 1);
+  const at = r.ledger().indexOf(`Landed: T1 ${landed}`);
+  assert.deepEqual(r.ledger().slice(at, at + 3), [`Landed: T1 ${landed}`, `Prep: T1 r1 ${landed}`, `Tested: T1 ${landed}`]);
+
+  // The crash window after the Landed line and before the tests ended: no Tested line.
+  editLedger(r, (l) => !l.startsWith('Tested: T1 '));
+  const again = out(ok(closeOf(r, 1)));
+  assert.equal(again.sha, landed);
+  assert.equal(testRuns(r), 2, 'the Test files did not run again');
+  assert.deepEqual(testedOf(r, 1), [landed]);
+  assert.equal(r.git('rev-list', '--count', `${tip}..HEAD`).trim(), '1');
+  assert.equal(r.taskState(1).status, 'done');
+  assert.deepEqual(worktrees(r), [r.dir]);
+}));
+
+test('a landing that has a Tested line is not tested again on the rerun', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  wtOpen(r, 1);
+  wtReview(r, 1, { test: countingTest(r) });
+  const landed = crashedAfterLanding(r);
+  ok(closeOf(r, 1));
+  assert.equal(testRuns(r), 1, 'a tested landing was tested again');
+  assert.deepEqual(landedOf(r, 1), [landed]);
+}));
+
+test('an untested landing whose Test files now fail is undone, never closed', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  wtOpen(r, 1);
+  wtReview(r, 1, { test: countingTest(r) });
+  crashedAfterLanding(r);
+  editLedger(r, (l) => !l.startsWith('Tested: T1 '));
+  writeFileSync(join(r.root, 'fail.flag'), '');
+  r.clearCalls();
+  const res = closeOf(r, 1);
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /node --test/);
+  assert.equal(r.head(), tip, 'the failing landing is still on the phase branch');
+  assert.deepEqual(r.ledger().slice(-3, -1), [`BASE: T1 ${tip}`, 'Task 1: landing conflict — re-run sequential']);
+  noComplete(r);
+  assert.equal(r.taskState(1).status, 'in_progress');
+  assert.deepEqual(r.calls().filter((c) => c.startsWith('tasks done')), []);
+  assert.deepEqual(worktrees(r), [r.dir]);
+  assert.equal(wtBranches(r), '');
+}));
+
+test('an untested landing that is no longer the phase tip is refused, never closed', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  wtOpen(r, 1);
+  wtReview(r, 1);
+  const landed = crashedAfterLanding(r);
+  editLedger(r, (l) => !l.startsWith('Tested: T1 '));
+  const later = r.commit('src/later.js', 'export const later = 1;\n', 'feat: later');
+  const res = closeOf(r, 1);
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /no Tested: line/);
+  assert.match(r.ledger().at(-1), /^Error: task-close T1 — exit 3 — /);
+  assert.equal(r.head(), later);
+  assert.equal(r.git('rev-parse', 'HEAD~1').trim(), landed);
+  noComplete(r);
+  assert.equal(r.taskState(1).status, 'in_review');
+}));
+
+test('a landing that is not on the phase branch (the undo died after the reset) is an Error, never closed', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  wtOpen(r, 1);
+  wtReview(r, 1);
+  crashedAfterLanding(r);
+  r.git('reset', '--keep', tip); // the undo got this far, then died before its BASE line
+  r.clearCalls();
+  const res = closeOf(r, 1);
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /not on the phase branch/);
+  assert.match(r.ledger().at(-1), /^Error: task-close T1 — exit 3 — .*not on the phase branch/);
+  noComplete(r);
+  assert.deepEqual(r.calls().filter((c) => c.startsWith('tasks done')), []);
+  assert.equal(r.taskState(1).status, 'in_review');
+  assert.equal(r.head(), tip);
+}));
+
+test('an undo that died before its clean-up is finished by the rerun, and the task is not closed', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  wtOpen(r, 1);
+  wtReview(r, 1, { test: FAILING_TEST });
+  r.failMove('rework');
+  const first = closeOf(r, 1);
+  assert.equal(first.status, 1, `${first.stdout}\n${first.stderr}`);
+  assert.equal(r.head(), tip, 'the phase branch is back at the previous tip');
+  assert.equal(worktrees(r).length, 2, 'the clean-up did not run yet');
+  r.allowMove('rework');
+  r.clearCalls();
+
+  const again = closeOf(r, 1);
+  assert.equal(again.status, 3, `${again.stdout}\n${again.stderr}`);
+  assert.match(again.stderr, /undone earlier/);
+  assert.equal(r.taskState(1).status, 'in_progress', 'the task was not moved back');
+  assert.deepEqual(worktrees(r), [r.dir]);
+  assert.equal(wtBranches(r), '');
+  assert.equal(r.head(), tip);
+  assert.equal(r.ledger().filter((l) => l === 'Task 1: landing conflict — re-run sequential').length, 1);
+  assert.equal(landedOf(r, 1).length, 1, 'a second landing');
+  noComplete(r);
+  assert.deepEqual(r.calls().filter((c) => c.startsWith('tasks done')), []);
+}));
+
+test('a crash between the landing and its Prep line does not strand the rerun', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  wtOpen(r, 1);
+  wtReview(r, 1);
+  const landed = crashedAfterLanding(r);
+  editLedger(r, (l) => l !== `Prep: T1 r1 ${landed}`);
+  const again = out(ok(closeOf(r, 1)));
+  assert.equal(again.sha, landed);
+  assert.equal(r.taskState(1).status, 'done');
+  assert.equal(r.ledger().filter((l) => l.startsWith('Task 1: complete')).length, 1);
+}));
+
+test('a crash between the reset and the Landed line records the landing that stands, not a second one', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  wtOpen(r, 1);
+  wtReview(r, 1, { test: countingTest(r) });
+  const landed = crashedAfterLanding(r);
+  editLedger(r, (l) => !l.includes(landed)); // the phase branch moved; no Landed, Prep or Tested line was written
+  const again = out(ok(closeOf(r, 1)));
+  assert.equal(again.sha, landed, 'a second landing commit was made');
+  assert.equal(r.head(), landed);
+  assert.equal(r.git('rev-list', '--count', `${tip}..HEAD`).trim(), '1');
+  assert.deepEqual(landedOf(r, 1), [landed]);
+  assert.deepEqual(testedOf(r, 1), [landed]);
+  assert.equal(testRuns(r), 2, 'the landing was closed untested');
+  assert.equal(r.taskState(1).status, 'done');
+}));
+
+test('a crash between the reset and the Landed line, with Test files that now fail, goes back to the commit before the landing', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  wtOpen(r, 1);
+  wtReview(r, 1, { test: countingTest(r) });
+  const landed = crashedAfterLanding(r);
+  editLedger(r, (l) => !l.includes(landed));
+  writeFileSync(join(r.root, 'fail.flag'), '');
+  const res = closeOf(r, 1);
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.equal(r.head(), tip, 'the undo went back to the landing commit, not to the commit before it');
+  assert.deepEqual(r.ledger().slice(-3, -1), [`BASE: T1 ${tip}`, 'Task 1: landing conflict — re-run sequential']);
+}));
+
+test('a worktree task lands only on the active phase branch: another branch, the trunk and a detached HEAD are refused', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const phase = r.git('branch', '--show-current').trim();
+  const tip = r.head();
+  wtOpen(r, 1);
+  wtReview(r, 1);
+  const trunkTip = r.git('rev-parse', 'main').trim();
+  for (const [label, go, want] of [
+    ['another branch', () => r.git('switch', '-q', '-c', 'other'), /HEAD is on other, not the active phase's branch/],
+    ['the trunk', () => r.git('switch', '-q', 'main'), /HEAD is on main, not the active phase's branch/],
+    ['a detached HEAD', () => r.git('switch', '-q', '--detach', phase), /HEAD is detached/],
+  ]) {
+    go();
+    const here = r.head();
+    const res = closeOf(r, 1);
+    assert.equal(res.status, 3, `${label}: ${res.stdout}\n${res.stderr}`);
+    assert.match(res.stderr, want, label);
+    assert.match(r.ledger().at(-1), /^Error: task-close T1 — exit 3 — /, label);
+    assert.equal(r.head(), here, `${label}: HEAD moved`);
+    assert.equal(r.git('rev-parse', phase).trim(), tip, `${label}: the phase branch moved`);
+    assert.equal(r.git('rev-parse', 'main').trim(), trunkTip, `${label}: the trunk moved`);
+    assert.deepEqual(landedOf(r, 1), [], label);
+    r.git('switch', '-q', phase);
+  }
+  ok(closeOf(r, 1));
+}));
+
+test('a Test path that is a glob or leaves the repository is refused when the worktree is opened', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  for (const [n, why] of [[5, /outside the repository/], [6, /glob/]]) {
+    const res = r.run('task-open', r.plan, String(n), '--worktree');
+    assert.equal(res.status, 3, `T${n}: ${res.stdout}\n${res.stderr}`);
+    assert.match(res.stderr, why, `T${n}`);
+    assert.match(r.ledger().at(-1), new RegExp(`^Error: task-open T${n} — exit 3 — `), `T${n}`);
+    assert.equal(existsSync(wtPath(r, n)), false, `T${n}: a worktree was made`);
+    assert.equal(r.taskState(n).status, 'pending', `T${n}: the task was started`);
+  }
+}));
+
+test('a Test path the plan changed to leave the repository after the open is refused before anything lands', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  wtOpen(r, 1);
+  wtReview(r, 1);
+  writeFileSync(r.plan, readFileSync(r.plan, 'utf8').replace('`test/one.test.mjs`', '`../one.test.mjs`'));
+  const res = closeOf(r, 1);
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /outside the repository/);
+  assert.equal(r.head(), tip);
+  assert.deepEqual(landedOf(r, 1), []);
+}));
+
+test('a landing whose Test files outlive the timeout is a failure and is undone', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  wtOpen(r, 1);
+  wtReview(r, 1, { test: "import { test } from 'node:test';\ntest('slow', async () => { await new Promise((done) => setTimeout(done, 6000)); });\n" });
+  const bad = closeWithEnv(r, 1, { TRIQUAL_LANDING_TEST_TIMEOUT_MS: 'soon' });
+  assert.equal(bad.status, 2, `${bad.stdout}\n${bad.stderr}`);
+  assert.match(bad.stderr, /TRIQUAL_LANDING_TEST_TIMEOUT_MS/);
+  assert.deepEqual(landedOf(r, 1), [], 'a bad timeout setting must be refused before the landing');
+  assert.equal(r.head(), tip);
+
+  const res = closeWithEnv(r, 1, { TRIQUAL_LANDING_TEST_TIMEOUT_MS: '1500' });
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /did not finish in 1500 ms/);
+  assert.equal(r.head(), tip);
+  assert.deepEqual(r.ledger().slice(-3, -1), [`BASE: T1 ${tip}`, 'Task 1: landing conflict — re-run sequential']);
+  assert.equal(r.taskState(1).status, 'in_progress');
+  noComplete(r);
+}));
+
+test('the reviewer outputs of an undone worktree attempt are not counted for the sequential re-run', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  wtOpen(r, 1);
+  wtReview(r, 1, { test: FAILING_TEST });
+  // The undone attempt's second review round and its fix round.
+  save(r, 1, 'spec-reviewer', 2, footerText('spec-reviewer'));
+  r.appendLedger('Task 1: fix round 1');
+  assert.equal(closeOf(r, 1).status, 3);
+  ageOutputs(r, 1, 60);
+  ageFile(join(r.workspace, 'task-1-spec-reviewer-r2.md'), 60);
+
+  open(r, 1);
+  r.commit('src/t1.js', 'export const t1 = 1;\n', 'feat: t1 again');
+  const prep = out(ok(r.run('task-prep', r.plan, '1')));
+  assert.equal(prep.round, '1');
+  const stale = closeOf(r, 1);
+  assert.equal(stale.status, 1, `${stale.stdout}\n${stale.stderr}`);
+  assert.match(stale.stderr, /no saved safety-reviewer output for T1 after the undone landing/);
+  noComplete(r);
+
+  save(r, 1, 'safety-reviewer', 1, footerText('safety-reviewer'));
+  save(r, 1, 'spec-reviewer', 1, footerText('spec-reviewer'));
+  const closed = out(ok(closeOf(r, 1)));
+  assert.equal(r.git('rev-parse', `${closed.sha}^`).trim(), tip);
+  assert.equal(recordOf(r, 1).fixRounds, 0, 'a fix round of the undone attempt was counted');
+}));
+
+test('a value that starts with a dash never reaches git as an option', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  wtOpen(r, 1);
+  const head = wtReview(r, 1);
+  const bare = closeOf(r, 1, '--head=--output=pwned');
+  assert.equal(bare.status, 2, `${bare.stdout}\n${bare.stderr}`);
+  assert.match(bare.stderr, /bad --head/);
+  r.appendLedger('BASE: T1 --output=pwned');
+  const res = closeOf(r, 1, '--head', head);
+  assert.equal(res.status, 1, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /BASE of T1 \(--output=pwned\) is not a commit/);
+  assert.match(r.ledger().at(-1), /^Error: task-close T1 — exit 1 — /);
+  assert.equal(existsSync(join(r.dir, 'pwned')), false);
+  assert.deepEqual(landedOf(r, 1), []);
+}));
+
+test('the worktree of a landed task is removed with its untracked files, and a tracked change is an Error after everything is recorded', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  wtOpen(r, 1);
+  wtReview(r, 1);
+  mkdirSync(join(wtPath(r, 1), 'vendor'), { recursive: true });
+  writeFileSync(join(wtPath(r, 1), 'vendor', 'installed.js'), 'x\n');
+  writeFileSync(join(wtPath(r, 1), 'src', 't1.js'), 'export const t1 = 99;\n'); // an uncommitted change to a tracked file
+  const first = closeOf(r, 1);
+  assert.equal(first.status, 1, `${first.stdout}\n${first.stderr}`);
+  assert.match(first.stderr, /uncommitted changes to tracked files/);
+  assert.match(first.stderr, /task-close again/);
+  assert.match(r.ledger().at(-1), /^Error: task-close T1 — exit 1 — /);
+  assert.equal(r.ledger().filter((l) => l.startsWith('Task 1: complete')).length, 1, 'the close is recorded');
+  assert.equal(r.taskState(1).status, 'done');
+  assert.equal(storedRecords(r).length, 1, 'the record is stored');
+  assert.equal(existsSync(wtPath(r, 1)), true, 'the work in the worktree was thrown away');
+
+  wtGit(r, 1, 'checkout', '--', 'src/t1.js');
+  const again = closeOf(r, 1);
+  assert.equal(again.status, 0, `${again.stdout}\n${again.stderr}`);
+  assert.match(again.stderr, /removed the worktree .* with 1 untracked file: vendor\/installed\.js/);
+  assert.deepEqual(worktrees(r), [r.dir]);
+  assert.equal(wtBranches(r), '');
+  assert.equal(storedRecords(r).length, 1, 'the record was made twice');
 }));

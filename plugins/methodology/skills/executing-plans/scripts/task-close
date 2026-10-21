@@ -2,9 +2,9 @@
 // Close a reviewed task in one call: squash the task's commits, the `done` move on the tracking ledger, the
 // `Task <N>: complete` line, the `task-review` record built from the saved reviewer outputs, and the review progress entry.
 //
-// Usage: task-close PLAN_FILE N [--provider claude|codex]
+// Usage: task-close PLAN_FILE N [--provider claude|codex] [--head <sha>]
 // Prints, in this order:
-//   sha: <sha>                         the squashed commit (HEAD when the task made no commit)
+//   sha: <sha>                         the squashed (or, for a worktree task, the landed) commit (HEAD when the task made no commit)
 //   record: <recorded|already recorded>   what `triqual role-eval record` said
 //
 // Inputs, all read before anything is written (a missing or malformed one is an Error and nothing changes):
@@ -26,6 +26,44 @@
 //   - the hunter model: with `--provider codex` the Codex routing value of `hunter`; otherwise (claude, the default) the `model:`
 //     line of agents/hunter.md in the roles plugin's installPath from ~/.claude/plugins/installed_plugins.json.
 //
+// A worktree task (task-open --worktree) is one with --head <sha>, a branch `wt/<plan stem>-t<N>` (--head then defaults to its tip) or
+// a `Landed:` line of this attempt. Its commits are reviewed in the worktree (task-prep --head), so the head the last `Prep:` line
+// names is the worktree's, and the close LANDS the task instead of squashing:
+//   - it refuses (exit 3, and no `Error:` line: it is a wait, not a failure) while an earlier task of the phase is not `done` or
+//     `dropped` in the tracking ledger (not opted in: has no `Task <M>: complete` line);
+//   - it skips the landing when a `Landed: T<N> <sha>` line stands (no undo has followed it); the closed head is then that sha, whatever
+//     --head says, and the reviewed-head check above is not repeated (it ran before the landing). A landing that stands is trusted
+//     only after two checks, since a crash can leave it half done: the sha must still be an ancestor of the active phase branch
+//     (else exit 3: the undo of the landing was cut short, nothing is closed), and its Test files must have passed (a ledger line
+//     `Tested: T<N> <sha>` written after a green run): without that line the Test files run again at the phase tip, and a failure is
+//     undone as below (a landing that is not the phase tip and has no `Tested:` line is refused, exit 3);
+//   - else it needs HEAD on the active phase branch of the stack (a detached HEAD or another branch is exit 3, as for `stack.mjs
+//     squash`), a clean tree, and Test paths that name files inside the repository (no glob, nothing outside it), merges the task's head
+//     into the phase tip (`git merge-tree --write-tree` with the task's BASE as merge base; BASE must be an ancestor of the head), makes
+//     ONE commit of the merged tree on the phase tip (`git commit-tree`, the task's first commit's message and author), moves the phase
+//     branch to it (`git reset --keep`), appends `Landed: T<N> <sha>` and, for the head check of a rerun after the close, `Prep: T<N> r<R>
+//     <sha>` (R: the round of the attempt's last `Prep:` line; none when the attempt has none), and runs the task's plan `Test:` files
+//     with `node --test` at that tip (a file that is not there fails, so zero files run is never a pass; the run is cut off after
+//     TRIQUAL_LANDING_TEST_TIMEOUT_MS, default 600000, and a timeout is a failure; the output goes to
+//     `<workspace>/task-<N>-landing-test.log`), then appends `Tested: T<N> <sha>`. A crash after the reset and before the `Landed:`
+//     line leaves the phase tip at a commit that is already the landing of the head: the rerun recognises it (same tree, message and
+//     author) and records it instead of landing a second, empty commit;
+//   - a conflict or a failing test is undone: `git reset --keep <previous tip>`, the ledger lines `BASE: T<N> <previous tip>` and
+//     `Task <N>: landing conflict — re-run sequential` (one write), the file `<workspace>/task-<N>-undone` (reviewer and hunter outputs
+//     older than it belong to the undone attempt and are never counted), `triqual tasks rework`, the worktree and its branch removed,
+//     exit 3. The ledger of the sequential re-run starts after the undo line: the Prep lines, fix rounds and budget of the undone
+//     attempt are not counted. A rerun after an undo that died before the clean-up finishes the clean-up and exits 3;
+//   - after the record and the entry it removes the worktree (`git worktree remove --force` once no tracked file of it has uncommitted
+//     changes: untracked files, such as an install's output, are dropped and named on stderr; tracked changes are an Error and exit
+//     1 after everything is recorded, and a rerun repeats only the removal) and its branch (`git branch -D`) and checks that
+//     `git worktree list` no longer shows it; a rerun repeats only what is left.
+//
+// The wait above, and the whole landing, apply to worktree tasks only: a task closed in place (sequential, `stack.mjs squash`) is
+// closed in the order the controller runs it, as before.
+//
+// Ledger line forms this script adds to the plan's list (SKILL.md's ledger vocabulary is outside this task's files, so the form is
+// recorded here): `Tested: T<N> <sha>`.
+//
 // Then, in this order: `stack.mjs squash PLAN BASE`, `triqual tasks done T<N> --commit <sha>` (not when the ledger already
 // shows the task done), the complete line, `triqual role-eval record`, and the progress entry (store mode: `tracking add
 // --commit <sha>`; local mode: `tracking write entry`; committed mode or not opted in: none).
@@ -40,15 +78,15 @@
 // `<workspace>/task-<N>-closed-<attempt>`, and an attempt after the first takes only the outputs (gate, spec, hunters) saved
 // after the marker of the attempt before. A stale or missing one is an Error naming it: attempt 1's counts are never reused.
 //
-// Exit codes: 0 ok, 2 usage / no such plan file, 3 refused (linked worktree, unknown task, no BASE, commits after the last
-// Prep, a move or the squash refused), 1 any other failure. A failure appends `Error: task-close T<N> — exit <code> — <cause>` to the ledger.
+// Exit codes: 0 ok, 2 usage / no such plan file / bad --head, 3 refused (linked worktree, unknown task, no BASE, commits after the last
+// Prep, a move or the squash refused, an earlier task not landed, an undone landing), 1 any other failure. A failure appends `Error: task-close T<N> — exit <code> — <cause>` to the ledger.
 //
 // Dynamic imports only: the file has no extension, so Node may load it as CommonJS or as an ES module depending on the
 // nearest package.json.
 (async () => {
   const { existsSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } = await import('node:fs');
   const { homedir } = await import('node:os');
-  const { basename, dirname, join } = await import('node:path');
+  const { basename, dirname, join, resolve } = await import('node:path');
   const { pathToFileURL } = await import('node:url');
   const scripts = dirname(realpathSync(process.argv[1]));
   const load = (...parts) => import(pathToFileURL(join(scripts, ...parts)).href);
@@ -59,7 +97,7 @@
   const { ScriptError, EXIT_OTHER, EXIT_USAGE, EXIT_REFUSED } = common;
 
   const STEP = 'task-close';
-  const USAGE = 'usage: task-close PLAN_FILE N [--provider claude|codex]';
+  const USAGE = 'usage: task-close PLAN_FILE N [--provider claude|codex] [--head <sha>]';
   const PROVIDERS = ['claude', 'codex'];
   const SEVERITIES = ['critical', 'important', 'minor'];
   const zero = () => ({ critical: 0, important: 0, minor: 0 });
@@ -99,12 +137,17 @@
   try {
     const positional = [];
     let provider = 'claude';
+    let headArg = null;
     const argv = process.argv.slice(2);
     for (let i = 0; i < argv.length; i++) {
       if (argv[i] === '--provider') {
         if (i + 1 >= argv.length) throw new ScriptError(EXIT_USAGE, '--provider needs claude or codex');
         provider = argv[++i];
       } else if (argv[i].startsWith('--provider=')) provider = argv[i].slice('--provider='.length);
+      else if (argv[i] === '--head') {
+        if (i + 1 >= argv.length) throw new ScriptError(EXIT_USAGE, '--head needs a sha');
+        headArg = argv[++i];
+      } else if (argv[i].startsWith('--head=')) headArg = argv[i].slice('--head='.length);
       else if (argv[i].startsWith('--')) throw new ScriptError(EXIT_USAGE, `unknown option: ${argv[i]}`);
       else positional.push(argv[i]);
     }
@@ -121,8 +164,11 @@
 
     // ---- read everything: nothing is written before the record is built and valid ----
     const ledger = common.ledgerLines(workspace);
-    const base = common.lastBase(ledger, n);
-    if (base === null) throw new ScriptError(EXIT_REFUSED, `no BASE recorded for T${n}: run task-open first`);
+    const baseLine = common.lastBase(ledger, n);
+    if (baseLine === null) throw new ScriptError(EXIT_REFUSED, `no BASE recorded for T${n}: run task-open first`);
+    // The ledger's word reaches git only as a resolved sha: a value that starts with `-` (or names no commit) is an Error, never an option.
+    const base = common.commitOf(baseLine);
+    if (base === null) throw new ScriptError(EXIT_OTHER, `the BASE of T${n} (${baseLine}) is not a commit`);
 
     // This attempt's window of the ledger: after the task's previous complete line, up to the line being reused (if any).
     // The tracking row is read first: a task that was reopened since its complete line is not `done`, so it is no resume.
@@ -133,15 +179,23 @@
     // orchestrator write around a failed close are not (SKILL.md, The Thin Controller): this step's own `Error:` lines,
     // the task's `Ruling:`, `awaiting landing` and `minor (deferred)` lines, and every line that names no T<N> or
     // `Task <N>:` (`Orchestrator:`, `Denied by policy:`, `Ruling:`, `RateLimit:`, other tasks' lines). Everything else
-    // that names this task (`Prep:`, `BASE:`, `Task <N>: fix round`, `Task <N>: reopened`, ...) marks a reopen.
+    // that names this task (`Prep:`, `BASE:`, `Task <N>: fix round`, `Task <N>: reopened`, ...) marks a reopen. The `Landed:` line of
+    // a landing and the `Prep:` line it writes at the landed sha are part of the attempt they landed.
     const ownScope = new RegExp(`^(?:Task ${n}: |(?:Prep|BASE|Tier|Tier raised|Review|Re-review|Round [12]|Skills): T${n}\\b|Error: [a-z-]+ T${n} |Budget: .* for T${n} )`);
-    const ownQuiet = new RegExp(`^(?:Error: ${STEP} T${n} |Task ${n}: (?:Ruling: |awaiting landing$|minor \\(deferred\\)))`);
-    const notNewWork = (l) => ownQuiet.test(l) || !ownScope.test(l);
+    const ownQuiet = new RegExp(`^(?:Error: ${STEP} T${n} |Landed: T${n} |Tested: T${n} |Task ${n}: (?:Ruling: |awaiting landing$|minor \\(deferred\\)))`);
+    // The landing writes a `Prep:` line at the landed sha (see the header): it belongs to the attempt it landed, not to a reopen.
+    const landedShas = new Set(ledger.flatMap((l) => { const m = new RegExp(`^Landed: T${n} (\\S+)\\s*$`).exec(l); return m ? [m[1]] : []; }));
+    const landingPrep = (l) => { const m = new RegExp(`^Prep: T${n} r\\d+ (\\S+)\\s*$`).exec(l); return m !== null && landedShas.has(m[1]); };
+    const notNewWork = (l) => ownQuiet.test(l) || landingPrep(l) || !ownScope.test(l);
     const resumed = lastComplete >= 0 && (state === null || state.status === 'done')
       && ledger.slice(lastComplete + 1).every(notNewWork);
     const earlier = resumed ? completeAt.slice(0, -1) : completeAt;
     const attempt = earlier.length + 1;
-    const window = ledger.slice((earlier.at(-1) ?? -1) + 1, resumed ? lastComplete : ledger.length);
+    const attemptLines = ledger.slice((earlier.at(-1) ?? -1) + 1, resumed ? lastComplete : ledger.length);
+    // A landing that was undone starts the task over (sequential): what the undone attempt wrote before the undo line (Prep lines,
+    // fix rounds, a Budget line, the Landed line itself) is not this attempt's.
+    const undoneAt = common.lastUndoIndex(attemptLines, n);
+    const window = attemptLines.slice(undoneAt + 1);
     const count = (prefix) => window.filter((l) => l.startsWith(prefix)).length;
 
     const { optedIn, mode, progress } = common.tracking();
@@ -162,14 +216,47 @@
       resumedSha = short && common.commitOf(short[1]);
       if (!resumedSha) throw new ScriptError(EXIT_OTHER, `cannot resolve the commit of the line: ${ledger[lastComplete]}`);
     }
-    const head = common.commitOf('HEAD');
-    if (head === null) throw new ScriptError(EXIT_OTHER, 'cannot resolve HEAD');
+    // A worktree task is built and reviewed in its worktree and lands at close. Its head is the landed commit once it landed, else
+    // --head, else the tip of its branch; any other task closes at HEAD of the main checkout.
+    const wt = common.worktreeOf(planName, n);
+    const landed = common.lastLanded(window, n);
+    const wtTip = common.commitOf(`refs/heads/${wt.branch}`);
+    const worktreeTask = headArg !== null || wtTip !== null || landed !== null;
+    let head;
+    if (landed !== null) head = common.commitOf(landed);
+    else if (headArg !== null) head = common.commitOf(headArg);
+    else head = wtTip ?? common.commitOf('HEAD');
+    if (head === null) {
+      throw landed !== null ? new ScriptError(EXIT_OTHER, `cannot resolve the landed commit ${landed}`)
+        : new ScriptError(headArg !== null ? EXIT_USAGE : EXIT_OTHER, headArg !== null ? `bad --head: ${headArg}` : 'cannot resolve HEAD');
+    }
+    // An undo that died before its clean-up finished (the undo line is written, the worktree or its branch is still there, and no
+    // review of a new attempt followed): finish it, then refuse. The task goes back to be re-run sequential, as the undo meant.
+    if (!resumed && undoneAt >= 0 && (wtTip !== null || common.registeredWorktrees().includes(wt.path))
+      && !window.some((l) => new RegExp(`^Prep: T${n} `).test(l))) {
+      if (state && state.status === 'in_review') common.taskMove('rework', n, plan);
+      common.removeWorktree(wt, { force: true });
+      throw new ScriptError(EXIT_REFUSED, `the landing of T${n} was undone earlier and its clean-up did not finish; it has now: re-run T${n} sequential`);
+    }
+    // Landing is in plan order: a task whose turn has not come waits (exit 3, no Error line: nothing failed).
+    if (worktreeTask && !resumed && landed === null) {
+      const statuses = common.taskStatuses(planName);
+      const waiting = common.earlierTasks(plan, n).filter((m) => (statuses
+        ? !['done', 'dropped'].includes(statuses[`T${m}`])
+        : !ledger.some((l) => l.startsWith(`Task ${m}: complete (commits `))));
+      if (waiting.length > 0) {
+        throw new ScriptError(EXIT_REFUSED, `T${n} waits for ${waiting.map((m) => `T${m}`).join(', ')}: worktree tasks land in plan order, close it again once ${waiting.length === 1 ? 'it is' : 'they are'} done or dropped`, { logged: false });
+      }
+    }
     const noCommits = Number(common.git(['rev-list', '--count', `${base}..${resumedSha ?? head}`])) === 0;
     // The commits a close squashes are the commits a reviewer saw: the last `Prep:` head of the attempt is HEAD. A reopened
     // task (attempt 2 and later) may be reviewed by hand (SKILL step 8), so it is checked only when it ran task-prep.
+    // A landing that stands passed this check before it was written (its sha is the head now), so only a review after it is checked:
+    // a `Prep:` line after the `Landed:` line must name the landed sha (the landing writes one), anything else is commits no reviewer saw.
     if (!resumed && !noCommits) {
-      const last = common.prepsOf(window, n).at(-1) ?? null;
-      if (last === null && attempt === 1) {
+      const landedAt = landed === null ? -1 : window.findLastIndex((l) => l.trim() === `Landed: T${n} ${landed}`);
+      const last = common.prepsOf(window, n).filter((p) => p.index > landedAt).at(-1) ?? null;
+      if (last === null && attempt === 1 && landed === null) {
         throw new ScriptError(EXIT_REFUSED, `T${n} has commits and no Prep line: run task-prep and review them first`);
       }
       if (last !== null && last.head !== head) {
@@ -179,23 +266,38 @@
     const needGate = !noCommits && !skippedGate;
     const needSpec = !noCommits && (skippedGate || tier !== 'light' || (lightItems !== undefined && Number(lightItems[1]) > 0));
 
-    // Attempt 2 and later: only outputs saved after the previous attempt's close marker belong to this attempt.
+    // Attempt 2 and later: only outputs saved after the previous attempt's close marker belong to this attempt. The same goes for the
+    // outputs saved before the undo of a landing (`<workspace>/task-<N>-undone`): they review the undone worktree attempt.
     const markerOf = (a) => join(workspace, `task-${n}-closed-${a}`);
+    const undoneMarker = join(workspace, `task-${n}-undone`);
     let cutoff;
+    let cutoffFile = null;
+    const mtimeOf = (file) => {
+      try {
+        return statSync(file).mtimeMs;
+      } catch (e) {
+        throw new ScriptError(EXIT_OTHER, e.code === 'ENOENT'
+          ? `T${n} attempt ${attempt}: ${file} is missing, so this attempt's outputs cannot be told from attempt ${attempt - 1}'s`
+          : `cannot read ${file}: ${e.code ?? e.message}`);
+      }
+    };
     const cutoffOf = () => {
-      if (attempt === 1) return null;
       if (cutoff === undefined) {
-        try {
-          cutoff = statSync(markerOf(attempt - 1)).mtimeMs;
-        } catch (e) {
-          throw new ScriptError(EXIT_OTHER, e.code === 'ENOENT'
-            ? `T${n} attempt ${attempt}: ${markerOf(attempt - 1)} is missing, so this attempt's outputs cannot be told from attempt ${attempt - 1}'s`
-            : `cannot read ${markerOf(attempt - 1)}: ${e.code ?? e.message}`);
+        cutoff = null;
+        for (const file of [attempt > 1 ? markerOf(attempt - 1) : null, existsSync(undoneMarker) ? undoneMarker : null]) {
+          if (file === null) continue;
+          const at = mtimeOf(file);
+          if (cutoff === null || at >= cutoff) {
+            cutoff = at;
+            cutoffFile = file;
+          }
         }
       }
       return cutoff;
     };
     const isStale = (file) => cutoffOf() !== null && statSync(file).mtimeMs <= cutoffOf();
+    const staleWhy = () => (cutoffFile === undoneMarker
+      ? `the undone landing (older than ${undoneMarker})` : `attempt ${attempt} started (older than ${markerOf(attempt - 1)})`);
 
     // The saved outputs of a role, by round; the first (lowest round) one carries the review's counts.
     const saved = readdirSync(workspace);
@@ -217,7 +319,9 @@
     const required = (role) => {
       const outputs = outputsOf(role);
       if (outputs.length === 0) {
-        throw new ScriptError(EXIT_OTHER, `no saved ${role} output for T${n}${attempt > 1 ? ` in attempt ${attempt} (saved after ${markerOf(attempt - 1)})` : ''}: expected ${join(workspace, `task-${n}-${role}-r1.md`)} with the v1 footer`);
+        const after = attempt > 1 ? ` in attempt ${attempt} (saved after ${markerOf(attempt - 1)})`
+          : existsSync(undoneMarker) ? ` after the undone landing (saved after ${undoneMarker})` : '';
+        throw new ScriptError(EXIT_OTHER, `no saved ${role} output for T${n}${after}: expected ${join(workspace, `task-${n}-${role}-r1.md`)} with the v1 footer`);
       }
       return outputs;
     };
@@ -261,7 +365,8 @@
         if (e.code !== 'ENOENT') throw new ScriptError(EXIT_OTHER, `cannot read the candidates file ${file}: ${e.code ?? e.message}`);
       }
       if (text !== null && isStale(file)) {
-        throw new ScriptError(EXIT_OTHER, `${basename(file)} is from before attempt ${attempt} started (older than ${markerOf(attempt - 1)}): run the hunter again or remove the file`);
+        cutoffOf();
+        throw new ScriptError(EXIT_OTHER, `${basename(file)} is from before ${staleWhy()}: run the hunter again or remove the file`);
       }
       if (text === null || text.trim() === '') {
         return { category, model, failed: true, candidates: 0, confirmed: zero(), refuted: 0, duplicateCandidate: 0, duplicateReview: 0 };
@@ -304,15 +409,127 @@
     if (!valid.ok) throw new ScriptError(EXIT_OTHER, `the task-review record is invalid: field ${valid.field}`);
     const parked = count(`Task ${n}: parked`);
 
-    // ---- write: squash, done, the complete line, the record, the entry ----
+    // The landing of a worktree task (see the header). Everything that can refuse runs before anything is written.
+    const preflight = () => {
+      const phaseBranch = common.activePhaseBranch(plan);
+      const current = common.exec('git', ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+      if (current.status !== 0) throw new ScriptError(EXIT_REFUSED, `HEAD is detached, not the active phase's branch ${phaseBranch}: nothing to land on`);
+      if (current.stdout.trim() !== phaseBranch) {
+        throw new ScriptError(EXIT_REFUSED, `HEAD is on ${current.stdout.trim()}, not the active phase's branch ${phaseBranch}: nothing to land on`);
+      }
+      const tip = common.commitOf('HEAD');
+      if (tip === null) throw new ScriptError(EXIT_REFUSED, 'HEAD of the main checkout is not on a commit: nothing to land on');
+      if (common.git(['status', '--porcelain', '--untracked-files=no']) !== '') {
+        throw new ScriptError(EXIT_REFUSED, 'the working tree is not clean: commit or stash the changes to tracked files first');
+      }
+      const tests = common.testPaths(planTask);
+      if (tests.length === 0) throw new ScriptError(EXIT_REFUSED, `T${n} has no Test: path in the plan: a landing runs none, and a landing that tests nothing is no landing`);
+      const root = common.git(['rev-parse', '--show-toplevel']);
+      const problem = tests.map((t) => common.testPathProblem(root, t)).find((why) => why !== null);
+      if (problem) throw new ScriptError(EXIT_REFUSED, `T${n}: ${problem}`);
+      return { tip, tests, root, timeout: common.landingTestTimeoutMs() };
+    };
+    // The undo: the phase branch back to `before`, the fresh BASE and the undo line in ONE write, the marker that dates the undone
+    // attempt's outputs, the task moved back, the worktree and its branch removed.
+    const undo = (why, before) => {
+      common.git(['reset', '--keep', before]);
+      common.appendLedger(workspace, `BASE: T${n} ${before}`, common.UNDONE_LINE(n));
+      writeFileSync(undoneMarker, `${before}\n`);
+      if (state) common.taskMove('rework', n, plan);
+      common.removeWorktree(wt, { force: true });
+      throw new ScriptError(EXIT_REFUSED, `${why}; T${n} is moved back to ${before.slice(0, 7)}: re-run it sequential`);
+    };
+    // The task's Test files at the landed tip (the phase tip). A file that is not there is a failure, never a pass with zero files
+    // run; so are a non-zero exit and a run that outlives the timeout. A green run is ledgered: `Tested: T<N> <sha>`.
+    const runTests = ({ tests, root, timeout }, landedSha, before) => {
+      const missing = tests.find((t) => !existsSync(resolve(root, t)));
+      if (missing !== undefined) undo(`landing failed: the Test file ${missing} is not in the landed tree`, before);
+      const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'NODE_TEST_CONTEXT'));
+      const ran = common.exec(process.execPath, ['--test', ...tests.map((t) => resolve(root, t))], { cwd: root, env, timeout });
+      const log = join(workspace, `task-${n}-landing-test.log`);
+      writeFileSync(log, `${ran.stdout}${ran.stderr}`);
+      if (ran.timedOut) undo(`landing failed: node --test did not finish in ${timeout} ms at the landed tip (output so far in ${log})`, before);
+      if (ran.status !== 0) undo(`landing failed: node --test exited ${ran.status} at the landed tip (output in ${log})`, before);
+      common.appendLedger(workspace, `Tested: T${n} ${landedSha}`);
+    };
+
+    const land = () => {
+      const context = preflight();
+      const { tip } = context;
+      if (!common.isAncestor(base, head)) {
+        throw new ScriptError(EXIT_REFUSED, `the BASE of T${n} (${base.slice(0, 7)}) is not an ancestor of its head ${head.slice(0, 7)}: the worktree was not made from it, so it cannot be landed`);
+      }
+      const first = common.git(['rev-list', '--reverse', `${base}..${head}`]).split('\n')[0];
+      const [name, email, date, message] = common.git(['log', '--format=%an%x00%ae%x00%aI%x00%B', '-1', first]).split('\0');
+
+      // A crash after the reset and before the `Landed:` line leaves the tip at a commit that already is the landing of this head
+      // (the merge of the head onto the tip's parent is the tip's tree, with the first commit's author and message): record it,
+      // do not land a second, empty commit on top of it.
+      const parent = common.commitOf(`${tip}^`);
+      const same = (rev) => common.git(['log', '--format=%an%x00%ae%x00%B', '-1', rev]).split('\0');
+      const alreadyLanded = () => {
+        if (parent === null) return false;
+        const prior = common.exec('git', ['merge-tree', '--write-tree', `--merge-base=${base}`, parent, head]);
+        return prior.status === 0 && prior.stdout.split('\n')[0].trim() === common.git(['rev-parse', `${tip}^{tree}`])
+          && same(tip).join('\0') === [name, email, message].join('\0');
+      };
+      let before = tip;
+      let landedSha;
+      if (alreadyLanded()) {
+        before = parent;
+        landedSha = tip;
+      } else {
+        const merged = common.exec('git', ['merge-tree', '--write-tree', '--name-only', `--merge-base=${base}`, tip, head]);
+        if (merged.status === 1) {
+          const files = merged.stdout.split('\n').slice(1).map((l) => l.trim()).filter((l, i, all) => l !== '' && all.slice(0, i).every((p) => p !== ''));
+          undo(`landing conflict in ${files.join(', ') || 'the merge'}`, tip);
+        }
+        if (merged.status !== 0) throw new ScriptError(EXIT_OTHER, `git merge-tree: ${common.firstLine(merged.stderr) || `exited ${merged.status}`}`);
+        const tree = merged.stdout.split('\n')[0].trim();
+        landedSha = common.git(['commit-tree', tree, '-p', tip, '-F', '-'], {
+          input: `${message}\n`,
+          env: { ...process.env, GIT_AUTHOR_NAME: name, GIT_AUTHOR_EMAIL: email, GIT_AUTHOR_DATE: date },
+        });
+        common.git(['reset', '--keep', landedSha]);
+      }
+      common.appendLedger(workspace, `Landed: T${n} ${landedSha}`);
+      const lastPrep = common.prepsOf(window, n).at(-1);
+      if (lastPrep) common.appendLedger(workspace, `Prep: T${n} r${lastPrep.round} ${landedSha}`);
+      runTests(context, landedSha, before);
+      return landedSha;
+    };
+
+    // A landing that stands (a rerun) is trusted only after the checks a crash can leave undone: it is still on the active phase
+    // branch, and its Test files passed (else they run again; a failure is undone).
+    const verifyLanding = (landedSha) => {
+      const phaseBranch = common.activePhaseBranch(plan);
+      const phaseTip = common.commitOf(`refs/heads/${phaseBranch}`);
+      if (phaseTip === null || !common.isAncestor(landedSha, phaseTip)) {
+        throw new ScriptError(EXIT_REFUSED, `the landed commit ${landedSha.slice(0, 7)} of T${n} is not on the phase branch ${phaseBranch} (the undo of the landing may have been cut short): nothing is closed`);
+      }
+      if (common.isTested(window, n, landedSha)) return;
+      if (landedSha !== phaseTip) {
+        throw new ScriptError(EXIT_REFUSED, `the landed commit ${landedSha.slice(0, 7)} of T${n} has no Tested: line and is not the tip of ${phaseBranch}: its Test files cannot be run again here`);
+      }
+      const before = common.commitOf(`${landedSha}^`);
+      if (before === null) throw new ScriptError(EXIT_OTHER, `the landed commit ${landedSha.slice(0, 7)} of T${n} has no parent`);
+      runTests(preflight(), landedSha, before);
+    };
+
+    // ---- write: land or squash, done, the complete line, the record, the entry ----
     let sha;
     if (resumed) {
       sha = resumedSha;
     } else {
-      const squashed = common.runScript('stack.mjs', ['squash', plan, base]);
-      if (squashed.status !== 0) throw common.scriptError('stack.mjs squash', squashed);
-      const printed = squashed.stdout.trim();
-      sha = printed === 'no commits' ? common.git(['rev-parse', 'HEAD']) : printed;
+      if (worktreeTask) {
+        if (landed !== null) verifyLanding(landed);
+        sha = landed ?? (noCommits ? common.git(['rev-parse', 'HEAD']) : land());
+      } else {
+        const squashed = common.runScript('stack.mjs', ['squash', plan, base]);
+        if (squashed.status !== 0) throw common.scriptError('stack.mjs squash', squashed);
+        const printed = squashed.stdout.trim();
+        sha = printed === 'no commits' ? common.git(['rev-parse', 'HEAD']) : printed;
+      }
       if (state && state.status !== 'done') common.taskMove('done', n, plan, ['--commit', sha]);
       common.appendLedger(workspace, `Task ${n}: complete (commits ${base.slice(0, 7)}..${sha.slice(0, 7)}, ${parked > 0 ? `${parked} parked` : 'review clean'})`);
     }
@@ -366,10 +583,14 @@
         if (added.status !== 0) throw new ScriptError(EXIT_OTHER, `triqual tracking: ${added.stderr.split('\n').find((l) => l.trim() !== '')?.trim() ?? `exited ${added.status}`}`);
       }
     }
+    if (worktreeTask) {
+      const dropped = common.removeWorktree(wt, { dropUntracked: true });
+      if (dropped.length > 0) process.stderr.write(`removed the worktree ${wt.path} with ${dropped.length} untracked file${dropped.length === 1 ? '' : 's'}: ${dropped.slice(0, 5).join(', ')}${dropped.length > 5 ? ', ...' : ''}\n`);
+    }
     process.stdout.write(`sha: ${sha}\nrecord: ${said}\n`);
   } catch (e) {
     const err = e instanceof ScriptError ? e : new ScriptError(1, `${STEP}: ${e.message}`);
-    common.fail(STEP, n, err.code, err.message, workspace);
+    common.fail(STEP, n, err.code, err.message, err.logged ? workspace : undefined);
   }
 })().catch((e) => {
   process.stderr.write(`task-close: ${e.stack ?? e}\n`);

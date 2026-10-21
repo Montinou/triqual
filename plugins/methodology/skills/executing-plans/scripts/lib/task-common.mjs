@@ -6,10 +6,10 @@
 // <first line of the cause>` is appended to `<workspace>/sdd-ledger.md` before the script exits. Nothing is retried,
 // defaulted or swallowed: a step that cannot run throws a ScriptError, and the script's one catch turns it into `fail`.
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, readFileSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PlanError, readTasks } from './plan.mjs';
+import { PlanError, readPhases, readTasks } from './plan.mjs';
 
 import { TIERS } from './plan.mjs';
 
@@ -21,16 +21,18 @@ export const EXIT_OTHER = 1;
 export const EXIT_USAGE = 2;
 export const EXIT_REFUSED = 3;
 
-// A failed step with the exit code the script ends with.
+// A failed step with the exit code the script ends with. `logged: false` is a refusal that is a wait, not a failure (a task
+// that must wait for an earlier one): the script exits with its code and cause but appends no `Error:` line.
 export class ScriptError extends Error {
-  constructor(code, message) {
+  constructor(code, message, { logged = true } = {}) {
     super(message);
     this.name = 'ScriptError';
     this.code = code;
+    this.logged = logged;
   }
 }
 
-const firstLine = (text) => String(text).split('\n').map((l) => l.trim()).find((l) => l !== '') ?? '';
+export const firstLine = (text) => String(text).split('\n').map((l) => l.trim()).find((l) => l !== '') ?? '';
 
 // Print `message` on stderr, append the `Error:` line when the workspace is known, and exit `code`.
 export function fail(step, n, code, message, workspace) {
@@ -47,11 +49,16 @@ export function fail(step, n, code, message, workspace) {
 
 // ---- processes ----
 
-// Run a command with its output captured. A command that cannot start is a ScriptError; the exit status is the caller's.
-export function exec(command, args) {
-  const res = spawnSync(command, args, { encoding: 'utf8' });
+// Run a command with its output captured (`options`: cwd, env, input, timeout in ms). A command that cannot start is a ScriptError;
+// the exit status is the caller's. A command cut off by `timeout` comes back with `timedOut: true` (and a non-zero status), never
+// as a pass. The buffer is large: an install or a test run can print a lot, and a cut-off output is no result.
+export function exec(command, args, options = {}) {
+  const res = spawnSync(command, args, { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, ...options });
+  if (res.error?.code === 'ETIMEDOUT') {
+    return { status: res.status || EXIT_OTHER, stdout: res.stdout ?? '', stderr: res.stderr ?? '', timedOut: true };
+  }
   if (res.error) throw new ScriptError(EXIT_OTHER, `cannot run ${basename(command)}: ${res.error.message}`);
-  return { status: res.status ?? EXIT_OTHER, stdout: res.stdout, stderr: res.stderr };
+  return { status: res.status ?? EXIT_OTHER, stdout: res.stdout, stderr: res.stderr, timedOut: false };
 }
 
 // A sibling script of the skill, by its interpreter (some extractors drop exec bits).
@@ -63,16 +70,24 @@ export function scriptError(label, res) {
   return new ScriptError(code, `${label}: ${firstLine(res.stderr) || `exited ${res.status}`}`);
 }
 
-export function git(args) {
-  const res = exec('git', args);
+export function git(args, options = {}) {
+  const res = exec('git', args, options);
   if (res.status !== 0) throw new ScriptError(EXIT_OTHER, `git ${args[0]}: ${firstLine(res.stderr) || `exited ${res.status}`}`);
   return res.stdout.trim();
 }
 
-// The commit a revision names, or null when it names none.
+// The commit a revision names, or null when it names none. `--end-of-options`: a revision that starts with `-` is never an option.
 export function commitOf(revision) {
-  const res = exec('git', ['rev-parse', '--verify', '--quiet', `${revision}^{commit}`]);
+  const res = exec('git', ['rev-parse', '--verify', '--quiet', '--end-of-options', `${revision}^{commit}`]);
   return res.status === 0 ? res.stdout.trim() : null;
+}
+
+// Whether commit `ancestor` is reachable from `descendant` (a commit is its own ancestor). Anything but git's yes (0) or no (1) is a failure.
+export function isAncestor(ancestor, descendant) {
+  const res = exec('git', ['merge-base', '--is-ancestor', '--end-of-options', ancestor, descendant]);
+  if (res.status === 0) return true;
+  if (res.status === 1) return false;
+  throw new ScriptError(EXIT_OTHER, `git merge-base --is-ancestor: ${firstLine(res.stderr) || `exited ${res.status}`}`);
 }
 
 // Scripts run from the main checkout: in a linked worktree the git dir differs from the common dir.
@@ -91,11 +106,12 @@ export function workspaceOf(planFile) {
   return res.stdout.replace(/\n+$/, '');
 }
 
-export function appendLedger(workspace, line) {
-  if (/[\r\n]/.test(line)) throw new Error('a ledger line is one line');
+// Append one line, or several lines in ONE write (lines that must stand or fall together, like the two lines of an undo).
+export function appendLedger(workspace, ...lines) {
+  if (lines.length === 0 || lines.some((line) => /[\r\n]/.test(line))) throw new Error('a ledger line is one line');
   const file = join(workspace, LEDGER);
   const text = existsSync(file) ? readFileSync(file, 'utf8') : '';
-  appendFileSync(file, `${text === '' || text.endsWith('\n') ? '' : '\n'}${line}\n`);
+  appendFileSync(file, `${text === '' || text.endsWith('\n') ? '' : '\n'}${lines.map((line) => `${line}\n`).join('')}`);
 }
 
 export function ledgerLines(workspace) {
@@ -110,6 +126,12 @@ export function lastBase(lines, n) {
   return hits.length ? hits.at(-1)[1] : null;
 }
 
+// The index in `lines` of the last `BASE: T<N> <sha>` line, else -1.
+export function lastBaseIndex(lines, n) {
+  const re = new RegExp(`^BASE: T${n} (\\S+)\\s*$`);
+  return lines.findLastIndex((l) => re.test(l));
+}
+
 // Every `Prep: T<N> r<R> <sha>` line of `lines` as { round, head, index }, in order.
 export function prepsOf(lines, n) {
   const re = new RegExp(`^Prep: T${n} r(\\d+) (\\S+)\\s*$`);
@@ -117,6 +139,27 @@ export function prepsOf(lines, n) {
     const m = re.exec(l);
     return m ? [{ round: Number(m[1]), head: m[2], index }] : [];
   });
+}
+
+// The sha of the last `Landed: T<N> <sha>` line that no later `BASE: T<N>` line has undone (an undone landing starts the task
+// over from a fresh BASE), else null.
+export function lastLanded(lines, n) {
+  const re = new RegExp(`^Landed: T${n} (\\S+)\\s*$`);
+  const at = lines.findLastIndex((l) => re.test(l));
+  return at > lastBaseIndex(lines, n) ? re.exec(lines[at])[1] : null;
+}
+
+// The line the undo of a landing writes (after the fresh `BASE:` line, in one write with it).
+export const UNDONE_LINE = (n) => `Task ${n}: landing conflict — re-run sequential`;
+// The index in `lines` of the last undo line of the task, else -1.
+export function lastUndoIndex(lines, n) {
+  return lines.findLastIndex((l) => l === UNDONE_LINE(n));
+}
+
+// Whether a `Tested: T<N> <sha>` line (written after the landing's Test files passed at <sha>) is among `lines`.
+export function isTested(lines, n, sha) {
+  const re = new RegExp(`^Tested: T${n} (\\S+)\\s*$`);
+  return lines.some((l) => re.exec(l)?.[1] === sha);
 }
 
 // ---- the plan ----
@@ -162,6 +205,70 @@ export function reasonLine({ task, lines }) {
 // The hunter categories of a heavy first round: `correctness` plus `state` for a Live state or Contract reason, else `security`.
 export const hunterPick = (reason) => `correctness,${/^(live state|contract)\b/i.test(reason ?? '') ? 'state' : 'security'}`;
 
+// The Test: paths of the task (the backticked paths of its `- Test:` lines, outside fences), in plan order.
+export function testPaths({ task, lines }) {
+  const paths = [];
+  let fenced = false;
+  for (let i = task.start - 1; i < task.end; i++) {
+    if (/^(```|~~~)/.test(lines[i])) {
+      fenced = !fenced;
+      continue;
+    }
+    const m = !fenced && /^\s*[-*]\s+Test:(.*)$/.exec(lines[i]);
+    if (m) paths.push(...[...m[1].matchAll(/`([^`]+)`/g)].map((hit) => hit[1]));
+  }
+  return paths;
+}
+
+// Why a `Test:` path of a plan cannot be run by the landing, or null: it must name one file inside the repository, so a glob (node
+// --test expands them) and a path that leaves `root` (`../x.mjs`, an absolute path) are refused.
+export function testPathProblem(root, path) {
+  if (/[*?[\]{}]/.test(path)) return `the Test: path ${path} is a glob: name each Test file`;
+  const full = resolve(root, path);
+  if (full !== root && !full.startsWith(root.endsWith(sep) ? root : `${root}${sep}`)) return `the Test: path ${path} is outside the repository`;
+  return null;
+}
+
+// The branch of the stack's active phase (the one `stack.mjs squash` closes on): a worktree task lands there and nowhere else.
+export function activePhaseBranch(plan) {
+  const res = runScript('stack.mjs', ['path', plan]);
+  if (res.status !== 0) throw scriptError('stack.mjs path', res);
+  const file = res.stdout.trim();
+  let state;
+  try {
+    state = JSON.parse(readFileSync(file, 'utf8'));
+  } catch (e) {
+    throw new ScriptError(e.code === 'ENOENT' ? EXIT_REFUSED : EXIT_OTHER, e.code === 'ENOENT' ? `no stack state at ${file}: run stack init first` : `${file} is not readable JSON`);
+  }
+  const active = (state.phases ?? []).find((p) => p.state === 'active');
+  if (!active) throw new ScriptError(EXIT_REFUSED, "no phase is active: a worktree task lands on the active phase's branch");
+  return active.branch;
+}
+
+// How long the landing's `node --test` may run before it counts as a failure: the TRIQUAL_LANDING_TEST_TIMEOUT_MS environment
+// variable, else this default (milliseconds).
+export const DEFAULT_LANDING_TEST_TIMEOUT_MS = 600000;
+export function landingTestTimeoutMs() {
+  const raw = process.env.TRIQUAL_LANDING_TEST_TIMEOUT_MS;
+  if (raw === undefined || raw === '') return DEFAULT_LANDING_TEST_TIMEOUT_MS;
+  if (!/^[1-9]\d*$/.test(raw)) throw new ScriptError(EXIT_USAGE, `TRIQUAL_LANDING_TEST_TIMEOUT_MS must be a positive number of milliseconds, not ${raw}`);
+  return Number(raw);
+}
+
+// The numbers of the tasks before T<N> in its phase (a plan with no phases is one phase of every task).
+export function earlierTasks(planFile, n) {
+  let phases;
+  try {
+    phases = readPhases(readFileSync(planFile, 'utf8'), basename(planFile).replace(/\.md$/, '')).phases;
+  } catch (e) {
+    if (e instanceof PlanError) throw new ScriptError(EXIT_USAGE, `${planFile}: ${e.message}`);
+    throw e;
+  }
+  const phase = phases.find((p) => p.tasks.includes(`T${n}`));
+  if (!phase) throw new ScriptError(EXIT_REFUSED, `T${n} is in no phase of ${planFile}`);
+  return phase.tasks.slice(0, phase.tasks.indexOf(`T${n}`)).map((id) => Number(id.slice(1)));
+}
+
 // The tier of the last `Tier: T<N> <tier>` / `Tier raised: T<N> <from> → <to>` line of the task, else null.
 export function ledgerTier(lines, n) {
   const tierPattern = TIERS.join('|');
@@ -194,13 +301,26 @@ export function tracking() {
   return { optedIn: paths.optedIn === true, mode: paths.mode ?? null, progress: paths.progress ?? null };
 }
 
-// The task's row in the tracking ledger, or null when the repo is not opted in. A plan or task the ledger does not know
-// is a refused precondition.
-export function taskState(planName, n) {
+// The plan's rows in the tracking ledger, or null when the repo is not opted in; a plan the ledger does not know is refused.
+function trackedPlan(planName) {
   if (!tracking().optedIn) return null;
   const snapshot = triqualJson(['tasks', 'export', '--json']);
   const plan = snapshot.plans.find((p) => p.name === planName.replace(/\.md$/, ''));
   if (!plan) throw new ScriptError(EXIT_REFUSED, `${planName} is not registered in the tracking ledger`);
+  return plan;
+}
+
+// The status of each task of the plan in the tracking ledger ({ T1: 'done', ... }), or null when the repo is not opted in.
+export function taskStatuses(planName) {
+  const plan = trackedPlan(planName);
+  return plan === null ? null : Object.fromEntries(plan.tasks.map((t) => [t.id, t.status]));
+}
+
+// The task's row in the tracking ledger, or null when the repo is not opted in. A plan or task the ledger does not know
+// is a refused precondition.
+export function taskState(planName, n) {
+  const plan = trackedPlan(planName);
+  if (plan === null) return null;
   const task = plan.tasks.find((t) => t.id === `T${n}`);
   if (!task) throw new ScriptError(EXIT_REFUSED, `T${n} is not in the tracking ledger of ${planName}`);
   return { status: task.status, tier: task.tier ?? null, effectiveTier: task.effectiveTier ?? null };
@@ -212,4 +332,48 @@ export function taskState(planName, n) {
 export function taskMove(command, n, plan, extra = []) {
   const res = exec('triqual', ['tasks', command, `T${n}`, ...extra, '--plan', resolve(plan)]);
   if (res.status !== 0) throw triqualError(`triqual tasks ${command}`, res);
+}
+
+// ---- the worktrees of parallel tasks ----
+
+export const WORKTREES_IGNORE = '.claude/worktrees/';
+
+// The worktree and the branch of a task: `.claude/worktrees/<plan stem>-t<N>` on `wt/<plan stem>-t<N>`, in the main checkout.
+export function worktreeOf(planName, n) {
+  const name = `${planName.replace(/\.md$/, '')}-t${n}`;
+  return { branch: `wt/${name}`, path: join(git(['rev-parse', '--show-toplevel']), '.claude', 'worktrees', name) };
+}
+
+// The paths `git worktree list` shows.
+export const registeredWorktrees = () => git(['worktree', 'list', '--porcelain']).split('\n').filter((l) => l.startsWith('worktree ')).map((l) => l.slice('worktree '.length));
+
+// Add `.claude/worktrees/` to the repository's `info/exclude` once.
+export function excludeWorktrees() {
+  const file = git(['rev-parse', '--path-format=absolute', '--git-path', 'info/exclude']);
+  const text = existsSync(file) ? readFileSync(file, 'utf8') : '';
+  if (text.split('\n').includes(WORKTREES_IGNORE)) return;
+  mkdirSync(dirname(file), { recursive: true });
+  appendFileSync(file, `${text === '' || text.endsWith('\n') ? '' : '\n'}${WORKTREES_IGNORE}\n`);
+}
+
+// Remove a task's worktree and its branch, then check that `git worktree list` no longer shows the worktree. Without an option a
+// worktree holding changes git does not know is refused (work nobody reviewed is never thrown away). `force`: the undo of a landing
+// takes the worktree down whatever it holds. `dropUntracked`: the close of a landed task takes it down with its untracked files
+// (an install's output that no .gitignore covers), and refuses only when a TRACKED file has uncommitted changes. Returns the
+// untracked paths it dropped. Safe to repeat: what is already gone is skipped.
+export function removeWorktree({ branch, path }, { force = false, dropUntracked = false } = {}) {
+  let dropped = [];
+  if (registeredWorktrees().includes(path)) {
+    if (!force && dropUntracked) {
+      const changed = git(['status', '--porcelain', '--untracked-files=no'], { cwd: path });
+      if (changed !== '') {
+        throw new ScriptError(EXIT_OTHER, `${path} holds uncommitted changes to tracked files (${firstLine(changed)}): the task is closed and recorded; commit or discard them, then run task-close again to remove the worktree`);
+      }
+      dropped = git(['ls-files', '--others', '--exclude-standard'], { cwd: path }).split('\n').filter(Boolean);
+    }
+    git(['worktree', 'remove', ...(force || dropUntracked ? ['--force'] : []), path]);
+  }
+  if (commitOf(`refs/heads/${branch}`) !== null) git(['branch', '-D', branch]);
+  if (registeredWorktrees().includes(path)) throw new ScriptError(EXIT_OTHER, `git worktree list still shows ${path}`);
+  return dropped;
 }

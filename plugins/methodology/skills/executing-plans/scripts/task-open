@@ -2,11 +2,21 @@
 // Start a task in one call: the `start` move on the tracking ledger (when the repo is opted in and the task is not
 // started already), the task's brief, and the task's BASE.
 //
-// Usage: task-open PLAN_FILE N
+// Usage: task-open PLAN_FILE N [--worktree]
 // Prints, in this order:
 //   brief: <workspace>/task-<N>-brief.md   (written)
 //   report: <workspace>/task-<N>-report.md (the implementer's report file; not created)
 //   base: <sha>                            (the LAST `BASE: T<N> <sha>` ledger line; recorded from HEAD when there is none)
+//   workdir: <path>                        (only with --worktree: the task's worktree)
+//
+// With --worktree the task is built in `.claude/worktrees/<plan stem>-t<N>` on the branch `wt/<plan stem>-t<N>`, made from BASE (the
+// phase tip the task opened at), so tasks of one phase can run side by side and land in plan order (task-close). A worktree that
+// is already there is reused. `.claude/worktrees/` is appended to `.git/info/exclude` when absent. The install command is chosen
+// from the worktree's lockfile (`package-lock.json` -> `npm ci`, `pnpm-lock.yaml` -> `pnpm install --frozen-lockfile`, `yarn.lock` ->
+// `yarn install --frozen-lockfile`, none -> no install) and runs in the worktree; a run whose install succeeded leaves a marker in the
+// worktree's git dir, so a rerun installs again only after a failed install. A task whose plan has no `Test:` path, or a `Test:`
+// path that is not a .mjs, .js or .cjs file, a glob, or a path outside the repository (`../x.mjs`), is refused (exit 3) before anything
+// is written: landing runs those files with `node --test`, and a landing that runs no test is no landing.
 //
 // A task that is in progress, in review or done is not moved again; a task that is pending or blocked is started; any
 // other state (dropped) is refused. BASE is recorded right after the move and before the brief, so a rerun after a failed brief reuses it. A
@@ -19,24 +29,41 @@
 // Dynamic imports only: the file has no extension, so Node may load it as CommonJS or as an ES module depending on the
 // nearest package.json.
 (async () => {
-  const { realpathSync } = await import('node:fs');
+  const { existsSync, realpathSync, writeFileSync } = await import('node:fs');
   const { basename, dirname, join } = await import('node:path');
   const { pathToFileURL } = await import('node:url');
   const common = await import(pathToFileURL(join(dirname(realpathSync(process.argv[1])), 'lib', 'task-common.mjs')).href);
   const { ScriptError, EXIT_USAGE, EXIT_REFUSED } = common;
 
   const STEP = 'task-open';
+  const USAGE = 'usage: task-open PLAN_FILE N [--worktree]';
+  const LOCKFILES = [
+    ['package-lock.json', ['npm', 'ci']],
+    ['pnpm-lock.yaml', ['pnpm', 'install', '--frozen-lockfile']],
+    ['yarn.lock', ['yarn', 'install', '--frozen-lockfile']],
+  ];
   const STARTABLE = ['pending', 'blocked'];
   const STARTED = ['in_progress', 'in_review', 'done'];
   let n = null;
   let workspace;
   try {
-    const [plan, taskArg, ...extra] = process.argv.slice(2);
+    const argv = process.argv.slice(2);
+    const worktree = argv.includes('--worktree');
+    const [plan, taskArg, ...extra] = argv.filter((a) => a !== '--worktree');
     n = common.taskNumber(taskArg);
-    if (plan === undefined || n === null || extra.length > 0) throw new ScriptError(EXIT_USAGE, 'usage: task-open PLAN_FILE N');
+    if (plan === undefined || n === null || extra.length > 0) throw new ScriptError(EXIT_USAGE, USAGE);
     common.assertMainCheckout();
     workspace = common.workspaceOf(plan);
-    common.readPlanTask(plan, n);
+    const planTask = common.readPlanTask(plan, n);
+    if (worktree) {
+      const tests = common.testPaths(planTask);
+      if (tests.length === 0) throw new ScriptError(EXIT_REFUSED, `T${n} has no Test: path in the plan: a worktree task lands only after its Test files pass`);
+      const bad = tests.find((t) => !/\.(mjs|js|cjs)$/.test(t));
+      if (bad) throw new ScriptError(EXIT_REFUSED, `T${n}: the Test: path ${bad} is not a .mjs, .js or .cjs file, which node --test runs at landing`);
+      const root = common.git(['rev-parse', '--show-toplevel']);
+      const problem = tests.map((t) => common.testPathProblem(root, t)).find((why) => why !== null);
+      if (problem) throw new ScriptError(EXIT_REFUSED, `T${n}: ${problem}, and landing runs each one with node --test`);
+    }
 
     const planName = basename(plan);
     const state = common.taskState(planName, n);
@@ -53,10 +80,30 @@
       common.appendLedger(workspace, `BASE: T${n} ${base}`);
     }
 
+    let workdir = null;
+    if (worktree) {
+      const wt = common.worktreeOf(planName, n);
+      common.excludeWorktrees();
+      if (!common.registeredWorktrees().includes(wt.path)) {
+        // The branch of an earlier worktree of the task is reused; a new one starts at BASE.
+        const branched = common.commitOf(`refs/heads/${wt.branch}`) !== null;
+        common.git(['worktree', 'add', ...(branched ? [wt.path, wt.branch] : ['-b', wt.branch, wt.path, base])]);
+      }
+      const marker = join(common.git(['rev-parse', '--path-format=absolute', '--git-dir'], { cwd: wt.path }), 'triqual-installed');
+      const lockfile = LOCKFILES.find(([name]) => existsSync(join(wt.path, name)));
+      if (lockfile && !existsSync(marker)) {
+        const [command, ...args] = lockfile[1];
+        const installed = common.exec(command, args, { cwd: wt.path });
+        if (installed.status !== 0) throw new ScriptError(1, `${lockfile[1].join(' ')}: ${common.firstLine(installed.stderr) || `exited ${installed.status}`}`);
+        writeFileSync(marker, `${lockfile[1].join(' ')}\n`);
+      }
+      workdir = wt.path;
+    }
+
     const brief = join(workspace, `task-${n}-brief.md`);
     const made = common.runScript('task-brief', [plan, String(n), brief]);
     if (made.status !== 0) throw common.scriptError('task-brief', made);
-    process.stdout.write(`brief: ${brief}\nreport: ${join(workspace, `task-${n}-report.md`)}\nbase: ${base}\n`);
+    process.stdout.write(`brief: ${brief}\nreport: ${join(workspace, `task-${n}-report.md`)}\nbase: ${base}\n${workdir ? `workdir: ${workdir}\n` : ''}`);
   } catch (e) {
     const err = e instanceof ScriptError ? e : new ScriptError(1, `${STEP}: ${e.message}`);
     common.fail(STEP, n, err.code, err.message, workspace);

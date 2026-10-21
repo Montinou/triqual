@@ -20,6 +20,9 @@
 // `**Tier:**` line: `Security` -> security, `Live state` or `Contract` -> state, anything else (or no line) -> security.
 // Appends `Prep: T<N> r<R> <head sha>` last, and `Review: T<N> — no commits, nothing to review` for an empty first range.
 //
+// Only the `Prep:` lines after the task's last `BASE:` line count: the undo of a landing appends a fresh BASE, and the sequential
+// re-run reviews from round 1.
+//
 // A call at the head of the last `Prep:` line is a rerun: it reuses that round, prints the same and appends no second
 // `Prep:` line. Any other call once a `Prep:` line exists must be `--fix-round`.
 //
@@ -71,7 +74,9 @@
     const ledger = common.ledgerLines(workspace);
     const base = common.lastBase(ledger, n);
     if (base === null) throw new ScriptError(EXIT_REFUSED, `no BASE recorded for T${n}: run task-open first`);
-    const preps = prepsOf(ledger, n);
+    // A fresh `BASE:` line (the undo of a landing) starts the task over: the Prep lines before it belong to the attempt it ended.
+    const baseAt = common.lastBaseIndex(ledger, n);
+    const preps = prepsOf(ledger, n).filter((p) => p.index > baseAt);
     const prev = preps.at(-1) ?? null;
     if (fixRound && prev === null) throw new ScriptError(EXIT_REFUSED, `no Prep line for T${n}: run task-prep without --fix-round first`);
     const head = common.commitOf(headArg ?? 'HEAD');
