@@ -32,7 +32,7 @@ const ptScript = (root, name) => (existsSync(join(root, 'cli', name)) || !exists
 // The system plugins, methodology first (installing it brings in the other three). Bootstrap reuses this list.
 export const PLUGINS = ['methodology', 'progress-tracking', 'workflow-gate', 'roles'];
 const ROLES = ['brief-writer', 'tdd-implementer', 'complex-implementer', 'safety-reviewer', 'spec-reviewer',
-  'review-fixer', 'final-adversarial-reviewer', 'hunter'];
+  'review-fixer', 'final-adversarial-reviewer', 'hunter', 'phase-orchestrator'];
 const LEGACY_GATE = 'hooks/workflow-gate.mjs';
 const HEADJACK_TIMEOUT_MS = 10000;
 const GIT_TIMEOUT_MS = 10000;

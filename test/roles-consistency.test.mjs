@@ -200,7 +200,7 @@ test('a copy that yields no role names fails instead of passing unchecked', () =
 });
 
 test('a wrong count word in a copy of plugin.json is reported', () => {
-  const problem = withTempCopy('rolesPlugin', 'plugin.json', (s) => s.replace('Eight role agents', 'Six role agents'),
+  const problem = withTempCopy('rolesPlugin', 'plugin.json', (s) => s.replace('Nine role agents', 'Six role agents'),
     (paths) => countWordProblem(paths));
-  assert.match(problem, /should start with "Eight" for 8 agent files/);
+  assert.match(problem, /should start with "Nine" for 9 agent files/);
 });

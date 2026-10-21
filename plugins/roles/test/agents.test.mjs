@@ -16,6 +16,7 @@ const ROLES = {
   'review-fixer': { model: 'sonnet', effort: 'high', disallowedTools: 'Agent' },
   'final-adversarial-reviewer': { model: 'opus', effort: 'high', disallowedTools: 'Agent, Edit, Write, NotebookEdit' },
   hunter: { model: 'claude-haiku-5-5', effort: 'medium', disallowedTools: 'Agent, Edit, NotebookEdit' },
+  'phase-orchestrator': { model: 'sonnet', effort: 'medium', disallowedTools: 'Edit, NotebookEdit' },
 };
 
 // Minimal frontmatter parser: `key: value` lines between the first two `---` fences.
@@ -96,4 +97,27 @@ test('safety-reviewer rule 7 splits by mode: store mode flags an added tracking 
   assert.match(rule, /root `progress\.md`/, 'rule 7 does not flag an added root progress.md');
   assert.match(rule, /deletions? (?:is|are) not/i, 'rule 7 does not exempt deletions');
   assert.ok(rule.includes('`templates/progress.md`') || rule.includes('`templates/`'), 'rule 7 does not exempt templates/');
+});
+
+// Plan thin-controller T4: the phase orchestrator is the one role that dispatches the others.
+test('only phase-orchestrator may use Agent', () => {
+  for (const file of readdirSync(AGENTS).filter((f) => f.endsWith('.md')).sort()) {
+    const { meta } = parseAgent(file);
+    const disallowsAgent = listTools(meta.disallowedTools).includes('Agent');
+    if (meta.name === 'phase-orchestrator') assert.ok(!disallowsAgent, 'phase-orchestrator must be able to dispatch agents');
+    else assert.ok(disallowsAgent, `${meta.name}: must disallow Agent`);
+  }
+});
+
+test('phase-orchestrator runs one phase through executing-plans and returns the summary contract', () => {
+  const { meta, body } = parseAgent('phase-orchestrator.md');
+  assert.match(meta.description, /^".*"$/, 'description is quoted like the other roles (Grok\'s YAML loader)');
+  assert.ok(body.includes('`methodology:executing-plans`'), 'body names methodology:executing-plans');
+  assert.match(body, /that phase only/);
+  assert.match(body, /never edits? product code/i);
+  assert.ok(body.includes('BLOCKED: <stop> — <details>'), 'body states the BLOCKED line');
+  for (const needle of ['Phase: P<n> <done|blocked>', 'Tasks: T<N> <sha>', 'Rulings I made:', 'Open minors:', 'Errors and fallbacks:', 'at most 20 lines']) {
+    assert.ok(body.includes(needle), `body lacks the summary contract line ${needle}`);
+  }
+  assert.ok(body.includes('## Denied by Policy'), 'body carries the denial rule heading');
 });

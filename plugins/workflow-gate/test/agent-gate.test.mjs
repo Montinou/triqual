@@ -375,6 +375,21 @@ test('the hook maps roles through the real ROLE_MODELS and lets Haiku through', 
   }
 });
 
+test('the hook counts roles:phase-orchestrator as a sonnet start through the real ROLE_MODELS', () => {
+  const home = tempDir();
+  try {
+    const orchestrator = { ...fixture('agent-pretooluse.json'), tool_input: { subagent_type: 'roles:phase-orchestrator' } };
+    for (let i = 0; i < 12; i++) assert.equal(runHook(orchestrator, home), null);
+    const out = runHook(orchestrator, home);
+    assert.equal(out.permissionDecision, 'deny');
+    assert.match(out.permissionDecisionReason, /sonnet/);
+    const state = JSON.parse(readFileSync(join(home, 'triqual', 'workflow-gate', `${orchestrator.session_id}.json`), 'utf8'));
+    assert.ok(state.starts.every((s) => s.model === 'sonnet'), JSON.stringify(state.starts));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('the hook honours WORKFLOW_MAX_OPUS and WORKFLOW_GATE_AGENT_WINDOW_S', () => {
   const home = tempDir();
   try {

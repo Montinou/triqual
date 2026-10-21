@@ -13,13 +13,13 @@
       "name": "workflow-gate",
       "source": "./plugins/workflow-gate",
       "description": "Caps the agents a Workflow script launches per model: fable 3, opus 8, sonnet 12, haiku unlimited. Since 0.3.0 it also caps Agent and Task starts per model in a 120 s window",
-      "version": "0.3.1"
+      "version": "0.3.2"
     },
     {
       "name": "roles",
       "source": "./plugins/roles",
-      "description": "Eight role agents for plan execution, from brief writing and candidate hunting to the final adversarial review",
-      "version": "0.3.4"
+      "description": "Nine role agents for plan execution, from brief writing and candidate hunting to the final adversarial review and the phase orchestrator",
+      "version": "0.4.0"
     },
     {
       "name": "methodology",

@@ -531,7 +531,7 @@ test('every dispatch template and every role agent carries the denial rule once,
   for (const needed of ['reviewing-code/reviewer-prompt.md', 'brainstorming/spec-document-reviewer-prompt.md']) {
     assert.ok(DISPATCH_TEMPLATES.includes(needed), `${needed} is not recognized as a dispatch template`);
   }
-  assert.equal(ROLE_AGENT_FILES.length, 8, ROLE_AGENT_FILES.join(', '));
+  assert.equal(ROLE_AGENT_FILES.length, 9, ROLE_AGENT_FILES.join(', '));
   assert.deepEqual([
     ...DISPATCH_TEMPLATES.flatMap((path) => carrierProblems(path, read(REAL.skills, path))),
     ...ROLE_AGENT_FILES.flatMap((file) => carrierProblems(`roles/agents/${file}`, readFileSync(join(REAL.agents, file), 'utf8'))),

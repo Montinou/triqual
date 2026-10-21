@@ -79,6 +79,14 @@ test('caps opus at 8', () => {
   assertDeny(runGate(script(s(9))), 'opus=9, over the opus cap of 8');
 });
 
+test('phase-orchestrator is a sonnet role: it needs a sonnet budget and is capped with the sonnet agents', () => {
+  const s = (n) => `// MAX_AGENTS: sonnet=${n}\nawait agent("x", { agentType: "roles:phase-orchestrator" });\n`;
+  assertAllow(runGate(script(s(1))));
+  assertDeny(runGate(script(s(13))), 'sonnet=13, over the sonnet cap of 12');
+  assertDeny(runGate(script('await agent("x", { agentType: "roles:phase-orchestrator" });\n')), /no budget comment/);
+  assertDeny(runGate(script('// MAX_AGENTS: sonnet=1\nawait agent("x", { agentType: "roles:phase-orchestrator" });\nawait agent("y", { agentType: "roles:tdd-implementer" });\n')), /declares sonnet=1 but the script has 2 sonnet agent\(\) call site/);
+});
+
 test('caps sonnet at 12', () => {
   const s = (n) => `// MAX_AGENTS: sonnet=${n}\nawait agent("x", { model: "sonnet" });\n`;
   assertAllow(runGate(script(s(12))));

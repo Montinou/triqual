@@ -3,6 +3,25 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## roles 0.4.0
+
+### Added
+
+- **`roles:phase-orchestrator`.** A ninth role agent, Sonnet at medium effort, that runs one phase of a plan by following
+  `methodology:executing-plans` for that phase only. It dispatches the other roles, never edits product code, ends on
+  any stop with `BLOCKED: <stop> — <details>` and returns a summary of at most 20 lines (phase status, task commits,
+  rulings, open minors, errors and fallbacks). It disallows `Edit` and `NotebookEdit` but not `Agent`: it is the only
+  role that may dispatch agents, and a test keeps every other role's `Agent` disallowed. It carries the denial rule.
+  Codex routing is `gpt-6.1-sol` at medium effort, and the generated Codex agent does not forbid `spawn_agent`. The
+  plugin cache is keyed by version, so machines on 0.3.4 do not have the role until they update.
+
+## workflow-gate 0.3.2
+
+### Changed
+
+- `ROLE_MODELS` carries `phase-orchestrator` as Sonnet, so a Workflow `agent()` naming it and an `Agent` start with
+  that `subagent_type` count against the Sonnet cap. The caps themselves are unchanged.
+
 ## methodology 1.2.0
 
 ### Changed

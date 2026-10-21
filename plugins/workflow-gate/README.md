@@ -29,7 +29,7 @@ not numeric, is empty or is negative is ignored and the default applies, with no
 A script is accepted when it meets all three rules.
 
 1. **Every `agent()` names its model.**
-   - `agentType: "roles:<name>"` for one of the eight [`roles`](../roles/README.md) agents, which
+   - `agentType: "roles:<name>"` for one of the nine [`roles`](../roles/README.md) agents, which
      maps to that role's model (map below), or
    - a string-literal `model:` that contains `fable`, `opus`, `sonnet` or `haiku`.
 
@@ -91,7 +91,7 @@ test keeps it equal to the `model:` of each agent file in `plugins/roles/agents/
 | Role | Model family |
 |---|---|
 | `hunter` | haiku |
-| `brief-writer`, `tdd-implementer`, `safety-reviewer`, `spec-reviewer`, `review-fixer` | sonnet |
+| `brief-writer`, `tdd-implementer`, `safety-reviewer`, `spec-reviewer`, `review-fixer`, `phase-orchestrator` | sonnet |
 | `complex-implementer`, `final-adversarial-reviewer` | opus |
 
 ## The `Agent` burst cap
