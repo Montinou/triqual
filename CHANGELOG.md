@@ -3,6 +3,29 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## methodology 1.2.0
+
+### Changed
+
+- **The task loop runs on three scripts.** `executing-plans` starts a task with `task-open` (the `start` move, the
+  brief, BASE), prepares each review with `task-prep` (the `review` move, `tier-check` and its raise, the hunter pick,
+  the review package; `--fix-round` for a fix round) and closes it with `task-close` (squash, `done`, the complete
+  line, the `task-review` record, the review progress entry). Each script is idempotent, runs from the main checkout,
+  prints `key: value` lines and, on a failure, appends an `Error:` line to the workspace ledger and exits non-zero:
+  2 usage, 3 refused precondition, 1 other failure. Nothing fails quietly and no count is guessed.
+- **Reviewer footers.** The safety gate, the spec reviewer and the re-reviewer end their final message with a v1
+  footer (`<!-- triqual-review v1 -->`, `role:`, `findings:` counts and, for the spec reviewer, one `candidate:` verdict
+  per candidate). The dispatcher saves each final message unchanged to `<workspace>/task-<N>-<role>-r<R>.md`, and
+  `task-close` builds the `task-review` record from the saved files and the hunters' candidates files: a hunter with
+  no usable candidates file is recorded `failed`, and a missing or malformed gate or spec footer is an `Error:` with no
+  record.
+- **Reopened tasks.** Each close leaves a marker file `task-<N>-closed-<attempt>`. After `triqual tasks reopen`, an
+  attempt of 2 or more accepts only gate, spec and hunter outputs saved after the previous marker, so a reopen saves
+  fresh gate and spec outputs; a reopen that runs only a re-review cannot be closed until they exist.
+- **Ledger vocabulary.** New lines: `BASE: T<N> <sha>`, `Prep: T<N> r<R> <head sha>` and `Error: <step> T<N> — exit
+  <code> — <first stderr line>`. Finish lists the ledger's `Error:` and fallback lines under "Errors and fallbacks",
+  and the closing progress entry counts them.
+
 ## methodology 1.1.0
 
 ### Changed

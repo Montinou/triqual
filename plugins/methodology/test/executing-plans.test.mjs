@@ -311,9 +311,9 @@ test('batched light dispatch resumes one implementer one task at a time, BASE re
     'consecutive light tasks of one phase whose role is `roles:tdd-implementer`',
     'resume that same implementer for each next task',
     'One task at a time',
-    "only after the previous task's review, squash and `triqual tasks done` finished",
-    'Record BASE before each resume',
-    '`tier-check`, the review and the ledger moves stay per task',
+    "only after the previous task's review and `task-close` finished",
+    'its own BASE (recorded from `HEAD`, the squashed commit of the previous task)',
+    '`task-prep`, the review and `task-close` stay per task',
     'A task that `tier-check` raises above light ends the batch',
     'gets a fresh dispatch',
   ]) {
@@ -353,7 +353,7 @@ test('a fix round passes --fix-round on its FIX_BASE..HEAD check, so code added 
 test('the kept SDD behaviors are in their own sections', () => {
   const text = skill();
   const pins = {
-    '### 1. Start the task': ['Record BASE (`git rev-parse HEAD`) before', 'never `HEAD~1`'],
+    '### 1. Start the task': ['the `BASE: T<N> <sha>` ledger line (the last one counts)', 'BASE is never `HEAD~1`'],
     '### 4. Review the task': ['on one review package'],
     '#### Round 2': ['`confirmed` (with a severity), `refuted`, `duplicate-candidate` and `duplicate-review`'],
     '### 5. The fix loop': ['`Task <N>: minor (deferred): <one-liner>`', 'after round 5 the task is blocked'],
@@ -400,8 +400,8 @@ test('after a block, the human decision restarts the task with tasks start befor
   assert.ok(parkText.includes('step 6'), 'park does not go on to step 6');
   assert.ok(moreText.includes('`Ruling: human granted <K> rounds for T<N>'), 'more rounds has no ledgered grant');
   assert.ok(
-    moreText.includes("skip the first granted round's `triqual tasks rework` move: `start` already moved the task to `in_progress`"),
-    'more rounds does not skip the first rework (rework only leaves in_review)',
+    moreText.includes('`start` already moved the task to `in_progress` and `rework` only leaves `in_review`, so run `triqual tasks review T<N> --plan <plan>` before the first `task-prep PLAN_FILE N --fix-round`'),
+    'more rounds does not move the task in_review before the first task-prep --fix-round (rework only leaves in_review)',
   );
   assert.doesNotMatch(text, /role-eval|`task-review` record/, 'the breaker writes a record (it is written once, at completion)');
 });
@@ -426,14 +426,14 @@ test('every retier outside the examples is conditional on opting in', () => {
   assert.deepEqual(bad, []);
 });
 
-test('step 6 writes the completion line right after tasks done, before the record; the record is written once', () => {
+test('task-close does the done move, then the completion line, then the record, in that order; the record is written once', () => {
   const six = flat(section(skill(), '### 6. Complete the task'));
   const done = six.indexOf('`triqual tasks done T<N>');
   const complete = six.indexOf('`Task <N>: complete');
-  const record = six.indexOf('`triqual role-eval record');
+  const record = six.indexOf('the `task-review` record');
   assert.ok(done >= 0 && complete > done && record > complete, 'order is not done → complete line → record');
   const records = flat(section(skill(), '## Records'));
-  assert.ok(records.includes('written once, when the task completes'));
+  assert.ok(records.includes('written once, by `task-close`, when the task completes'));
   assert.doesNotMatch(records, /and at the breaker/);
 });
 
@@ -1049,11 +1049,11 @@ test('fix rounds commit with --fixup of the first commit, never an amend, a reba
 
 test('completing a task squashes before the ledger move, with commit-tree and no hook', () => {
   const done = flat(section(skill(), '### 6. Complete the task'));
-  const squash = done.indexOf('1. **Squash:** run `node scripts/stack.mjs squash PLAN_FILE BASE`');
+  const squash = done.indexOf('the squash: `node scripts/stack.mjs squash PLAN_FILE BASE`');
   const move = done.indexOf('`triqual tasks done T<N> --commit <sha> --plan <plan>`');
   const line = done.indexOf('`Task <N>: complete (commits <base7>..<head7>, review clean)`');
   assert.ok(squash >= 0 && move > squash && line > move, 'the order is not squash, then tasks done, then the complete line');
-  for (const text of ['with `git commit-tree`', 'never a rebase and never a `git commit`', 'so no hook runs and no gate fires', 'with the sha the squash printed']) {
+  for (const text of ['with `git commit-tree`', 'never a rebase and never a `git commit`', 'so no hook runs and no gate fires', 'with that sha']) {
     assert.ok(done.includes(text), `step 6 lacks: ${text}`);
   }
 });
@@ -1604,4 +1604,104 @@ test('the changelog and the README describe the hunters and the seams review acc
   assert.doesNotMatch(changelog, /hunters' findings are verified by the phase review/, 'the changelog still says the phase review verifies per-task hunters');
   const readme = flat(readFileSync(join(PLUGIN, 'README.md'), 'utf8'));
   assert.ok(readme.includes('A `hunters` record takes `P<n>` for a phase review (the seams review writes none)'), 'the README gives the seams review a hunters record');
+});
+
+// ---- thin controller, slice 1: the task loop runs on three scripts (spec U1, U2) ----------------------------------
+
+test('the task loop runs task-open, task-prep and task-close', () => {
+  const text = skill();
+  const one = flat(section(text, '### 1. Start the task'));
+  assert.ok(one.includes('`node scripts/task-open PLAN_FILE N`'), 'step 1 does not run task-open');
+  for (const key of ['brief:', 'report:', 'base:']) assert.ok(one.includes(`\`${key}\``), `step 1 does not name the ${key} line`);
+  assert.doesNotMatch(one, /triqual tasks start|git rev-parse HEAD/, 'step 1 still makes the start move or records BASE by hand');
+
+  const three = flat(section(text, '### 3. Check the tier'));
+  assert.ok(three.includes('`node scripts/task-prep PLAN_FILE N`'), 'step 3 does not run task-prep');
+  for (const key of ['tier:', 'hunters:', 'package:', 'round:', 'full-review:']) assert.ok(three.includes(`\`${key}\``), `step 3 does not name the ${key} line`);
+  const four = flat(section(text, '### 4. Review the task'));
+  assert.ok(four.includes('`package:` line of `task-prep`'), 'step 4 does not take the package from task-prep');
+  assert.doesNotMatch(four, /run `node scripts\/review-package PLAN_FILE BASE HEAD`/, 'step 4 still builds the package by hand');
+  const fix = flat(section(text, '### 5. The fix loop'));
+  assert.ok(fix.includes('`node scripts/task-prep PLAN_FILE N --fix-round`'), 'the fix loop does not run task-prep --fix-round');
+
+  const six = flat(section(text, '### 6. Complete the task'));
+  assert.ok(six.includes('`node scripts/task-close PLAN_FILE N`'), 'step 6 does not run task-close');
+  for (const key of ['sha:', 'record:']) assert.ok(six.includes(`\`${key}\``), `step 6 does not name the ${key} line`);
+  for (const gone of ['1. **Squash:**', '2. **Progress entry:**', '3. **Ledger move:**', '4. **Ledger, right away:**', '5. **Record:**']) {
+    assert.ok(!six.includes(gone), `step 6 still lists a controller step: ${gone}`);
+  }
+  for (const folded of ['`node scripts/stack.mjs squash', '`git commit-tree`', '`Task <N>: complete (commits <base7>..<head7>, review clean)`', 'the `task-review` record', 'review progress entry']) {
+    assert.ok(six.includes(folded), `step 6 does not say task-close does: ${folded}`);
+  }
+  const process = flat(section(text, '## The Process'));
+  for (const script of ['task-open', 'task-prep', 'task-close']) assert.ok(process.includes(script), `The Process does not name ${script}`);
+});
+
+test('more rounds after the breaker move the task in_review first; a reopen runs its fix loop by hand because task-prep cannot serve a squashed task', () => {
+  const breaker = flat(skill().split('\n').find((l) => l.startsWith('**The breaker.**')) ?? '');
+  assert.ok(breaker.includes('run `triqual tasks review T<N> --plan <plan>` before the first `task-prep PLAN_FILE N --fix-round`'), 'more rounds does not move the task in_review first');
+  assert.ok(breaker.includes('`rework` only leaves `in_review`'), 'more rounds does not say why');
+  const seven = flat(section(skill(), '### 7. End the phase'));
+  for (const line of [
+    'the head of its last `Prep:` line is no ancestor of `HEAD`',
+    'FIX_BASE is the task\'s squashed commit',
+    'node scripts/tier-check PLAN_FILE N FIX_BASE HEAD --floor <tier> --fix-round',
+    'node scripts/review-package PLAN_FILE FIX_BASE HEAD',
+    'fresh gate and spec outputs',
+    'its record carries the next `attempt`',
+  ]) {
+    assert.ok(seven.includes(line), `the reopen path lacks: ${line}`);
+  }
+});
+
+test('reviewer prompts end with the v1 footer', () => {
+  for (const [file, role] of [['safety-review-prompt.md', 'safety-reviewer'], ['task-reviewer-prompt.md', 'spec-reviewer'], ['re-review-prompt.md', 're-reviewer']]) {
+    const text = read(`${EP}/${file}`);
+    const format = flat(text.slice(text.indexOf('## Output Format')));
+    assert.ok(format.includes('<!-- triqual-review v1 -->'), `${file} lacks the footer marker in its Output Format`);
+    assert.ok(format.includes(`role: ${role}`), `${file} lacks role: ${role}`);
+    assert.ok(format.includes('findings: critical=<n> important=<n> minor=<n>'), `${file} lacks the findings: line`);
+    assert.ok(format.includes('last lines of your final message'), `${file} does not make the footer the last lines`);
+  }
+  const spec = flat(read(`${EP}/task-reviewer-prompt.md`));
+  assert.ok(spec.includes('candidate: <candidate id> confirmed critical|confirmed important|confirmed minor|refuted|duplicate-candidate|duplicate-review'), 'the spec reviewer prompt lacks the candidate: line form');
+  assert.ok(spec.includes('one `candidate:` line per candidate'), 'the spec reviewer prompt does not ask for one candidate: line each');
+  const re = flat(read(`${EP}/re-review-prompt.md`));
+  assert.ok(re.includes('`candidate:` lines: none'), 're-review prompt does not drop the candidate: lines');
+  const gate = flat(read(`${EP}/safety-review-prompt.md`));
+  assert.ok(gate.includes('`candidate:` lines: none'), 'the safety prompt does not drop the candidate: lines');
+});
+
+test('the dispatcher saves each reviewer\'s final message, and a reopen needs fresh outputs', () => {
+  const text = flat(section(skill(), '### 4. Review the task'));
+  assert.ok(text.includes('`<workspace>/task-<N>-<role>-r<R>.md`'), 'step 4 does not name the saved output path');
+  for (const line of ['`safety-reviewer`, `spec-reviewer` or `re-reviewer`', '`round:` line of `task-prep`', 'unchanged', 'cannot write files', 'A final message without the footer is sent back']) {
+    assert.ok(text.includes(line), `step 4 lacks: ${line}`);
+  }
+  const six = flat(section(skill(), '### 6. Complete the task'));
+  for (const line of [
+    '`<workspace>/task-<N>-closed-<attempt>`',
+    'an attempt of 2 or more (after `triqual tasks reopen`) accepts only gate, spec and hunter outputs saved after the previous marker',
+    'a reopen must save a fresh gate output and a fresh spec output',
+    'a reopen that runs only a re-review cannot be closed until they exist',
+  ]) {
+    assert.ok(six.includes(line), `step 6 lacks: ${line}`);
+  }
+  const seven = flat(section(skill(), '### 7. End the phase'));
+  assert.ok(seven.includes('fresh gate and spec outputs'), 'the reopen path does not ask for fresh gate and spec outputs');
+});
+
+test('the ledger vocabulary has BASE, Prep and Error lines, and Finish lists Errors and fallbacks', () => {
+  const vocab = flat(section(skill(), '## Ledger vocabulary'));
+  for (const line of [
+    '`BASE: T<N> <sha>`',
+    '`Prep: T<N> r<R> <head sha>`',
+    '`Error: <step> T<N> — exit <code> — <first stderr line>`',
+  ]) {
+    assert.ok(vocab.includes(line), `the ledger vocabulary lacks: ${line}`);
+  }
+  const finish = flat(section(skill(), '## Finish'));
+  assert.ok(finish.includes('under "Errors and fallbacks"'), 'Finish does not list Errors and fallbacks');
+  assert.ok(finish.includes('every ledger line that starts with `Error:`'), 'Finish does not collect the Error: lines');
+  assert.ok(finish.includes('the closing `progress.md` entry') && finish.includes('the count of `Error:` and fallback lines'), 'the closing progress entry does not count the Error: and fallback lines');
 });
