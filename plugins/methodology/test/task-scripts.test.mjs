@@ -2267,3 +2267,77 @@ test('the worktree of a landed task is removed with its untracked files, and a t
   assert.equal(wtBranches(r), '');
   assert.equal(storedRecords(r).length, 1, 'the record was made twice');
 }));
+
+// ---- worktree tasks: fix round 2 (the BASE of a worktree task is a closed commit of the phase branch) ----
+
+// A task built in the main checkout: open, one commit, task-prep at it, the reviewers' outputs saved (not yet closed).
+const mainReviewed = (r, n) => {
+  open(r, n);
+  const head = r.commit(`src/t${n}.js`, `export const t${n} = ${n};\n`, `feat: t${n}`);
+  ok(r.run('task-prep', r.plan, String(n)));
+  save(r, n, 'safety-reviewer', 1, footerText('safety-reviewer'));
+  save(r, n, 'spec-reviewer', 1, footerText('spec-reviewer'));
+  return head;
+};
+
+test('a worktree task opened while a main-checkout task has an unreviewed commit is based at the last closed commit, not at that commit', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  const o1 = open(r, 1);
+  assert.equal(o1.base, tip);
+  const unreviewed = r.commit('src/t1.js', 'export const t1 = 1;\n', 'feat: t1');
+  assert.notEqual(unreviewed, tip);
+
+  const o2 = wtOpen(r, 2);
+  assert.equal(o2.base, tip, 'BASE is the closed commit, not the main-checkout task commit');
+  assert.equal(wtGit(r, 2, 'rev-parse', 'HEAD').trim(), tip, 'the worktree starts at the closed commit');
+  assert.equal(existsSync(join(wtPath(r, 2), 'src', 't1.js')), false);
+  assert.ok(r.ledger().includes(`BASE: T2 ${tip}`));
+  assert.equal(r.ledger().includes(`BASE: T2 ${unreviewed}`), false);
+  assert.equal(out(ok(r.run('task-open', r.plan, '2', '--worktree'))).base, tip, 'a rerun reads the recorded BASE');
+
+  // The worktree task is reviewed on its own commits only.
+  const h2 = wtReview(r, 2);
+  const pkg = readFileSync(join(r.workspace, `review-${sha7(tip)}..${sha7(h2)}.diff`), 'utf8');
+  assert.match(pkg, /src\/t2\.js/);
+  assert.doesNotMatch(pkg, /src\/t1\.js/, "the other task's commit is in the review package");
+
+  // T1 is closed (squashed on the phase branch), then T2 lands on it: BASE is an ancestor of both and the merge base is BASE.
+  ok(r.run('task-prep', r.plan, '1'));
+  save(r, 1, 'safety-reviewer', 1, footerText('safety-reviewer'));
+  save(r, 1, 'spec-reviewer', 1, footerText('spec-reviewer'));
+  const c1 = out(ok(closeOf(r, 1)));
+  const c2 = out(ok(closeOf(r, 2)));
+  assert.equal(r.git('rev-parse', `${c2.sha}^`).trim(), c1.sha);
+  assert.ok(['src/t1.js', 'src/t2.js'].every((f) => tracked(r, 'HEAD').includes(f)), tracked(r, 'HEAD').join('\n'));
+  assert.equal(r.taskState(2).status, 'done');
+  noError(r);
+}));
+
+test('a worktree task is based at the phase tip when the main-checkout task has no commit yet', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  open(r, 1);
+  assert.equal(wtOpen(r, 2).base, tip);
+  assert.equal(wtGit(r, 2, 'rev-parse', 'HEAD').trim(), tip);
+}));
+
+test('a worktree task is based at the phase tip once the main-checkout task is closed', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  mainReviewed(r, 1);
+  const c1 = out(ok(closeOf(r, 1)));
+  assert.equal(wtOpen(r, 2).base, c1.sha, 'a closed task: the tip is the closed commit');
+  assert.equal(wtGit(r, 2, 'rev-parse', 'HEAD').trim(), c1.sha);
+}));
+
+test('a worktree task does not count as an unreviewed main-checkout task, and an earlier worktree task BASE is not reused', () => withRig({ planText: WT_PLAN.replace('- Create: `src/t3.js`\n', '- Create: `src/t3.js`\n- Test: `test/three.test.mjs`\n') }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  assert.equal(wtOpen(r, 2).base, tip);
+  wtCommit(r, 2, 'src/t2.js', 'export const t2 = 2;\n');
+  mainReviewed(r, 1);
+  const c1 = out(ok(closeOf(r, 1)));
+  // T2's worktree (BASE = tip) is open with commits not on the branch, and its BASE is older than the closed T1: T3 starts at c1.
+  assert.equal(wtOpen(r, 3).base, c1.sha, "an open worktree task's BASE is not a closed commit of the tip");
+  assert.equal(wtGit(r, 3, 'rev-parse', 'HEAD').trim(), c1.sha);
+}));

@@ -1961,3 +1961,292 @@ test('the summary has an overflow rule and the main session reads nothing of the
   assert.ok(body.includes('and in the phase review (step 8) only the reviewers\' verdicts'), 'the never-reads rule does not allow the phase review verdicts');
   assert.ok(body.includes('The fallback is the exception'), 'the never-reads rule has no fallback exception');
 });
+
+// ---- parallel tasks, slice 3: independent tasks of a phase run at the same time (spec U6) -------------------------
+
+const PARALLEL = '### Parallel tasks';
+const parallel = () => flat(section(skill(), PARALLEL));
+
+test('independence is no shared Files path with a running task and every dependency complete', () => {
+  const body = parallel();
+  for (const line of [
+    'A task is independent when every task it depends on is complete and its plan `**Files:**` paths share no path with any earlier task of the phase that is not yet closed',
+    'a task is running from its `task-open` until its `task-close`',
+  ]) assert.ok(body.includes(line), `Parallel tasks lacks: ${line}`);
+  assert.ok(flat(PROMPT()).includes('`**Files:**` paths share no path with any earlier task of the phase that is not yet closed'), 'the orchestrator prompt does not carry the independence rule');
+});
+
+test('an earlier overlapping task always starts first: independence looks at every earlier task not yet closed, and the deadlock is the reason', () => {
+  const body = parallel();
+  for (const line of [
+    'any earlier task of the phase that is not yet closed, running or not yet started',
+    'an earlier task that overlaps it always starts first',
+    'it starts once that earlier task is closed',
+    // the reason: a later task running while an earlier overlapping one has not started deadlocks against the landing order
+    'if a later task ran while an earlier task it overlaps had not started, the earlier would wait for the later to close, and the later `task-close` waits for the earlier to land: a deadlock',
+  ]) assert.ok(body.includes(line), `Parallel tasks lacks: ${line}`);
+  assert.doesNotMatch(body, /share no path with any running task/, 'the rule still checks only running tasks');
+  const prompt = flat(PROMPT());
+  assert.ok(prompt.includes('so an earlier overlapping task always starts first'), 'the orchestrator prompt does not order the starts');
+  assert.ok(prompt.includes('a deadlock against the landing order'), 'the orchestrator prompt does not give the deadlock reason');
+  assert.doesNotMatch(prompt, /share no path with any running task/, 'the orchestrator prompt still checks only running tasks');
+  const log = readFileSync(join(PLUGIN, '..', '..', 'CHANGELOG.md'), 'utf8');
+  const entry = flat(log.slice(log.indexOf('\n## methodology 1.4.0'), log.indexOf('\n## methodology 1.3.0')));
+  assert.ok(entry.includes('earlier task of the phase that is not yet closed'), 'the CHANGELOG still states the running-only rule');
+});
+
+test('a fix round due while all 3 slots are busy waits for the first implementer to report, ahead of any task that has not started', () => {
+  const body = parallel();
+  assert.ok(body.includes('A fix round that is due while all 3 slots are busy waits for the first implementer to report, ahead of any task that has not started'), 'Parallel tasks does not say what a due fix round does with no free slot');
+  assert.ok(flat(PROMPT()).includes('a fix round due with all 3 slots busy waits for the first free slot, ahead of any task that has not started'), 'the orchestrator prompt does not say it');
+});
+
+test('the abandon recipe for a landing that never clears moves the branch, writes the undo pair and marker, removes the worktree and reworks', () => {
+  const body = parallel();
+  for (const line of [
+    'moves the phase branch to that sha (`git reset --keep <sha>` from the main checkout; nothing to do when it is already there)',
+    'writes `BASE: T<N> <sha>` and `Task <N>: landing conflict — re-run sequential` in one write',
+    'creates the file `<workspace>/task-<N>-undone`',
+    'removes the task\'s worktree and its branch (`git worktree remove --force`, `git branch -D wt/<plan stem>-t<N>`)',
+    'runs `triqual tasks rework T<N> --plan <plan>` when opted in',
+    // why: the record of the re-run must not count the undone attempt
+    'without the line and the marker the re-run\'s record would count the undone attempt\'s fix rounds and its stale reviewer and hunter outputs',
+  ]) assert.ok(body.includes(line), `Parallel tasks lacks the abandon recipe: ${line}`);
+  const order = ['moves the phase branch to that sha', 'writes `BASE: T<N> <sha>`', 'creates the file `<workspace>/task-<N>-undone`', 'runs `triqual tasks rework'].map((l) => body.indexOf(l));
+  assert.deepEqual([...order].sort((a, b) => a - b), order, 'the abandon steps are not in order');
+});
+
+test('at most 3 implementers at once', () => {
+  assert.ok(parallel().includes('At most 3 implementers at once'), 'Parallel tasks has no limit');
+  assert.ok(PROMPT().includes('at most 3 implementers at once'), 'the orchestrator prompt has no limit');
+  assert.doesNotMatch(skill(), /Never dispatch two implementers in parallel/, 'the sequential-only sentence is still there');
+  assert.ok(flat(section(skill(), '### 2. Build')).includes('Two implementers run at once only as Parallel tasks says'), 'step 2 does not point at Parallel tasks');
+});
+
+test('batched light tasks never run in parallel', () => {
+  assert.ok(parallel().includes('Batched light tasks never run in parallel'), 'Parallel tasks does not exclude batched light tasks');
+  assert.ok(PROMPT().includes('batched light tasks never run in parallel'), 'the orchestrator prompt does not exclude batched light tasks');
+  assert.ok(flat(section(skill(), '#### Batched light dispatch')).includes('Batched light tasks never run in parallel'), 'Batched light dispatch does not say so');
+});
+
+test('a task uses the main checkout only when every earlier task of the phase is done or dropped; others use task-open --worktree', () => {
+  const body = parallel();
+  for (const line of [
+    'A task uses the main checkout only when every earlier task of the phase is done or dropped',
+    'every other task is opened with `node scripts/task-open PLAN_FILE N --worktree`',
+    '`.claude/worktrees/<plan stem>-t<N>`',
+    'on the branch `wt/<plan stem>-t<N>`',
+    'started at its BASE',
+    'adds `.claude/worktrees/` to `.git/info/exclude`',
+    '`npm ci`, `pnpm install --frozen-lockfile`, `yarn install --frozen-lockfile`',
+    'a failed install is exit 1 with an `Error:` line',
+    'It prints `workdir:` after `base:`',
+    'A rerun reuses the worktree',
+    '`[WORK_DIR]`',
+  ]) assert.ok(body.includes(line), `Parallel tasks lacks: ${line}`);
+  assert.ok(PROMPT().includes('A task uses the main checkout only when every earlier task of the phase is done or dropped'), 'the orchestrator prompt does not say where a task runs');
+  assert.ok(flat(section(skill(), '### 1. Start the task')).includes('`node scripts/task-open PLAN_FILE N --worktree`'), 'step 1 does not name --worktree');
+});
+
+test('task-close for a worktree task is called only after every earlier task has landed', () => {
+  const body = parallel();
+  for (const line of [
+    '`task-close` for a worktree task is called only after every earlier task of the phase has landed',
+    'lands in plan order',
+    'refused (exit 3) with no `Error:` line',
+    'a wait, not a failure',
+    '`task-prep PLAN_FILE N --head <sha>`',
+    '`git rev-parse wt/<plan stem>-t<N>`',
+    '`--fix-round --head <sha>`',
+    '`git merge-tree --write-tree`',
+    '`git commit-tree`',
+    '`git reset --keep`',
+    'ONE commit on the phase tip',
+    '`node --test`',
+    'done --commit <landed sha>',
+    '`git worktree list`',
+    'worktree and its branch are removed',
+  ]) assert.ok(body.includes(line), `Parallel tasks lacks: ${line}`);
+  assert.ok(PROMPT().includes('closed with `task-close` only after every earlier task has landed'), 'the orchestrator prompt does not order the landings');
+  assert.ok(PROMPT().includes('`task-prep --head <sha>`'), 'the orchestrator prompt does not review a worktree task with --head');
+  assert.ok(flat(section(skill(), '### 6. Complete the task')).includes('a worktree task: see Parallel tasks'), 'step 6 does not point at Parallel tasks');
+});
+
+test('a task with no node Test path never runs in a worktree', () => {
+  const body = parallel();
+  for (const line of [
+    'A task with no node `Test:` path never runs in a worktree',
+    'a `Test:` path that is not a `.mjs`, `.js` or `.cjs` file, a glob, or a path outside the repository',
+    '`task-open --worktree` refuses it (exit 3, with an `Error:` line, before anything is written)',
+  ]) assert.ok(body.includes(line), `Parallel tasks lacks: ${line}`);
+  assert.ok(PROMPT().includes('A task with no node `Test:` path never runs in a worktree'), 'the orchestrator prompt lacks the Test path rule');
+});
+
+test('phase close removes leftover <plan stem>-t* worktrees and logs each', () => {
+  const seven = flat(section(skill(), '### 7. End the phase'));
+  for (const line of [
+    'Phase close removes every `<plan stem>-t*` worktree left behind',
+    '`git worktree remove --force`',
+    '`git branch -D wt/<plan stem>-t<N>`',
+    '`Worktree removed: <path> — left behind at the close of P<n>`',
+    'before the Phase check',
+  ]) assert.ok(seven.includes(line), `step 7 lacks: ${line}`);
+  assert.ok(flat(section(skill(), '## Ledger vocabulary')).includes('`Worktree removed: <path> — left behind at the close of P<n>`'), 'the ledger vocabulary lacks the cleanup line');
+});
+
+test('the landing is undone, never patched: the undo pair, its marker and the sequential re-run', () => {
+  const body = parallel();
+  for (const line of [
+    'A merge conflict or a failing `Test:` file at the landing is undone',
+    '`git reset --keep` back to the previous tip',
+    '`BASE: T<N> <previous tip>`',
+    '`Task <N>: landing conflict — re-run sequential`',
+    '`<workspace>/task-<N>-undone`',
+    '`triqual tasks rework`',
+    'exit 3 with an `Error:` line',
+    '`task-open PLAN_FILE N` without `--worktree`',
+    'starts again at round 1',
+    'are never counted',
+    'a rerun of `task-close` finishes the clean-up',
+  ]) assert.ok(body.includes(line), `Parallel tasks lacks the undo: ${line}`);
+  assert.ok(PROMPT().includes('`Task <N>: landing conflict — re-run sequential`'), 'the orchestrator prompt does not name the undo line');
+});
+
+test('the landing writes Landed, Prep at the landed sha and Tested, and a rerun skips what stands', () => {
+  const body = parallel();
+  for (const line of [
+    '`Landed: T<N> <sha>`',
+    '`Prep: T<N> r<R> <landed sha>` when the attempt has a `Prep:` line',
+    '`Tested: T<N> <sha>`',
+    'a rerun without it runs them again',
+    'neither tested nor the phase tip',
+    'its sha must still be on the phase branch',
+    'the closed commit is the landed sha, whatever `--head` says',
+    '`BASE: T<N> <sha>`',
+  ]) assert.ok(body.includes(line), `Parallel tasks lacks: ${line}`);
+  const vocab = flat(section(skill(), '## Ledger vocabulary'));
+  for (const line of [
+    '`Landed: T<N> <sha>`',
+    '`Tested: T<N> <sha>`',
+    '`Prep: T<N> r<R> <landed sha>`',
+    '`BASE: T<N> <previous tip>`',
+    '`Task <N>: landing conflict — re-run sequential`',
+    '`<workspace>/task-<N>-undone`',
+  ]) assert.ok(vocab.includes(line), `the ledger vocabulary lacks: ${line}`);
+});
+
+test('the landing verifies with TRIQUAL_LANDING_TEST_TIMEOUT_MS, and a timeout is a failure', () => {
+  const body = parallel();
+  for (const line of [
+    '`TRIQUAL_LANDING_TEST_TIMEOUT_MS`',
+    'default 600000',
+    'a timeout is a failure and takes the undo',
+    '`<workspace>/task-<N>-landing-test.log`',
+    'not a positive number of milliseconds is exit 2',
+  ]) assert.ok(body.includes(line), `Parallel tasks lacks: ${line}`);
+  const common = readFileSync(join(SCRIPTS, 'lib', 'task-common.mjs'), 'utf8');
+  assert.match(common, /DEFAULT_LANDING_TEST_TIMEOUT_MS = 600000/, 'the script default is not the 600000 the skill states');
+});
+
+test('a task-close rerun resumes past Landed and Tested lines, and the exit-3 refusals say which write an Error line', () => {
+  const six = flat(section(skill(), '### 6. Complete the task'));
+  for (const line of [
+    '`Landed: T<N> <sha>` and `Tested: T<N> <sha>` lines, and the `Prep:` line at the landed sha',
+    'a `Prep:` at any other head is new work',
+  ]) assert.ok(six.includes(line), `step 6 does not say what a landing resume is: ${line}`);
+  const body = parallel();
+  for (const line of [
+    'Every exit-3 refusal of `task-close` writes its `Error: task-close T<N> — exit 3 — <cause>` line except the earlier-task wait and the linked-worktree refusal',
+    'a linked worktree (`run from the main checkout`) is refused before the workspace is known',
+    'the wait is the refusal whose message starts `T<N> waits for`',
+    'the landed commit is not on the phase branch',
+    'no longer the tip',
+    'the owner decides',
+    'not on the active phase branch',
+    'the tree is not clean',
+  ]) assert.ok(body.includes(line), `Parallel tasks lacks: ${line}`);
+  const vocab = flat(section(skill(), '## Ledger vocabulary'));
+  assert.ok(vocab.includes('except the earlier-task wait of `task-close` and a refusal from a linked worktree'), 'the Error line of the ledger vocabulary does not name what writes none');
+  assert.ok(flat(PROMPT()).includes('a refusal whose message starts `T<N> waits for` is a wait'), 'the orchestrator prompt does not name the wait by its message');
+  assert.doesNotMatch(flat(PROMPT()), /a refusal that writes no `Error:` line is a wait/, 'the prompt still takes a missing Error line for a wait');
+});
+
+test('the loop text no longer reads BASE..HEAD for a worktree task, and phase close names the path form and what a forced removal discards', () => {
+  const one = flat(section(skill(), '### 1. Start the task'));
+  assert.ok(one.includes('`tier-check` and the squash all read `BASE..HEAD`, where HEAD is the task\'s head (`--head <sha>` for a worktree task, which lands in place of the squash)'), 'step 1 still reads BASE..HEAD for every task');
+  const seven = flat(section(skill(), '### 7. End the phase'));
+  for (const line of [
+    '`<path>` is the absolute worktree path',
+    '`--force` and `branch -D` also discard the unlanded commits of a dropped task, and this line is the only trace of them',
+  ]) assert.ok(seven.includes(line), `step 7 lacks: ${line}`);
+  assert.ok(flat(section(skill(), '## Ledger vocabulary')).includes('`<path>` absolute'), 'the ledger vocabulary does not say the path form');
+});
+
+test('parallel runs need store or local tracking: committed mode is already refused at init', () => {
+  const body = parallel();
+  assert.ok(body.includes('Parallel runs need store or local tracking mode: in committed mode every worktree commit would append to `progress.md` and `status.md` and the landings would conflict, so `stack.mjs init` refuses committed mode before Task 1'), 'Parallel tasks does not state the tracking-mode requirement');
+  const stack = readFileSync(join(SCRIPTS, 'stack.mjs'), 'utf8');
+  assert.match(stack, /info\?\.optedIn && info\.mode === 'committed'\) fail\(EXIT_REFUSED/, 'stack.mjs no longer refuses committed mode');
+});
+
+test('a stop leaves a waiting worktree task awaiting landing, and a resumed phase reuses its worktrees', () => {
+  const body = parallel();
+  for (const line of [
+    'On a stop, a task that is reviewed but waits to land gets `Task <N>: awaiting landing` and keeps its worktree',
+    'A resumed phase reads the running tasks from the ledger',
+    '`task-open PLAN_FILE N --worktree` again reuses',
+  ]) assert.ok(body.includes(line), `Parallel tasks lacks: ${line}`);
+  assert.ok(flat(section(skill(), '## The Process')).includes('Parallel tasks'), 'The Process does not mention Parallel tasks');
+});
+
+test('the 1.4.0 CHANGELOG entry and the orchestrator prompt carry the parallel rule', () => {
+  const log = readFileSync(join(PLUGIN, '..', '..', 'CHANGELOG.md'), 'utf8');
+  const from = log.indexOf('\n## methodology 1.4.0');
+  assert.ok(from >= 0, 'no methodology 1.4.0 CHANGELOG entry');
+  assert.ok(from < log.indexOf('\n## methodology 1.3.0'), 'the 1.4.0 entry is not above the 1.3.0 entry');
+  const entry = flat(log.slice(from, log.indexOf('\n## ', from + 4)));
+  for (const line of ['Parallel tasks', 'At most 3 implementers', '`task-open --worktree`', 'plan order', 'landing conflict', 'TRIQUAL_LANDING_TEST_TIMEOUT_MS']) {
+    assert.ok(entry.includes(line), `the 1.4.0 CHANGELOG entry lacks: ${line}`);
+  }
+  assert.equal(JSON.parse(readFileSync(join(PLUGIN, '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.4.0');
+  assert.ok(PROMPT().includes('## Parallel Tasks'), 'the orchestrator prompt has no Parallel Tasks section');
+});
+
+test('an earlier unstarted task is never blocked by a later one: a batch starts only when every earlier task is closed', () => {
+  const body = parallel();
+  for (const line of [
+    '**An earlier task is never blocked by a later one.**',
+    'A later task never starts while an earlier task that has not started could be held back by it',
+    'a batched light task holds back every other task, so a task of a batch starts only when every earlier task of the phase is closed (a batch therefore always runs in the main checkout)',
+    'a parallel task holds an earlier one back only through a shared path (the independence rule above) or a slot (the slot rule above)',
+    // the reason, as the deadlock the independence rule already names
+    "would wait for the light task to close while the light task's `task-close` waits for it to land",
+  ]) assert.ok(body.includes(line), `Parallel tasks lacks: ${line}`);
+  assert.ok(flat(section(skill(), '#### Batched light dispatch')).includes('a task of a batch starts only when every earlier task of the phase is closed'), 'Batched light dispatch does not give the start rule');
+  assert.ok(flat(PROMPT()).includes('a task of a batch starts only when every earlier task of the phase is closed (an earlier task is never blocked by a later one)'), 'the orchestrator prompt does not give the start rule');
+  const log = readFileSync(join(PLUGIN, '..', '..', 'CHANGELOG.md'), 'utf8');
+  assert.ok(flat(log.slice(log.indexOf('\n## methodology 1.4.0'), log.indexOf('\n## methodology 1.3.0'))).includes('An earlier task is never blocked by a later one'), 'the CHANGELOG does not state the start rule');
+});
+
+test('the BASE of a worktree task is the last closed commit, and the scripts do it', () => {
+  const body = parallel();
+  assert.ok(body.includes('The BASE of a worktree task is the last closed commit of the phase branch: the phase tip, or, when a task built in the main checkout has commits that no `task-close` has squashed yet, that task\'s own BASE'), 'Parallel tasks does not say what a worktree task is based at');
+  assert.doesNotMatch(body, /started at its BASE \(the phase tip\)/, 'the phase-tip claim is still there');
+  assert.ok(flat(PROMPT()).includes('based by `task-open` at the last closed commit, never on a main-checkout task\'s unreviewed commits'), 'the orchestrator prompt does not say it');
+  assert.match(readFileSync(join(SCRIPTS, 'task-open'), 'utf8'), /worktree \? common\.worktreeBase\(/, 'task-open no longer takes the BASE of a worktree task from worktreeBase');
+});
+
+test('the worktree of a task is the exception to "no worktree by default", in Setup and in Worktrees', () => {
+  const text = flat(skill());
+  assert.ok(text.includes('the one exception is the task worktrees of Parallel tasks, which the plan\'s own parallel rule creates under `.claude/worktrees/` without any request'), 'Setup does not reconcile with Parallel tasks');
+  assert.ok(flat(section(skill(), '## Worktrees')).includes('the task worktrees of Parallel tasks are not that request and need none (`task-open --worktree` makes them)'), 'Worktrees does not reconcile with Parallel tasks');
+});
+
+test('task-open step: not every non-zero exit writes an Error line', () => {
+  const one = flat(section(skill(), '### 1. Start the task'));
+  assert.ok(one.includes('except a bad argument list and a refusal from a linked worktree (`run from the main checkout`), which come before the workspace is known and write none'), 'step 1 still says every non-zero exit appends an Error line');
+  // the scripts: both refusals come before the workspace is set
+  const open = readFileSync(join(SCRIPTS, 'task-open'), 'utf8');
+  const at = (needle) => open.indexOf(needle);
+  assert.ok(at("throw new ScriptError(EXIT_USAGE, USAGE)") < at('workspace = common.workspaceOf(plan)') && at('common.assertMainCheckout()') < at('workspace = common.workspaceOf(plan)'), 'task-open sets the workspace before its usage and linked-worktree refusals');
+});

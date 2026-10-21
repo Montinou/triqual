@@ -6,16 +6,18 @@
 // Prints, in this order:
 //   brief: <workspace>/task-<N>-brief.md   (written)
 //   report: <workspace>/task-<N>-report.md (the implementer's report file; not created)
-//   base: <sha>                            (the LAST `BASE: T<N> <sha>` ledger line; recorded from HEAD when there is none)
+//   base: <sha>                            (the LAST `BASE: T<N> <sha>` ledger line; recorded from HEAD when there is none; for a
+//                                           --worktree task from the last CLOSED commit of HEAD's branch, so a main-checkout
+//                                           task's unreviewed commits are never its base)
 //   workdir: <path>                        (only with --worktree: the task's worktree)
 //
 // With --worktree the task is built in `.claude/worktrees/<plan stem>-t<N>` on the branch `wt/<plan stem>-t<N>`, made from BASE (the
-// phase tip the task opened at), so tasks of one phase can run side by side and land in plan order (task-close). A worktree that
+// last closed commit of the phase branch: the phase tip, or the BASE of a main-checkout task whose commits no close has squashed yet), so tasks of one phase can run side by side and land in plan order (task-close). A worktree that
 // is already there is reused. `.claude/worktrees/` is appended to `.git/info/exclude` when absent. The install command is chosen
 // from the worktree's lockfile (`package-lock.json` -> `npm ci`, `pnpm-lock.yaml` -> `pnpm install --frozen-lockfile`, `yarn.lock` ->
 // `yarn install --frozen-lockfile`, none -> no install) and runs in the worktree; a run whose install succeeded leaves a marker in the
 // worktree's git dir, so a rerun installs again only after a failed install. A task whose plan has no `Test:` path, or a `Test:`
-// path that is not a .mjs, .js or .cjs file, a glob, or a path outside the repository (`../x.mjs`), is refused (exit 3) before anything
+// path that is not a .mjs, .js or .cjs file, a glob, or a path outside the repository (one that climbs out of it), is refused (exit 3) before anything
 // is written: landing runs those files with `node --test`, and a landing that runs no test is no landing.
 //
 // A task that is in progress, in review or done is not moved again; a task that is pending or blocked is started; any
@@ -76,7 +78,7 @@
     if (state && STARTABLE.includes(state.status)) common.taskMove('start', n, plan);
     // BASE goes in before the brief: a brief that fails must not leave the rerun to take a later HEAD.
     if (base === null) {
-      base = common.git(['rev-parse', 'HEAD']);
+      base = worktree ? common.worktreeBase(planName, n, common.ledgerLines(workspace)) : common.git(['rev-parse', 'HEAD']);
       common.appendLedger(workspace, `BASE: T${n} ${base}`);
     }
 

@@ -221,7 +221,7 @@ export function testPaths({ task, lines }) {
 }
 
 // Why a `Test:` path of a plan cannot be run by the landing, or null: it must name one file inside the repository, so a glob (node
-// --test expands them) and a path that leaves `root` (`../x.mjs`, an absolute path) are refused.
+// --test expands them) and a path that leaves `root` (one that climbs out of it, an absolute path) are refused.
 export function testPathProblem(root, path) {
   if (/[*?[\]{}]/.test(path)) return `the Test: path ${path} is a glob: name each Test file`;
   const full = resolve(root, path);
@@ -354,6 +354,31 @@ export function excludeWorktrees() {
   if (text.split('\n').includes(WORKTREES_IGNORE)) return;
   mkdirSync(dirname(file), { recursive: true });
   appendFileSync(file, `${text === '' || text.endsWith('\n') ? '' : '\n'}${WORKTREES_IGNORE}\n`);
+}
+
+// The commit a worktree task opens at: the last CLOSED commit of the main checkout's branch. HEAD is closed unless a task built in the
+// main checkout has commits on it that no close has squashed yet (nobody has reviewed them): then it is that task's BASE (the phase tip
+// when the task opened, a closed commit by the same rule). Worktree tasks are not main-checkout tasks (their commits are not on
+// HEAD), and a task that is done, dropped or has landed has nothing unreviewed on HEAD. When several tasks qualify, the one whose BASE
+// is the oldest wins (the most commits `BASE..HEAD`).
+export function worktreeBase(planName, n, ledger) {
+  const head = git(['rev-parse', 'HEAD']);
+  const statuses = taskStatuses(planName);
+  const stem = planName.replace(/\.md$/, '');
+  const others = [...new Set(ledger.flatMap((l) => { const m = /^BASE: T(\d+) /.exec(l); return m && Number(m[1]) !== n ? [Number(m[1])] : []; }))];
+  const open = others.filter((m) => !(statuses
+    ? ['done', 'dropped'].includes(statuses[`T${m}`])
+    : ledger.some((l) => l.startsWith(`Task ${m}: complete (commits `)))
+    && lastLanded(ledger, m) === null
+    && commitOf(`refs/heads/wt/${stem}-t${m}`) === null);
+  let closed = { base: head, count: 0 };
+  for (const m of open) {
+    const base = commitOf(lastBase(ledger, m));
+    if (base === null || !isAncestor(base, head)) continue;
+    const count = Number(git(['rev-list', '--count', `${base}..${head}`]));
+    if (count > closed.count) closed = { base, count };
+  }
+  return closed.base;
 }
 
 // Remove a task's worktree and its branch, then check that `git worktree list` no longer shows the worktree. Without an option a

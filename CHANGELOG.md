@@ -3,6 +3,41 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## methodology 1.4.0
+
+### Added
+
+- **Parallel tasks.** `executing-plans` gains a Parallel tasks section, and the orchestrator prompt a Parallel Tasks
+  section, so independent tasks of one phase are built at the same time. A task is independent when every task it
+  depends on is complete and its plan `**Files:**` paths share no path with any earlier task of the phase that is not
+  yet closed (running or not yet started), so an earlier overlapping task always starts first and a task that fails the
+  check runs sequentially; a later task running while an earlier overlapping one had not started would deadlock against
+  the landing order. At most 3 implementers at once, and batched light tasks never run in
+  parallel. An earlier task is never blocked by a later one: a task of a batch starts only when every earlier task of the
+  phase is closed, so a light task cannot start first and wait to land while the earlier task cannot start. The "Never
+  dispatch two implementers in parallel" rule is gone.
+- **Where a task runs.** A task uses the main checkout only when every earlier task of the phase is done or dropped;
+  every other task is opened with `task-open --worktree`, built in `.claude/worktrees/<plan stem>-t<N>` (branch
+  `wt/<plan stem>-t<N>`), and reviewed with `task-prep --head <sha>`. A task with no node `Test:` path never runs in a
+  worktree: `task-open --worktree` refuses a missing, non-`.mjs`/`.js`/`.cjs`, glob or out-of-repo `Test:` path.
+  The BASE of a worktree task is the last closed commit of the phase branch: when a task built in the main checkout has
+  commits no close has squashed yet, the worktree task is based at that task's BASE, not on those unreviewed commits.
+- **Landing comes first, in plan order.** `task-close` for a worktree task is called only after every earlier task has
+  landed (called early it exits 3 with no `Error:` line: a wait). It folds the task onto the phase tip as one commit,
+  runs the plan's `Test:` files with `node --test` (cut off after `TRIQUAL_LANDING_TEST_TIMEOUT_MS`, default 600000
+  milliseconds), then moves the task to `done` with the landed sha and removes the worktree.
+- **A landing conflict is undone, not patched.** A merge conflict or a failing `Test:` file resets the phase branch to
+  the previous tip, writes `BASE: T<N> <previous tip>` and `Task <N>: landing conflict — re-run sequential`, moves the
+  task back with `rework`, and the task runs again sequentially in the main checkout; the undone attempt's reviewer
+  outputs are never counted.
+- **Phase close removes leftover `<plan stem>-t*` worktrees**, each removal logged as `Worktree removed: <path> —
+  left behind at the close of P<n>`.
+- The ledger vocabulary gains `Landed: T<N> <sha>`, `Tested: T<N> <sha>`, `Prep: T<N> r<R> <landed sha>`, the undo pair
+  and the `Worktree removed:` line; a rerun of `task-close` is a resume past `Landed:` and `Tested:` lines and the
+  landing's `Prep:` line. Every exit-3 refusal of `task-close` writes an `Error:` line except the earlier-task wait and a refusal from a linked worktree.
+  The scripts behind this (`task-open --worktree`, the landing and its undo in `task-close`, and `task-prep` counting
+  only the `Prep:` lines after a task's last `BASE:` line) ship in this release.
+
 ## methodology 1.3.0
 
 ### Changed
