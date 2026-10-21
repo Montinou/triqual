@@ -54,7 +54,7 @@ Subagent (roles:phase-orchestrator):
     based by `task-open` at the last closed commit, never on a main-checkout task's unreviewed commits, and closed with `task-close` only after every earlier task has landed: a refusal whose message starts `T<N> waits for` is a wait,
     not a failure. A task with no node `Test:` path never runs in a worktree. When `task-close` undoes a landing (exit 3,
     an `Error:` line, `Task <N>: landing conflict — re-run sequential`), run that task again sequentially in the main
-    checkout with `task-open` and no `--worktree`; never patch the landing. On a stop, keep the worktrees of tasks
+    checkout with `task-open` and no `--worktree`; never patch the landing, and never `task-close` it again before the re-run has a `task-prep`. On a stop, keep the worktrees of tasks
     awaiting landing.
 
     ## Stops

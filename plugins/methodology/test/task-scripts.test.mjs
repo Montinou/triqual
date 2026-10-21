@@ -679,7 +679,9 @@ const noError = (r) => assert.deepEqual(r.ledger().filter((l) => l.startsWith('E
 test('task-close: builds the record, squashes, marks done, writes the complete line and the entry', () => withRig({}, (r) => {
   startStack(r);
   // An earlier attempt of T2 (a fix round and its complete line) and a fix round of another task.
-  r.seedLedger('Task 2: fix round 1/5 (1 addressed, 0 open — earlier; commits aaaaaaa..bbbbbbb)', 'Task 2: complete (commits aaaaaaa..bbbbbbb, review clean)');
+  // The earlier attempt closed with no commit at the tip: a reopen squashes from the commit its previous close made, which must exist.
+  const seeded = sha7(r.head());
+  r.seedLedger('Task 2: fix round 1/5 (1 addressed, 0 open — earlier; commits aaaaaaa..bbbbbbb)', `Task 2: complete (commits ${seeded}..${seeded}, review clean)`);
   markClosed(r, 2, 1, 7200);
   const { base } = prepared(r, 2);
   r.appendLedger('Task 2: fix round 1/5 (1 addressed, 0 open — one; commits a..b)', 'Task 3: fix round 1/5 (other task)', 'Task 2: fix round 2/5 (1 addressed, 0 open — two; commits b..c)', 'Task 2: minor (deferred): a nit');
@@ -1004,7 +1006,7 @@ test('task-close: a failed entry lookup on the rerun is an Error, not "no entry 
 
 test('task-close: a reopened task needs outputs saved after the previous attempt closed', () => withRig({}, (r) => {
   startStack(r);
-  r.seedLedger('Task 2: complete (commits aaaaaaa..bbbbbbb, review clean)');
+  r.seedLedger(`Task 2: complete (commits ${sha7(r.head())}..${sha7(r.head())}, review clean)`);
   markClosed(r, 2, 1, 600);
   prepared(r, 2);
   HEAVY_OUTPUTS(r);
@@ -1739,10 +1741,13 @@ test('--head defaults to the wt branch tip', () => withRig({ planText: WT_PLAN }
   assert.equal(r.head(), tip, 'the phase branch moved');
   assert.deepEqual(landedOf(r, 1), []);
 
-  const res = out(ok(closeOf(r, 1, '--head', reviewed)));
-  assert.equal(r.git('rev-parse', `${res.sha}^`).trim(), tip);
-  assert.equal(tracked(r, 'HEAD').includes('src/later.js'), false, 'the commit past --head was landed');
-  assert.ok(tracked(r, 'HEAD').includes('src/t1.js'));
+  // A --head behind the tip would land the reviewed commit and throw the later one away with the branch: refused (phase 3 fix 1, M-4).
+  const behind = closeOf(r, 1, '--head', reviewed);
+  assert.equal(behind.status, 3, `${behind.stdout}\n${behind.stderr}`);
+  assert.match(behind.stderr, /not the tip/);
+  assert.equal(r.head(), tip, 'the phase branch moved');
+  assert.deepEqual(landedOf(r, 1), []);
+  assert.equal(r.git('rev-parse', wtBranch(1)).trim(), later, 'the later commit was thrown away');
 }));
 
 test('an overlapping change is undone, moved back and logged', () => withRig({ planText: WT_PLAN }, (r) => {
@@ -2340,4 +2345,172 @@ test('a worktree task does not count as an unreviewed main-checkout task, and an
   // T2's worktree (BASE = tip) is open with commits not on the branch, and its BASE is older than the closed T1: T3 starts at c1.
   assert.equal(wtOpen(r, 3).base, c1.sha, "an open worktree task's BASE is not a closed commit of the tip");
   assert.equal(wtGit(r, 3, 'rev-parse', 'HEAD').trim(), c1.sha);
+}));
+
+// ---- phase 3 fix round 1: the undone landing stays undone, a reopen squashes from its own commit, and the worktree close edges ----
+
+test('a second task-close right after an undone landing is refused, never closed with none of its work', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  wtOpen(r, 1);
+  wtReview(r, 1, { test: FAILING_TEST });
+  assert.equal(closeOf(r, 1).status, 3);
+  r.clearCalls();
+
+  const again = closeOf(r, 1);
+  assert.equal(again.status, 3, `${again.stdout}\n${again.stderr}`);
+  assert.match(again.stderr, /undone/);
+  assert.match(again.stderr, /task-prep/);
+  assert.match(r.ledger().at(-1), /^Error: task-close T1 — exit 3 — /);
+  noComplete(r);
+  assert.equal(r.taskState(1).status, 'in_progress');
+  assert.equal(r.head(), tip);
+  assert.deepEqual(r.calls().filter((c) => c.startsWith('tasks done')), []);
+  assert.equal(storedRecords(r).length, 0, 'a record was made for no work');
+
+  // Once the sequential re-run has been prepped, the same call closes it from the fresh BASE.
+  open(r, 1);
+  r.commit('src/t1.js', 'export const t1 = 1;\n', 'feat: t1 again');
+  ok(r.run('task-prep', r.plan, '1'));
+  save(r, 1, 'safety-reviewer', 1, footerText('safety-reviewer'));
+  save(r, 1, 'spec-reviewer', 1, footerText('spec-reviewer'));
+  const closed = out(ok(closeOf(r, 1)));
+  assert.equal(r.git('rev-parse', `${closed.sha}^`).trim(), tip);
+}));
+
+test('a reopened landed worktree task is squashed from the commit before its landing, keeping the earlier task', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const p0 = r.head();
+  open(r, 1);
+  assert.equal(wtOpen(r, 2).base, p0, 'T2 opened while T1 ran: BASE is the phase tip before T1');
+  mainReviewed(r, 1);
+  const c1 = out(ok(closeOf(r, 1)));
+  wtReview(r, 2);
+  const c2 = out(ok(closeOf(r, 2)));
+  assert.equal(r.git('rev-parse', `${c2.sha}^`).trim(), c1.sha);
+
+  // The Phase check failed: the main session reopens the last task (SKILL step 7) and the fix loop runs by hand.
+  ok(r.triqual('tasks', 'reopen', 'T2', 'Phase check failed', '--plan', r.plan));
+  r.appendLedger('Task 2: reopened — Phase check failed — node --test');
+  r.commit('src/t2.js', 'export const t2 = 22;\n', 'fix: t2');
+  ok(r.triqual('tasks', 'review', 'T2', '--plan', r.plan));
+  ageFile(markerPath(r, 2, 1), 60);
+  save(r, 2, 'safety-reviewer', 1, footerText('safety-reviewer'));
+  save(r, 2, 'spec-reviewer', 1, footerText('spec-reviewer'));
+  const again = out(ok(closeOf(r, 2)));
+
+  assert.equal(r.git('rev-parse', `${again.sha}^`).trim(), c1.sha, "T1's closed commit is folded into T2's");
+  assert.equal(r.git('rev-list', '--count', `${p0}..HEAD`).trim(), '2');
+  assert.equal(r.git('log', '-1', '--format=%s').trim(), 'feat: t2');
+  assert.equal(r.git('log', '--format=%s', `${p0}..HEAD`).trim().split('\n').at(-1), 'feat: t1');
+  assert.equal(r.git('show', 'HEAD:src/t2.js').trim(), 'export const t2 = 22;');
+  assert.equal(r.ledger().at(-1), `Task 2: complete (commits ${sha7(c1.sha)}..${sha7(again.sha)}, review clean)`);
+  assert.equal(recordOf(r, 2).attempt, 2);
+  assert.equal(r.taskState(2).status, 'done');
+  noError(r);
+}));
+
+test('a reopened task whose previous close commit is not in the history is an Error, never squashed from BASE', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  r.seedLedger('Task 2: complete (commits aaaaaaa..bbbbbbb, review clean)');
+  markClosed(r, 2, 1, 600);
+  open(r, 2);
+  r.commit('src/t2.js', 'export const t2 = 2;\n', 'feat: t2');
+  ok(r.run('task-prep', r.plan, '2'));
+  save(r, 2, 'safety-reviewer', 1, footerText('safety-reviewer'));
+  save(r, 2, 'spec-reviewer', 1, footerText('spec-reviewer'));
+  const head = r.head();
+  const res = closeOf(r, 2);
+  assert.equal(res.status, 1, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /bbbbbbb/);
+  assert.equal(r.head(), head, 'the stack was rewritten');
+  assert.match(r.ledger().at(-1), /^Error: task-close T2 — exit 1 — /);
+}));
+
+test('an undo that died after its reset and before its ledger lines is finished by the rerun', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  wtOpen(r, 1);
+  wtReview(r, 1, { test: countingTest(r) });
+  crashedAfterLanding(r);
+  editLedger(r, (l) => !l.startsWith('Tested: T1 '));
+  r.git('reset', '--keep', tip); // the undo got this far, then died before its ledger write
+  r.clearCalls();
+
+  const res = closeOf(r, 1);
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /cut short/);
+  assert.deepEqual(r.ledger().slice(-3, -1), [`BASE: T1 ${tip}`, 'Task 1: landing conflict — re-run sequential']);
+  assert.equal(existsSync(join(r.workspace, 'task-1-undone')), true, 'the undone marker');
+  assert.equal(r.taskState(1).status, 'in_progress');
+  assert.deepEqual(worktrees(r), [r.dir]);
+  assert.equal(wtBranches(r), '');
+  assert.equal(r.head(), tip);
+  noComplete(r);
+  assert.deepEqual(r.calls().filter((c) => c.startsWith('tasks done')), []);
+  // The ledger now says what the undo says: a further call is the refusal of an undone landing.
+  const third = closeOf(r, 1);
+  assert.equal(third.status, 3, `${third.stdout}\n${third.stderr}`);
+  assert.match(third.stderr, /undone/);
+}));
+
+test('an undo that died before its marker is finished by the rerun, which writes the marker so the undone outputs are not counted', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  wtOpen(r, 1);
+  wtReview(r, 1, { test: FAILING_TEST });
+  r.failMove('rework');
+  assert.equal(closeOf(r, 1).status, 1);
+  rmSync(join(r.workspace, 'task-1-undone')); // the crash window between the ledger write and the marker
+  r.allowMove('rework');
+
+  const again = closeOf(r, 1);
+  assert.equal(again.status, 3, `${again.stdout}\n${again.stderr}`);
+  assert.equal(existsSync(join(r.workspace, 'task-1-undone')), true, 'the clean-up wrote no marker');
+  assert.equal(r.taskState(1).status, 'in_progress');
+
+  // The sequential re-run has no output of its own: the undone attempt's gate and spec outputs are not counted.
+  open(r, 1);
+  r.commit('src/t1.js', 'export const t1 = 1;\n', 'feat: t1 again');
+  ok(r.run('task-prep', r.plan, '1'));
+  const stale = closeOf(r, 1);
+  assert.equal(stale.status, 1, `${stale.stdout}\n${stale.stderr}`);
+  assert.match(stale.stderr, /no saved safety-reviewer output/);
+}));
+
+test('a worktree task with no commits closes at its own head, and a rerun of that close still finishes', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  assert.equal(wtOpen(r, 2).base, tip);
+  mainReviewed(r, 1);
+  const c1 = out(ok(closeOf(r, 1)));
+  assert.notEqual(c1.sha, tip);
+
+  r.failMove('record');
+  const first = closeOf(r, 2);
+  assert.equal(first.status, 1, `${first.stdout}\n${first.stderr}`);
+  assert.equal(r.ledger().filter((l) => l.startsWith('Task 2: complete')).at(-1), `Task 2: complete (commits ${sha7(tip)}..${sha7(tip)}, review clean)`, 'the task closed at the main checkout HEAD');
+  r.allowMove('record');
+  const again = out(ok(closeOf(r, 2)));
+  assert.equal(again.sha, tip);
+  assert.equal(again.record, 'recorded');
+  assert.equal(r.taskState(2).status, 'done');
+  assert.equal(r.head(), c1.sha, 'the phase branch moved');
+  assert.deepEqual(worktrees(r), [r.dir]);
+  assert.equal(wtBranches(r), '');
+}));
+
+test('task-close --head that is not the tip of the worktree branch is refused: later commits are never thrown away', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  wtOpen(r, 1);
+  const reviewed = wtReview(r, 1);
+  const later = wtCommit(r, 1, 'src/extra.js', 'export const extra = 1;\n', 'feat: after the review');
+  const res = closeOf(r, 1, '--head', reviewed);
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /not the tip/);
+  assert.match(r.ledger().at(-1), /^Error: task-close T1 — exit 3 — /);
+  noComplete(r);
+  assert.equal(r.head(), tip, 'something landed');
+  assert.equal(r.git('rev-parse', wtBranch(1)).trim(), later, 'the later commit was thrown away');
+  assert.equal(worktrees(r).length, 2);
 }));

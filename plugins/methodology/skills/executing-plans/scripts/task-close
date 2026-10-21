@@ -4,7 +4,8 @@
 //
 // Usage: task-close PLAN_FILE N [--provider claude|codex] [--head <sha>]
 // Prints, in this order:
-//   sha: <sha>                         the squashed (or, for a worktree task, the landed) commit (HEAD when the task made no commit)
+//   sha: <sha>                         the squashed (or, for a worktree task, the landed) commit (HEAD when a task closed in place made no
+//                                      commit, the task's own head when a worktree task made none)
 //   record: <recorded|already recorded>   what `triqual role-eval record` said
 //
 // Inputs, all read before anything is written (a missing or malformed one is an Error and nothing changes):
@@ -29,6 +30,8 @@
 // A worktree task (task-open --worktree) is one with --head <sha>, a branch `wt/<plan stem>-t<N>` (--head then defaults to its tip) or
 // a `Landed:` line of this attempt. Its commits are reviewed in the worktree (task-prep --head), so the head the last `Prep:` line
 // names is the worktree's, and the close LANDS the task instead of squashing:
+//   - --head must be the tip of the task's branch: the close removes the branch, so a --head behind the tip (commits no reviewer saw
+//     come after it) is refused (exit 3);
 //   - it refuses (exit 3, and no `Error:` line: it is a wait, not a failure) while an earlier task of the phase is not `done` or
 //     `dropped` in the tracking ledger (not opted in: has no `Task <M>: complete` line);
 //   - it skips the landing when a `Landed: T<N> <sha>` line stands (no undo has followed it); the closed head is then that sha, whatever
@@ -52,7 +55,10 @@
 //     `Task <N>: landing conflict — re-run sequential` (one write), the file `<workspace>/task-<N>-undone` (reviewer and hunter outputs
 //     older than it belong to the undone attempt and are never counted), `triqual tasks rework`, the worktree and its branch removed,
 //     exit 3. The ledger of the sequential re-run starts after the undo line: the Prep lines, fix rounds and budget of the undone
-//     attempt are not counted. A rerun after an undo that died before the clean-up finishes the clean-up and exits 3;
+//     attempt are not counted. A rerun after an undo that died before the clean-up finishes the clean-up (and writes the marker when it
+//     is missing) and exits 3; so does one after an undo that died between its reset and its ledger lines (the landing has no `Tested:`
+//     line and the phase tip is its parent). After an undo, a close is refused (exit 3) until the sequential re-run has a `Prep:` line:
+//     the worktree and its branch are gone, so a close would squash nothing and mark the task done with none of its work;
 //   - after the record and the entry it removes the worktree (`git worktree remove --force` once no tracked file of it has uncommitted
 //     changes: untracked files, such as an install's output, are dropped and named on stderr; tracked changes are an Error and exit
 //     1 after everything is recorded, and a rerun repeats only the removal) and its branch (`git branch -D`) and checks that
@@ -74,7 +80,10 @@
 // `tracking log` (a failed lookup is an Error) and in local mode in the progress file, so a first run that failed after the
 // complete line still gets its entry on the rerun, and exactly once.
 //
-// Reopened tasks (attempt 2 and later): the saved outputs carry the round, not the attempt, so each close leaves a marker file
+// Reopened tasks (attempt 2 and later) squash from the parent of the commit the previous attempt's complete line closed at (for a task
+// closed in place that is its BASE; a landed worktree task's BASE is the phase tip from when it opened, older than the tip it landed
+// on, so it is not), and the complete line shows that parent. A previous commit that is not in the history of HEAD is an Error.
+// The saved outputs carry the round, not the attempt, so each close leaves a marker file
 // `<workspace>/task-<N>-closed-<attempt>`, and an attempt after the first takes only the outputs (gate, spec, hunters) saved
 // after the marker of the attempt before. A stale or missing one is an Error naming it: attempt 1's counts are never reused.
 //
@@ -230,13 +239,26 @@
       throw landed !== null ? new ScriptError(EXIT_OTHER, `cannot resolve the landed commit ${landed}`)
         : new ScriptError(headArg !== null ? EXIT_USAGE : EXIT_OTHER, headArg !== null ? `bad --head: ${headArg}` : 'cannot resolve HEAD');
     }
-    // An undo that died before its clean-up finished (the undo line is written, the worktree or its branch is still there, and no
-    // review of a new attempt followed): finish it, then refuse. The task goes back to be re-run sequential, as the undo meant.
-    if (!resumed && undoneAt >= 0 && (wtTip !== null || common.registeredWorktrees().includes(wt.path))
-      && !window.some((l) => new RegExp(`^Prep: T${n} `).test(l))) {
-      if (state && state.status === 'in_review') common.taskMove('rework', n, plan);
-      common.removeWorktree(wt, { force: true });
-      throw new ScriptError(EXIT_REFUSED, `the landing of T${n} was undone earlier and its clean-up did not finish; it has now: re-run T${n} sequential`);
+    // The file that dates an undone landing's outputs (see below, and `undo`).
+    const undoneMarker = join(workspace, `task-${n}-undone`);
+    // An undone landing stays undone: after the undo line (the sequential re-run starts there) nothing is closed until the re-run has a
+    // `Prep:` line of its own, since the worktree and its branch are gone and a close would squash no commit and mark the task done with
+    // none of its work. When the undo died before its clean-up finished (the worktree or its branch is still there, or the marker is
+    // missing), finish the clean-up first: the task goes back to be re-run sequential, as the undo meant. Either way: refuse.
+    if (!resumed && undoneAt >= 0 && !window.some((l) => new RegExp(`^Prep: T${n} `).test(l))) {
+      const leftover = wtTip !== null || common.registeredWorktrees().includes(wt.path);
+      if (leftover) {
+        if (!existsSync(undoneMarker)) writeFileSync(undoneMarker, `${base}\n`);
+        if (state && state.status === 'in_review') common.taskMove('rework', n, plan);
+        common.removeWorktree(wt, { force: true });
+      }
+      throw new ScriptError(EXIT_REFUSED, leftover
+        ? `the landing of T${n} was undone earlier and its clean-up did not finish; it has now: re-run T${n} sequential (task-open without --worktree, implement, task-prep)`
+        : `the landing of T${n} was undone and none of its work is on the phase branch: re-run T${n} sequential (task-open without --worktree, implement, task-prep) before closing it`);
+    }
+    // --head names the commit that was reviewed; the close throws the branch away, so a branch that has moved on is refused.
+    if (!resumed && landed === null && wtTip !== null && head !== wtTip) {
+      throw new ScriptError(EXIT_REFUSED, `--head ${head.slice(0, 7)} is not the tip of ${wt.branch} (${wtTip.slice(0, 7)}): the commits after it would be thrown away with the branch; review the tip with task-prep --head, or close without --head`);
     }
     // Landing is in plan order: a task whose turn has not come waits (exit 3, no Error line: nothing failed).
     if (worktreeTask && !resumed && landed === null) {
@@ -269,7 +291,6 @@
     // Attempt 2 and later: only outputs saved after the previous attempt's close marker belong to this attempt. The same goes for the
     // outputs saved before the undo of a landing (`<workspace>/task-<N>-undone`): they review the undone worktree attempt.
     const markerOf = (a) => join(workspace, `task-${n}-closed-${a}`);
-    const undoneMarker = join(workspace, `task-${n}-undone`);
     let cutoff;
     let cutoffFile = null;
     const mtimeOf = (file) => {
@@ -431,8 +452,9 @@
     };
     // The undo: the phase branch back to `before`, the fresh BASE and the undo line in ONE write, the marker that dates the undone
     // attempt's outputs, the task moved back, the worktree and its branch removed.
-    const undo = (why, before) => {
-      common.git(['reset', '--keep', before]);
+    // `reset: false`: the phase branch is already at `before` (an undo that died after its reset and before its ledger lines).
+    const undo = (why, before, { reset = true } = {}) => {
+      if (reset) common.git(['reset', '--keep', before]);
       common.appendLedger(workspace, `BASE: T${n} ${before}`, common.UNDONE_LINE(n));
       writeFileSync(undoneMarker, `${before}\n`);
       if (state) common.taskMove('rework', n, plan);
@@ -505,6 +527,13 @@
       const phaseBranch = common.activePhaseBranch(plan);
       const phaseTip = common.commitOf(`refs/heads/${phaseBranch}`);
       if (phaseTip === null || !common.isAncestor(landedSha, phaseTip)) {
+        // The undo of a landing resets the phase branch first and writes its ledger lines after: a landing with no `Tested:` line whose
+        // phase branch is back at its parent is an undo that died between the two. Finish it (the lines, the marker, the task moved back,
+        // the worktree removed) and refuse, as the undo does. A tested landing was never undone by the script: that stays an owner's call.
+        const before = common.commitOf(`${landedSha}^`);
+        if (phaseTip !== null && before === phaseTip && !common.isTested(window, n, landedSha)) {
+          undo(`the undo of the landing of T${n} was cut short after its reset; it is finished now`, before, { reset: false });
+        }
         throw new ScriptError(EXIT_REFUSED, `the landed commit ${landedSha.slice(0, 7)} of T${n} is not on the phase branch ${phaseBranch} (the undo of the landing may have been cut short): nothing is closed`);
       }
       if (common.isTested(window, n, landedSha)) return;
@@ -516,22 +545,44 @@
       runTests(preflight(), landedSha, before);
     };
 
+    // The commit a squash starts after. The first attempt's is BASE. A reopened task (attempt 2 and later) squashes from the parent of the
+    // commit its previous close made: for a task closed in place that is its BASE, but a landed worktree task's BASE is the phase tip
+    // from when it opened, older than the tip it landed on, and a squash from there would fold the tasks closed since into its commit.
+    // A previous close that made no commit (its line reads <sha>..<sha>) left the branch at that sha. A previous commit that is not in the
+    // history of HEAD is an Error, never a fall back to BASE.
+    const squashBase = () => {
+      if (attempt === 1) return base;
+      const line = ledger[earlier.at(-1)];
+      const m = /commits ([0-9a-f]{7,40})\.\.([0-9a-f]{7,40})[,)]/.exec(line);
+      const opened = m && common.commitOf(m[1]);
+      const closed = m && common.commitOf(m[2]);
+      if (!closed || !common.isAncestor(closed, head)) {
+        throw new ScriptError(EXIT_OTHER, `the commit of T${n}'s previous close (${m ? m[2] : line}) is not in the history of HEAD: a reopen cannot tell where its squash starts`);
+      }
+      if (opened === closed) return closed;
+      const parent = common.commitOf(`${closed}^`);
+      if (parent === null) throw new ScriptError(EXIT_OTHER, `the commit of T${n}'s previous close (${closed.slice(0, 7)}) has no parent`);
+      return parent;
+    };
+
     // ---- write: land or squash, done, the complete line, the record, the entry ----
     let sha;
+    let closeBase = base;
     if (resumed) {
       sha = resumedSha;
     } else {
       if (worktreeTask) {
         if (landed !== null) verifyLanding(landed);
-        sha = landed ?? (noCommits ? common.git(['rev-parse', 'HEAD']) : land());
+        sha = landed ?? (noCommits ? head : land());
       } else {
-        const squashed = common.runScript('stack.mjs', ['squash', plan, base]);
+        closeBase = squashBase();
+        const squashed = common.runScript('stack.mjs', ['squash', plan, closeBase]);
         if (squashed.status !== 0) throw common.scriptError('stack.mjs squash', squashed);
         const printed = squashed.stdout.trim();
         sha = printed === 'no commits' ? common.git(['rev-parse', 'HEAD']) : printed;
       }
       if (state && state.status !== 'done') common.taskMove('done', n, plan, ['--commit', sha]);
-      common.appendLedger(workspace, `Task ${n}: complete (commits ${base.slice(0, 7)}..${sha.slice(0, 7)}, ${parked > 0 ? `${parked} parked` : 'review clean'})`);
+      common.appendLedger(workspace, `Task ${n}: complete (commits ${closeBase.slice(0, 7)}..${sha.slice(0, 7)}, ${parked > 0 ? `${parked} parked` : 'review clean'})`);
     }
 
     // The close marker of this attempt (see the header): the cutoff for the next attempt's outputs.
