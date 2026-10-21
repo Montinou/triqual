@@ -18,7 +18,8 @@ import {
 import { enabledInClaude } from './resolve.mjs';
 import { configPath, readMethodologyConfig, supersededEnabled } from './settings.mjs';
 import {
-  editTomlFile, hasTopLevelKey, insertTopLevel, removeTable, removeTableKey, removeTopLevelKey, setTableKey,
+  editTomlFile, foreignTableKey, hasTopLevelKey, insertTopLevel, removeTableIfEmpty, removeTableKey, removeTopLevelKey,
+  setTableKey,
 } from './toml-edit.mjs';
 import { tomlString } from './agents.mjs';
 import { applyAgents, applyLinks, linkState, placeLink } from './harness-links.mjs';
@@ -389,6 +390,55 @@ const codexConfigStep = (ctx) => {
   });
 };
 
+// The depth the methodology's phase orchestrator needs: an orchestrator at depth 1 spawns the task agents at depth 2.
+const DEPTH_WANTED = 2;
+const DEPTH_NOT_NUMBER = '[agents] max_depth is not a number: left alone, set it to 2 or more by hand';
+const DEPTH_BY_HAND = '[agents] is set by a dotted or inline key that sync cannot edit: set max_depth to 2 or more by hand';
+
+// A TOML integer literal (decimal, with `_` separators, or 0x/0o/0b) as a number; null for anything else.
+function tomlInteger(text) {
+  if (/^[+-]?\d+(?:_\d+)*$/.test(text)) return Number(text.replaceAll('_', ''));
+  const radix = { x: 16, o: 8, b: 2 }[/^0([xob])/.exec(text)?.[1]];
+  const digits = { 16: /^[0-9a-f]+(?:_[0-9a-f]+)*$/i, 8: /^[0-7]+(?:_[0-7]+)*$/, 2: /^[01]+(?:_[01]+)*$/ }[radix];
+  return radix && digits.test(text.slice(2)) ? parseInt(text.slice(2).replaceAll('_', ''), radix) : null;
+}
+
+// config.toml's [agents] max_depth: { state: 'unset' }, { state: 'number', value } or { state: 'other' } for a value
+// that is not a TOML integer. `foreign: true` when it is set by a top-level dotted or inline key (`agents.max_depth =
+// 3`, `agents = { max_depth = 3 }`) that the edit helpers cannot change; then `other` also covers a definition of
+// [agents] with no max_depth in it. A read only: setTableKey's result is dropped.
+export function codexMaxDepth(text) {
+  const { was } = setTableKey(text, 'agents', 'max_depth', String(DEPTH_WANTED));
+  const foreign = was === null ? foreignTableKey(text, 'agents', 'max_depth') : null;
+  const raw = foreign ? foreign.value : was;
+  if (raw === null) return foreign ? { state: 'other', foreign: true } : { state: 'unset' };
+  const value = tomlInteger(raw);
+  const seen = value === null ? { state: 'other' } : { state: 'number', value };
+  return foreign ? { ...seen, foreign: true } : seen;
+}
+
+// [agents] max_depth raised to 2 when absent or a number below 2, never lowered or touched at 2 or more. Recorded for
+// the revert like codexConfigStep, edit and record under one manifest lock.
+const codexDepthStep = (ctx) => {
+  const path = configFile(ctx);
+  return record(ctx, async (entry) => {
+    let seen;
+    const res = await editTomlFile(path, (text) => {
+      seen = codexMaxDepth(text);
+      if (seen.state === 'number' && seen.value >= DEPTH_WANTED) return { text, changes: null };
+      if (seen.foreign) throw new StepError(DEPTH_BY_HAND);
+      if (seen.state === 'other') throw new StepError(DEPTH_NOT_NUMBER);
+      const r = setTableKey(text, 'agents', 'max_depth', String(DEPTH_WANTED));
+      return { text: r.text, changes: { was: r.was, createdTable: r.createdTable } };
+    }, { validate: validateConfig(ctx) });
+    if (res.error) throw new StepError(res.error);
+    if (!res.changed) return { status: 'already', detail: `[agents] max_depth is ${seen.value}, ${DEPTH_WANTED} or more` };
+    const { was, createdTable } = res.changes;
+    recordConfig(entry, { key: 'max_depth', table: 'agents', was, createdTable });
+    return { status: 'done', detail: `${was === null ? 'set' : `raised from ${was} to`} [agents] max_depth = ${DEPTH_WANTED}` };
+  });
+};
+
 const REMOTE = 'disabled in config.toml, Codex still lists it enabled (remotely managed?)';
 
 // `codex plugin list --json` installed[] entries (objects) → { pluginId: enabled }, what supersededEnabled reads.
@@ -635,6 +685,7 @@ export async function syncHarness({
     steps.push(await step('codex-agents', () => agentsStep(ctx)));
     steps.push(await step('codex-plugin', () => codexPluginStep(ctx)));
     steps.push(await step('codex-config', () => codexConfigStep(ctx)));
+    steps.push(await step('codex-depth', () => codexDepthStep(ctx)));
     steps.push(await step('codex-supersedes', () => codexSupersedesStep(ctx)));
   } else {
     steps.push(await step('grok-plugins', () => grokPluginsStep(ctx)));
@@ -806,10 +857,10 @@ const removeCodexRulesStep = (ctx) => record(ctx, (entry) => {
   return { status: 'done', detail: `removed the managed section from ${path} (backup ${saved})${note}` };
 });
 
-// One recorded config.toml change undone: a table sync created goes whole, a key it added is removed, a key it changed
-// gets its prior value back.
+// One recorded config.toml change undone: a key it added is removed (and the table it created with it, unless the user
+// has put anything else in it since), a key it changed gets its prior value back.
 function revertConfig(text, rec) {
-  if (rec.createdTable) return removeTable(text, rec.table);
+  if (rec.createdTable) return removeTableIfEmpty(removeTableKey(text, rec.table, rec.key), rec.table);
   if (rec.was === null) {
     return rec.table === null ? removeTopLevelKey(text, rec.key) : removeTableKey(text, rec.table, rec.key);
   }

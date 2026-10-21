@@ -31,8 +31,11 @@ function newLines(doc, lines) {
   return lines.map((line) => (doc.crlf ? `${line}\r` : line));
 }
 
-// Whitespace outside quotes removed, so `[ a . "b" ]` and `a."b"` name the same table.
+// Whitespace outside quotes removed, so `[ a . "b" ]` and `a."b"` name the same table, and a quoted segment that a bare
+// key could spell (`"agents"`) is written bare, so `["agents"]` and `[agents]` name the same table too.
 function normalizeKey(key) {
+  const bareIfPossible = (seg) => /^(["'])[A-Za-z0-9_-]+\1$/.test(seg) ? seg.slice(1, -1) : seg;
+  const parts = [];
   let out = '';
   let quote = null;
   for (let i = 0; i < key.length; i++) {
@@ -44,11 +47,15 @@ function normalizeKey(key) {
     } else if (c === '"' || c === "'") {
       quote = c;
       out += c;
+    } else if (c === '.') {
+      parts.push(bareIfPossible(out));
+      out = '';
     } else if (c !== ' ' && c !== '\t') {
       out += c;
     }
   }
-  return out;
+  parts.push(bareIfPossible(out));
+  return parts.join('.');
 }
 
 function headerOf(trimmed) {
@@ -145,11 +152,13 @@ function findTable(info, table) {
 }
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// A single-segment key as a regex source: bare, "basic" or 'literal' quoted, the same key in TOML.
+const keyForms = (key) => `(?:${escapeRe(key)}|"${escapeRe(key)}"|'${escapeRe(key)}')`;
 
 // The key's line in [from, to): { at, end, indent, eq }, where `end` is one past its value's last line and `eq`
 // the index just after its '='. Null when absent.
 function findKey(doc, info, from, to, key) {
-  const re = new RegExp(`^(\\s*)${escapeRe(key)}\\s*=`);
+  const re = new RegExp(`^(\\s*)${keyForms(key)}\\s*=`);
   for (let j = from; j < to; j++) {
     if (info[j].kind !== 'key') continue;
     const m = re.exec(bare(doc.lines[j]));
@@ -266,6 +275,49 @@ export function removeTable(text, table) {
   if (h === -1) return text;
   doc.lines.splice(h, spanEnd(info, h) - h);
   return join(doc);
+}
+
+// Removes [table] only when nothing but blank lines is left in it (after its recorded key was removed): keys, values
+// and comments a user put there since stay, and so does the table.
+export function removeTableIfEmpty(text, table) {
+  const { doc, info } = parse(text);
+  const h = findTable(info, table);
+  if (h === -1) return text;
+  const end = spanEnd(info, h);
+  for (let j = h + 1; j < end; j++) {
+    if (info[j].kind !== 'blank') return text;
+  }
+  doc.lines.splice(h, end - h);
+  return join(doc);
+}
+
+// A top-level (before the first header) definition of [table] that setTableKey cannot edit: `table.key = v`,
+// `table.other = v` or `table = { key = v }`. Null when there is none; otherwise { value }, the text of key's value
+// or null when that definition does not set it. Adding a [table] header next to one of these is invalid TOML.
+export function foreignTableKey(text, table, key) {
+  const { doc, info } = parse(text);
+  const h = firstHeader(info);
+  const to = h === -1 ? info.length : h;
+  const t = keyForms(table);
+  const dotted = new RegExp(`^(\\s*)${t}\\s*\\.\\s*${keyForms(key)}\\s*=`);
+  const other = new RegExp(`^\\s*${t}\\s*\\.`);
+  const inline = new RegExp(`^(\\s*)${t}\\s*=\\s*\\{`);
+  const member = new RegExp(`[{,]\\s*${keyForms(key)}\\s*=\\s*([^,}]*)`);
+  let defined = false;
+  for (let j = 0; j < to; j++) {
+    if (info[j].kind !== 'key') continue;
+    const line = bare(doc.lines[j]);
+    const found = { at: j, end: j + 1, eq: 0 };
+    while (found.end < info.length && info[found.end].kind === 'cont') found.end++;
+    const m = dotted.exec(line);
+    if (m) return { value: valueOf(doc, info, { ...found, eq: m[0].length }) };
+    if (inline.test(line)) {
+      const v = member.exec(valueOf(doc, info, { ...found, eq: line.indexOf('=') + 1 }));
+      return { value: v ? v[1].trim() : null };
+    }
+    if (other.test(line)) defined = true;
+  }
+  return defined ? { value: null } : null;
 }
 
 // Edits the real file behind `path`: note the mtime, read, mutate, re-stat, write atomically (same dir, same mode),

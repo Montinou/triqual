@@ -167,6 +167,12 @@ function parseArgs(argv) {
 
 const lines = (steps) => steps.map((s) => `${s.id}: ${s.status} — ${s.detail}\n`).join('');
 
+// Codex reads its agents and config.toml when a session starts. The rules gate reports `done` on every run (it only
+// checks), so it does not count as a change.
+const RESTART_CODEX = 'Restart open Codex sessions to load the new agents and settings.';
+const changedCodexFile = (steps) => steps.some((s) => s.id.startsWith('codex-') && s.id !== 'codex-enabled'
+  && s.id !== 'codex-rules-gate' && s.status === 'done');
+
 // `<id>-enabled`: harnesses.<id>.enabled set false in config.json, so triqual sync no longer syncs the removed harness.
 function disableHarnessStep(home, id) {
   const stepId = `${id}-enabled`;
@@ -237,7 +243,8 @@ export async function syncCli(argv, {
     if (explicit && !isAbsent(id, done)) steps.push(enableHarnessStep(home, id));
     steps.push(...done);
   }
-  return { code: steps.some((s) => s.status === 'failed') ? 1 : 0, stdout: lines(steps), stderr: '' };
+  const restart = changedCodexFile(steps) ? `${RESTART_CODEX}\n` : '';
+  return { code: steps.some((s) => s.status === 'failed') ? 1 : 0, stdout: `${lines(steps)}${restart}`, stderr: '' };
 }
 
 // A y/N question on the terminal; only yes or y (any case) is yes.

@@ -34,6 +34,7 @@ const BRIDGE = `methodology-codex@${MARKET}`;
 const NEW_BRIDGE = `methodology-codex@${BRAND.marketplace}`;
 const SUPERPOWERS_TABLE = 'plugins."superpowers@openai-curated-remote"';
 const FALLBACK = 'project_doc_fallback_filenames = ["CLAUDE.md"]';
+const RESTART = 'Restart open Codex sessions to load the new agents and settings.';
 const NOW = new Date(2026, 8, 29, 10, 0, 0);
 const LATER = new Date(2026, 8, 29, 11, 0, 0);
 
@@ -250,7 +251,7 @@ function snapshot(dir) {
 }
 
 const CODEX_STEPS = ['codex-skills', 'codex-rules-gate', 'codex-rules', 'codex-agents', 'codex-plugin', 'codex-config',
-  'codex-supersedes'];
+  'codex-depth', 'codex-supersedes'];
 const ROLE_NAMES = readdirSync(ROLES_AGENTS).filter((f) => f.endsWith('.md'))
   .map((f) => parseRole(readFileSync(join(ROLES_AGENTS, f), 'utf8')).name).sort();
 const expectedAgent = (agents, name, rolesVersion = '0.1.0') => codexAgentToml(
@@ -343,12 +344,199 @@ test('codex sync from scratch', () => withHome({}, async (home, { installs }) =>
   assert.equal(m.links.length, OURS.length + NO_CLASH.length);
   assert.deepEqual(m.config, [
     { key: 'project_doc_fallback_filenames', table: null, was: null, createdTable: false },
+    { key: 'max_depth', table: 'agents', was: null, createdTable: true },
     { key: 'enabled', table: SUPERPOWERS_TABLE, was: null, createdTable: true },
   ]);
   assert.deepEqual(m.plugins, [
     { id: MARKET, action: 'marketplace-added' },
     { id: BRIDGE, action: 'added' },
   ]);
+}));
+
+// ---- codex-depth: [agents] max_depth raised to 2, never lowered ----
+
+const depthRecords = (home) => (readManifest(home).harnesses.codex?.config ?? []).filter((c) => c.key === 'max_depth');
+const withAgentsTable = (body) => `${CONFIG_FIXTURE}\n[agents]\n${body}`;
+
+test('codex-depth sets max_depth = 2 when absent and keeps other [agents] keys', () => withHome({}, async (home) => {
+  writeFileSync(codexConfig(home), withAgentsTable('max_threads = 4\n'));
+  const { steps } = await syncCodex(home, fakeRun(home));
+  assert.equal(stepOf(steps, 'codex-depth').status, 'done', JSON.stringify(stepOf(steps, 'codex-depth')));
+  const text = readFileSync(codexConfig(home), 'utf8');
+  assert.match(text, /\[agents\]\nmax_threads = 4\nmax_depth = 2\n/);
+  assert.equal(text.split('[agents]').length, 2, 'one [agents] table');
+  assert.deepEqual(depthRecords(home), [{ key: 'max_depth', table: 'agents', was: null, createdTable: false }]);
+}));
+
+test('codex-depth creates the [agents] table when there is none', () => withHome({}, async (home) => {
+  const { steps } = await syncCodex(home, fakeRun(home));
+  assert.equal(stepOf(steps, 'codex-depth').status, 'done');
+  assert.match(readFileSync(codexConfig(home), 'utf8'), /\[agents\]\nmax_depth = 2\n/);
+  assert.deepEqual(depthRecords(home), [{ key: 'max_depth', table: 'agents', was: null, createdTable: true }]);
+}));
+
+test('codex-depth leaves max_depth = 3 unchanged and writes nothing', () => withHome({}, async (home) => {
+  writeFileSync(codexConfig(home), withAgentsTable('max_depth = 3 # mine\n'));
+  const r = fakeRun(home);
+  const { steps } = await syncCodex(home, r);
+  const depth = stepOf(steps, 'codex-depth');
+  assert.equal(depth.status, 'already', JSON.stringify(depth));
+  const text = readFileSync(codexConfig(home), 'utf8');
+  assert.match(text, /^max_depth = 3 # mine$/m);
+  assert.equal(text.includes('max_depth = 2'), false);
+  assert.deepEqual(depthRecords(home), []);
+}));
+
+test('codex-depth raises 1 to 2 and records the old value', () => withHome({}, async (home) => {
+  writeFileSync(codexConfig(home), withAgentsTable('max_depth = 1\n'));
+  const { steps } = await syncCodex(home, fakeRun(home));
+  assert.equal(stepOf(steps, 'codex-depth').status, 'done');
+  assert.match(readFileSync(codexConfig(home), 'utf8'), /^max_depth = 2$/m);
+  assert.deepEqual(depthRecords(home), [{ key: 'max_depth', table: 'agents', was: '1', createdTable: false }]);
+}));
+
+test('codex-depth fails on a max_depth that is not a number and leaves it alone', () => withHome({}, async (home) => {
+  writeFileSync(codexConfig(home), withAgentsTable('max_depth = "deep"\n'));
+  const { steps } = await syncCodex(home, fakeRun(home));
+  const depth = stepOf(steps, 'codex-depth');
+  assert.equal(depth.status, 'failed');
+  assert.match(depth.detail, /^\[agents\] max_depth is not a number: left alone, set it to 2 or more by hand$/);
+  assert.match(readFileSync(codexConfig(home), 'utf8'), /^max_depth = "deep"$/m);
+  assert.deepEqual(depthRecords(home), []);
+}));
+
+// Forms of the same key a line scanner keyed on `[agents]` + `max_depth =` would miss: a miss makes sync add a second
+// definition, which Codex rejects ("duplicate key"), so the file is restored and the step fails every run.
+const topLevelDepth = (line) => `${line}\n${CONFIG_FIXTURE}`;
+const depthKeyCount = (text) => (text.match(/max_depth/g) ?? []).length;
+
+test('codex-depth leaves a max_depth of 2 or more alone in a dotted, inline, quoted or hex form', async () => {
+  for (const body of [
+    topLevelDepth('agents.max_depth = 3'),
+    topLevelDepth('agents . "max_depth" = 3 # mine'),
+    topLevelDepth('agents = { max_threads = 4, max_depth = 3 }'),
+    `${CONFIG_FIXTURE}\n["agents"]\nmax_depth = 3\n`,
+    `${CONFIG_FIXTURE}\n[agents]\n"max_depth" = 3\n`,
+    `${CONFIG_FIXTURE}\n[agents]\nmax_depth = 0x3\n`,
+    `${CONFIG_FIXTURE}\n[agents]\nmax_depth = 0b10\n`,
+  ]) {
+    await withHome({}, async (home) => {
+      writeFileSync(codexConfig(home), body);
+      const { steps } = await syncCodex(home, fakeRun(home));
+      const depth = stepOf(steps, 'codex-depth');
+      assert.equal(depth.status, 'already', `${body.slice(0, 50)}: ${JSON.stringify(depth)}`);
+      assert.equal(readFileSync(codexConfig(home), 'utf8').includes('max_depth = 2'), false, body.slice(0, 50));
+      assert.equal(depthKeyCount(readFileSync(codexConfig(home), 'utf8')), 1, body.slice(0, 50));
+      assert.deepEqual(depthRecords(home), []);
+    });
+  }
+});
+
+test('codex-depth raises a quoted-key or quoted-header max_depth in place, with no second definition', async () => {
+  for (const [body, was] of [
+    [`${CONFIG_FIXTURE}\n[agents]\n"max_depth" = 1\n`, '1'],
+    [`${CONFIG_FIXTURE}\n["agents"]\nmax_depth = 1\n`, '1'],
+    [`${CONFIG_FIXTURE}\n[agents]\nmax_depth = 0x1\n`, '0x1'],
+  ]) {
+    await withHome({}, async (home) => {
+      writeFileSync(codexConfig(home), body);
+      const { steps } = await syncCodex(home, fakeRun(home));
+      assert.equal(stepOf(steps, 'codex-depth').status, 'done', body.slice(-30));
+      const text = readFileSync(codexConfig(home), 'utf8');
+      assert.equal(depthKeyCount(text), 1, text.slice(-60));
+      assert.match(text, /^max_depth = 2$/m);
+      assert.equal(/agents/.test(text.replace(/\["?agents"?\]/, '')), false, 'one agents table');
+      assert.deepEqual(depthRecords(home), [{ key: 'max_depth', table: 'agents', was, createdTable: false }]);
+    });
+  }
+});
+
+test('codex-depth fails with a hand-edit message on a dotted or inline max_depth below 2, or an agents with none', async () => {
+  const BY_HAND = /^\[agents\] is set by a dotted or inline key that sync cannot edit: set max_depth to 2 or more by hand$/;
+  for (const body of [
+    topLevelDepth('agents.max_depth = 1'),
+    topLevelDepth('agents = { max_depth = 1 }'),
+    topLevelDepth('agents.max_threads = 4'),
+    topLevelDepth('agents = { max_threads = 4 }'),
+    topLevelDepth('agents.max_depth = "deep"'),
+  ]) {
+    await withHome({}, async (home) => {
+      writeFileSync(codexConfig(home), body);
+      const { steps } = await syncCodex(home, fakeRun(home));
+      const depth = stepOf(steps, 'codex-depth');
+      assert.equal(depth.status, 'failed', body.split('\n')[0]);
+      assert.match(depth.detail, BY_HAND, body.split('\n')[0]);
+      assert.equal(readFileSync(codexConfig(home), 'utf8').includes('[agents]'), false, 'file untouched');
+      assert.deepEqual(depthRecords(home), []);
+    });
+  }
+});
+
+test('removing the harness keeps a key the user added to an [agents] table the step created', () => withHome({}, async (home) => {
+  const r = fakeRun(home);
+  await syncCodex(home, r);
+  const synced = readFileSync(codexConfig(home), 'utf8');
+  assert.match(synced, /\[agents\]\nmax_depth = 2\n/);
+  writeFileSync(codexConfig(home), synced.replace('max_depth = 2\n', 'max_depth = 2\nmax_threads = 4\n'));
+  await removeHarness({ home, id: 'codex', run: r.run, now: LATER });
+  const text = readFileSync(codexConfig(home), 'utf8');
+  assert.match(text, /\[agents\]\nmax_threads = 4\n/);
+  assert.equal(text.includes('max_depth'), false);
+}));
+
+test('a second sync leaves the depth step already', () => withHome({}, async (home) => {
+  const r = fakeRun(home);
+  await syncCodex(home, r);
+  const { steps } = await syncCodex(home, r, { now: LATER });
+  assert.equal(stepOf(steps, 'codex-depth').status, 'already');
+}));
+
+test('removing the harness reverts a max_depth the step created', () => withHome({}, async (home) => {
+  const r = fakeRun(home);
+  await syncCodex(home, r);
+  assert.match(readFileSync(codexConfig(home), 'utf8'), /^max_depth = 2$/m);
+  await removeHarness({ home, id: 'codex', run: r.run, now: LATER });
+  const text = readFileSync(codexConfig(home), 'utf8');
+  assert.equal(text.includes('max_depth'), false);
+  assert.equal(text.includes('[agents]'), false);
+}));
+
+test('removing the harness puts back a max_depth the step raised and keeps other [agents] keys', () => withHome({}, async (home) => {
+  writeFileSync(codexConfig(home), withAgentsTable('max_threads = 4\nmax_depth = 1\n'));
+  const r = fakeRun(home);
+  await syncCodex(home, r);
+  await removeHarness({ home, id: 'codex', run: r.run, now: LATER });
+  const text = readFileSync(codexConfig(home), 'utf8');
+  assert.match(text, /\[agents\]\nmax_threads = 4\nmax_depth = 1\n/);
+}));
+
+test('a codex that rejects the depth edit restores config.toml and fails only that step', () => withHome({}, async (home) => {
+  const r = fakeRun(home);
+  const run = async (cmd, args, opts) => (args.join(' ') === 'features list' && existsSync(codexConfig(home))
+    && readFileSync(codexConfig(home), 'utf8').includes('max_depth') ? { code: 1, stdout: '', stderr: '' } : r.run(cmd, args, opts));
+  const { steps } = await syncHarness({ home, id: 'codex', run, now: NOW });
+  assert.deepEqual(stepOf(steps, 'codex-depth'), {
+    id: 'codex-depth', status: 'failed', detail: 'codex rejected the edited config; restored',
+  });
+  assert.equal(readFileSync(codexConfig(home), 'utf8').includes('max_depth'), false);
+  assert.deepEqual(depthRecords(home), []);
+}));
+
+// ---- the restart line ----
+
+test('sync prints the restart line only when a Codex file changed', () => withHome({}, async (home) => {
+  mkdirSync(join(home, '.claude'), { recursive: true });
+  const r = fakeRun(home);
+  const deps = { home, pluginRoot: PLUGIN_ROOT, run: r.run };
+  const first = await syncCli(['--harness', 'codex'], { ...deps, now: NOW });
+  assert.equal(first.code, 0, first.stdout);
+  assert.equal(first.stdout.trimEnd().split('\n').at(-1), RESTART);
+  assert.equal(first.stdout.split(RESTART).length, 2, 'once');
+  const second = await syncCli(['--harness', 'codex'], { ...deps, now: LATER });
+  assert.equal(second.code, 0, second.stdout);
+  assert.equal(second.stdout.includes('Restart'), false, second.stdout);
+  const grok = await syncCli(['--harness', 'grok'], { ...deps, now: LATER });
+  assert.equal(grok.stdout.includes('Restart'), false, 'a Grok change needs no Codex restart');
 }));
 
 test("syncHarness('codex') on an AGENTS.md whose legacy section holds global.md leaves one new section", () => withHome({}, async (home, { installs }) => {
@@ -1219,7 +1407,7 @@ test('triqual sync --harness runs only the named harnesses, with no Claude steps
   assert.match(out.stdout, /^grok-hooks: done — /m);
   assert.equal(existsSync(join(home, '.claude', 'CLAUDE.md')), false, 'no Claude rules step');
   const both = await syncCli(['--harness', 'codex', '--harness', 'grok', '--yes'], { home, pluginRoot: PLUGIN_ROOT, run: r.run, now: LATER });
-  const ids = both.stdout.trimEnd().split('\n').map((l) => l.split(':')[0]);
+  const ids = both.stdout.trimEnd().split('\n').filter((l) => l !== RESTART).map((l) => l.split(':')[0]);
   assert.deepEqual(ids, ['codex-enabled', ...CODEX_STEPS, 'grok-enabled', 'grok-plugins', 'grok-rules', 'grok-hooks']);
   assert.match(both.stdout, /^grok-enabled: already — /m);
   assert.deepEqual(readJson(join(home, '.config', 'triqual', 'config.json')).harnesses,
