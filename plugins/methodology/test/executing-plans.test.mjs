@@ -1936,7 +1936,7 @@ test('a harness that cannot dispatch a task role stops and asks, a missing orche
 test('a coordinator task runs in the main session, and the orchestrator hands over one that edits a file', () => {
   const coord = flat(section(skill(), '### Coordinator tasks'));
   assert.ok(!coord.includes('runs in this session, by you'), 'Coordinator tasks still says it runs in this session, by you');
-  for (const line of ['run by the controller, the main session, never by the phase orchestrator', 'hands over one that edits a file']) {
+  for (const line of ['run by the controller, never dispatched to a role', 'the main session runs one that edits a file', 'the phase orchestrator hands it over']) {
     assert.ok(coord.includes(line), `Coordinator tasks lacks: ${line}`);
   }
   const handoff = thin().slice(thin().indexOf('**Coordinator tasks.**'));
@@ -2249,4 +2249,68 @@ test('task-open step: not every non-zero exit writes an Error line', () => {
   const open = readFileSync(join(SCRIPTS, 'task-open'), 'utf8');
   const at = (needle) => open.indexOf(needle);
   assert.ok(at("throw new ScriptError(EXIT_USAGE, USAGE)") < at('workspace = common.workspaceOf(plan)') && at('common.assertMainCheckout()') < at('workspace = common.workspaceOf(plan)'), 'task-open sets the workspace before its usage and linked-worktree refusals');
+});
+
+// ---- final fix round 1: coordinator hand-off bound by the parallel rule, stale step 6 and [WORK_DIR] text ----------
+
+const COORD_START = 'only once every earlier task of the phase is done or dropped and nothing else runs there';
+
+test('a coordinator task starts like a batch task: every earlier task done or dropped and nothing else in the main checkout, in the skill, the prompt and the role', () => {
+  const coord = flat(section(skill(), '### Coordinator tasks'));
+  assert.ok(coord.includes('works in the main checkout and starts like a batch task'), 'Coordinator tasks does not say where a coordinator task starts');
+  assert.ok(coord.includes(COORD_START), 'Coordinator tasks lacks the start condition');
+  assert.ok(coord.includes('`task-open` refuses it with exit 3 otherwise'), 'Coordinator tasks does not say the script refuses it');
+  assert.ok(coord.includes("its BASE is `HEAD` and its close squashes `BASE..HEAD`, which would absorb an earlier task's unreviewed commits"), 'Coordinator tasks does not give the reason');
+  const handoff = thin().slice(thin().indexOf('**Coordinator tasks.**'));
+  for (const line of [COORD_START, 'until then it waits like any task that is not independent', 'lets running agents finish their current step first', 'Once it may start']) {
+    assert.ok(handoff.includes(line), `the coordinator handoff lacks: ${line}`);
+  }
+  assert.ok(handoff.indexOf(COORD_START) < handoff.indexOf('`BLOCKED: coordinator task T<N>'), 'the start condition comes after the handoff line');
+  assert.ok(flat(section(skill(), '### Parallel tasks')).includes('A coordinator task is always a main-checkout task: it starts only once every earlier task of the phase is done or dropped'), 'Parallel tasks does not put a coordinator task under the Where rule');
+  const prompt = PROMPT();
+  for (const line of [COORD_START, 'until then it waits like any task that is not independent', 'Once it may start']) assert.ok(prompt.includes(line), `the orchestrator prompt lacks: ${line}`);
+  const role = ORCHESTRATOR_ROLE();
+  for (const line of ['starts only once every earlier task of the phase is done or dropped and nothing else runs there', 'until then it waits', 'Once it may start']) assert.ok(role.includes(line), `the orchestrator role lacks: ${line}`);
+});
+
+test('task-open enforces the coordinator start rule through the shared earlier-task check', () => {
+  const open = readFileSync(join(SCRIPTS, 'task-open'), 'utf8');
+  assert.match(open, /!worktree && planTask\.task\.role === 'coordinator'/, 'task-open does not look at a coordinator task');
+  assert.match(open, /common\.earlierUnfinished\(/, 'task-open does not use the earlier-task check');
+  assert.match(readFileSync(join(SCRIPTS, 'task-close'), 'utf8'), /common\.earlierUnfinished\(/, 'task-close does not use the shared earlier-task check');
+});
+
+test('SKILL, prompt and role agree on who runs a coordinator task: the main session one that edits a file, the orchestrator one that edits none', () => {
+  assert.doesNotMatch(skill(), /never by the phase orchestrator/, 'Coordinator tasks still says the orchestrator never runs one');
+  assert.ok(flat(section(skill(), '### Coordinator tasks')).includes('the phase orchestrator runs one that edits no file itself'), 'Coordinator tasks does not say the orchestrator runs one that edits none');
+  assert.ok(thin().includes('the orchestrator runs itself; one that edits a file it hands over'), 'The Thin Controller does not say it');
+  assert.ok(PROMPT().includes('one that edits no file you run yourself'), 'the orchestrator prompt does not say it');
+  assert.ok(ORCHESTRATOR_ROLE().includes('one that edits no file you run yourself'), 'the orchestrator role does not say it');
+});
+
+test('step 6 says which non-zero exits of task-close write no Error line, and lists the earlier-task wait and the undone landing as exit 3', () => {
+  const six = flat(section(skill(), '### 6. Complete the task'));
+  for (const line of [
+    'a worktree task whose earlier tasks have not landed, an undone landing',
+    'except the earlier-task wait of a worktree task (a wait, not a failure) and a refusal from a linked worktree (`run from the main checkout`), which write none',
+  ]) assert.ok(six.includes(line), `step 6 lacks: ${line}`);
+  assert.doesNotMatch(six, /before a non-zero exit it appends `Error: task-close T<N> — exit <code> — <first stderr line>` to the ledger\.(?! )/, 'step 6 still says every non-zero exit writes an Error line');
+});
+
+test('[WORK_DIR] is the task worktree of a task opened with --worktree, for the implementer and its fixer', () => {
+  const line = flat(read(`${EP}/implementer-prompt.md`)).split('- `[WORK_DIR]`')[1].split('- `[TRACKING]`')[0];
+  assert.ok(line.includes('for a task opened with `task-open --worktree`, the task worktree it printed as `workdir:`, for the implementer and for its fixer'), 'the [WORK_DIR] placeholder is still the plan checkout only');
+});
+
+test('a worktree task: task-prep takes the branch tip without --head, a no-commit task closes at the phase tip, and task-open does not restart a blocked task', () => {
+  const body = flat(section(skill(), '### Parallel tasks'));
+  assert.ok(body.includes('without `--head`, `task-prep` takes that tip itself when the branch exists, as `task-close` does, and never `HEAD` of the main checkout'), 'Parallel tasks does not give the task-prep default');
+  assert.ok(body.includes('closes at the tip of the phase branch (its complete line reads `<tip>..<tip>`, so a Phase check reopen squashes from that tip and never folds in the tasks that closed after the task opened), never at its own BASE'), 'Parallel tasks does not give where a no-commit worktree task closes');
+  const one = flat(section(skill(), '### 1. Start the task'));
+  assert.ok(one.includes('when opted in and the task is `pending`, the `start` move'), 'step 1 still starts a blocked task');
+  assert.ok(one.includes('a `blocked` task is refused with exit 3: only your human partner\'s decision restarts it, by the `start` move the main session makes'), 'step 1 does not say a blocked task is refused');
+  assert.doesNotMatch(one, /`pending` or `blocked`/);
+  assert.ok(one.includes('a blocked task, a coordinator task while an earlier task of its phase is not done or dropped'), 'step 1 does not list the new exit-3 refusals');
+  assert.match(readFileSync(join(SCRIPTS, 'task-open'), 'utf8'), /const STARTABLE = \['pending'\];/, 'task-open still starts a blocked task');
+  assert.match(readFileSync(join(SCRIPTS, 'task-prep'), 'utf8'), /refs\/heads\/\$\{common\.worktreeOf\(planName, n\)\.branch\}/, 'task-prep does not read the worktree branch');
 });

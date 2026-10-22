@@ -237,7 +237,7 @@ squash and `triqual tasks done` finished:
   "Next task" message only what this task adds; omit the line when there is nothing
 - `[BRIEF_FILE]` — the path `node scripts/task-brief PLAN_FILE N` printed
 - `[REPORT_FILE]` — the report file named after the brief (`task-N-report.md`)
-- `[WORK_DIR]` — the checkout the plan runs in (the current one, or the worktree your human partner asked for)
+- `[WORK_DIR]` — the checkout the plan runs in (the current one, or the worktree your human partner asked for); for a task opened with `task-open --worktree`, the task worktree it printed as `workdir:`, for the implementer and for its fixer
 - `[TRACKING]` — the Tracking section, kept only when the repo is opted in, with `[MODE]` (`"committed"`, `"local"` or `"store"`), `[PROGRESS_PATH]` and `[STATUS_PATH]` from `triqual tasks paths --json`, and `[TASKS_LEDGER_PATH]`, the plan's `*.tasks.json` beside it in `plansDir`; `[PROGRESS_PATH]`, `[STATUS_PATH]` and `[TASKS_LEDGER_PATH]` are dropped in store mode, which has no such files
 - `[MODE]` — see `[TRACKING]`
 - `[PROGRESS_PATH]` — see `[TRACKING]`

@@ -5,7 +5,7 @@
 // Usage: task-close PLAN_FILE N [--provider claude|codex] [--head <sha>]
 // Prints, in this order:
 //   sha: <sha>                         the squashed (or, for a worktree task, the landed) commit (HEAD when a task closed in place made no
-//                                      commit, the task's own head when a worktree task made none)
+//                                      commit, the tip of the phase branch when a worktree task made none: its complete line reads `<tip>..<tip>`, so a reopen squashes from the tip)
 //   record: <recorded|already recorded>   what `triqual role-eval record` said
 //
 // Inputs, all read before anything is written (a missing or malformed one is an Error and nothing changes):
@@ -220,10 +220,14 @@
     // Whether the task has commits is git's word, never a ledger line: a `Review: T<N> — no commits` line goes stale the
     // moment the implementer commits. A resumed close counts up to the commit it squashed to, not to a HEAD later tasks moved.
     let resumedSha = null;
+    let resumedNoCommits = false;
     if (resumed) {
-      const short = /\.\.([0-9a-f]{7,40})[,)]/.exec(ledger[lastComplete]);
-      resumedSha = short && common.commitOf(short[1]);
+      const short = /commits ([0-9a-f]{7,40})\.\.([0-9a-f]{7,40})[,)]/.exec(ledger[lastComplete]);
+      resumedSha = short && common.commitOf(short[2]);
       if (!resumedSha) throw new ScriptError(EXIT_OTHER, `cannot resolve the commit of the line: ${ledger[lastComplete]}`);
+      // A close that made no commit shows `<sha>..<sha>`; counting BASE..<sha> would say otherwise for a worktree task, which closes at
+      // the phase tip, later than its BASE.
+      resumedNoCommits = common.commitOf(short[1]) === resumedSha;
     }
     // A worktree task is built and reviewed in its worktree and lands at close. Its head is the landed commit once it landed, else
     // --head, else the tip of its branch; any other task closes at HEAD of the main checkout.
@@ -262,15 +266,12 @@
     }
     // Landing is in plan order: a task whose turn has not come waits (exit 3, no Error line: nothing failed).
     if (worktreeTask && !resumed && landed === null) {
-      const statuses = common.taskStatuses(planName);
-      const waiting = common.earlierTasks(plan, n).filter((m) => (statuses
-        ? !['done', 'dropped'].includes(statuses[`T${m}`])
-        : !ledger.some((l) => l.startsWith(`Task ${m}: complete (commits `))));
+      const waiting = common.earlierUnfinished(plan, planName, n, ledger);
       if (waiting.length > 0) {
         throw new ScriptError(EXIT_REFUSED, `T${n} waits for ${waiting.map((m) => `T${m}`).join(', ')}: worktree tasks land in plan order, close it again once ${waiting.length === 1 ? 'it is' : 'they are'} done or dropped`, { logged: false });
       }
     }
-    const noCommits = Number(common.git(['rev-list', '--count', `${base}..${resumedSha ?? head}`])) === 0;
+    const noCommits = resumed ? resumedNoCommits : Number(common.git(['rev-list', '--count', `${base}..${head}`])) === 0;
     // The commits a close squashes are the commits a reviewer saw: the last `Prep:` head of the attempt is HEAD. A reopened
     // task (attempt 2 and later) may be reviewed by hand (SKILL step 8), so it is checked only when it ran task-prep.
     // A landing that stands passed this check before it was written (its sha is the head now), so only a review after it is checked:
@@ -573,7 +574,13 @@
     } else {
       if (worktreeTask) {
         if (landed !== null) verifyLanding(landed);
-        sha = landed ?? (noCommits ? head : land());
+        if (landed === null && noCommits) {
+          // Nothing to land: the task closes at the tip of the phase branch, as a task closed in place closes at HEAD. Its own head is its
+          // BASE, older than every task that closed since it opened, and a Phase check reopen would squash from there and fold them in.
+          sha = common.commitOf(`refs/heads/${common.activePhaseBranch(plan)}`);
+          if (sha === null) throw new ScriptError(EXIT_OTHER, 'cannot resolve the tip of the active phase branch');
+          closeBase = sha;
+        } else sha = landed ?? land();
       } else {
         closeBase = squashBase();
         const squashed = common.runScript('stack.mjs', ['squash', plan, closeBase]);

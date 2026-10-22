@@ -269,6 +269,15 @@ export function earlierTasks(planFile, n) {
   return phase.tasks.slice(0, phase.tasks.indexOf(`T${n}`)).map((id) => Number(id.slice(1)));
 }
 
+// The earlier tasks of T<N>'s phase that are neither done nor dropped: in the tracking ledger when the repo is opted in, else those
+// with no `Task <M>: complete` line. A worktree task's landing and a coordinator task's start both wait for this list to be empty.
+export function earlierUnfinished(plan, planName, n, ledger) {
+  const statuses = taskStatuses(planName);
+  return earlierTasks(plan, n).filter((m) => (statuses
+    ? !['done', 'dropped'].includes(statuses[`T${m}`])
+    : !ledger.some((l) => l.startsWith(`Task ${m}: complete (commits `))));
+}
+
 // The tier of the last `Tier: T<N> <tier>` / `Tier raised: T<N> <from> → <to>` line of the task, else null.
 export function ledgerTier(lines, n) {
   const tierPattern = TIERS.join('|');

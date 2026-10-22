@@ -11,7 +11,8 @@
 //   full-review: <yes|no>              yes only when this fix round raised the tier: the raised tier's full review is due
 //
 // The range is BASE..<head> (BASE: the last `BASE: T<N>` line); with --fix-round it is the last `Prep: T<N>` head..<head>.
-// <head> is HEAD of the main checkout, or --head <sha> for a task built in a worktree. The floor handed to tier-check is
+// <head> is --head <sha>, else the tip of the task's worktree branch `wt/<plan stem>-t<N>` when it exists (as task-close does), else HEAD of
+// the main checkout. The floor handed to tier-check is
 // the tracking ledger's effective tier, else the last `Tier:` / `Tier raised:` line for the task, else none. A fix round
 // runs tier-check twice with that floor, on the round's range with --fix-round and on the cumulative BASE..<head> without
 // it, and the higher tier wins. A raise is recorded: the `Tier raised:` ledger line first, then `triqual tasks retier`
@@ -79,7 +80,9 @@
     const preps = prepsOf(ledger, n).filter((p) => p.index > baseAt);
     const prev = preps.at(-1) ?? null;
     if (fixRound && prev === null) throw new ScriptError(EXIT_REFUSED, `no Prep line for T${n}: run task-prep without --fix-round first`);
-    const head = common.commitOf(headArg ?? 'HEAD');
+    // As task-close does: a task with a worktree branch is reviewed at its tip, never at HEAD of the main checkout.
+    const wtTip = headArg === null ? common.commitOf(`refs/heads/${common.worktreeOf(planName, n).branch}`) : null;
+    const head = headArg !== null ? common.commitOf(headArg) : wtTip ?? common.commitOf('HEAD');
     if (head === null) throw new ScriptError(EXIT_USAGE, `bad --head: ${headArg ?? 'HEAD'}`);
 
     // The round to prepare, the range it reviews, and the ledger lines written during it (a raise there makes it a full review).

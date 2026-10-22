@@ -2477,7 +2477,7 @@ test('an undo that died before its marker is finished by the rerun, which writes
   assert.match(stale.stderr, /no saved safety-reviewer output/);
 }));
 
-test('a worktree task with no commits closes at its own head, and a rerun of that close still finishes', () => withRig({ planText: WT_PLAN }, (r) => {
+test('a worktree task with no commits closes at the phase tip, and a rerun of that close still finishes', () => withRig({ planText: WT_PLAN }, (r) => {
   startStack(r);
   const tip = r.head();
   assert.equal(wtOpen(r, 2).base, tip);
@@ -2488,15 +2488,43 @@ test('a worktree task with no commits closes at its own head, and a rerun of tha
   r.failMove('record');
   const first = closeOf(r, 2);
   assert.equal(first.status, 1, `${first.stdout}\n${first.stderr}`);
-  assert.equal(r.ledger().filter((l) => l.startsWith('Task 2: complete')).at(-1), `Task 2: complete (commits ${sha7(tip)}..${sha7(tip)}, review clean)`, 'the task closed at the main checkout HEAD');
+  assert.equal(r.ledger().filter((l) => l.startsWith('Task 2: complete')).at(-1), `Task 2: complete (commits ${sha7(c1.sha)}..${sha7(c1.sha)}, review clean)`, 'the task closed at the phase tip, not at its old BASE');
   r.allowMove('record');
   const again = out(ok(closeOf(r, 2)));
-  assert.equal(again.sha, tip);
+  assert.equal(again.sha, c1.sha, 'the resume reads the commit of the complete line');
   assert.equal(again.record, 'recorded');
   assert.equal(r.taskState(2).status, 'done');
   assert.equal(r.head(), c1.sha, 'the phase branch moved');
   assert.deepEqual(worktrees(r), [r.dir]);
   assert.equal(wtBranches(r), '');
+}));
+
+test('a reopened worktree task that made no commit is squashed from the phase tip it closed at, never folding the tasks closed since it opened', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const p0 = r.head();
+  open(r, 1);
+  assert.equal(wtOpen(r, 2).base, p0, 'T2 opened while T1 ran: its BASE is the phase tip before T1');
+  mainReviewed(r, 1);
+  const c1 = out(ok(closeOf(r, 1)));
+  const c2 = out(ok(closeOf(r, 2)));
+  assert.equal(c2.sha, c1.sha, 'T2 made no commit: it closed at the phase tip');
+
+  // The Phase check failed: the main session reopens the last task (SKILL step 7) and the fix loop runs by hand.
+  ok(r.triqual('tasks', 'reopen', 'T2', 'Phase check failed', '--plan', r.plan));
+  r.appendLedger('Task 2: reopened — Phase check failed — node --test');
+  r.commit('src/t2.js', 'export const t2 = 22;\n', 'fix: t2');
+  ok(r.triqual('tasks', 'review', 'T2', '--plan', r.plan));
+  ageFile(markerPath(r, 2, 1), 60);
+  save(r, 2, 'safety-reviewer', 1, footerText('safety-reviewer'));
+  save(r, 2, 'spec-reviewer', 1, footerText('spec-reviewer'));
+  const again = out(ok(closeOf(r, 2)));
+
+  assert.equal(r.git('rev-parse', `${again.sha}^`).trim(), c1.sha, "T1's closed commit stays under T2's reopened commit");
+  assert.equal(r.git('rev-list', '--count', `${p0}..HEAD`).trim(), '2', "T1's commit was folded into T2's");
+  assert.equal(r.git('log', '-1', '--format=%s').trim(), 'fix: t2');
+  assert.equal(r.ledger().at(-1), `Task 2: complete (commits ${sha7(c1.sha)}..${sha7(again.sha)}, review clean)`);
+  assert.equal(recordOf(r, 2).attempt, 2);
+  noError(r);
 }));
 
 test('task-close --head that is not the tip of the worktree branch is refused: later commits are never thrown away', () => withRig({ planText: WT_PLAN }, (r) => {
@@ -2513,4 +2541,115 @@ test('task-close --head that is not the tip of the worktree branch is refused: l
   assert.equal(r.head(), tip, 'something landed');
   assert.equal(r.git('rev-parse', wtBranch(1)).trim(), later, 'the later commit was thrown away');
   assert.equal(worktrees(r).length, 2);
+}));
+
+// ---- final fix round 1: a worktree task is prepped at its own branch tip, a coordinator task starts like a batch task, and a blocked task is not restarted by task-open ----
+
+test('task-prep without --head reviews a worktree task at the tip of its branch, as task-close does, never at the main checkout HEAD', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  wtOpen(r, 1);
+  wtCommit(r, 1, 'src/t1.js', 'export const t1 = 1;\n', 'feat: t1');
+  const head = wtCommit(r, 1, TEST_FILE[1], PASSING_TEST, 'test: t1');
+  assert.equal(r.head(), tip, 'the main checkout did not move');
+
+  const got = out(ok(r.run('task-prep', r.plan, '1')));
+  assert.notEqual(got.package, 'none', 'the worktree commits were not packaged');
+  assert.equal(got.package, join(r.workspace, `review-${tip.slice(0, 7)}..${head.slice(0, 7)}.diff`));
+  assert.equal(got.round, '1');
+  assert.equal(r.ledger().at(-1), `Prep: T1 r1 ${head}`, 'the Prep line names the worktree head');
+  assert.equal(r.ledger().some((l) => l.startsWith('Review: T1 — no commits')), false);
+
+  // The close finds the Prep head it expects, with no --head either.
+  save(r, 1, 'safety-reviewer', 1, footerText('safety-reviewer'));
+  save(r, 1, 'spec-reviewer', 1, footerText('spec-reviewer'));
+  ok(closeOf(r, 1));
+  assert.equal(landedOf(r, 1).length, 1);
+}));
+
+test('task-prep without --head and without a worktree branch still reads HEAD of the main checkout', () => withRig({}, (r) => {
+  startStack(r);
+  open(r, 1);
+  const head = r.commit('src/t1.js', 'export const t1 = 1;\n', 'feat: t1');
+  ok(r.run('task-prep', r.plan, '1'));
+  assert.equal(r.ledger().at(-1), `Prep: T1 r1 ${head}`);
+}));
+
+const COORD_PLAN = `# Coordinator plan
+
+## Global Constraints
+
+- Nothing.
+
+### Task 1: First
+
+**Tier:** standard
+**Role:** roles:tdd-implementer
+
+- [ ] **Step 1:** one.
+
+### Task 2: Bump the version
+
+**Tier:** light
+**Role:** coordinator
+
+- [ ] **Step 1:** two.
+`;
+
+test('task-open refuses a coordinator task while an earlier task of the phase is not done or dropped, and writes nothing', () => withRig({ planText: COORD_PLAN }, (r) => {
+  startStack(r);
+  open(r, 1);
+  r.commit('src/t1.js', 'export const t1 = 1;\n', 'feat: t1');
+  r.clearCalls();
+  const ledgerBefore = r.ledger();
+
+  const res = r.run('task-open', r.plan, '2');
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /coordinator task/);
+  assert.match(res.stderr, /T1/);
+  assert.match(res.stderr, /done or dropped/);
+  assert.deepEqual(r.ledger().slice(0, ledgerBefore.length), ledgerBefore);
+  assert.equal(r.ledger().some((l) => l.startsWith('BASE: T2')), false, 'a BASE was recorded for the refused coordinator task');
+  assert.match(r.ledger().at(-1), /^Error: task-open T2 — exit 3 — /);
+  assert.deepEqual(r.calls().filter((c) => c.startsWith('tasks start')), [], 'the task was started');
+  assert.equal(r.taskState(2).status, 'pending');
+}));
+
+test('task-open starts a coordinator task once every earlier task is done, and a coordinator task does not wait for a later one', () => withRig({ planText: COORD_PLAN }, (r) => {
+  startStack(r);
+  mainReviewed(r, 1);
+  const c1 = out(ok(closeOf(r, 1)));
+  const got = open(r, 2);
+  assert.equal(got.base, c1.sha);
+  assert.equal(r.taskState(2).status, 'in_progress');
+}));
+
+test('task-open: a coordinator task without tracking waits for the complete line of every earlier task', () => withRig({ store: false, planText: COORD_PLAN }, (r) => {
+  startStack(r);
+  r.seedLedger('BASE: T1 aaaaaaa');
+  const res = r.run('task-open', r.plan, '2');
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /T1/);
+  r.appendLedger('Task 1: complete (commits aaaaaaa..bbbbbbb, review clean)');
+  ok(r.run('task-open', r.plan, '2'));
+}));
+
+test('task-open does not restart a blocked task: only the human decision moves it, through triqual tasks start', () => withRig({}, (r) => {
+  startStack(r);
+  open(r, 1);
+  ok(r.triqual('tasks', 'block', 'T1', 'one open finding', '--plan', r.plan));
+  assert.equal(r.taskState(1).status, 'blocked');
+  r.clearCalls();
+
+  const res = r.run('task-open', r.plan, '1');
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /T1 is blocked/);
+  assert.match(res.stderr, /triqual tasks start/);
+  assert.match(r.ledger().at(-1), /^Error: task-open T1 — exit 3 — /);
+  assert.deepEqual(r.calls().filter((c) => c.startsWith('tasks start')), [], 'task-open started the blocked task');
+  assert.equal(r.taskState(1).status, 'blocked');
+
+  // After the owner's ruling the main session makes the move, and the same call goes on.
+  ok(r.triqual('tasks', 'start', 'T1', '--plan', r.plan));
+  ok(r.run('task-open', r.plan, '1'));
 }));

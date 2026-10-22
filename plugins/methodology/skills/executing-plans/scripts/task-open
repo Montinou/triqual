@@ -20,13 +20,16 @@
 // path that is not a .mjs, .js or .cjs file, a glob, or a path outside the repository (one that climbs out of it), is refused (exit 3) before anything
 // is written: landing runs those files with `node --test`, and a landing that runs no test is no landing.
 //
-// A task that is in progress, in review or done is not moved again; a task that is pending or blocked is started; any
-// other state (dropped) is refused. BASE is recorded right after the move and before the brief, so a rerun after a failed brief reuses it. A
+// A task that is in progress, in review or done is not moved again; a task that is pending is started; any
+// other state (dropped) is refused, and so is a blocked one: only the human's decision restarts it, with `triqual tasks start`. BASE is recorded right after the move and before the brief, so a rerun after a failed brief reuses it. A
 // task the tracking ledger shows as started with no `BASE:` line (a 1.1.0 ledger resumed mid-task) is refused: its first
 // commit is not HEAD, and HEAD as BASE would close it with no review. Run from the main checkout.
 //
+// A coordinator task (the plan's `**Role:** coordinator`) opened in the main checkout is refused (exit 3) while an earlier task of its phase
+// is not done or dropped: it starts like a batch task, once nothing earlier is open in the main checkout.
+//
 // Exit codes: 0 ok, 2 usage / no such plan file / malformed plan, 3 refused (linked worktree, unknown task, a started task
-// with no BASE line, a move the ledger refuses), 1 any other failure. A failure appends `Error: task-open T<N> — exit <code> — <cause>` to the ledger.
+// with no BASE line, a blocked task, a coordinator task with an earlier task open, a move the ledger refuses), 1 any other failure. A failure appends `Error: task-open T<N> — exit <code> — <cause>` to the ledger.
 //
 // Dynamic imports only: the file has no extension, so Node may load it as CommonJS or as an ES module depending on the
 // nearest package.json.
@@ -44,7 +47,7 @@
     ['pnpm-lock.yaml', ['pnpm', 'install', '--frozen-lockfile']],
     ['yarn.lock', ['yarn', 'install', '--frozen-lockfile']],
   ];
-  const STARTABLE = ['pending', 'blocked'];
+  const STARTABLE = ['pending'];
   const STARTED = ['in_progress', 'in_review', 'done'];
   let n = null;
   let workspace;
@@ -68,7 +71,16 @@
     }
 
     const planName = basename(plan);
+    // A coordinator task works in the main checkout and starts like a batch task: its BASE is HEAD and its close squashes BASE..HEAD, so an
+    // earlier task still open there would have its unreviewed commits absorbed (or its review package hold the coordinator's commit).
+    if (!worktree && planTask.task.role === 'coordinator') {
+      const waiting = common.earlierUnfinished(plan, planName, n, common.ledgerLines(workspace));
+      if (waiting.length > 0) {
+        throw new ScriptError(EXIT_REFUSED, `T${n} is a coordinator task and works in the main checkout: it starts once every earlier task of the phase is done or dropped (${waiting.map((m) => `T${m}`).join(', ')} ${waiting.length === 1 ? 'is' : 'are'} not)`);
+      }
+    }
     const state = common.taskState(planName, n);
+    if (state && state.status === 'blocked') throw new ScriptError(EXIT_REFUSED, `T${n} is blocked: only your human partner's decision restarts it, with triqual tasks start T${n}`);
     if (state && !STARTABLE.includes(state.status) && !STARTED.includes(state.status)) throw new ScriptError(EXIT_REFUSED, `T${n} is ${state.status}; cannot start`);
 
     let base = common.lastBase(common.ledgerLines(workspace), n);
