@@ -26,6 +26,7 @@ const ROLE_NAMES = [
   'complex-implementer',
   'final-adversarial-reviewer',
   'hunter',
+  'phase-orchestrator',
   'review-fixer',
   'safety-reviewer',
   'spec-reviewer',
@@ -83,7 +84,7 @@ const readToml = (text) => {
 
 const ROLE_TEXT = (front, body = 'Body.\n') => `---\n${front}\n---\n\n${body}`;
 
-test('parses the eight shipped roles', () => {
+test('parses the nine shipped roles', () => {
   const roles = shippedRoles();
   assert.deepEqual(roles.map((role) => role.name), ROLE_NAMES);
   const byName = Object.fromEntries(roles.map((role) => [role.name, role]));
@@ -150,6 +151,7 @@ test('codexAgentToml assigns a model and effort by task difficulty for each ship
     'spec-reviewer': { model: 'gpt-6.1-sol', effort: 'high' },
     'complex-implementer': { model: 'gpt-6.1-sol', effort: 'high' },
     'final-adversarial-reviewer': { model: 'gpt-6-astra', effort: 'medium' },
+    'phase-orchestrator': { model: 'gpt-6.1-sol', effort: 'medium' },
   };
   assert.deepEqual(shippedRoles().map((role) => role.name).sort(), Object.keys(expected).sort());
   for (const role of shippedRoles()) {
@@ -164,6 +166,11 @@ test('codexAgentToml assigns a model and effort by task difficulty for each ship
     assert.equal(keys.model, expected[role.name].model, `${role.name}: Codex model`);
     assert.equal(keys.model_reasoning_effort, expected[role.name].effort, `${role.name}: Codex effort`);
   }
+  // The orchestrator is the one role allowed to dispatch, so its generated instructions never forbid spawn_agent.
+  const orchestrator = shippedRoles().find((role) => role.name === 'phase-orchestrator');
+  const instructions = readToml(codexAgentToml(orchestrator, { rolesVersion: '1', xhigh: true, readOnly: true })).developer_instructions;
+  assert.doesNotMatch(instructions, /spawn_agent/);
+  assert.match(instructions, /\n\nTools you must not use: apply_patch on existing files\.$/);
 });
 
 test('Codex routing stays independent of Claude model and effort changes', () => {

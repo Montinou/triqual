@@ -3,6 +3,128 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## methodology 1.4.0
+
+### Added
+
+- **Parallel tasks.** `executing-plans` gains a Parallel tasks section, and the orchestrator prompt a Parallel Tasks
+  section, so independent tasks of one phase are built at the same time. A task is independent when every task it
+  depends on is complete and its plan `**Files:**` paths share no path with any earlier task of the phase that is not
+  yet closed (running or not yet started), so an earlier overlapping task always starts first and a task that fails the
+  check runs sequentially; a later task running while an earlier overlapping one had not started would deadlock against
+  the landing order. At most 3 implementers at once, and batched light tasks never run in
+  parallel. An earlier task is never blocked by a later one: a task of a batch starts only when every earlier task of the
+  phase is closed, so a light task cannot start first and wait to land while the earlier task cannot start. The "Never
+  dispatch two implementers in parallel" rule is gone.
+- **Where a task runs.** A task uses the main checkout only when every earlier task of the phase is done or dropped;
+  every other task is opened with `task-open --worktree`, built in `.claude/worktrees/<plan stem>-t<N>` (branch
+  `wt/<plan stem>-t<N>`), and reviewed with `task-prep --head <sha>`. A task with no node `Test:` path never runs in a
+  worktree: `task-open --worktree` refuses a missing, non-`.mjs`/`.js`/`.cjs`, glob or out-of-repo `Test:` path.
+  The BASE of a worktree task is the last closed commit of the phase branch: when a task built in the main checkout has
+  commits no close has squashed yet, the worktree task is based at that task's BASE, not on those unreviewed commits.
+- **Landing comes first, in plan order.** `task-close` for a worktree task is called only after every earlier task has
+  landed (called early it exits 3 with no `Error:` line: a wait). It folds the task onto the phase tip as one commit,
+  runs the plan's `Test:` files with `node --test` (cut off after `TRIQUAL_LANDING_TEST_TIMEOUT_MS`, default 600000
+  milliseconds), then moves the task to `done` with the landed sha and removes the worktree.
+- **A landing conflict is undone, not patched.** A merge conflict or a failing `Test:` file resets the phase branch to
+  the previous tip, writes `BASE: T<N> <previous tip>` and `Task <N>: landing conflict — re-run sequential`, moves the
+  task back with `rework`, and the task runs again sequentially in the main checkout; the undone attempt's reviewer
+  outputs are never counted.
+- **Phase close removes leftover `<plan stem>-t*` worktrees**, each removal logged as `Worktree removed: <path> —
+  left behind at the close of P<n>`.
+- The ledger vocabulary gains `Landed: T<N> <sha>`, `Tested: T<N> <sha>`, `Prep: T<N> r<R> <landed sha>`, the undo pair
+  and the `Worktree removed:` line; a rerun of `task-close` is a resume past `Landed:` and `Tested:` lines and the
+  landing's `Prep:` line. Every exit-3 refusal of `task-close` writes an `Error:` line except the earlier-task wait and a refusal from a linked worktree.
+  The scripts behind this (`task-open --worktree`, the landing and its undo in `task-close`, and `task-prep` counting
+  only the `Prep:` lines after a task's last `BASE:` line) ship in this release.
+
+## methodology 1.3.0
+
+### Changed
+
+- **A per-phase orchestrator runs the task loop.** `executing-plans` now dispatches one `roles:phase-orchestrator` per
+  phase ([orchestrator-prompt.md](plugins/methodology/skills/executing-plans/orchestrator-prompt.md)) and the main
+  session only decides: it runs `stack.mjs phase`, waits for the orchestrator once, reads its summary (at most 20
+  lines: `Phase:`, `Tasks:`, `BLOCKED:`, `Rulings I made:`, `Open minors:`, `Errors and fallbacks:`), writes
+  `Orchestrator: P<n> — <summary first line>` to the ledger, and runs the Phase check, the phase review, `done`,
+  `submit` and the break as before. It never reads code, diffs or reports; a Phase check failure's reopen and a
+  phase-review fix go to an orchestrator or a fixer. There is one set of rules: the orchestrator follows the skill.
+- **Stops are decided by the main session.** On any of the seven stops the orchestrator starts nothing new, lets
+  running agents finish their current step, writes `Task <N>: awaiting landing` for a finished but unlanded task and
+  returns `BLOCKED: <stop> — <details>`. The main session asks, writes `Task <N>: Ruling: …` and the ledger move the
+  decision implies (`triqual tasks start T<N> --plan <plan>` for a blocked task), then dispatches a new orchestrator for
+  the same phase, which resumes from the ledger. A final message that begins with `BLOCKED` instead of `Phase:` is a
+  denial and is relayed verbatim.
+- **Announced fallback.** When the orchestrator cannot be dispatched (role missing) or cannot dispatch (`BLOCKED:
+  nested dispatch unavailable`), the main session writes `Error: orchestrator P<n> — exit 1 — <first line of the
+  error>`, says so, and runs the phase loop itself with the same scripts. A workflow-gate cap denial is neither a stop
+  nor a fallback: wait the seconds it names and retry.
+- **The wait rule holds at both levels** (bounded stretches, never short polling, reconcile live children; `wait_agent`
+  in Codex), and a rate-limited orchestrator returns `BLOCKED: rate limit` after about 6 stretches.
+- **Routing of a blocked summary.** A stop (or a script error the steps cannot resolve) goes to the owner; the three
+  `BLOCKED:` kinds that are not stops (`nested dispatch unavailable`, `rate limit`, `coordinator task`) go to the
+  fallback, the end of the run and the coordinator handoff, with no question and no ruling. A human decision is ledgered
+  as `Task <N>: Ruling: <finding> — <decision> — <why> — <what it costs if wrong>`, and a task with a `complete` line is
+  not dispatched again unless the resume note reopens it (a Phase check failure's reopen).
+- **A rerun of `task-close` after a BLOCKED round trip resumes.** The `Orchestrator:` line, the task's `Task <N>:
+  Ruling:`, `awaiting landing` and `minor (deferred)` lines and every line that names no `T<N>` no longer make it a
+  reopen; `Prep:`, `BASE:`, `Task <N>: fix round` and the new `Task <N>: reopened — Phase check failed — <command>`
+  still do. The main session runs a Phase check failure's reopen and writes that line; the orchestrator runs the fix
+  loop. `triqual doctor` says `unset` for an `[agents]` table defined by a dotted or inline key without `max_depth`.
+- **Coordinator tasks stay with the main session.** The orchestrator never edits product code (its role disallows
+  `Edit` and `NotebookEdit`), so it runs a coordinator task only when the task edits no file; one that does is handed
+  over with `BLOCKED: coordinator task T<N> — edits files, run it in the main session`, and the main session runs it
+  and dispatches a new orchestrator for the rest of the phase. The `phase-orchestrator` role file now agrees with the
+  skill: the Phase check and the phase review stay with the main session. A summary over 20 lines keeps its first
+  lines and `+<k> more in the ledger`.
+- **A phase submitted before 1.1.0** gets rounds 1 and 2 and the fix rounds of the phase review, without `done`,
+  `submit` or the break, and the top phase's Phase check after each fix round.
+- The ledger vocabulary gains `Task <N>: awaiting landing` and `Orchestrator: P<n> — <summary first line>`, and Finish
+  lists the orchestrators' errors and fallbacks beside "Rulings I made". The role `roles:phase-orchestrator` needs
+  roles 0.4.0.
+
+## roles 0.4.0
+
+### Added
+
+- **`roles:phase-orchestrator`.** A ninth role agent, Sonnet at medium effort, that runs one phase of a plan by following
+  `methodology:executing-plans` for that phase only. It dispatches the other roles, never edits product code, ends on
+  any stop with `BLOCKED: <stop> — <details>` and returns a summary of at most 20 lines (phase status, task commits,
+  rulings, open minors, errors and fallbacks). It disallows `Edit` and `NotebookEdit` but not `Agent`: it is the only
+  role that may dispatch agents, and a test keeps every other role's `Agent` disallowed. It carries the denial rule.
+  Codex routing is `gpt-6.1-sol` at medium effort, and the generated Codex agent does not forbid `spawn_agent`. The
+  plugin cache is keyed by version, so machines on 0.3.4 do not have the role until they update.
+
+## workflow-gate 0.3.2
+
+### Changed
+
+- `ROLE_MODELS` carries `phase-orchestrator` as Sonnet, so a Workflow `agent()` naming it and an `Agent` start with
+  that `subagent_type` count against the Sonnet cap. The caps themselves are unchanged.
+
+## methodology 1.2.0
+
+### Changed
+
+- **The task loop runs on three scripts.** `executing-plans` starts a task with `task-open` (the `start` move, the
+  brief, BASE), prepares each review with `task-prep` (the `review` move, `tier-check` and its raise, the hunter pick,
+  the review package; `--fix-round` for a fix round) and closes it with `task-close` (squash, `done`, the complete
+  line, the `task-review` record, the review progress entry). Each script is idempotent, runs from the main checkout,
+  prints `key: value` lines and, on a failure, appends an `Error:` line to the workspace ledger and exits non-zero:
+  2 usage, 3 refused precondition, 1 other failure. Nothing fails quietly and no count is guessed.
+- **Reviewer footers.** The safety gate, the spec reviewer and the re-reviewer end their final message with a v1
+  footer (`<!-- triqual-review v1 -->`, `role:`, `findings:` counts and, for the spec reviewer, one `candidate:` verdict
+  per candidate). The dispatcher saves each final message unchanged to `<workspace>/task-<N>-<role>-r<R>.md`, and
+  `task-close` builds the `task-review` record from the saved files and the hunters' candidates files: a hunter with
+  no usable candidates file is recorded `failed`, and a missing or malformed gate or spec footer is an `Error:` with no
+  record.
+- **Reopened tasks.** Each close leaves a marker file `task-<N>-closed-<attempt>`. After `triqual tasks reopen`, an
+  attempt of 2 or more accepts only gate, spec and hunter outputs saved after the previous marker, so a reopen saves
+  fresh gate and spec outputs; a reopen that runs only a re-review cannot be closed until they exist.
+- **Ledger vocabulary.** New lines: `BASE: T<N> <sha>`, `Prep: T<N> r<R> <head sha>` and `Error: <step> T<N> — exit
+  <code> — <first stderr line>`. Finish lists the ledger's `Error:` and fallback lines under "Errors and fallbacks",
+  and the closing progress entry counts them.
+
 ## methodology 1.1.0
 
 ### Changed

@@ -18,7 +18,8 @@ import {
 import { enabledInClaude } from './resolve.mjs';
 import { configPath, readMethodologyConfig, supersededEnabled } from './settings.mjs';
 import {
-  editTomlFile, hasTopLevelKey, insertTopLevel, removeTable, removeTableKey, removeTopLevelKey, setTableKey,
+  editTomlFile, foreignTableKey, hasTopLevelKey, insertTopLevel, removeTableIfEmpty, removeTableKey, removeTopLevelKey,
+  setTableKey, tableKeyValue, topLevelKeyValue,
 } from './toml-edit.mjs';
 import { tomlString } from './agents.mjs';
 import { applyAgents, applyLinks, linkState, placeLink } from './harness-links.mjs';
@@ -34,7 +35,8 @@ export { readManifest, writeManifest };
 const BRIDGE_IDS = [BRAND.marketplace, BRAND.legacy.marketplace].map((m) => `methodology-codex@${m}`);
 const CODEX_MARKETPLACES = [BRAND.marketplace, BRAND.legacy.marketplace];
 const FALLBACK_KEY = 'project_doc_fallback_filenames';
-const FALLBACK_LINE = `${FALLBACK_KEY} = ["CLAUDE.md"]`;
+const FALLBACK_VALUE = '["CLAUDE.md"]';
+const FALLBACK_LINE = `${FALLBACK_KEY} = ${FALLBACK_VALUE}`;
 const CLI_TIMEOUT_MS = 60000;
 // Grok's own copies we uninstall (F.11 P6d/P6e); superpowers only without keepSuperseded. Doctor checks the same list.
 export const GROK_STALE =['methodology', 'progress-tracking', 'workflow-gate', 'roles', 'superpowers'];
@@ -384,8 +386,61 @@ const codexConfigStep = (ctx) => {
       : { text: insertTopLevel(text, [FALLBACK_LINE]), changes: [FALLBACK_KEY] }), { validate: validateConfig(ctx) });
     if (res.error) throw new StepError(res.error);
     if (!res.changed) return { status: 'already', detail: `${FALLBACK_KEY} is set` };
-    recordConfig(entry, { key: FALLBACK_KEY, table: null, was: null, createdTable: false });
+    recordConfig(entry, {
+      key: FALLBACK_KEY, table: null, was: null, createdTable: false, wrote: FALLBACK_VALUE,
+    });
     return { status: 'done', detail: `added ${FALLBACK_LINE} before the first table` };
+  });
+};
+
+// The depth the methodology's phase orchestrator needs: an orchestrator at depth 1 spawns the task agents at depth 2.
+const DEPTH_WANTED = 2;
+const DEPTH_NOT_NUMBER = '[agents] max_depth is not a number: left alone, set it to 2 or more by hand';
+const DEPTH_BY_HAND = '[agents] is set by a dotted or inline key that sync cannot edit: set max_depth to 2 or more by hand';
+
+// A TOML integer literal (decimal, with `_` separators, or 0x/0o/0b) as a number; null for anything else.
+function tomlInteger(text) {
+  if (/^[+-]?\d+(?:_\d+)*$/.test(text)) return Number(text.replaceAll('_', ''));
+  const radix = { x: 16, o: 8, b: 2 }[/^0([xob])/.exec(text)?.[1]];
+  const digits = { 16: /^[0-9a-f]+(?:_[0-9a-f]+)*$/i, 8: /^[0-7]+(?:_[0-7]+)*$/, 2: /^[01]+(?:_[01]+)*$/ }[radix];
+  return radix && digits.test(text.slice(2)) ? parseInt(text.slice(2).replaceAll('_', ''), radix) : null;
+}
+
+// config.toml's [agents] max_depth: { state: 'unset' }, { state: 'number', value } or { state: 'other' } for a value
+// that is not a TOML integer. `foreign: true` when it is set by a top-level dotted or inline key (`agents.max_depth =
+// 3`, `agents = { max_depth = 3 }`) that the edit helpers cannot change; a definition of [agents] with no max_depth in
+// it is `unset` and foreign. A read only: setTableKey's result is dropped.
+export function codexMaxDepth(text) {
+  const { was } = setTableKey(text, 'agents', 'max_depth', String(DEPTH_WANTED));
+  const foreign = was === null ? foreignTableKey(text, 'agents', 'max_depth') : null;
+  const raw = foreign ? foreign.value : was;
+  if (raw === null) return foreign ? { state: 'unset', foreign: true } : { state: 'unset' };
+  const value = tomlInteger(raw);
+  const seen = value === null ? { state: 'other' } : { state: 'number', value };
+  return foreign ? { ...seen, foreign: true } : seen;
+}
+
+// [agents] max_depth raised to 2 when absent or a number below 2, never lowered or touched at 2 or more. Recorded for
+// the revert like codexConfigStep, edit and record under one manifest lock.
+const codexDepthStep = (ctx) => {
+  const path = configFile(ctx);
+  return record(ctx, async (entry) => {
+    let seen;
+    const res = await editTomlFile(path, (text) => {
+      seen = codexMaxDepth(text);
+      if (seen.state === 'number' && seen.value >= DEPTH_WANTED) return { text, changes: null };
+      if (seen.foreign) throw new StepError(DEPTH_BY_HAND);
+      if (seen.state === 'other') throw new StepError(DEPTH_NOT_NUMBER);
+      const r = setTableKey(text, 'agents', 'max_depth', String(DEPTH_WANTED));
+      return { text: r.text, changes: { was: r.was, createdTable: r.createdTable } };
+    }, { validate: validateConfig(ctx) });
+    if (res.error) throw new StepError(res.error);
+    if (!res.changed) return { status: 'already', detail: `[agents] max_depth is ${seen.value}, ${DEPTH_WANTED} or more` };
+    const { was, createdTable } = res.changes;
+    recordConfig(entry, {
+      key: 'max_depth', table: 'agents', was, createdTable, wrote: String(DEPTH_WANTED),
+    });
+    return { status: 'done', detail: `${was === null ? 'set' : `raised from ${was} to`} [agents] max_depth = ${DEPTH_WANTED}` };
   });
 };
 
@@ -423,7 +478,9 @@ async function codexSupersedesStep(ctx) {
       if (res.error) {
         problems.push(`${pluginId}: ${res.error}`);
       } else if (res.changed) {
-        recordConfig(entry, { key: 'enabled', table, was: res.changes.was, createdTable: res.changes.createdTable });
+        recordConfig(entry, {
+          key: 'enabled', table, was: res.changes.was, createdTable: res.changes.createdTable, wrote: 'false',
+        });
         disabled.push(pluginId);
       } else {
         remote.push(pluginId);
@@ -635,6 +692,7 @@ export async function syncHarness({
     steps.push(await step('codex-agents', () => agentsStep(ctx)));
     steps.push(await step('codex-plugin', () => codexPluginStep(ctx)));
     steps.push(await step('codex-config', () => codexConfigStep(ctx)));
+    steps.push(await step('codex-depth', () => codexDepthStep(ctx)));
     steps.push(await step('codex-supersedes', () => codexSupersedesStep(ctx)));
   } else {
     steps.push(await step('grok-plugins', () => grokPluginsStep(ctx)));
@@ -806,10 +864,31 @@ const removeCodexRulesStep = (ctx) => record(ctx, (entry) => {
   return { status: 'done', detail: `removed the managed section from ${path} (backup ${saved})${note}` };
 });
 
-// One recorded config.toml change undone: a table sync created goes whole, a key it added is removed, a key it changed
-// gets its prior value back.
+// What sync wrote for a record made before records kept `wrote`: the value is the one constant per key.
+const LEGACY_WROTE = { max_depth: String(DEPTH_WANTED), enabled: 'false', [FALLBACK_KEY]: FALLBACK_VALUE };
+
+// Whether the record's key still holds what sync wrote (whitespace aside); a key the user removed holds nothing, and a
+// record with no known written value is acted on as before.
+function stillAsWritten(text, rec) {
+  const wrote = rec.wrote ?? LEGACY_WROTE[rec.key];
+  if (typeof wrote !== 'string') return true;
+  const now = rec.table === null ? topLevelKeyValue(text, rec.key) : tableKeyValue(text, rec.table, rec.key);
+  return now !== null && now.replace(/\s+/g, '') === wrote.replace(/\s+/g, '');
+}
+
+// One recorded config.toml change undone, only while the key still holds the value sync wrote: a key it added is
+// removed (and the table it created with it, unless the user has put anything else in it since), a key it changed gets
+// its prior value back. { text, kept }: `kept` when the user changed the value since, which is then left as theirs.
 function revertConfig(text, rec) {
-  if (rec.createdTable) return removeTable(text, rec.table);
+  if (!stillAsWritten(text, rec)) {
+    const now = rec.table === null ? topLevelKeyValue(text, rec.key) : tableKeyValue(text, rec.table, rec.key);
+    return { text, kept: now !== null };
+  }
+  return { text: revertConfigKey(text, rec), kept: false };
+}
+
+function revertConfigKey(text, rec) {
+  if (rec.createdTable) return removeTableIfEmpty(removeTableKey(text, rec.table, rec.key), rec.table);
   if (rec.was === null) {
     return rec.table === null ? removeTopLevelKey(text, rec.key) : removeTableKey(text, rec.table, rec.key);
   }
@@ -827,14 +906,18 @@ const removeConfigStep = (ctx) => record(ctx, async (entry) => {
   if (!existsSync(path)) throw new StepError(`${path} does not exist: its recorded changes are not reverted`);
   const reverted = [];
   const gone = [];
+  const left = [];
   const problems = [];
   for (const rec of [...entry.config].reverse()) {
     const name = rec.table === null ? rec.key : `${rec.table}.${rec.key}`;
     let res;
+    let kept = false;
     try {
-      res = await editTomlFile(path, (text) => ({ text: revertConfig(text, rec), changes: null }), {
-        validate: validateConfig(ctx),
-      });
+      res = await editTomlFile(path, (text) => {
+        const r = revertConfig(text, rec);
+        kept = r.kept;
+        return { text: r.text, changes: null };
+      }, { validate: validateConfig(ctx) });
     } catch (err) {
       problems.push(`${name}: ${err.message}`);
       continue;
@@ -843,12 +926,13 @@ const removeConfigStep = (ctx) => record(ctx, async (entry) => {
       problems.push(`${name}: ${res.error}`);
       continue;
     }
-    (res.changed ? reverted : gone).push(name);
+    (kept ? left : res.changed ? reverted : gone).push(name);
     dropFrom(entry.config, rec);
   }
   const parts = [];
   if (reverted.length) parts.push(`reverted ${reverted.join(', ')}`);
   if (gone.length) parts.push(`already as before triqual sync: ${gone.join(', ')}`);
+  if (left.length) parts.push(`left as you set it (changed since triqual sync): ${left.join(', ')}`);
   if (problems.length) throw new StepError([...parts, ...problems].join('; '));
   return { status: reverted.length ? 'done' : 'already', detail: parts.join('; ') };
 });

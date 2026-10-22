@@ -116,6 +116,19 @@ Subagent (roles:spec-reviewer):
 
     **Fix round:** [All findings addressed, no new Critical/Important
     breakage | Findings remain open] — list the open ones.
+
+    ### Footer
+
+    The last lines of your final message, with nothing after them, are these
+    three; the controller saves your message with them, so write them
+    exactly. `<n>` counts, at each severity, the findings still open after
+    your review: each NOT ADDRESSED finding at the severity it was given, and
+    each piece of new breakage you reported, `0` for none. `candidate:` lines:
+    none.
+
+    <!-- triqual-review v1 -->
+    role: re-reviewer
+    findings: critical=<n> important=<n> minor=<n>
 ```
 
 When `roles:safety-reviewer` raised findings, dispatch it the same prompt,
@@ -139,4 +152,5 @@ Subagent (roles:safety-reviewer):
 - `[DIFF_FILE]` — the path `node scripts/review-package PLAN_FILE FIX_BASE HEAD` printed
 
 **Re-reviewer returns:** per-finding verdicts (ADDRESSED / NOT ADDRESSED),
-new breakage in the fix diff, out-of-scope observations, and a round verdict.
+new breakage in the fix diff, out-of-scope observations, a round verdict and the
+v1 footer as the last lines of its final message.

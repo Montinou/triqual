@@ -502,7 +502,8 @@ test('no skill or template names fence hatch except in the clause that forbids s
   assert.deepEqual(carriers, [
     'brainstorming/spec-document-reviewer-prompt.md',
     'executing-plans/SKILL.md', 'executing-plans/final-review-prompt.md', 'executing-plans/hunter-prompt.md',
-    'executing-plans/implementer-prompt.md', 'executing-plans/re-review-prompt.md', 'executing-plans/safety-review-prompt.md',
+    'executing-plans/implementer-prompt.md', 'executing-plans/orchestrator-prompt.md', 'executing-plans/re-review-prompt.md',
+    'executing-plans/safety-review-prompt.md',
     'executing-plans/task-reviewer-prompt.md', 'finishing-branch/SKILL.md', 'reviewing-code/reviewer-prompt.md',
   ]);
   // The role agents are outside the skills; their definitions are checked the same way.
@@ -531,7 +532,7 @@ test('every dispatch template and every role agent carries the denial rule once,
   for (const needed of ['reviewing-code/reviewer-prompt.md', 'brainstorming/spec-document-reviewer-prompt.md']) {
     assert.ok(DISPATCH_TEMPLATES.includes(needed), `${needed} is not recognized as a dispatch template`);
   }
-  assert.equal(ROLE_AGENT_FILES.length, 8, ROLE_AGENT_FILES.join(', '));
+  assert.equal(ROLE_AGENT_FILES.length, 9, ROLE_AGENT_FILES.join(', '));
   assert.deepEqual([
     ...DISPATCH_TEMPLATES.flatMap((path) => carrierProblems(path, read(REAL.skills, path))),
     ...ROLE_AGENT_FILES.flatMap((file) => carrierProblems(`roles/agents/${file}`, readFileSync(join(REAL.agents, file), 'utf8'))),

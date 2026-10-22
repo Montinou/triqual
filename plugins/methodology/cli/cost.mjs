@@ -1,9 +1,10 @@
 // `triqual cost [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--project <text>] [--json]`: the token spend in this
 // machine's Claude Code transcripts (<root>/<project dir>/**/*.jsonl; root ~/.claude/projects, or
 // TRIQUAL_TRANSCRIPTS_DIR), per model, split into the main session transcripts (controller) and the subagent ones (a
-// path with a `subagents` directory), with an estimated USD from lib/prices.json. Read-only; it prints counts, model
-// names and project directory names, never message content, prompts or other paths. An assistant message is counted
-// once per message id and request id (a transcript repeats it per content block).
+// path with a `subagents` directory; of those, the ones whose sibling agent-<id>.meta.json names agentType
+// `phase-orchestrator` are reported apart as orchestrators), with an estimated USD from lib/prices.json. Read-only;
+// it prints counts, model names and project directory names, never message content, prompts or other paths. An
+// assistant message is counted once per message id and request id (a transcript repeats it per content block).
 // Exit codes: 0 a report (zeros when there are no transcripts), 2 usage.
 // node: built-ins only. main() is exported for tests and runs only when this file is the entry point.
 import { readdirSync, readFileSync, realpathSync } from 'node:fs';
@@ -18,12 +19,13 @@ const USAGE = [
   'usage:',
   '  triqual cost [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--project <text>] [--json]',
   '      Tokens per model (input, output, cache read, cache write) in the Claude Code transcripts of this machine,',
-  '      controller (main sessions) apart from subagents, between --since and --until (UTC days, both included),',
+  '      controller (main sessions), orchestrators (phase-orchestrator subagents) and the other subagents apart,',
+  '      between --since and --until (UTC days, both included),',
   '      in the project directories whose name contains --project (default: all). The USD is an ESTIMATE at the list',
   '      prices in the methodology plugin\'s cli/lib/prices.json; a model not listed there shows tokens and no price.',
   '      For one plan, pass its first and last day as --since/--until: the ledger\'s event times are not read.',
   '      Transcripts: ~/.claude/projects, or TRIQUAL_TRANSCRIPTS_DIR. Read-only; prints project directory names only,',
-  '      never message content or other paths. A transcript it cannot read is counted as unreadable.',
+  '      never message content or other paths. A transcript or subagent meta file it cannot read is unreadable.',
   '  triqual cost --help',
   '',
 ].join('\n');
@@ -46,10 +48,24 @@ function priceOf(model) {
   return PRICES[model] ?? PRICES[model.replace(/-\d{8}$/, '').replace(/\[.*\]$/, '')] ?? null;
 }
 
-// { since, until, projects, controller: { model: totals }, subagents: { ... }, totalUsd, unpriced, unreadable }.
+// Whether the subagent transcript at `path` is a phase orchestrator, from its sibling agent-<id>.meta.json. No meta file
+// (older transcripts have none) is a plain subagent; one that exists but cannot be read or parsed is a plain subagent
+// too and is reported through `onUnreadable`.
+const ORCHESTRATOR = /^(?:roles:)?phase-orchestrator$/;
+function isOrchestrator(path, onUnreadable) {
+  let text;
+  try { text = readFileSync(path.replace(/\.jsonl$/, '.meta.json'), 'utf8'); } catch (e) {
+    if (e?.code !== 'ENOENT') onUnreadable();
+    return false;
+  }
+  try { return ORCHESTRATOR.test(JSON.parse(text)?.agentType); } catch { onUnreadable(); return false; }
+}
+
+// { since, until, projects, controller: { model: totals }, orchestrators: { ... }, subagents: { ... }, totalUsd,
+//   unpriced, unreadable }.
 export function collect(root, { since, until, project }) {
   // Null-prototype maps: a model name is only ever a key (`__proto__` included).
-  const groups = { controller: Object.create(null), subagents: Object.create(null) };
+  const groups = { controller: Object.create(null), orchestrators: Object.create(null), subagents: Object.create(null) };
   const seen = new Set();
   const projects = [];
   let unreadable = 0;
@@ -62,6 +78,7 @@ export function collect(root, { since, until, project }) {
       let text;
       // A file it cannot read (permissions, or past the ~512 MB string limit) is counted, never silently skipped.
       try { text = readFileSync(path, 'utf8'); } catch { unreadable += 1; continue; }
+      const group = !sub ? 'controller' : isOrchestrator(path, () => { unreadable += 1; }) ? 'orchestrators' : 'subagents';
       for (const line of text.split('\n')) {
         if (!line.includes('"usage"')) continue;
         let rec;
@@ -75,7 +92,7 @@ export function collect(root, { since, until, project }) {
         if ((since && day < since) || (until && day > until)) continue;
         const id = `${msg.id ?? ''}\0${rec.requestId ?? ''}`;
         if (id !== '\0') { if (seen.has(id)) continue; seen.add(id); }
-        const t = groups[sub ? 'subagents' : 'controller'][msg.model] ??= {
+        const t = groups[group][msg.model] ??= {
           input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, messages: 0,
         };
         t.input += n(u.input_tokens);
@@ -89,14 +106,14 @@ export function collect(root, { since, until, project }) {
   }
   let totalUsd = 0;
   let unpriced = false;
-  for (const group of Object.values(groups)) {
-    for (const [model, t] of Object.entries(group)) {
+  for (const bucket of Object.values(groups)) {
+    for (const [model, t] of Object.entries(bucket)) {
       const p = priceOf(model);
       const { cacheWrite1h, ...shown } = t;
       if (p === null) unpriced = true;
       const usd = p === null ? null : (t.input * p.input + t.output * p.output + t.cacheRead * p.cacheRead
         + (t.cacheWrite - cacheWrite1h) * p.cacheWrite5m + cacheWrite1h * p.cacheWrite1h) / 1e6;
-      group[model] = { ...shown, usd };
+      bucket[model] = { ...shown, usd };
       totalUsd += usd ?? 0;
     }
   }
@@ -107,7 +124,7 @@ const fmt = (v) => v.toLocaleString('en-US');
 
 function format(r) {
   const out = [`Window: ${r.since ?? 'start'} .. ${r.until ?? 'now'} (UTC days), ${r.projects.length} project(s)`];
-  for (const name of ['controller', 'subagents']) {
+  for (const name of ['controller', 'orchestrators', 'subagents']) {
     out.push('', name);
     const models = Object.keys(r[name]).sort();
     if (models.length === 0) out.push('  (none)');

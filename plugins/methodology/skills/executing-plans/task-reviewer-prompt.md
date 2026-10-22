@@ -277,6 +277,22 @@ Subagent (roles:spec-reviewer):
     **Task quality:** [Approved | Needs fixes]
 
     **Reasoning:** [1-2 sentence technical assessment]
+
+    ### Footer
+
+    The last lines of your final message, with nothing after them, are these
+    lines; the controller's `task-close` reads them to build the task's review
+    record, so write them exactly. `<n>` is the number of findings you
+    reported at that severity in your own review (Issues, and the safety
+    findings when you ran the Safety Checklist), `0` for none; a candidate's
+    verdict is not counted there. Write one `candidate:` line per candidate,
+    in file order, with the candidate's id and its verdict as you gave it
+    above, and no `candidate:` line when you were given no candidates.
+
+    <!-- triqual-review v1 -->
+    role: spec-reviewer
+    findings: critical=<n> important=<n> minor=<n>
+    candidate: <candidate id> confirmed critical|confirmed important|confirmed minor|refuted|duplicate-candidate|duplicate-review
 ```
 
 **Placeholders:**
@@ -313,4 +329,4 @@ Subagent (roles:spec-reviewer):
 
 **Reviewer returns:** Spec Compliance verdict (✅/❌/⚠️), Strengths, Issues
 (Critical/Important/Minor), a verdict for every candidate (when hunters ran), the checklist verdicts and the `Safety:` verdict when the
-Safety Checklist sections are kept, Task quality verdict
+Safety Checklist sections are kept, Task quality verdict, and the v1 footer as the last lines of its final message

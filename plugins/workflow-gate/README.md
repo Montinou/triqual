@@ -29,7 +29,7 @@ not numeric, is empty or is negative is ignored and the default applies, with no
 A script is accepted when it meets all three rules.
 
 1. **Every `agent()` names its model.**
-   - `agentType: "roles:<name>"` for one of the eight [`roles`](../roles/README.md) agents, which
+   - `agentType: "roles:<name>"` for one of the nine [`roles`](../roles/README.md) agents, which
      maps to that role's model (map below), or
    - a string-literal `model:` that contains `fable`, `opus`, `sonnet` or `haiku`.
 
@@ -64,6 +64,11 @@ The gate compares the declared number with the number of `agent()` call sites pe
 source. It does not count launches: a call site inside a loop or a `.map` counts once. The
 fan-out rule is what bounds the lists.
 
+The count covers the script's own call sites only. An agent such as `roles:phase-orchestrator` dispatches
+agents of its own, and those starts are in no script's budget: the `Agent` burst cap (below) is what bounds
+them, per session. methodology never dispatches the orchestrator from a Workflow script; a script that does
+has its `MAX_AGENTS` budget bound only on the orchestrator itself.
+
 ### Fan-out rule
 
 `pipeline(x, ...)`, `parallel(x)` and `.map(` over a dynamic list that launch non-Haiku agents
@@ -91,7 +96,7 @@ test keeps it equal to the `model:` of each agent file in `plugins/roles/agents/
 | Role | Model family |
 |---|---|
 | `hunter` | haiku |
-| `brief-writer`, `tdd-implementer`, `safety-reviewer`, `spec-reviewer`, `review-fixer` | sonnet |
+| `brief-writer`, `tdd-implementer`, `safety-reviewer`, `spec-reviewer`, `review-fixer`, `phase-orchestrator` | sonnet |
 | `complex-implementer`, `final-adversarial-reviewer` | opus |
 
 ## The `Agent` burst cap

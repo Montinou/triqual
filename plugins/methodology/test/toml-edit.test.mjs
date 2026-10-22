@@ -11,7 +11,7 @@ import { createHash } from 'node:crypto';
 import { BRAND } from '../cli/lib/brand.mjs';
 import {
   firstTableHeaderIndex, hasTopLevelKey, insertTopLevel, setTableKey, tableNames,
-  removeTopLevelKey, removeTableKey, removeTable, editTomlFile,
+  removeTopLevelKey, removeTableKey, removeTable, removeTableIfEmpty, foreignTableKey, editTomlFile,
 } from '../cli/lib/toml-edit.mjs';
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
@@ -76,7 +76,7 @@ test('insertTopLevel appends when there is no header', () => {
 
 test('tableNames lists each table header normalized, skipping array tables and header-looking string lines', () => {
   const text = 'a = 1\n[ x . "y z" ]\nk = """\n[not.a.table]\n"""\n[[arr]]\n[w.\'q\'] # note\r\n';
-  assert.deepEqual(tableNames(text), ['x."y z"', "w.'q'"]);
+  assert.deepEqual(tableNames(text), ['x."y z"', 'w.q'], "a quoted segment a bare key could spell is written bare");
   assert.deepEqual(tableNames(''), []);
 });
 
@@ -167,6 +167,38 @@ test('reverts return the text unchanged when the target is absent', () => {
 test('removeTable keeps a comment that belongs to the next table', () => {
   const text = 'a = 1\n\n[t]\nk = 1\n\n# about u\n[u]\nx = 2\n';
   assert.equal(removeTable(text, 't'), 'a = 1\n\n# about u\n[u]\nx = 2\n');
+});
+
+test('quoted forms of a key and of a table header name the same key and table', () => {
+  const quoted = 'a = 1\n\n["agents"]\n"max_depth" = 1\n\n[b]\nx = 1\n';
+  assert.deepEqual(tableNames(quoted), ['agents', 'b']);
+  assert.deepEqual(setTableKey(quoted, 'agents', 'max_depth', '2'),
+    { text: 'a = 1\n\n["agents"]\nmax_depth = 2\n\n[b]\nx = 1\n', was: '1', createdTable: false });
+  assert.equal(removeTableKey(quoted, 'agents', 'max_depth'), 'a = 1\n\n["agents"]\n\n[b]\nx = 1\n');
+  assert.equal(hasTopLevelKey("'a' = 1\n[t]\n", 'a'), true);
+  assert.deepEqual(tableNames('[plugins."x@y"]\n[ "a-b" . c ]\n'), ['plugins."x@y"', 'a-b.c']);
+});
+
+test('removeTableIfEmpty drops a table with only blank lines left and keeps one with anything else', () => {
+  assert.equal(removeTableIfEmpty('a = 1\n\n[t]\n\n[u]\nx = 2\n', 't'), 'a = 1\n\n[u]\nx = 2\n');
+  assert.equal(removeTableIfEmpty('a = 1\n\n[t]\n', 't'), 'a = 1\n\n');
+  const kept = 'a = 1\n\n[t]\nk = 1\n\n[u]\nx = 2\n';
+  assert.equal(removeTableIfEmpty(kept, 't'), kept);
+  const note = 'a = 1\n\n[t]\n# mine\n\n[u]\nx = 2\n';
+  assert.equal(removeTableIfEmpty(note, 't'), note);
+  assert.equal(removeTableIfEmpty(FIXTURE, 'absent'), FIXTURE);
+});
+
+test('foreignTableKey reads a top-level dotted or inline definition of a table, and nothing else', () => {
+  const rest = '\n[hooks]\nagents.max_depth = 9\n';
+  assert.deepEqual(foreignTableKey(`agents.max_depth = 3 # c${rest}`, 'agents', 'max_depth'), { value: '3' });
+  assert.deepEqual(foreignTableKey(`"agents" . 'max_depth'=0x2${rest}`, 'agents', 'max_depth'), { value: '0x2' });
+  assert.deepEqual(foreignTableKey(`agents = { max_threads = 4, max_depth = 3 }${rest}`, 'agents', 'max_depth'), { value: '3' });
+  assert.deepEqual(foreignTableKey(`agents = { max_threads = 4 }${rest}`, 'agents', 'max_depth'), { value: null });
+  assert.deepEqual(foreignTableKey(`agents.max_threads = 4${rest}`, 'agents', 'max_depth'), { value: null });
+  assert.equal(foreignTableKey(`a = 1\n[agents]\nmax_depth = 3\n`, 'agents', 'max_depth'), null);
+  assert.equal(foreignTableKey(FIXTURE, 'agents', 'max_depth'), null);
+  assert.equal(foreignTableKey(`my_agents.max_depth = 3\n${rest}`, 'agents', 'max_depth'), null);
 });
 
 test('headers inside """ strings and multi-line arrays are ignored', () => {

@@ -125,6 +125,18 @@ Subagent (roles:safety-reviewer):
     ### Verdict
 
     **Safety:** [clean | findings | cannot verify]
+
+    ### Footer
+
+    The last lines of your final message, with nothing after them, are these
+    three; the controller's `task-close` reads them to build the task's review
+    record, so write them exactly. `<n>` is the number of findings you
+    reported at that severity (a Cannot Verify item is not a finding), `0`
+    for none. `candidate:` lines: none, you were given no candidates.
+
+    <!-- triqual-review v1 -->
+    role: safety-reviewer
+    findings: critical=<n> important=<n> minor=<n>
 ```
 
 **Placeholders:**
@@ -144,5 +156,5 @@ Subagent (roles:safety-reviewer):
   file is expected`; when not opted in, drop checklist item 7
 
 **Safety reviewer returns:** the checklist verdicts, findings by severity,
-the Cannot Verify items, and a one-line verdict (clean | findings | cannot
-verify).
+the Cannot Verify items, a one-line verdict (clean | findings | cannot
+verify) and the v1 footer as the last lines of its final message.

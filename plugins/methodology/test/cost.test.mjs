@@ -143,3 +143,56 @@ test('cost: an unreadable transcript is counted and reported, never silently ski
   assert.match(t.err, /1 transcripts? unreadable/);
   assert.equal(JSON.parse(run(['--json', '--project', 'repo'], root).out).unreadable, 0);
 }));
+
+// Adds two phase-orchestrator subagents and a hunter subagent, each with its meta file, to the fixture.
+function addMetaSubagents(root) {
+  const dir = join(root, '-home-me-repo', 'sess-1', 'subagents');
+  writeFileSync(join(dir, 'agent-orch.jsonl'), line({ id: 'or1', at: '2026-10-11T10:00:00Z', model: 'claude-sonnet-5-5', input: 100, output: 200 }));
+  writeFileSync(join(dir, 'agent-orch.meta.json'), JSON.stringify({ agentType: 'roles:phase-orchestrator' }));
+  writeFileSync(join(dir, 'agent-hunt.jsonl'), line({ id: 'hu1', at: '2026-10-11T10:00:00Z', model: 'claude-sonnet-5-5', input: 7, output: 9 }));
+  writeFileSync(join(dir, 'agent-hunt.meta.json'), JSON.stringify({ agentType: 'roles:hunter' }));
+  writeFileSync(join(dir, 'agent-bare.jsonl'), line({ id: 'or2', at: '2026-10-11T10:00:00Z', model: 'claude-sonnet-5-5', input: 1000, output: 2000 }));
+  writeFileSync(join(dir, 'agent-bare.meta.json'), JSON.stringify({ agentType: 'phase-orchestrator' }));
+  return dir;
+}
+
+test('cost: orchestrator transcripts are counted apart', () => withTranscripts((root) => {
+  addMetaSubagents(root);
+  const j = JSON.parse(run(['--json', '--project', 'repo'], root).out);
+  assert.equal(j.orchestrators['claude-sonnet-5-5'].input, 1100, 'roles:phase-orchestrator and phase-orchestrator both count');
+  assert.equal(j.orchestrators['claude-sonnet-5-5'].output, 2200);
+  assert.equal(j.subagents['claude-sonnet-5-5'].input, 7, 'a hunter stays a subagent');
+  assert.equal(j.subagents['claude-haiku-5-5'].input, 11, 'a subagent with no meta file stays a subagent');
+  assert.equal(j.controller['claude-sonnet-5-5'], undefined);
+  assert.ok(j.orchestrators['claude-sonnet-5-5'].usd > 0);
+  assert.equal(j.unreadable, 0);
+}));
+
+test('cost: the text report prints the orchestrators block between controller and subagents', () => withTranscripts((root) => {
+  addMetaSubagents(root);
+  const r = run(['--project', 'repo'], root);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /^controller$[\s\S]*^orchestrators$[\s\S]*^subagents$/m);
+  assert.match(r.out, /^orchestrators\n {2}claude-sonnet-5-5: input 1,100, output 2,200, /m);
+  assert.match(run([], join(root, 'missing')).out, /^orchestrators\n {2}\(none\)$/m);
+}));
+
+test('cost: an unparsable meta file is counted as a subagent and reported unreadable', () => withTranscripts((root) => {
+  const dir = addMetaSubagents(root);
+  writeFileSync(join(dir, 'agent-orch.meta.json'), '{not json');
+  const j = run(['--json', '--project', 'repo'], root);
+  const r = JSON.parse(j.out);
+  assert.equal(r.unreadable, 1);
+  assert.match(j.err, /^1 transcripts? unreadable/m);
+  assert.equal(r.orchestrators['claude-sonnet-5-5'].input, 1000, 'only the intact orchestrator meta counts');
+  assert.equal(r.subagents['claude-sonnet-5-5'].input, 107, 'the transcript behind the bad meta is a subagent');
+}));
+
+test('cost: a missing meta file is a subagent and not unreadable', () => withTranscripts((root) => {
+  const j = run(['--json', '--project', 'repo'], root);
+  const r = JSON.parse(j.out);
+  assert.equal(r.unreadable, 0);
+  assert.equal(j.err, '');
+  assert.deepEqual(r.orchestrators, {});
+  assert.equal(r.subagents['claude-haiku-5-5'].input, 11);
+}));

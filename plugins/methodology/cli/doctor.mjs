@@ -13,7 +13,7 @@ import { readManagedSection } from './lib/fsx.mjs';
 import { codexAgentText, inSupersededCache, linkState, wantedLinks } from './lib/harness-links.mjs';
 import { readManifest } from './lib/harness-manifest.mjs';
 import {
-  codexEnabledMap, codexPluginTable, grokHooksFile, grokStaleEntries, hooksOn, userInstalls,
+  codexEnabledMap, codexMaxDepth, codexPluginTable, grokHooksFile, grokStaleEntries, hooksOn, userInstalls,
 } from './lib/harness-sync.mjs';
 import {
   bridgeId, codexBridgeDir, codexCloneDir, codexTrustKeys, detect, expectedRules, harnessPaths, HARNESS_IDS,
@@ -32,7 +32,7 @@ const ptScript = (root, name) => (existsSync(join(root, 'cli', name)) || !exists
 // The system plugins, methodology first (installing it brings in the other three). Bootstrap reuses this list.
 export const PLUGINS = ['methodology', 'progress-tracking', 'workflow-gate', 'roles'];
 const ROLES = ['brief-writer', 'tdd-implementer', 'complex-implementer', 'safety-reviewer', 'spec-reviewer',
-  'review-fixer', 'final-adversarial-reviewer', 'hunter'];
+  'review-fixer', 'final-adversarial-reviewer', 'hunter', 'phase-orchestrator'];
 const LEGACY_GATE = 'hooks/workflow-gate.mjs';
 const HEADJACK_TIMEOUT_MS = 10000;
 const GIT_TIMEOUT_MS = 10000;
@@ -190,6 +190,14 @@ function pluginChecks(home, failures, warnings) {
     }
   }
   return installs;
+}
+
+// The roles plugin must ship the phase orchestrator (roles 0.4.0): methodology's phase runs dispatch it. An install from
+// before that has an agents/ folder without it, or none.
+function rolesAgentCheck(home, rolesPath, failures) {
+  if (typeof rolesPath !== 'string' || existsSync(join(rolesPath, 'agents', 'phase-orchestrator.md'))) return;
+  failures.push('the installed roles plugin has no phase-orchestrator agent: '
+    + `run claude plugin update ${idOf(home, 'roles')}`);
 }
 
 function settingsChecks(home, failures) {
@@ -896,6 +904,28 @@ function codexTrustCheck(home, path, failures) {
   }
 }
 
+// The phase orchestrator spawns the task agents one level below itself: [agents] max_depth below 2, or unset, is not
+// enough for that (triqual sync raises it). An unreadable config.toml is the trust check's failure, not repeated here.
+function codexDepthCheck(path, failures) {
+  let text;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch {
+    return;
+  }
+  const depth = codexMaxDepth(text);
+  if (depth.state === 'number' && depth.value >= 2) return;
+  // Sync cannot fix a value it will not edit: say to edit it by hand instead of recommending a sync that fails.
+  if (depth.foreign) {
+    const shown = depth.state === 'number' ? String(depth.value) : depth.state === 'unset' ? 'unset' : 'not a readable number';
+    failures.push(`Codex [agents] max_depth is ${shown}, in a dotted or inline key that sync cannot edit: set it to 2 or more by hand`);
+  } else if (depth.state === 'other') {
+    failures.push('Codex [agents] max_depth is not a number: set it to 2 or more by hand');
+  } else {
+    failures.push(`Codex [agents] max_depth is ${depth.state === 'unset' ? 'unset' : depth.value}, below 2: ${syncFix('codex')}`);
+  }
+}
+
 // Header and hash presence cannot show a hash gone stale after a bridge release: no last-run-codex stamp, or one
 // older than the installed bridge dir, warns.
 function codexStampCheck(home, warnings) {
@@ -1100,6 +1130,7 @@ async function codexChecks(ctx, failures, warnings) {
     failures.push(`the Codex hooks feature is off: ${fix}`);
   }
   codexTrustCheck(home, paths.config, failures);
+  codexDepthCheck(paths.config, failures);
   codexStampCheck(home, warnings);
   const methodologyPath = installs.methodology?.installPath ?? null;
   if (methodologyPath === null) return; // the missing plugin is already reported
@@ -1241,6 +1272,7 @@ export async function doctor({ home, cwd, repo = false, run, env = process.env }
   const warnings = [];
   nodeCheck(process.versions.node, failures);
   const installs = pluginChecks(home, failures, warnings);
+  rolesAgentCheck(home, installs.roles, failures);
   const settings = settingsChecks(home, failures);
   const config = readMethodologyConfig(home);
   if (config.error) warnings.push(`${config.error}: triqual sync disables nothing until it is fixed or removed`);

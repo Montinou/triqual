@@ -53,6 +53,7 @@ const ROLE_MODELS = {
   "review-fixer": "sonnet",
   "final-adversarial-reviewer": "opus",
   "hunter": "haiku",
+  "phase-orchestrator": "sonnet",
 };
 
 // A decision is data: { decision: 'allow' | 'deny', reason }. main() prints it once the check, and any lock it held,
