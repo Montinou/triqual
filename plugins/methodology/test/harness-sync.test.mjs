@@ -343,9 +343,9 @@ test('codex sync from scratch', () => withHome({}, async (home, { installs }) =>
   // The manifest lists everything.
   assert.equal(m.links.length, OURS.length + NO_CLASH.length);
   assert.deepEqual(m.config, [
-    { key: 'project_doc_fallback_filenames', table: null, was: null, createdTable: false },
-    { key: 'max_depth', table: 'agents', was: null, createdTable: true },
-    { key: 'enabled', table: SUPERPOWERS_TABLE, was: null, createdTable: true },
+    { key: 'project_doc_fallback_filenames', table: null, was: null, createdTable: false, wrote: '["CLAUDE.md"]' },
+    { key: 'max_depth', table: 'agents', was: null, createdTable: true, wrote: '2' },
+    { key: 'enabled', table: SUPERPOWERS_TABLE, was: null, createdTable: true, wrote: 'false' },
   ]);
   assert.deepEqual(m.plugins, [
     { id: MARKET, action: 'marketplace-added' },
@@ -365,14 +365,14 @@ test('codex-depth sets max_depth = 2 when absent and keeps other [agents] keys',
   const text = readFileSync(codexConfig(home), 'utf8');
   assert.match(text, /\[agents\]\nmax_threads = 4\nmax_depth = 2\n/);
   assert.equal(text.split('[agents]').length, 2, 'one [agents] table');
-  assert.deepEqual(depthRecords(home), [{ key: 'max_depth', table: 'agents', was: null, createdTable: false }]);
+  assert.deepEqual(depthRecords(home), [{ key: 'max_depth', table: 'agents', was: null, createdTable: false, wrote: '2' }]);
 }));
 
 test('codex-depth creates the [agents] table when there is none', () => withHome({}, async (home) => {
   const { steps } = await syncCodex(home, fakeRun(home));
   assert.equal(stepOf(steps, 'codex-depth').status, 'done');
   assert.match(readFileSync(codexConfig(home), 'utf8'), /\[agents\]\nmax_depth = 2\n/);
-  assert.deepEqual(depthRecords(home), [{ key: 'max_depth', table: 'agents', was: null, createdTable: true }]);
+  assert.deepEqual(depthRecords(home), [{ key: 'max_depth', table: 'agents', was: null, createdTable: true, wrote: '2' }]);
 }));
 
 test('codex-depth leaves max_depth = 3 unchanged and writes nothing', () => withHome({}, async (home) => {
@@ -392,7 +392,7 @@ test('codex-depth raises 1 to 2 and records the old value', () => withHome({}, a
   const { steps } = await syncCodex(home, fakeRun(home));
   assert.equal(stepOf(steps, 'codex-depth').status, 'done');
   assert.match(readFileSync(codexConfig(home), 'utf8'), /^max_depth = 2$/m);
-  assert.deepEqual(depthRecords(home), [{ key: 'max_depth', table: 'agents', was: '1', createdTable: false }]);
+  assert.deepEqual(depthRecords(home), [{ key: 'max_depth', table: 'agents', was: '1', createdTable: false, wrote: '2' }]);
 }));
 
 test('codex-depth fails on a max_depth that is not a number and leaves it alone', () => withHome({}, async (home) => {
@@ -446,7 +446,7 @@ test('codex-depth raises a quoted-key or quoted-header max_depth in place, with 
       assert.equal(depthKeyCount(text), 1, text.slice(-60));
       assert.match(text, /^max_depth = 2$/m);
       assert.equal(/agents/.test(text.replace(/\["?agents"?\]/, '')), false, 'one agents table');
-      assert.deepEqual(depthRecords(home), [{ key: 'max_depth', table: 'agents', was, createdTable: false }]);
+      assert.deepEqual(depthRecords(home), [{ key: 'max_depth', table: 'agents', was, createdTable: false, wrote: '2' }]);
     });
   }
 });
@@ -562,7 +562,7 @@ test('the superpowers disable records createdTable', () => withHome({}, async (h
   assert.equal(stepOf(steps, 'codex-supersedes').status, 'done');
   assert.match(stepOf(steps, 'codex-supersedes').detail, /superpowers@openai-curated-remote/);
   const entry = readManifest(home).harnesses.codex.config.find((c) => c.table === SUPERPOWERS_TABLE);
-  assert.deepEqual(entry, { key: 'enabled', table: SUPERPOWERS_TABLE, was: null, createdTable: true });
+  assert.deepEqual(entry, { key: 'enabled', table: SUPERPOWERS_TABLE, was: null, createdTable: true, wrote: 'false' });
   const config = readFileSync(codexConfig(home), 'utf8');
   assert.match(config, /^\[plugins\."superpowers@openai-curated-remote"\]\nenabled = false$/m);
   assert.doesNotMatch(config, /\[hooks\.state\.[^\n]*superpowers/, 'no [hooks.state] written');

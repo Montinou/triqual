@@ -550,6 +550,63 @@ test('a failed item does not stop the others, and its records are kept', async (
   });
 });
 
+// A config.toml value the user changed after sync is theirs: remove-harness reverts only a value still as sync wrote it.
+const AGENTS_TABLE = (n) => `[agents]\nmax_depth = ${n}\n`;
+const depthStep = (steps) => stepOf(steps, 'codex-config');
+
+test('remove-harness leaves a max_depth the user changed after sync, and says so', async () => {
+  // A table sync created: the user raised the value to 5 -> kept, with the table.
+  await withHome({}, async (home) => {
+    const r = fakeRun(home);
+    await syncHarness({ home, id: 'codex', run: r.run, now: NOW });
+    const rec = readManifest(home).harnesses.codex.config.find((c) => c.key === 'max_depth');
+    assert.deepEqual([rec.createdTable, rec.wrote], [true, '2'], JSON.stringify(rec));
+    write(codexConfig(home), readFileSync(codexConfig(home), 'utf8').replace('max_depth = 2', 'max_depth = 5'), 0o600);
+    const { steps } = await removeHarness({ home, id: 'codex', run: r.run, now: LATER });
+    assert.equal(depthStep(steps).status, 'done', JSON.stringify(steps));
+    assert.match(depthStep(steps).detail, /left as you set it \(changed since triqual sync\): agents\.max_depth/);
+    assert.match(readFileSync(codexConfig(home), 'utf8'), /^\[agents\]\nmax_depth = 5$/m);
+    assert.deepEqual(readManifest(home).harnesses, {}, 'the record is dropped, not retried forever');
+  });
+  // A key sync raised from 1: the user later set 4 -> the old 1 is not written back.
+  await withHome({}, async (home) => {
+    write(codexConfig(home), `${AGENTS_TABLE(1)}\n${CONFIG_FIXTURE}`, 0o600);
+    const r = fakeRun(home);
+    await syncHarness({ home, id: 'codex', run: r.run, now: NOW });
+    assert.match(readFileSync(codexConfig(home), 'utf8'), /^max_depth = 2$/m);
+    write(codexConfig(home), readFileSync(codexConfig(home), 'utf8').replace('max_depth = 2', 'max_depth = 4'), 0o600);
+    const { steps } = await removeHarness({ home, id: 'codex', run: r.run, now: LATER });
+    assert.match(depthStep(steps).detail, /agents\.max_depth/);
+    const after = readFileSync(codexConfig(home), 'utf8');
+    assert.match(after, /^max_depth = 4$/m);
+    assert.doesNotMatch(after, /^max_depth = 1$/m);
+  });
+  // A value still as sync wrote it is reverted as before (was 1 back; a created table gone).
+  await withHome({}, async (home) => {
+    write(codexConfig(home), `${AGENTS_TABLE(1)}\n${CONFIG_FIXTURE}`, 0o600);
+    const r = fakeRun(home);
+    await syncHarness({ home, id: 'codex', run: r.run, now: NOW });
+    const { steps } = await removeHarness({ home, id: 'codex', run: r.run, now: LATER });
+    assert.doesNotMatch(depthStep(steps).detail, /left as you set it/);
+    assert.match(readFileSync(codexConfig(home), 'utf8'), /^max_depth = 1$/m);
+  });
+  // An old record without `wrote` (written before this field): sync's own value is inferred, a user edit is kept.
+  for (const [now, kept] of [[2, false], [6, true]]) {
+    await withHome({}, async (home) => {
+      const r = fakeRun(home);
+      await syncHarness({ home, id: 'codex', run: r.run, now: NOW });
+      const manifest = readManifest(home);
+      for (const c of manifest.harnesses.codex.config) delete c.wrote;
+      writeManifest(home, manifest);
+      write(codexConfig(home), readFileSync(codexConfig(home), 'utf8').replace('max_depth = 2', `max_depth = ${now}`), 0o600);
+      const { steps } = await removeHarness({ home, id: 'codex', run: r.run, now: LATER });
+      assert.equal(failedOf(steps).length, 0, JSON.stringify(steps));
+      assert.equal(/left as you set it/.test(depthStep(steps).detail), kept, depthStep(steps).detail);
+      assert.equal(/^max_depth = 6$/m.test(readFileSync(codexConfig(home), 'utf8')), kept);
+    });
+  }
+});
+
 // ---- the triqual sync CLI ----
 
 test('triqual sync --remove-harness runs the removal and sets harnesses.<id>.enabled false in config.json', async () => {

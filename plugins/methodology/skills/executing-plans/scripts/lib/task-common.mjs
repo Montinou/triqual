@@ -49,6 +49,10 @@ export function fail(step, n, code, message, workspace) {
 
 // ---- processes ----
 
+// The scripts need `triqual` whatever the tracking state (`triqual role-eval record` at close, and `triqual tasks` when the repo
+// is opted in), so a missing one is a stop, never "not opted in": skipping the ledger moves of an opted-in repo would go unnoticed.
+const TRIQUAL_MISSING = 'triqual is not on the PATH: the task scripts need it (the tracking moves, `triqual role-eval record`), so this is a stop, not "not opted in": install it with /methodology:setup (it puts triqual in ~/.local/bin), put that directory on the PATH, then run this script again';
+
 // Run a command with its output captured (`options`: cwd, env, input, timeout in ms). A command that cannot start is a ScriptError;
 // the exit status is the caller's. A command cut off by `timeout` comes back with `timedOut: true` (and a non-zero status), never
 // as a pass. The buffer is large: an install or a test run can print a lot, and a cut-off output is no result.
@@ -57,6 +61,7 @@ export function exec(command, args, options = {}) {
   if (res.error?.code === 'ETIMEDOUT') {
     return { status: res.status || EXIT_OTHER, stdout: res.stdout ?? '', stderr: res.stderr ?? '', timedOut: true };
   }
+  if (res.error?.code === 'ENOENT' && command === 'triqual') throw new ScriptError(EXIT_OTHER, TRIQUAL_MISSING);
   if (res.error) throw new ScriptError(EXIT_OTHER, `cannot run ${basename(command)}: ${res.error.message}`);
   return { status: res.status ?? EXIT_OTHER, stdout: res.stdout, stderr: res.stderr, timedOut: false };
 }

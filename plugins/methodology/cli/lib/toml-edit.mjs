@@ -216,6 +216,22 @@ export function insertTopLevel(text, lines) {
   return join(doc);
 }
 
+// The text of a top-level key's value (comment dropped, trimmed), or null when the key is not there. A read only.
+export function topLevelKeyValue(text, key) {
+  const { doc, info } = parse(text);
+  const h = firstHeader(info);
+  const found = findKey(doc, info, 0, h === -1 ? info.length : h, key);
+  return found ? valueOf(doc, info, found) : null;
+}
+
+// The text of `key`'s value in [table] (comment dropped, trimmed), or null when the table or the key is not there.
+export function tableKeyValue(text, table, key) {
+  const { doc, info } = parse(text);
+  const h = findTable(info, table);
+  const found = h === -1 ? null : findKey(doc, info, h + 1, spanEnd(info, h), key);
+  return found ? valueOf(doc, info, found) : null;
+}
+
 // Sets `key = literal` in [table]. An existing key is edited in place (its trailing comment kept on a one-line
 // value); a missing key goes after the table's last non-blank line; a missing table is inserted before the first
 // header, followed by a blank line, or appended when there is no header. `was` is the prior value's text, or null.

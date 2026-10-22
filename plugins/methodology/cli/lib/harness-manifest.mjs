@@ -118,10 +118,11 @@ export function forgetFile(entry, path) {
   else entry.files.splice(i, 1);
 }
 
-// A config record { key, table, was, createdTable }: the first edit of a key keeps its prior value.
-export function recordConfig(entry, { key, table, was, createdTable }) {
+// A config record { key, table, was, createdTable, wrote }: the first edit of a key keeps its prior value, and `wrote`
+// the value text sync put there (the revert acts only while the key still holds it; an older record has none).
+export function recordConfig(entry, { key, table, was, createdTable, wrote }) {
   if (entry.config.some((c) => c.key === key && c.table === table)) return;
-  entry.config.push({ key, table, was, createdTable });
+  entry.config.push({ key, table, was, createdTable, wrote });
 }
 
 // A plugin record, keyed by `id` (Codex) or `name` (Grok) plus `action`; a newer one replaces it.

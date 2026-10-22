@@ -60,7 +60,7 @@
 //     line and the phase tip is its parent). After an undo, a close is refused (exit 3) until the sequential re-run has a `Prep:` line:
 //     the worktree and its branch are gone, so a close would squash nothing and mark the task done with none of its work;
 //   - after the record and the entry it removes the worktree (`git worktree remove --force` once no tracked file of it has uncommitted
-//     changes: untracked files, such as an install's output, are dropped and named on stderr; tracked changes are an Error and exit
+//     changes: untracked files, such as an install's output, are dropped and named on stderr (up to 200, then `, and N more`); tracked changes are an Error and exit
 //     1 after everything is recorded, and a rerun repeats only the removal) and its branch (`git branch -D`) and checks that
 //     `git worktree list` no longer shows it; a rerun repeats only what is left.
 //
@@ -109,6 +109,7 @@
   const USAGE = 'usage: task-close PLAN_FILE N [--provider claude|codex] [--head <sha>]';
   const PROVIDERS = ['claude', 'codex'];
   const SEVERITIES = ['critical', 'important', 'minor'];
+  const NAMED_UNTRACKED_MAX = 200; // the dropped untracked files stderr names; the rest are counted
   const zero = () => ({ critical: 0, important: 0, minor: 0 });
   const sum = (counts) => SEVERITIES.reduce((total, s) => total + counts[s], 0);
   const rank = (tier) => TIERS.indexOf(tier); // TIERS runs heavy first: the lower index is the higher tier
@@ -524,6 +525,8 @@
 
     // A landing that stands (a rerun) is trusted only after the checks a crash can leave undone: it is still on the active phase
     // branch, and its Test files passed (else they run again; a failure is undone).
+    // The two refusals below clear by no rerun: the way out is the abandon recipe of the SKILL's Refusals section.
+    const abandon = () => `; the owner decides: to abandon this landing follow the Refusals section of the executing-plans SKILL.md (with the sha the owner names, reset the phase branch to it, write \`BASE: T${n} <sha>\` and \`Task ${n}: landing conflict — re-run sequential\`, create the file task-${n}-undone, remove the worktree and its branch), then re-run T${n} sequential`;
     const verifyLanding = (landedSha) => {
       const phaseBranch = common.activePhaseBranch(plan);
       const phaseTip = common.commitOf(`refs/heads/${phaseBranch}`);
@@ -535,11 +538,11 @@
         if (phaseTip !== null && before === phaseTip && !common.isTested(window, n, landedSha)) {
           undo(`the undo of the landing of T${n} was cut short after its reset; it is finished now`, before, { reset: false });
         }
-        throw new ScriptError(EXIT_REFUSED, `the landed commit ${landedSha.slice(0, 7)} of T${n} is not on the phase branch ${phaseBranch} (the undo of the landing may have been cut short): nothing is closed`);
+        throw new ScriptError(EXIT_REFUSED, `the landed commit ${landedSha.slice(0, 7)} of T${n} is not on the phase branch ${phaseBranch} (the undo of the landing may have been cut short): nothing is closed${abandon()}`);
       }
       if (common.isTested(window, n, landedSha)) return;
       if (landedSha !== phaseTip) {
-        throw new ScriptError(EXIT_REFUSED, `the landed commit ${landedSha.slice(0, 7)} of T${n} has no Tested: line and is not the tip of ${phaseBranch}: its Test files cannot be run again here`);
+        throw new ScriptError(EXIT_REFUSED, `the landed commit ${landedSha.slice(0, 7)} of T${n} has no Tested: line and is not the tip of ${phaseBranch}: its Test files cannot be run again here${abandon()}`);
       }
       const before = common.commitOf(`${landedSha}^`);
       if (before === null) throw new ScriptError(EXIT_OTHER, `the landed commit ${landedSha.slice(0, 7)} of T${n} has no parent`);
@@ -643,7 +646,10 @@
     }
     if (worktreeTask) {
       const dropped = common.removeWorktree(wt, { dropUntracked: true });
-      if (dropped.length > 0) process.stderr.write(`removed the worktree ${wt.path} with ${dropped.length} untracked file${dropped.length === 1 ? '' : 's'}: ${dropped.slice(0, 5).join(', ')}${dropped.length > 5 ? ', ...' : ''}\n`);
+      if (dropped.length > 0) {
+        const more = dropped.length - NAMED_UNTRACKED_MAX;
+        process.stderr.write(`removed the worktree ${wt.path} with ${dropped.length} untracked file${dropped.length === 1 ? '' : 's'}: ${dropped.slice(0, NAMED_UNTRACKED_MAX).join(', ')}${more > 0 ? `, and ${more} more` : ''}\n`);
+      }
     }
     process.stdout.write(`sha: ${sha}\nrecord: ${said}\n`);
   } catch (e) {

@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -241,6 +241,19 @@ test('task-open: without tracking no triqual tasks move is made, and the output 
   assert.deepEqual(r.ledger(), [`BASE: T1 ${base}`]);
   const moves = r.calls().filter((c) => !c.startsWith('tasks paths'));
   assert.deepEqual(moves, [], 'a triqual call other than the opt-in probe');
+}));
+
+test('task-open: with no triqual on the PATH it is an Error that says what to do, not "not opted in"', () => withRig({ store: false }, (r) => {
+  // A PATH holding only git: the scripts run by absolute node, and nothing named triqual is reachable.
+  const only = join(r.root, 'only-git');
+  mkdirSync(only);
+  symlinkSync(execFileSync('which', ['git'], { encoding: 'utf8' }).trim(), join(only, 'git'));
+  const res = spawnSync(process.execPath, [join(SCRIPTS, 'task-open'), r.plan, '1'], { cwd: r.dir, env: { ...r.env, PATH: only }, encoding: 'utf8' });
+  assert.equal(res.status, 1, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /triqual is not on the PATH/);
+  assert.match(res.stderr, /\/methodology:setup/);
+  assert.match(res.stderr, /run this script again/);
+  assert.match(r.ledger().at(-1), /^Error: task-open T1 — exit 1 — triqual is not on the PATH/);
 }));
 
 test('task-open: a task already in_review or done is not moved again', () => withRig({}, (r) => {
@@ -2027,6 +2040,15 @@ test('an untested landing whose Test files now fail is undone, never closed', ()
   assert.equal(wtBranches(r), '');
 }));
 
+// The permanent exit-3 refusals point to the SKILL's abandon recipe (its Refusals section): the BASE line, the landing-conflict
+// line and the undone marker it names.
+const assertAbandonRecipe = (stderr) => {
+  assert.match(stderr, /Refusals section of the executing-plans SKILL\.md/);
+  assert.ok(stderr.includes('`BASE: T1 <sha>`'), stderr);
+  assert.ok(stderr.includes('`Task 1: landing conflict — re-run sequential`'), stderr);
+  assert.ok(stderr.includes('task-1-undone'), stderr);
+};
+
 test('an untested landing that is no longer the phase tip is refused, never closed', () => withRig({ planText: WT_PLAN }, (r) => {
   startStack(r);
   wtOpen(r, 1);
@@ -2037,6 +2059,7 @@ test('an untested landing that is no longer the phase tip is refused, never clos
   const res = closeOf(r, 1);
   assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
   assert.match(res.stderr, /no Tested: line/);
+  assertAbandonRecipe(res.stderr);
   assert.match(r.ledger().at(-1), /^Error: task-close T1 — exit 3 — /);
   assert.equal(r.head(), later);
   assert.equal(r.git('rev-parse', 'HEAD~1').trim(), landed);
@@ -2055,6 +2078,7 @@ test('a landing that is not on the phase branch (the undo died after the reset) 
   const res = closeOf(r, 1);
   assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
   assert.match(res.stderr, /not on the phase branch/);
+  assertAbandonRecipe(res.stderr);
   assert.match(r.ledger().at(-1), /^Error: task-close T1 — exit 3 — .*not on the phase branch/);
   noComplete(r);
   assert.deepEqual(r.calls().filter((c) => c.startsWith('tasks done')), []);
@@ -2272,6 +2296,27 @@ test('the worktree of a landed task is removed with its untracked files, and a t
   assert.equal(wtBranches(r), '');
   assert.equal(storedRecords(r).length, 1, 'the record was made twice');
 }));
+
+// The untracked files a landed task's worktree drops are all named on stderr, up to a cap, then "and N more".
+for (const [count, named] of [[7, 7], [203, 200]]) {
+  test(`closing a landed task names ${named} of its ${count} dropped untracked files${count > named ? ' and counts the rest' : ''}`, () => withRig({ planText: WT_PLAN }, (r) => {
+    startStack(r);
+    wtOpen(r, 1);
+    wtReview(r, 1);
+    mkdirSync(join(wtPath(r, 1), 'vendor'), { recursive: true });
+    const names = Array.from({ length: count }, (_, i) => `vendor/f${String(i).padStart(3, '0')}.js`);
+    for (const name of names) writeFileSync(join(wtPath(r, 1), name), 'x\n');
+    const res = closeOf(r, 1);
+    assert.equal(res.status, 0, `${res.stdout}\n${res.stderr}`);
+    assert.match(res.stderr, new RegExp(`with ${count} untracked files: `));
+    const line = res.stderr.split('\n').find((l) => l.startsWith('removed the worktree'));
+    assert.deepEqual(names.slice(0, named).filter((name) => !line.includes(name)), [], 'every name up to the cap is on the line');
+    assert.equal(line.includes(names[named] ?? '\0'), false, 'nothing past the cap is named');
+    if (count > named) assert.match(line, new RegExp(`, and ${count - named} more$`));
+    else assert.doesNotMatch(line, /more/);
+    assert.deepEqual(worktrees(r), [r.dir]);
+  }));
+}
 
 // ---- worktree tasks: fix round 2 (the BASE of a worktree task is a closed commit of the phase branch) ----
 
