@@ -278,8 +278,8 @@ test('env -C changes the inner cwd; env PATH=/x rm', () => {
   assert.ok(r.writes.includes(path.join(d, 'out')));
   const [e] = cmds('env PATH=/x rm y', d);
   assert.deepEqual([e.argv, e.env], [['rm', 'y'], { PATH: '/x' }]);
-  // env -i clears the environment: code-loading-var since T17
-  assert.equal(opaque('env -i PATH=/x rm y', d).construct, 'code-loading-var');
+  // env -i clears the environment: host-config-var (it clears HOME and the rest)
+  assert.equal(opaque('env -i PATH=/x rm y', d).construct, 'host-config-var');
 });
 
 test('a cd run by an external wrapper does not move the shell; builtin and command still do', () => {

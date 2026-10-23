@@ -12,6 +12,28 @@
 // back as {opaque:{reason, construct, offset}}.
 
 import { Lexer, Opaque, MAX_DEPTH, MAX_BYTES, isName } from './tokenize.mjs';
+import { isHostConfigName } from '../tables/envvars.mjs';
+
+// An assignment form the parser does not model (`NAME+=v`, `NAME[i]=v`, `NAME=( … )`): opaque as
+// `construct`, except that a host-configuration name is `host-config-var` whatever the form.
+function assignOpaque(construct, name, off) {
+  return new Opaque('unsupported', isHostConfigName(name) ? 'host-config-var' : construct, off);
+}
+
+// zsh/bash declaration builtins: their words after the command are assignments too.
+const DECLARATIONS = new Set(['export', 'declare', 'typeset', 'local', 'readonly', 'integer', 'float', 'private']);
+
+// The variable a word assigns (`NAME=v`, `NAME+=v`, `NAME[i]=v`), or null.
+function assignName(word) {
+  const ps = word.parts;
+  const first = ps[0];
+  if (!first || first.type !== 'lit' || first.quoted) return null;
+  const eq = first.text.indexOf('=');
+  if (eq < 0) return isName(first.text) && ps[1] && ps[1].type === 'glob' && ps[1].text === '[' ? first.text : null;
+  const n = first.text.slice(0, eq);
+  const base = n.endsWith('+') ? n.slice(0, -1) : n;
+  return isName(base) ? base : null;
+}
 
 /**
  * @typedef {import('./tokenize.mjs').Word} Word
@@ -440,6 +462,54 @@ class Parser {
     return { type: 'case', word: subject.word, arms };
   }
 
+  // An assignment form the parser does not model is opaque as `op`; but when any assignment of the
+  // same simple command (already parsed in `assigns` or `words`, or still ahead) names a
+  // host-configuration variable, that command is `host-config-var`, whatever the order. `decl`: the
+  // command is a declaration builtin, whose every word after it is an assignment.
+  hostFirst(op, assigns, words, decl) {
+    if (op.opaque.construct === 'host-config-var') return op;
+    const hit = assigns.some((a) => isHostConfigName(a.name)) ||
+      (decl && words.some((w) => {
+        const n = assignName(w);
+        return n !== null && isHostConfigName(n);
+      })) ||
+      this.hostAhead(decl);
+    return hit ? new Opaque(op.opaque.reason, 'host-config-var', op.opaque.offset) : op;
+  }
+
+  // Do the rest of the simple command's assignment words name a host-configuration variable? Reads
+  // (and drops) tokens: only called on the way to an Opaque. Array values `( … )` are skipped.
+  hostAhead(decl) {
+    try {
+      let depth = 0;
+      for (;;) {
+        const t = this.lex.peek();
+        if (t.t === 'eof') return false;
+        if (t.t === 'redir') {
+          this.parseRedir();
+          continue;
+        }
+        if (t.t === 'op') {
+          if (t.v === '(') depth++;
+          else if (t.v === ')' && depth > 0) depth--;
+          else return false;
+          this.lex.next();
+          continue;
+        }
+        this.lex.next();
+        if (depth > 0) continue;
+        const n = assignName(t.word);
+        if (n === null) {
+          if (decl) continue;
+          return false;
+        }
+        if (isHostConfigName(n)) return true;
+      }
+    } catch {
+      return false;
+    }
+  }
+
   // A leading NAME=value word as an assignment, or null.
   assignment(t) {
     const ps = t.word.parts;
@@ -451,7 +521,7 @@ class Parser {
       if (isName(first.text) && ps[1] && ps[1].type === 'glob' && ps[1].text === '[') {
         for (let i = 2; i < ps.length; i++) {
           if (ps[i].type === 'lit' && !ps[i].quoted && ps[i].text.includes('=')) {
-            throw new Opaque('unsupported', 'array-assign', t.off);
+            throw assignOpaque('array-assign', first.text, t.off);
           }
         }
       }
@@ -459,7 +529,7 @@ class Parser {
     }
     const name = first.text.slice(0, eq);
     if (!isName(name)) {
-      if (name.endsWith('+') && isName(name.slice(0, -1))) throw new Opaque('unsupported', 'append-assign', t.off);
+      if (name.endsWith('+') && isName(name.slice(0, -1))) throw assignOpaque('append-assign', name.slice(0, -1), t.off);
       return null;
     }
     const rest = first.text.slice(eq + 1);
@@ -487,7 +557,13 @@ class Parser {
         const after = this.lex.peek();
         // bash `{fd}>file` allocates a descriptor into a variable
         if (after.t === 'redir' && after.adj && isNamedFd(t)) throw new Opaque('unsupported', 'named-fd', t.off);
-        const a = words.length === 0 ? this.assignment(t) : null;
+        let a = null;
+        try {
+          a = words.length === 0 ? this.assignment(t) : null;
+        } catch (e) {
+          const c = e instanceof Opaque ? e.opaque.construct : '';
+          throw c === 'append-assign' || c === 'array-assign' ? this.hostFirst(e, assigns, words, false) : e;
+        }
         if (a) {
           assigns.push(a);
         } else {
@@ -499,10 +575,14 @@ class Parser {
         lastAssign = a !== null;
         lastWord = t;
       } else if (isOp(t, '(')) {
-        if (lastAssign && t.adj) throw new Opaque('unsupported', 'array-assign', t.off);
+        if (lastAssign && t.adj) {
+          throw this.hostFirst(assignOpaque('array-assign', assigns[assigns.length - 1].name, t.off), assigns, words, false);
+        }
         // zsh `=( … )` process substitution
         if (t.adj && lastWord && endsWithUnquotedEquals(lastWord.word)) {
-          throw new Opaque('unsupported', 'zsh-syntax', t.off);
+          const op = new Opaque('unsupported', 'zsh-syntax', t.off);
+          // `export HOME=(a)`: the word is a declaration's assignment
+          throw words.length > 0 && DECLARATIONS.has(literalText(words[0])) ? this.hostFirst(op, assigns, words, true) : op;
         }
         if (words.length === 1 && assigns.length === 0) {
           this.lex.next();

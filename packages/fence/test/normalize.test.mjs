@@ -845,3 +845,23 @@ test('a directory an earlier command deletes or moves counts as missing for repo
   assert.equal(cmds('mv sub old && cp -r ../r sub && cd sub && git', d).at(-1).repo, UNKNOWN);
   assert.equal(cmds('cd sub && git commit', d).at(-1).repo, null);
 });
+
+test('guessedClasses marks the classes given only because of an UNKNOWN word', () => {
+  const g = (text) => {
+    const cs = cmds(text);
+    return cs.at(-1).guessedClasses.slice().sort();
+  };
+  assert.deepEqual(g('rsync $F a b'), ['delete', 'network-fetch']);
+  // (`export "$X"` is opaque host-config-var here, so `ps $X` stands for the env-dump guess)
+  assert.deepEqual(g('ps $X'), ['env-dump']);
+  assert.deepEqual(g('git branch $X'), ['vcs-write']);
+  assert.deepEqual(g('rsync -a a b'), []);
+  assert.deepEqual(g('rm -rf ./x'), []);
+  assert.deepEqual(g('git push origin main'), []);
+  // classes itself is unchanged, and a guessed class is one of them
+  const c = cmds('rsync $F a b').at(-1);
+  assert.deepEqual(c.classes.slice().sort(), ['delete', 'network-fetch']);
+  // a class a certain source also gives is not guessed
+  assert.deepEqual(g('rsync --delete $F a b'), ['network-fetch']);
+  assert.deepEqual(g('cat /dev/tcp/example.com/80'), []);
+});
