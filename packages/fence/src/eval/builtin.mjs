@@ -5,6 +5,7 @@
 //   checkPathWrite(absPath, opts)                       a write, delete, move, chmod or link of a path
 //   checkAncestorOp(absPath, op, opts)                  delete|move|chmod|link|bulk (a bulk writer: T18) of a path that may hold protected ones
 //   checkCommandArgv(argv)                              denied fence, claude and codex command lines
+//   programName(word)                                   the program a command word names (basename, lower case)
 // Each returns null (not denied) or {rule, reason}. A value the normalizer could not
 // determine (UNKNOWN) always denies: these checks fail closed.
 //
@@ -71,7 +72,7 @@ export const PROJECT_SUBGLOBS = ['.claude/settings*.json', '.claude/skills/**', 
 export const ANCESTOR_OPS = ['delete', 'move', 'chmod', 'link', 'bulk'];
 
 // The only fence subcommands an agent may run.
-export const FENCE_ALLOWED_SUBCOMMANDS = ['check', 'test', 'log', 'doctor', 'replay', 'version', 'help'];
+export const FENCE_ALLOWED_SUBCOMMANDS = ['check', 'test', 'log', 'doctor', 'replay', 'audit', 'version', 'help'];
 // Flags fence accepts without a subcommand.
 export const FENCE_BARE_FLAGS = ['--help', '-h', '--version', '-V'];
 
@@ -186,14 +187,23 @@ function badProjectRoots(projectRoots) {
   return projectRoots.some((r) => typeof r !== 'string' || !r.startsWith('/') || r.includes('\u0000'));
 }
 
-function allGlobs({ home, platform, projectRoots = [], realpath = fs.realpathSync.native }) {
+// The roots among `projectRoots` the checks can use: absolute strings without a NUL.
+function validProjectRoots(projectRoots) {
+  if (!Array.isArray(projectRoots)) return [];
+  return projectRoots.filter((r) => typeof r === 'string' && r.startsWith('/') && !r.includes('\u0000'));
+}
+
+// The project-root globs alone: they depend on the roots the caller names. Only the valid
+// roots count, so a bad root beside a good one cannot hide a match under the good one.
+function projectGlobs({ home, projectRoots = [], realpath = fs.realpathSync.native }) {
   const project = [];
-  for (const root of projectRoots) {
+  for (const root of validProjectRoots(projectRoots)) {
     const base = escapeGlobLiteral(path.posix.resolve(root).replace(/\/+$/, ''));
     for (const sub of PROJECT_SUBGLOBS) project.push(`${base}/${sub}`);
   }
-  return [...protectedGlobs({ home, platform, realpath }), ...expandBoth(project, { home }, realpath)];
+  return expandBoth(project, { home }, realpath);
 }
+
 
 // The resolver's fold (NFC + full Unicode case fold), so builtin and the resolver always agree.
 const fold = foldCase;
@@ -220,6 +230,8 @@ function unresolvedDeny(what) {
   return {
     rule: SELF,
     reason: `The target of this ${what} could not be determined, so it may be a path that ${PROTECTED}; it is denied.`,
+    floor: false,
+    certain: false,
   };
 }
 
@@ -236,33 +248,43 @@ function badRootsDeny() {
   return {
     rule: SELF,
     reason: `A project root could not be resolved to an absolute path, so fence's built-in self-protection cannot tell which paths under it are protected; the call is denied.`,
+    floor: false,
+    certain: false,
+  };
+}
+
+// A write to a resolved target that matches `globs`.
+function writeHit(target, hit) {
+  return {
+    rule: SELF,
+    reason: `${target} ${PROTECTED} (${hit}); an agent may not write, move, delete or link it. A human can run "fence allow-once ${target}".`,
+    floor: true,
+    certain: true,
   };
 }
 
 export function checkPathWrite(absPath, opts) {
-  if (badProjectRoots(opts.projectRoots)) return badRootsDeny();
-  if (isUnknown(absPath)) return unresolvedDeny('write');
-  const target = normalizeTarget(absPath);
+  const target = isUnknown(absPath) ? null : normalizeTarget(absPath);
+  // A resolved hit on the home or system globs is decided first: those globs need no project
+  // root, so an unresolved root elsewhere in the call cannot hide it.
+  if (target !== null) {
+    const base = matchProtected(target, protectedGlobs(opts), opts.caseInsensitive);
+    if (base !== null) return writeHit(target, base);
+  }
+  const bad = badProjectRoots(opts.projectRoots);
+  if (bad && target === null) return badRootsDeny();
   if (target === null) return unresolvedDeny('write');
-  const hit = matchProtected(target, allGlobs(opts), opts.caseInsensitive);
-  if (hit === null) return null;
-  return {
-    rule: SELF,
-    reason: `${target} ${PROTECTED} (${hit}); an agent may not write, move, delete or link it. A human can run "fence allow-once ${target}".`,
-  };
+  // A hit under a valid root is definite even when another root is bad.
+  const hit = matchProtected(target, projectGlobs(opts), opts.caseInsensitive);
+  if (hit !== null) return writeHit(target, hit);
+  return bad ? badRootsDeny() : null;
 }
 
-export function checkAncestorOp(absPath, op, opts) {
-  if (!ANCESTOR_OPS.includes(op)) throw new TypeError(`unknown ancestor operation ${JSON.stringify(op)}`);
-  if (badProjectRoots(opts.projectRoots)) return badRootsDeny();
-  if (isUnknown(absPath)) return unresolvedDeny(op);
-  const target = normalizeTarget(absPath);
-  if (target === null) return unresolvedDeny(op);
-  const ci = opts.caseInsensitive;
-  const globs = allGlobs(opts);
+// An ancestor operation on a resolved target against `globs`, or null.
+function ancestorHit(target, op, globs, ci) {
   const own = matchProtected(target, globs, ci);
   if (own !== null) {
-    return { rule: SELF, reason: `${target} ${PROTECTED} (${own}); an agent may not ${op} it.` };
+    return { rule: SELF, reason: `${target} ${PROTECTED} (${own}); an agent may not ${op} it.`, floor: true, certain: true };
   }
   const t = fold(target, ci);
   const under = t === '/' ? '/' : `${t}/`;
@@ -273,17 +295,37 @@ export function checkAncestorOp(absPath, op, opts) {
       return {
         rule: SELF,
         reason: `${target} holds paths that ${PROTECTED} (${g}); an agent may not ${op} it as a whole.`,
+        floor: true,
+        certain: true,
       };
     }
   }
   return null;
 }
 
+export function checkAncestorOp(absPath, op, opts) {
+  if (!ANCESTOR_OPS.includes(op)) throw new TypeError(`unknown ancestor operation ${JSON.stringify(op)}`);
+  const target = isUnknown(absPath) ? null : normalizeTarget(absPath);
+  const ci = opts.caseInsensitive;
+  // As in checkPathWrite: the home and system globs are decided before an unresolved root.
+  if (target !== null) {
+    const base = ancestorHit(target, op, protectedGlobs(opts), ci);
+    if (base !== null) return base;
+  }
+  const bad = badProjectRoots(opts.projectRoots);
+  if (bad && target === null) return badRootsDeny();
+  if (target === null) return unresolvedDeny(op);
+  const hit = ancestorHit(target, op, projectGlobs(opts), ci);
+  if (hit !== null) return hit;
+  return bad ? badRootsDeny() : null;
+}
+
 // ---- Commands ----------------------------------------------------------------------------------
 
 const isFlag = (w) => typeof w === 'string' && w.startsWith('-') && w !== '-';
 
-function programName(word) {
+// The program a command word names: its basename, lower-cased (`/usr/bin/Claude` -> `claude`).
+export function programName(word) {
   return path.posix.basename(word).toLowerCase();
 }
 
@@ -348,6 +390,8 @@ function hostDeny(prog, what) {
   return {
     rule: HOST_CFG,
     reason: `${prog} ${what} changes ${prog === 'claude' ? 'Claude Code' : 'Codex'} settings, hooks or plugins and ${PROTECTED}.`,
+    floor: true,
+    certain: true,
   };
 }
 
@@ -361,12 +405,16 @@ function checkFence(words) {
       return {
         rule: FENCE_CMD,
         reason: `A fence command whose subcommand could not be determined ${PROTECTED}; agents may run only fence ${allowed}.`,
+        floor: true,
+        certain: false,
       };
     }
     if (!FENCE_ALLOWED_SUBCOMMANDS.includes(w)) {
       return {
         rule: FENCE_CMD,
         reason: `"fence ${w}" ${PROTECTED}; agents may run only fence ${allowed}. A human runs the others.`,
+        floor: true,
+        certain: true,
       };
     }
   }
@@ -376,6 +424,8 @@ function checkFence(words) {
   return {
     rule: FENCE_CMD,
     reason: `"fence ${odd}" without a subcommand ${PROTECTED}; agents may run only fence ${allowed}.`,
+    floor: true,
+    certain: true,
   };
 }
 
@@ -384,6 +434,8 @@ function checkHost(prog, words) {
     return {
       rule: HOST_CFG,
       reason: `A ${prog} command with a word that could not be determined (it may be a settings flag or subcommand) ${PROTECTED}.`,
+      floor: true,
+      certain: false,
     };
   }
   for (let i = 1; i < words.length; i++) {
@@ -406,7 +458,12 @@ function checkHost(prog, words) {
 
 export function checkCommandArgv(argv) {
   if (!Array.isArray(argv)) {
-    return { rule: FENCE_CMD, reason: `A command line that is not a word list cannot be checked and ${PROTECTED}.` };
+    return {
+      rule: FENCE_CMD,
+      reason: `A command line that is not a word list cannot be checked and ${PROTECTED}.`,
+      floor: true,
+      certain: false,
+    };
   }
   if (argv.length === 0) return null;
   const first = argv[0];
@@ -414,6 +471,8 @@ export function checkCommandArgv(argv) {
     return {
       rule: FENCE_CMD,
       reason: `A command whose program could not be determined may be fence, claude or codex and ${PROTECTED}.`,
+      floor: true,
+      certain: false,
     };
   }
   // Any other word that is neither a string nor UNKNOWN is read as UNKNOWN (fail closed).

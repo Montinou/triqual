@@ -6,6 +6,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import * as check from '../src/cli/check.mjs';
+import { validatePolicy } from '../src/policy/schema.mjs';
+
 const PKG_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = path.join(PKG_DIR, 'bin', 'fence.mjs');
 
@@ -108,6 +111,29 @@ test('fence check warns on an allow rule matching runs-repo-code', () => {
   assert.match(out2, /warning: allow rule "npm-test"/);
   assert.ok(!out2.includes('"repo-reads"'), out2);
   assert.ok(!out2.includes('"search-only"'), out2);
+});
+
+test('fence check warns, without failing, on an unknown construct name in a profile', () => {
+  const text = (constructs) =>
+    JSON.stringify({
+      version: 1,
+      profiles: { default: { undecided: 'host', uncertain: { constructs } } },
+      rules: [],
+    });
+  const bad = setup(text({ 'no-such': 'audit', 'eval-dynamic': 'deny' }));
+  const r = fence(['check', '--policy', bad.policy], bad.home);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stderr, /warning: profile "default": uncertain\.constructs names "no-such"/);
+  assert.match(r.stderr, /not in fence's known list of opaque constructs \(a likely typo\)/);
+  assert.ok(!/never applies/.test(r.stderr), r.stderr);
+  assert.ok(!r.stderr.includes('"eval-dynamic"'), r.stderr);
+  assert.match(r.stdout, /is valid/);
+
+  // known names draw no warning
+  const good = setup(text({ 'eval-dynamic': 'audit', 'command-substitution': 'deny' }));
+  const g = fence(['check', '--policy', good.policy], good.home);
+  assert.equal(g.code, 0, g.stderr);
+  assert.ok(!/warning/.test(g.stderr), g.stderr);
 });
 
 test('fence test runs examples with non-shell tools and shell examples through the engine', () => {
@@ -220,4 +246,90 @@ test('fence version prints the package version', () => {
   const help = fence(['help'], home);
   assert.ok(help.stdout.includes(pkg.version));
   for (const c of ['check', 'test', 'version', 'help', 'install', 'allow-once']) assert.ok(help.stdout.includes(c), c);
+});
+
+// ---- fence test under modes (T8) ----------------------------------------------------------------------
+
+const CREDS = (decision, examples) => ({
+  id: 'creds',
+  decision,
+  match: { paths: ['~/.ssh/**'], access: 'any' },
+  why: 'Keys are never read.',
+  ...(examples === undefined ? {} : { examples }),
+});
+
+// fence test, no built-in table, in process; the policy examples only.
+function exampleRun(policy) {
+  const { home, policy: file } = setup(JSON.stringify(policy));
+  const out = [];
+  const code = check.runTest(['--policy', file], { out: (l) => out.push(l), err: (l) => out.push(l) }, { home, builtin: false });
+  return { code, text: out.join('\n') };
+}
+
+test('forceDeny sets every audit-able action to deny and leaves undecided and the input alone', () => {
+  const policy = validatePolicy({
+    version: 1,
+    profiles: {
+      default: { undecided: 'host' },
+      relaxed: { undecided: 'host', uncertain: { opaque: 'audit', selfProtection: 'audit', rules: 'audit', constructs: { 'eval-dynamic': 'audit' } }, certain: 'audit', rules: { creds: 'off', other: 'audit' } },
+      unattended: { undecided: 'deny', uncertain: 'audit', certain: 'audit' },
+    },
+    rules: [CREDS('audit'), { id: 'other', decision: 'deny', match: { class: ['delete'] }, why: 'w' }, { id: 'ok', decision: 'allow', match: { class: ['search'] }, why: 'w' }],
+  });
+  const before = JSON.stringify(policy);
+  const forced = check.forceDeny(policy);
+  assert.equal(JSON.stringify(policy), before, 'the input is not changed');
+  for (const name of ['default', 'relaxed', 'unattended']) {
+    const p = forced.profiles[name];
+    assert.equal(p.certain, 'deny', name);
+    assert.deepEqual([p.uncertain.opaque, p.uncertain.selfProtection, p.uncertain.rules], ['deny', 'deny', 'deny'], name);
+    assert.ok(Object.values(p.uncertain.constructs).every((a) => a === 'deny'), name);
+    assert.ok(Object.values(p.rules).every((a) => a === 'deny'), name);
+  }
+  assert.deepEqual(Object.keys(forced.profiles.relaxed.rules).sort(), ['creds', 'other']);
+  assert.deepEqual(Object.keys(forced.profiles.relaxed.uncertain.constructs), ['eval-dynamic']);
+  assert.equal(forced.profiles.default.undecided, 'host');
+  assert.equal(forced.profiles.unattended.undecided, 'deny');
+  assert.deepEqual(forced.rules.map((r) => r.decision), ['deny', 'deny', 'allow']);
+  assert.deepEqual(forced.rules.map((r) => r.id), ['creds', 'other', 'ok']);
+});
+
+test('forceDeny also reads a policy as written in the file', () => {
+  const forced = check.forceDeny({ version: 1, profiles: { a: { undecided: 'host', uncertain: 'audit', certain: 'audit' }, b: { undecided: 'deny' } }, rules: [{ id: 'r', decision: 'audit' }] });
+  assert.deepEqual(forced.profiles.a, { undecided: 'host', uncertain: 'deny', certain: 'deny' });
+  assert.deepEqual(forced.profiles.b, { undecided: 'deny' });
+  assert.equal(forced.rules[0].decision, 'deny');
+});
+
+test('fence test: a deny example of an audit rule passes, on a tool call and on a shell command', () => {
+  const r = exampleRun({
+    version: 1,
+    rules: [CREDS('audit', { deny: [{ tool: 'Read', path: '~/.ssh/id_rsa' }, { tool: 'Bash', command: 'cat ~/.ssh/id_rsa' }], allow: [{ tool: 'Read', path: 'README.md' }] })],
+  });
+  assert.equal(r.code, 0, r.text);
+  assert.match(r.text, /PASS creds deny\[0\] Read/);
+  assert.match(r.text, /PASS creds deny\[1\] Bash cat/);
+  assert.match(r.text, /3 passed, 0 failed, 0 skipped/);
+});
+
+test('fence test: a deny example passes under a profile that relaxes certain denies', () => {
+  const r = exampleRun({
+    version: 1,
+    profiles: { default: { undecided: 'host', uncertain: 'audit', certain: 'audit', rules: { creds: 'off' } } },
+    rules: [CREDS('deny', { deny: [{ tool: 'Read', path: '~/.ssh/id_rsa' }, { tool: 'Bash', command: 'cat ~/.ssh/id_rsa' }] })],
+  });
+  assert.equal(r.code, 0, r.text);
+  assert.match(r.text, /2 passed, 0 failed, 0 skipped/);
+});
+
+test('fence test: an allow example of a deny rule passes when the call ends undecided, and fails when denied', () => {
+  const r = exampleRun({
+    version: 1,
+    profiles: { default: { undecided: 'host', uncertain: 'audit' } },
+    rules: [CREDS('deny', { deny: [{ tool: 'Read', path: '~/.ssh/id_rsa' }], allow: [{ tool: 'Bash', command: 'npm test' }, { tool: 'Read', path: '~/.ssh/config' }] })],
+  });
+  assert.equal(r.code, 1, r.text);
+  assert.match(r.text, /PASS creds allow\[0\] Bash npm test/);
+  assert.match(r.text, /FAIL creds allow\[1\].*expected not deny, got deny/);
+  assert.match(r.text, /2 passed, 1 failed, 0 skipped/);
 });

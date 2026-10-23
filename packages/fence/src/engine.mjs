@@ -226,8 +226,11 @@ function decidePre(args, { stdin, now, isRootOwned, fsImpl, env, trace, written 
   const profile = env.FENCE_PROFILE === undefined ? 'default' : env.FENCE_PROFILE;
   trace.call = call;
   trace.profile = profile;
-  const ctx = { home, platform: process.platform, caseInsensitive };
-  const decision = evaluate(policy, call, normalized, { profile, grants, ctx });
+  // envProfileSet: the session's mode was fixed by FENCE_PROFILE in this environment.
+  const ctx = { home, platform: process.platform, caseInsensitive, envProfileSet: env.FENCE_PROFILE !== undefined };
+  // `raw` is the shell text the normalizer read; a call the adapter marked opaque has none (evaluate floor-denies it).
+  const raw = !parsed.opaque && typeof parsed.command === 'string' ? parsed.command : undefined;
+  const decision = evaluate(policy, call, normalized, { profile, grants, ctx, raw });
 
   const { lifted, ...canonical } = decision;
   if (canonical.decision !== 'deny' && Array.isArray(lifted)) {

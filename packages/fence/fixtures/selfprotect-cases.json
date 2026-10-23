@@ -81,7 +81,7 @@
       "id": "opaque-command",
       "host": "claude",
       "tool": "Bash",
-      "input": { "command": "sh -c \"$FENCE_CASE_PAYLOAD\"" },
+      "input": { "command": "sh -c \"$FENCE_CASE_PAYLOAD > ${home}/.claude/settings.json\"" },
       "expectRule": "builtin:opaque",
       "harmless": { "tool": "Bash", "input": { "command": "sh -c 'echo x > ./notes.txt'" } }
     },

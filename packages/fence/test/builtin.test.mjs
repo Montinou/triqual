@@ -4,7 +4,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { checkAncestorOp, checkCommandArgv, checkPathWrite, protectedGlobs } from '../src/eval/builtin.mjs';
+import {
+  checkAncestorOp,
+  checkCommandArgv,
+  checkPathWrite,
+  FENCE_ALLOWED_SUBCOMMANDS,
+  protectedGlobs,
+} from '../src/eval/builtin.mjs';
 import { UNKNOWN } from '../src/norm/unknown.mjs';
 
 // A fake home and project root that never touch the real file system: `noReal` makes every
@@ -369,4 +375,116 @@ test('denies codex --ignore-user-config and --approve-for-me but allows --ignore
     assertDenied(checkCommandArgv(['codex', `${flag}=1`]), host);
   }
   assert.equal(checkCommandArgv(['codex', 'exec', '--ignore-rules', 't']), null);
+});
+
+// ---- floor and certainty flags ----
+
+test('a resolved protected target is floor and certain even with an unresolved project root', () => {
+  const policy = `${HOME}/.config/fence/policy.json`;
+  const plain = checkPathWrite(policy, OPTS);
+  assert.equal(plain.floor, true);
+  assert.equal(plain.certain, true);
+  for (const projectRoots of [[ROOT, UNKNOWN], ['rel'], 'not-an-array']) {
+    const r = checkPathWrite(policy, { ...OPTS, projectRoots });
+    assertDenied(r);
+    assert.equal(r.floor, true, JSON.stringify(projectRoots));
+    assert.equal(r.certain, true, JSON.stringify(projectRoots));
+    assert.ok(r.reason.includes(policy));
+    const a = checkAncestorOp(policy, 'delete', { ...OPTS, projectRoots });
+    assert.equal(a.floor, true);
+    assert.equal(a.certain, true);
+  }
+  // a project-root glob cannot be matched without the root: not floor, not certain
+  const noRoot = checkPathWrite(`${ROOT}/.claude/settings.json`, { ...OPTS, projectRoots: [UNKNOWN] });
+  assertDenied(noRoot);
+  assert.equal(noRoot.floor, false);
+  assert.equal(noRoot.certain, false);
+  // a protected project path under a resolved root is a definite match
+  const proj = checkPathWrite(`${ROOT}/.claude/settings.json`, OPTS);
+  assert.equal(proj.floor, true);
+  assert.equal(proj.certain, true);
+});
+
+test('a project-glob hit under a valid root stays floor and certain beside a bad root', () => {
+  const mixed = { ...OPTS, projectRoots: [UNKNOWN, ROOT] };
+  const w = checkPathWrite(`${ROOT}/.claude/skills/x/SKILL.md`, mixed);
+  assertDenied(w);
+  assert.equal(w.floor, true);
+  assert.equal(w.certain, true);
+  assert.doesNotMatch(w.reason, /could not be resolved/);
+  const a = checkAncestorOp(`${ROOT}/.claude`, 'delete', mixed);
+  assertDenied(a);
+  assert.equal(a.floor, true);
+  assert.equal(a.certain, true);
+  assert.doesNotMatch(a.reason, /could not be resolved/);
+  // a target the valid root does not match, with a bad root present, is still the bad-roots deny
+  const miss = checkPathWrite(`${ROOT}/src/index.mjs`, mixed);
+  assertDenied(miss);
+  assert.equal(miss.floor, false);
+  assert.equal(miss.certain, false);
+  assert.match(miss.reason, /could not be resolved/);
+  const missA = checkAncestorOp(`${ROOT}/src`, 'delete', mixed);
+  assertDenied(missA);
+  assert.equal(missA.floor, false);
+  assert.equal(missA.certain, false);
+  assert.match(missA.reason, /could not be resolved/);
+});
+
+test('an ancestor operation on a protected tree is floor and certain', () => {
+  const r = checkAncestorOp(`${HOME}/.config/fence`, 'move', OPTS);
+  assertDenied(r);
+  assert.equal(r.floor, true);
+  assert.equal(r.certain, true);
+  const above = checkAncestorOp(`${HOME}/.config`, 'delete', OPTS);
+  assert.equal(above.floor, true);
+  assert.equal(above.certain, true);
+});
+
+test('an unresolved target or project root is neither floor nor certain', () => {
+  for (const r of [
+    checkPathWrite(UNKNOWN, OPTS),
+    checkPathWrite('relative/path', OPTS),
+    checkPathWrite(`${HOME}/notes.txt`, { ...OPTS, projectRoots: [UNKNOWN] }),
+    checkAncestorOp(UNKNOWN, 'delete', OPTS),
+    checkAncestorOp(`${HOME}/notes.txt`, 'delete', { ...OPTS, projectRoots: ['rel'] }),
+  ]) {
+    assertDenied(r);
+    assert.equal(r.floor, false);
+    assert.equal(r.certain, false);
+  }
+});
+
+test('host-config and fence-command denies are floor, certain or not', () => {
+  const sub = checkCommandArgv(['claude', UNKNOWN, '-p', 'hi']);
+  assertDenied(sub, 'builtin:host-config');
+  assert.equal(sub.floor, true);
+  assert.equal(sub.certain, false);
+  const flag = checkCommandArgv(['codex', '--yolo']);
+  assertDenied(flag, 'builtin:host-config');
+  assert.equal(flag.floor, true);
+  assert.equal(flag.certain, true);
+  const tree = checkCommandArgv(['claude', 'plugin', 'install', 'x']);
+  assert.equal(tree.floor, true);
+  assert.equal(tree.certain, true);
+
+  const apply = checkCommandArgv(['fence', 'apply', 'x']);
+  assertDenied(apply, 'builtin:fence-command');
+  assert.equal(apply.floor, true);
+  assert.equal(apply.certain, true);
+  const odd = checkCommandArgv(['fence', UNKNOWN]);
+  assertDenied(odd, 'builtin:fence-command');
+  assert.equal(odd.floor, true);
+  assert.equal(odd.certain, false);
+  for (const argv of [null, [42, 'apply'], [UNKNOWN, 'apply']]) {
+    const r = checkCommandArgv(argv);
+    assertDenied(r, 'builtin:fence-command');
+    assert.equal(r.floor, true);
+    assert.equal(r.certain, false);
+  }
+});
+
+test('fence audit is an allowed read-only subcommand', () => {
+  assert.equal(checkCommandArgv(['fence', 'audit']), null);
+  assert.equal(checkCommandArgv(['fence', 'audit', '--json']), null);
+  assert.ok(FENCE_ALLOWED_SUBCOMMANDS.includes('audit'));
 });
