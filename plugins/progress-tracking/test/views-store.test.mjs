@@ -227,7 +227,9 @@ test('SessionStart on a store error prints one notice line and exits 0', () => {
     const older = new DatabaseSync(dbFile);
     older.exec('CREATE TABLE x (y INTEGER)');
     older.close();
-    notice(session(b), /\(open\).*older than this triqual/);
+    const old = notice(session(b), /\(open\).*older than this triqual/);
+    // A write upgrades an older database: restoring a snapshot would only throw entries away.
+    assert.doesNotMatch(old, /tracking restore/, 'an older schema must not be told to restore');
 
     // missing: no database file at all
     rmSync(dbFile, { force: true });

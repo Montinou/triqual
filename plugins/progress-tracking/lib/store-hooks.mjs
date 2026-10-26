@@ -63,12 +63,12 @@ const UPDATE_ADVICE = '; this plugin is older than the database: update progress
   + `(or restart the session); do not run \`${RESTORE}\`, it would discard newer entries`;
 
 // One line on a store failure: where the store is (when known), the error's code and the recovery command (added
-// unless the error's own message already names it). `err` is a StoreError or anything a query threw after the open
+// unless the error's own message already names it, or names a write as the fix for an older schema). `err` is a StoreError or anything a query threw after the open
 // (SQLITE_BUSY, corruption).
 function failureText(err, where) {
   const code = typeof err?.code === 'string' && err.code ? err.code : 'error';
   const message = err?.message ?? String(err);
-  const recover = code === SCHEMA_TOO_NEW ? UPDATE_ADVICE : message.includes(RESTORE) ? ''
+  const recover = code === SCHEMA_TOO_NEW ? UPDATE_ADVICE : err?.upgradeByWrite || message.includes(RESTORE) ? ''
     : `; recover with \`${RESTORE} <snapshot>\` (snapshots are kept in backups/ beside the database)`;
   return `the tracking store${where ? ` at ${where}` : ''} failed (${code}): ${message}${recover}`;
 }

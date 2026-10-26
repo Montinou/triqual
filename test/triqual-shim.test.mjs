@@ -496,9 +496,9 @@ test('triqual progress-init runs the progress-tracking init in the cwd repo', ()
   }
 });
 
-test('progress-tracking is at version 0.5.3', () => {
+test('progress-tracking is at version 0.5.4', () => {
   const manifest = JSON.parse(readFileSync(join(ROOT, 'plugins', 'progress-tracking', '.claude-plugin', 'plugin.json'), 'utf8'));
-  assert.equal(manifest.version, '0.5.3');
+  assert.equal(manifest.version, '0.5.4');
 });
 
 // Before methodology 0.1.2 and progress-tracking 0.2.1 the commands ignored --help: sync ran and wrote

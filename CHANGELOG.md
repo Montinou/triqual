@@ -3,6 +3,15 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## progress-tracking 0.5.4
+
+### Fixed
+
+- **An older database is never told to restore.** When a read-only open refuses a database of an older schema (the
+  Stop hook, the session-start notice, the store `pre-commit`), the message no longer appends `recover with triqual
+  tracking restore`: its own text already names the fix, any write such as `triqual tracking add`, and a restore would
+  only throw entries away.
+
 ## methodology 1.4.1
 
 ### Fixed
