@@ -85,4 +85,4 @@ and `summary --by-tier` per review tier. See the [`methodology` README](../metho
 ## Tests
 
 `test/agents.test.mjs` checks the frontmatter of each agent against the table above.
-`workflow-gate` has a test that keeps its role-to-model map in sync with these files.
+The repository-root test `test/roles-consistency.test.mjs` keeps `workflow-gate`'s role-to-model map (`ROLE_MODELS` in its `scripts/gate.mjs`) in sync with these files.

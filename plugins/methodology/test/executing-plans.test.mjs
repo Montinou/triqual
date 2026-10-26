@@ -409,7 +409,7 @@ test('after a block, the human decision restarts the task with tasks start befor
 
 test('a resumed session treats a blocked task as a stop, never a re-dispatch', () => {
   const ws = flat(section(skill(), '### Workspace and ledger'));
-  assert.ok(ws.includes('A task whose last ledger line is its `Task <N>: blocked` line is the sixth stop again'), 'no blocked resume rule');
+  assert.ok(ws.includes('A task whose last ledger line is its `Task <N>: blocked` line is the fifth stop again'), 'no blocked resume rule');
   assert.ok(ws.includes('never re-dispatched'));
   assert.ok(ws.includes('a task already `blocked`'), 'the resumed-state list lacks blocked');
 });
@@ -528,6 +528,10 @@ test('the hunter template has no final mode', () => {
   assert.doesNotMatch(text, /final review's 3 hunters|final-candidates|in the final review|final review only|final or phase review/, 'the hunter template still mentions the final review');
   assert.ok(text.includes('**Phase review:**'), 'the hunter template lost its phase mode');
   assert.ok(text.includes('a phase review sends four hunters') || text.includes('A phase review sends four hunters'), 'the hunter template lost the phase hunter count');
+  // The role agent names the same candidates files as the template, and no final-review file.
+  const agent = flat(readFileSync(join(PLUGIN, '..', 'roles', 'agents', 'hunter.md'), 'utf8'));
+  assert.doesNotMatch(agent, /final-candidates|in the final review/, 'the hunter role still names a final-review candidates file');
+  assert.ok(agent.includes('`<workspace>/phase-<N>-candidates-<category>.md` in a phase review'), 'the hunter role does not name the phase candidates file');
 });
 
 test('a single-phase plan: its phase review is the final review', () => {
@@ -572,7 +576,7 @@ test('the phase review runs between the Phase check and done/submit', () => {
   assert.ok(flat(section(raw, '### 4. Review the task')).includes('once per phase'), 'step 4 still says the broad review happens once, at the final review');
 });
 
-test('phase fixes: two rounds, own commits, never reopen a task, then a seventh stop', () => {
+test('phase fixes: two rounds, own commits, never reopen a task, then a sixth stop', () => {
   const body = phaseReview();
   for (const line of ['at most two', '`fix(', 'never folded into a task commit', 'never reopens a task', '`roles:review-fixer`', '`roles:spec-reviewer`']) {
     assert.ok(body.includes(line), `the phase review lacks: ${line}`);
@@ -582,8 +586,11 @@ test('phase fixes: two rounds, own commits, never reopen a task, then a seventh 
   const stops = para.split(': ')[1].split('. For those')[0].split(';').map((s) => s.trim());
   assert.equal(stops.length, 7, `${stops.length} stops: ${JSON.stringify(stops)}`);
   assert.ok(stops.some((s) => /phase review/.test(s) && /second fix round/.test(s)), 'no stop for a blocked phase review');
+  // The ordinals the skill uses elsewhere (the blocked-task resume rule, step 8) count from this list.
+  assert.match(stops[4], /breaker/, 'the fifth stop is no longer the breaker');
+  assert.match(stops[5], /phase review/, 'the sixth stop is no longer the phase review');
   assert.ok(flat(skill()).includes('The only reasons to stop are the seven named below'), 'the continuous-execution paragraph still counts six');
-  assert.ok(body.includes('seventh stop'), 'the phase review does not name the seventh stop');
+  assert.ok(body.includes('sixth stop'), 'the phase review does not name the sixth stop');
 });
 
 // ---- the controller break per phase and lean reading (design: Controller context) ----
@@ -957,15 +964,36 @@ test('the per-task scripts are deleted, nothing live calls them, and the scripts
 
 // ---- the harness references -----------------------------------------------------------------------------------------------
 
+test('the seams review ledgers the ready lines that submit --open prints', () => {
+  const raw = skill();
+  const vocab = flat(section(raw, '## Ledger vocabulary'));
+  assert.ok(vocab.includes('`Phase <N>: ready (<branch>, PR #<n>)` (printed by `submit --open`'), 'the ledger vocabulary lacks the ready line');
+  const submit = flat(section(raw, '## Final Review'));
+  assert.ok(submit.includes('prints one `Phase <N>: ready (<branch>, PR #<n>)` line per phase') && submit.includes('ledger those lines'), 'the final review submit step does not ledger the ready lines');
+});
+
+test('the implementer prompt never stages tracking files and names the scripts that move the ledger', () => {
+  const text = flat(read(`${EP}/implementer-prompt.md`));
+  assert.doesNotMatch(text, /stage `progress\.md`|which the controller moves|the controller runs every/, 'the implementer prompt still stages tracking files or has the controller move the ledger');
+  assert.ok(text.includes('a plan run never uses `"mode": "committed"` (`stack.mjs init` refuses it'), 'the implementer prompt does not say a plan run is never in committed mode');
+  assert.ok(text.includes('so never stage a tracking file (`progress.md`, `status.md` or a task ledger, `*.tasks.json`) with your task commit'), 'the implementer prompt does not forbid staging the tracking files');
+  assert.ok(text.includes('the `task-open`, `task-prep` and `task-close` scripts the orchestrator runs make every `triqual tasks` move'), 'the implementer prompt does not name the scripts that move the ledger');
+});
+
 test('the harness references name the one orchestrator and keep their routing statements', () => {
   const claude = flat(read('using-methodology/references/claude-code-tools.md'));
-  assert.ok(claude.includes('The controller of a methodology:executing-plans run reads every result'), 'claude-code-tools.md does not name the controller of executing-plans');
+  assert.ok(claude.includes('In a methodology:executing-plans run it dispatches one `roles:phase-orchestrator` per phase'), 'claude-code-tools.md does not name the per-phase orchestrator of executing-plans');
+  assert.ok(claude.includes('it is the only role that may dispatch'), 'claude-code-tools.md lost the orchestrator as the one dispatching role');
+  assert.doesNotMatch(claude, /never handed to a nested orchestrator|no role covers it|a role never dispatches another/, 'claude-code-tools.md still says no orchestrator subagent exists');
+  assert.ok(claude.includes('`BLOCKED: nested dispatch unavailable`'), 'claude-code-tools.md lost the nested-dispatch fallback');
   assert.doesNotMatch(claude, /mid-tier/i, 'claude-code-tools.md still advises an orchestrator on a mid-tier model');
   assert.match(claude, /`roles:<name>`/, 'claude-code-tools.md does not describe role dispatch');
   const codex = flat(read('using-methodology/references/codex-tools.md'));
   assert.ok(codex.includes('that `executing-plans` uses.'), 'codex-tools.md does not name executing-plans for multi-agent support');
   assert.doesNotMatch(codex, /dispatching-parallel-agents/, 'codex-tools.md still names the removed dispatching-parallel-agents');
   assert.doesNotMatch(codex, /Model Selection/, 'codex-tools.md still points at Model Selection');
+  assert.ok(codex.includes('the phase orchestrator uses `gpt-6.1-sol` / `medium`'), 'codex-tools.md lost the phase orchestrator model group');
+  assert.match(codex, /`\[agents\] max_depth` of 2 or more[^]*`triqual sync` raises it[^]*`triqual doctor` fails/, 'codex-tools.md lost the max_depth requirement');
   // Codex: a role dispatch is spawn_agent with agent_type, and a methodology skill name drops its prefix.
   assert.match(codex, /a role dispatch `roles:<name>` is `spawn_agent` with `agent_type: "<name>"`/);
   assert.match(codex, /`methodology:<x>` is the skill `<x>`/);
@@ -1596,7 +1624,7 @@ test('no template or step still points at a whole-branch or final review after t
   assert.ok(flat(section(raw, '## Final Review')).includes('with the phase fix commits the only commits of the stack that are not tasks'), 'Final Review ignores the phase fix commits');
   const body = phaseReview();
   assert.doesNotMatch(body, /beside the six/, 'step 8 still counts six stops');
-  assert.ok(body.includes('the seventh stop, listed at the top of this skill'), 'step 8 does not point at the seven stops');
+  assert.ok(body.includes('the sixth stop, listed at the top of this skill'), 'step 8 does not name the phase review as the sixth of the seven stops');
 });
 
 test('the changelog and the README describe the hunters and the seams review accurately', () => {
@@ -2208,7 +2236,7 @@ test('the 1.4.0 CHANGELOG entry and the orchestrator prompt carry the parallel r
   for (const line of ['Parallel tasks', 'At most 3 implementers', '`task-open --worktree`', 'plan order', 'landing conflict', 'TRIQUAL_LANDING_TEST_TIMEOUT_MS']) {
     assert.ok(entry.includes(line), `the 1.4.0 CHANGELOG entry lacks: ${line}`);
   }
-  assert.equal(JSON.parse(readFileSync(join(PLUGIN, '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.4.0');
+  assert.equal(JSON.parse(readFileSync(join(PLUGIN, '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.4.1');
   assert.ok(PROMPT().includes('## Parallel Tasks'), 'the orchestrator prompt has no Parallel Tasks section');
 });
 

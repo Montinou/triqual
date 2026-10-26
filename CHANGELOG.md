@@ -3,6 +3,61 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## methodology 1.4.1
+
+### Fixed
+
+- **A Codex revert acts only on a value still as `triqual sync` wrote it.** `triqual sync --harness codex` now records
+  the value it wrote for each `config.toml` key it changed (`project_doc_fallback_filenames`, `[agents] max_depth`, and
+  the `enabled` key of a superseded plugin). `triqual sync --remove-harness codex` puts a key back only while it still
+  holds that value; one you changed since is left as you set it and named in the step's detail. A record made before
+  this release has no recorded value, and the revert uses the one value sync always wrote for that key.
+- **A missing `triqual` is an actionable Error.** `task-open`, `task-prep` and `task-close` need `triqual` whether or
+  not the repo is opted in (`triqual tasks`, `triqual role-eval record`). With none on the `PATH` the first script exits
+  1 with an `Error:` line that says so and how to install it, and `executing-plans` treats that as a stop instead of
+  "not opted in".
+- **The landing close names up to 200 dropped untracked files.** When `task-close` removes a worktree it drops its
+  untracked files (an install's output, say) and names them on stderr; it named 5 and now names up to 200, then
+  `, and N more`.
+- **The permanent exit-3 landing refusals point to the abandon recipe.** The two refusals that no rerun clears (the
+  landed commit is not on the phase branch, and a landing that is neither tested nor the phase tip) now end with the
+  steps to abandon the landing, from the Refusals section of `executing-plans`.
+- **Review fixes to parallel tasks.** An undone landing stays undone: `task-close` refuses the task (exit 3) until the
+  sequential re-run has a `Prep:` line, and a rerun finishes an undo that died between its reset and its ledger lines. A
+  `--head` that is behind the tip of the task's branch is refused, since the close removes the branch. A reopened task
+  squashes from the parent of the commit its previous close made, so it no longer folds in the tasks that closed since
+  it opened. A worktree task that made no commit closes at the tip of the phase branch. `task-prep` takes the tip of
+  the task's worktree branch as its head when there is one, never `HEAD` of the main checkout. `task-open` refuses a
+  `blocked` task (only the owner's `triqual tasks start` restarts it), and a coordinator task while an earlier task of
+  its phase is not done or dropped.
+
+### Docs
+
+- The skills references follow the phase orchestrator: `claude-code-tools.md`, `codex-tools.md` and
+  `diagnosing-methodology`. The stop ordinals in `executing-plans` are fixed. `writing-plans` gains guidance for
+  writing tasks that can run in parallel. The implementer prompt no longer mentions
+  staging in committed tracking mode, which `executing-plans` refuses.
+- The READMEs of methodology, roles, workflow-gate and memory-report are brought in line with the code: the task scripts
+  and `triqual cost`, the `doctor` checks and the Codex depth step of `sync`, and the files and variables of parallel
+  tasks.
+
+## roles 0.4.1
+
+### Fixed
+
+- `hunter` names the per-task and per-phase candidates files (`task-<N>-candidates-<category>.md`,
+  `phase-<N>-candidates-<category>.md`) in place of the retired final-candidates file.
+
+## progress-tracking 0.5.3
+
+### Fixed
+
+- The skill and its store-mode reference now say that a store left by a newer plugin version warns and asks for a plugin
+  update, not a restore from a backup.
+- Every refusal of `tracking relocate` is listed in full.
+- `tasks init` in store mode needs `tracking write plan` first, which creates the ledger; the reference says so.
+- The wording of `tasks check` matches what it compares.
+
 ## methodology 1.4.0
 
 ### Added
@@ -82,6 +137,14 @@ What changed in each plugin, newest first. The plugin version in each entry is t
 - The ledger vocabulary gains `Task <N>: awaiting landing` and `Orchestrator: P<n> — <summary first line>`, and Finish
   lists the orchestrators' errors and fallbacks beside "Rulings I made". The role `roles:phase-orchestrator` needs
   roles 0.4.0.
+- **`triqual sync` raises Codex `[agents] max_depth` to 2.** An orchestrator at depth 1 spawns its task agents at depth
+  2, so `sync --harness codex` sets `[agents] max_depth = 2` when it is unset or a number below 2, and never lowers or
+  touches a value of 2 or more. The change is recorded so `--remove-harness codex` can undo it. A value sync cannot
+  edit (a dotted or inline key, or one that is not a number) fails the step with a message to set it by hand.
+  `triqual doctor` fails on a Codex `max_depth` below 2.
+- **`triqual cost` reports orchestrator spend on its own line.** The report has three groups, the main sessions
+  (`controller`), the phase orchestrators (`orchestrators`, read from the subagent transcripts' `agentType`) and the
+  other subagents. `--json` gains an `orchestrators` object beside `controller` and `subagents`.
 
 ## roles 0.4.0
 

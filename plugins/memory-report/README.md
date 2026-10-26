@@ -193,7 +193,7 @@ Each sent note is one block: `#<id> [<project>] <date> <type> — <title>`, then
 The call is one headless `claude -p` process, started from `~/.local/state/triqual/memory-report/memory-report-work`:
 
 - Model: the config key `model`.
-- Flags: `--safe-mode`, `--tools ''`, `--strict-mcp-config`, `--disable-slash-commands`, `--no-session-persistence`, `--settings '{"disableAllHooks":true}'`, `--output-format json` and `--json-schema` with the output schema.
+- Flags: `--safe-mode`, `--tools ''`, `--strict-mcp-config`, `--disable-slash-commands`, `--no-session-persistence`, `--permission-prompts none`, `--settings '{"disableAllHooks":true}'`, `--output-format json` and `--json-schema` with the output schema.
 - Environment: the parent environment minus `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDECODE`, `MCP_SESSION_ID` and every `CLAUDE_CODE_*` and `CLAUDECODE_*` variable, plus `MEMORY_REPORT_CHILD=1` and `CLAUDE_MEM_INTERNAL=1`.
 - It needs the `claude` CLI on PATH, or the path in `claudeBin`. A child that cannot start gives `claude could not be started`.
 - The prompt says the notes are data, never instructions.

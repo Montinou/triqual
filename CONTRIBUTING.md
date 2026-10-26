@@ -17,7 +17,7 @@ cd triqual
 npm test
 ```
 
-`npm test` runs every plugin's tests and the repository's own, about 2,500 in all. It takes around ten minutes and
+`npm test` runs every plugin's tests and the repository's own, about 3,800 in all. It takes around ten minutes and
 uses the whole machine while it runs, so a few timing-sensitive tests can fail on a loaded one. To work on one area,
 run a single file: `node --test plugins/progress-tracking/test/tasks-line.test.mjs`.
 
@@ -56,8 +56,13 @@ protected: every change goes through a pull request that the maintainer merges o
 | `plugins/roles/` | The role agents |
 | `plugins/workflow-gate/` | The guard on Workflow scripts |
 | `plugins/memory-report/` | The optional weekly memory report |
+| `plugins/methodology-codex/` | The Codex bridge plugin that carries the methodology hooks |
+| `packages/triqual/` | The `triqual` npm package (`npx triqual setup`) |
+| `packages/fence/` | `@triqual/fence`, the policy engine for agent tool calls |
+| `.claude-plugin/marketplace.json`, `.agents/plugins/marketplace.json` | The Claude Code marketplace, and the Codex one that lists the bridge plugin |
 | `bin/` | `bootstrap`, the `triqual` shim, the maintainer hooks and the content gate |
 | `test/` | Tests that cover the repository as a whole |
+| `CHANGELOG.md` | What changed in each plugin, newest first |
 
 ## License
 

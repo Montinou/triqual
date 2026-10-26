@@ -89,7 +89,9 @@ git commit -m "feat: ..."
 ```
 
 The pre-commit gate checks that this worktree has a pending entry (merges, replays and commits with nothing staged
-pass); the post-commit hook stamps the pending entries with the new commit. `--commit <rev>` records an entry for a
+pass); the post-commit hook stamps the pending entries with the new commit. Pending entries belong to the worktree (its
+git dir), so one commit stamps every pending entry of that worktree and none of another's; ledgers, plans and the
+tasks lock belong to the clone and are shared by its worktrees. `--commit <rev>` records an entry for a
 commit that already exists. `--corrects <id>` makes the entry a correction of an earlier one: entries are append-only
 and never edited.
 
@@ -152,7 +154,8 @@ empty row for it that relocate refuses to replace.
   checkout is still there. Output: `relocated <old-root> -> <root>`,
   and `unset the store marker in <old-root>` when it unset it.
 - Exit 3, nothing changed, with the reason: an entry of the repository is pending, a plan is not done, no row has the
-  root `<old-root>`, or the new checkout already has a row. Exit 2: no argument, or not inside a git checkout.
+  root `<old-root>`, the new checkout already has a row, several rows share `<old-root>`, or the documents directory
+  `repos/<new-key>` already exists. Exit 2: no argument, or not inside a git checkout.
 
 ## Recovery, export and the daily snapshot
 
@@ -161,7 +164,10 @@ empty row for it that relocate refuses to replace.
 - **Restore.** `triqual tracking restore <snapshot> [--yes]` replaces every row of the database with the snapshot's,
   after saving the current database as `backups/pre-restore-<stamp>.db`. It asks first on a terminal and refuses
   without `--yes` anywhere else. A store gate that fails names this command:
-  `the tracking store at <db> failed (<code>): <message>; recover with ...`.
+  `the tracking store at <db> failed (<code>): <message>; recover with ...`. Two failures are not fixed by a restore:
+  `schema-too-new` (the database was written by a newer progress-tracking: the Stop hook only warns; update the plugin and
+  run `/reload-plugins`, because a restore would discard the newer entries) and a database of an older schema that a
+  read-only open refused (any write, for example `triqual tracking add`, upgrades it in place).
 - **Export.** `triqual tracking export [--out <file>]` writes the repository's rows as JSONL (stdout, or a 0600 file).
   It is the off-store copy: the database lives in one user directory and nothing in git holds it. Rebuild from it with
   `triqual tracking import --replace --from <file>`.

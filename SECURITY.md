@@ -5,7 +5,7 @@
 Please report it privately, not in a public issue: open the **Security** tab of this repository and choose **Report a
 vulnerability**. That creates a private advisory that only you and the maintainer can read.
 
-Include the version (`triqual doctor` prints it), what you did, what you expected and what happened. A short
+Include the versions (`claude plugin list` shows the version of each installed plugin; for the npm CLI, `npx triqual --version`), what you did, what you expected and what happened. A short
 reproduction helps more than a long description.
 
 This is a personal project, so there is no support contract and no guaranteed response time. Reports are read and

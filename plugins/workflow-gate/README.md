@@ -24,7 +24,8 @@ Caps per script, per model:
 | Haiku | unlimited | none |
 
 An override must be a number of 0 or more (0 is valid and forbids that model). A value that is
-not numeric, is empty or is negative is ignored and the default applies, with no warning.
+not numeric, is empty or is negative is ignored and the default applies, with no warning. A value of
+only whitespace is not empty to the gate: it reads as 0 and forbids that model.
 
 A script is accepted when it meets all three rules.
 
@@ -91,7 +92,7 @@ must have `.slice(0, N)` in the same chain.
 ## Role models
 
 Used when an `agent()` names `roles:<name>`, and when an `Agent` start has that `subagent_type`. The map is `ROLE_MODELS` in `scripts/gate.mjs`, and a
-test keeps it equal to the `model:` of each agent file in `plugins/roles/agents/`.
+test (`test/roles-consistency.test.mjs` at the repository root) keeps it equal to the `model:` of each agent file in `plugins/roles/agents/`.
 
 | Role | Model family |
 |---|---|
@@ -116,7 +117,7 @@ started `cap` agents of that model within the last window:
 | State directory | `$XDG_STATE_HOME/triqual/workflow-gate/`, else `~/.local/state/triqual/workflow-gate/` | none |
 
 - **The model of a start.** The `model` input wins when it names a family (`fable`, `opus`, `sonnet` or
-  `haiku`). Otherwise a `subagent_type` of `roles:<name>` takes that role's model from the map below. Anything
+  `haiku`). Otherwise a `subagent_type` of `roles:<name>` takes that role's model from the table above. Anything
   else (a built-in type such as `general-purpose`, an unknown `roles:` name, no type at all) is counted apart, in
   an `unresolved` bucket, and capped at the Opus cap.
 - **The session.** State is one file per `session_id`, and only an id that matches `^[A-Za-z0-9_-]{1,128}$`

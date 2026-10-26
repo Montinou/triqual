@@ -106,6 +106,14 @@ test('the plan header names the branch prefix', () => {
   assert.ok(prefix > spec, 'the plan header has no **Branch prefix:** line after **Spec:**');
 });
 
+test('writing-plans tells the author what parallel tasks need: complete Files lists and a node Test path', () => {
+  const text = readFileSync(join(SKILLS, PLANS), 'utf8').replace(/\s*\n\s*/g, ' ');
+  assert.ok(text.includes('`**Files:**` also decides which tasks run side by side'), 'writing-plans does not say Files decides parallel runs');
+  assert.ok(text.includes('list every file the task creates, modifies or tests'), 'writing-plans does not ask for complete Files lists');
+  assert.ok(text.includes('`Test:` path that is one exact file ending `.mjs`, `.js` or `.cjs`'), 'writing-plans does not name the node Test path a parallel task needs');
+  assert.ok(text.includes('it runs sequentially'), 'writing-plans does not say what a task without one does');
+});
+
 test('a plan is phases of one-commit tasks', () => {
   const text = section(PLANS, '## Phases').join('\n');
   let at = -1;
