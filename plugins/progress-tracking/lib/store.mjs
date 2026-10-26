@@ -158,7 +158,8 @@ const walHasContent = (file) => {
   }
 };
 
-const tooOld = (file, found) => new StoreError('open', `the tracking database ${file} has schema ${found}, older than this triqual's ${SCHEMA_VERSION}: run a command that writes (for example \`triqual tracking add\`) to upgrade it`);
+// `upgradeByWrite` tells the hooks that a write is the fix, so they never suggest a restore.
+const tooOld = (file, found) => Object.assign(new StoreError('open', `the tracking database ${file} has schema ${found}, older than this triqual's ${SCHEMA_VERSION}: run a command that writes (for example \`triqual tracking add\`) to upgrade it`), { upgradeByWrite: true });
 
 const MISSING = (db) => `no tracking database at ${db}: create one with \`triqual progress-init --store\` or \`triqual tracking import\`, or restore a snapshot with \`triqual tracking restore <snapshot>\``;
 

@@ -1015,7 +1015,7 @@ function codexLinksCheck({ home, dir, installs, patterns, keepSuperseded }, fail
 }
 
 // A link under the Codex skills dir into a methodology install's skills/ folder (the current one or an older version's)
-// whose skill that install no longer ships: methodology 1.0 removed five skills, and a link made under 0.7.x still names
+// whose skill that install no longer ships: methodology 1.0 removed six skills, and a link made under 0.7.x still names
 // one. triqual sync removes the ones it recorded; this names any that stay. A link elsewhere is not methodology's.
 // Only while methodology is enabled in Claude (`want` is empty otherwise, so no skill set exists to compare with), and
 // never for a link whose skill the current install still ships.

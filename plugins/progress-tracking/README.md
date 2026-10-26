@@ -650,8 +650,8 @@ The date an entry shows is the draft's heading date. The entry is ordered by the
   Read-only opens do not migrate and refuse an older database with `has schema N, older than this triqual's ...`: the
   Stop hook, the session-start notice, the store `pre-commit`, `tasks status|next|check|render|export|line` and
   `tracking status|log`. The fix is any write, for example `triqual tracking add` (`--no-commit` if no commit follows);
-  it upgrades the database in place. Do not restore a snapshot for this, even if the hook text suggests it. An older progress-tracking refuses the migrated store
-  and its `pre-commit` gate would block commits in store-mode repos, so do not downgrade below 0.5.0.
+  it upgrades the database in place. Do not restore a snapshot for this; since 0.5.4 the hooks no longer
+  suggest one for it. An older progress-tracking refuses the migrated store and its `pre-commit` gate would block commits in store-mode repos, so do not downgrade below 0.5.0.
 - **No tier is ever lowered.** `retier` refuses it, reconciling keeps the higher tier, and importing a snapshot keeps
   the higher effective tier.
 - **Store mode fails closed.** A database that cannot be read blocks the Stop hook and the `pre-commit`, and both name

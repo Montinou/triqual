@@ -529,7 +529,7 @@ function storeRender(st) {
 }
 
 // `check` in store mode: each plan whose document is in the documents directory is compared against the store (titles,
-// roles, deps, commits). There is no rendered section to drift, and a plan without its document is not compared.
+// missing tasks, non-task roles, commits); dependencies and roles are never compared with the plan. There is no rendered section to drift, and a plan without its document is not compared.
 function storeCheck(st) {
   const commitExists = commitChecker(st.repoRoot);
   const warn = warner();
