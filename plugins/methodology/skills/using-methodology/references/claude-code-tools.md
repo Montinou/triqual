@@ -12,10 +12,13 @@ whose `subagent_type` is that role, `roles:<name>` (an agent of plugin
 and a `model` in the call would override that pin. Only a generic agent, for
 work no role covers, names a model.
 
-Coordination stays in this session. The controller of a
-methodology:executing-plans run reads every result, makes the
-rulings and moves the ledger; it is never handed to a nested orchestrator
-subagent, since no role covers it and its "Rulings I made" list must reach
-your human partner from the session that made them. Claude Code supports
-nested subagents, but a role never dispatches another: each role template
-forbids it.
+Coordination stays in the main session. In a methodology:executing-plans run
+it dispatches one `roles:phase-orchestrator` per phase; the orchestrator runs
+the task loop and dispatches the other roles, and it is the only role that may
+dispatch (every other role template forbids it). The orchestrator returns its
+rulings and errors in its summary and in the ledger, and the main session
+relays them to your human partner and asks on a `BLOCKED:` stop, since the
+orchestrator cannot. Nested dispatch needs a harness that supports nested
+subagents, which Claude Code does; where it is not available the orchestrator
+returns `BLOCKED: nested dispatch unavailable` and the main session runs the
+phase loop itself (the Fallback in The Thin Controller of executing-plans).

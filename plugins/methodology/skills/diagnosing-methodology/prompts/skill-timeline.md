@@ -32,13 +32,15 @@ Build the per-human-turn record of skill and plugin use, then look for gaps.
    - a skill invoked one or more turns after the matching request (late);
    - each non-methodology plugin/skill/tool used, with where.
 
-5. When the session ran a plan, the orchestrator's ledger `sdd-ledger.md`
-   (or the transcript's tool calls that wrote it, once the workspace is
-   deleted) holds `Tier: T<N> <tier>` and
+5. When the session ran a plan, the plan's shared ledger `sdd-ledger.md`
+   (or the transcript's tool calls that wrote it, once the main session has
+   deleted the workspace) holds `Tier: T<N> <tier>` and
    `Tier raised: T<N> <from> → <to> — <reason>` lines. List them with their
    line numbers beside the skill events of the same turns: they show which
    task ran at which tier, and a `Tier raised:` line is the controller's
-   record, not a skill firing.
+   record, not a skill firing. The same holds for the `Orchestrator:`,
+   `Prep:`, `Landed:`, `Phase review:` and `Round 1: P<n>` lines: they record
+   the run, not a skill firing.
 
 Do not say whether a missed or late trigger was wrong. Report the match
 and the absence; the reader decides.

@@ -34,8 +34,10 @@ test('skill documents paths --json outside tracking, role reconciliation, and st
   assert.match(skill, /`"optedIn": false`/, 'SKILL.md: paths --json outside an opted-in repo');
   assert.match(skill, /`notOptedInMessage`[\s\S]{0,40}`localHookLines`/, 'SKILL.md: the two facts');
   assert.match(skill, /`"optedIn": false`[\s\S]{0,200}exit(s)? 0/, 'SKILL.md: paths --json exits 0 when not opted in');
-  assert.match(skill, /`check` does not compare a pending task's role with the plan until `(triqual tasks )?init`/,
-    'SKILL.md: role drift waits for init');
+  assert.match(skill, /`check` never compares a role or the dependencies with the plan: only `(triqual tasks )?init` copies them/,
+    'SKILL.md: check compares no role or dependencies with the plan, init copies them');
+  assert.match(skill, /`schema-too-new`[\s\S]{0,120}Never restore a snapshot/,
+    'SKILL.md: a schema-too-new store is never restored');
   assert.ok(skill.length <= 10000, `SKILL.md is ${skill.length} characters, must be at most 10,000`);
 });
 

@@ -25,9 +25,9 @@ happened. "Plan" here means any agreed course of action, not git commits.
    - steps invented (work done that no plan step covers);
    - drift immediately after a structural event (cite the event line and
      the first divergent action).
-4. Read the orchestrator's ledger, `sdd-ledger.md` in
-   `.methodology/sdd/<plan>/`. The workspace is deleted when a plan
-   finishes, so when the file is gone take the lines from the transcript's
+4. Read the plan's shared ledger, `sdd-ledger.md` in
+   `.methodology/sdd/<plan>/`. The main session deletes the workspace when
+   the plan finishes, so when the file is gone take the lines from the transcript's
    tool calls that wrote them. It holds one `Tier: T<N> <tier>` line per
    task, written at setup, and a `Tier raised: T<N> <from> → <to> — <reason>`
    line whenever a task's tier went up. A tier is never lowered. For each
@@ -37,6 +37,12 @@ happened. "Plan" here means any agreed course of action, not git commits.
    the new tier. Also report: a task with a `Tier raised:` line and no review
    line after it; a task with no `Tier:` line; any line that puts a task at
    a lower tier than an earlier line did. Do not say whether a raise was
-   right or wrong; quote the lines.
+   right or wrong; quote the lines. The same ledger also records, per phase,
+   `Orchestrator: P<n> — <summary first line>` (the main session's note of
+   what the phase's orchestrator subagent returned), `Prep: T<N> r<R> <sha>`
+   (a review round prepared), `Landed: T<N> <sha>` (a task landed from its
+   worktree), `Round 1: P<n> — hunters <done>/<sent>` and
+   `Phase review: P<n> clean | fixed | blocked`: report them in order beside
+   the plan's steps, and quote both where a plan step and these lines disagree.
 5. If there is no recoverable plan, say so as the only finding, with
    the lines you checked.

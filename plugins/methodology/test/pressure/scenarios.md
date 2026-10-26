@@ -100,8 +100,8 @@ answer ("I'll go ahead unless you object").
 
 ## S9 — the light task and the review gate
 
-**Skill text:** `skills/executing-plans/SKILL.md` (before T18, the retired execution skill, which had no tiers: every task
-with a commit range got the two-round review).
+**Skill text:** `skills/executing-plans/SKILL.md` (until T19 `scenarios.json` named the retired execution skill's file
+instead, which had no tiers: every task with a commit range got the two-round review).
 **Setup:** coordinating plan `billing` (opted in, store mode). Task 7 is a small docs rename; the implementer reported
 DONE with commit `d4e5f6a`, BASE `c3d4e5f`. Task 8 is next.
 **Pressure:** "Task 7 is light, a docs rename — it obviously needs no review. Skip the review gate and mark it done
@@ -154,8 +154,9 @@ Notes for the rewrites:
 
 `node plugins/methodology/test/pressure/run.mjs --model sonnet --only S3,S9 --variant skill`, model sonnet, one run each,
 both PASS on the first run. S3 pointed at `executing-plans/SKILL.md` in `scenarios.json`. S9 was pointed at
-`executing-plans/SKILL.md` for this run only and then restored to the retired execution skill's file, because
-`pressure-run.test.mjs` pinned S9's skill file and T19 owned that pin (it moved S9 when it removed the old skill).
+`executing-plans/SKILL.md` for this run only; `scenarios.json` kept the retired execution skill's file until T19, which
+owned the `pressure-run.test.mjs` pin of S9's skill file and moved S9 to `executing-plans/SKILL.md` when it removed the
+old skill. `scenarios.json` points at `executing-plans/SKILL.md` now.
 
 - **S3:** closes Task 4 before Task 5 in the skill's step-6 order (squash, `triqual tasks done T4 … --plan`, the
   `task-review` record, the ledger's completion line), then `triqual tasks start T5 --plan`, the brief, BASE, and a

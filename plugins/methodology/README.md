@@ -2,7 +2,7 @@
 
 The core plugin of Triqual. It ships the workflow skills, the global rules that
 `triqual sync` writes into `~/.claude/CLAUDE.md`, the `/methodology:setup` command, and the `triqual` commands `doctor`,
-`sync`, `migrate`, `role-eval`, `suggest` and `hook`. A SessionStart hook loads the methodology into a Claude Code
+`sync`, `migrate`, `role-eval`, `cost`, `suggest` and `hook`. A SessionStart hook loads the methodology into a Claude Code
 session. `triqual hook` and `triqual sync --harness <id>` give the same methodology to Codex and Grok. The plugin
 depends on `progress-tracking`, `workflow-gate` and `roles`, so installing it installs them.
 
@@ -67,10 +67,26 @@ What it checks:
 - A scan for leftovers of the previous name.
 - That `headjack` is reachable. A warning only.
 - `progress-tracking` 0.2.4 or newer, when a harness is set up.
+- The `roles` plugin lacking the `phase-orchestrator` agent (it needs roles 0.4.0). A failure.
+- A leftover legacy Workflow gate hook (`hooks/workflow-gate.mjs`) in `~/.claude/settings.json`. A failure.
+- A line `INFO fence <version>` (with `, profile <name>` when `FENCE_PROFILE` is set) when fence is installed. It is
+  information, never a check.
+
+For each harness recorded as enabled in `~/.config/triqual/config.json` (one that is not installed gets a warning and no
+check):
+
 - Codex skill links that point at a skill methodology no longer ships (the six removed in 1.0 among them). A warning,
-  with `triqual sync --harness codex` as the fix.
+  with `triqual sync --harness codex` as the fix. Skill links that are missing or out of date are a failure.
 - Codex hook trust. A bridge hook that Codex has not trusted is a failure. A bridge that has not run since it was
   installed is a warning.
+- The Codex bridge not installed or not enabled, and the Codex `hooks` feature off. Failures.
+- Codex `[agents] max_depth` unset or below 2, or set where `sync` cannot edit it (a dotted or inline key, or not a
+  number). A failure.
+- The managed section of `~/.codex/AGENTS.md` differing from what `triqual sync` writes. A failure.
+- Codex role agent files in `~/.codex/agents` missing or out of date. A failure.
+- Grok: the hooks file or `~/.grok/rules/triqual.md` missing or differing from what `triqual sync` writes, and a Grok
+  plugin that sync uninstalls still installed. Failures. Grok's Claude compatibility not loading the progress-tracking
+  hooks is a warning.
 
 Right after a fresh Codex setup the bridge hooks are not trusted yet, so `doctor` fails, and so does the last step of
 bootstrap. Approve the two hooks in the next Codex session and run `triqual doctor` again.
@@ -106,6 +122,12 @@ Notes on the Codex steps:
 - The bridge is installed with `codex plugin marketplace add ~/.claude/plugins/marketplaces/triqual`, then
   `codex plugin add methodology-codex@triqual`. When the Claude marketplace clone is missing, the step fails and points
   at `triqual migrate`.
+- The `codex-depth` step raises `[agents] max_depth` in `config.toml` to 2 when it is unset or a number below 2, because
+  the phase orchestrator spawns the task agents one level below itself. It never lowers a value and leaves 2 or more as
+  it is. It records the value it wrote, so `--remove-harness codex` reverts it only while the key still holds that value;
+  a value you changed since is left as you set it, and the step says so. When `[agents]` is set by a dotted or inline key
+  (`agents.max_depth = 3`), or `max_depth` is not a number, the step fails with a message to set it by hand. The same
+  record-and-revert rule covers `project_doc_fallback_filenames` and the `enabled` key of a superseded plugin.
 - Grok's old copy of superpowers is uninstalled only without `keepSuperseded`.
 
 The harness model is in [Codex and Grok](../../README.md#codex-and-grok) in the root README. The bridge plugin is
@@ -195,10 +217,16 @@ Usage: `triqual cost [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--project <text>
 
 The token spend recorded in this machine's Claude Code transcripts, every `*.jsonl` under
 `~/.claude/projects/<project dir>/` (subagent transcripts included), or under `TRIQUAL_TRANSCRIPTS_DIR`. Per model it
-sums input, output, cache-read and cache-write tokens, with the main session transcripts (`controller`) apart from the
-ones under a `subagents` directory. An assistant message counts once per message id and request id. `--since` and
-`--until` keep the UTC days between them, both included; `--project` keeps the project directories whose name contains
-the text. `--json` prints the same numbers, with each model's `usd`.
+sums input, output, cache-read and cache-write tokens in three groups: the main session transcripts (`controller`), the
+phase orchestrators (`orchestrators`: transcripts under a `subagents` directory whose sibling `agent-<id>.meta.json`
+names the agent type `phase-orchestrator`) and every other subagent (`subagents`). An assistant message counts once per
+message id and request id. `--since` and `--until` keep the UTC days between them, both included; `--project` keeps the
+project directories whose name contains the text.
+
+`--json` prints an object with `since`, `until`, `projects` (the project directory names), the three groups, `totalUsd`,
+`unpriced` and `unreadable`. Each group maps a model name to `input`, `output`, `cacheRead`, `cacheWrite`, `messages` and
+`usd` (`null` when the model has no price). A transcript or meta file the command cannot read is counted in `unreadable`,
+and a line on stderr says how many; a subagent whose meta file is missing or unreadable counts as a plain subagent.
 
 The USD is an estimate: list prices per million tokens from `cli/lib/prices.json`, the Anthropic first-party prices
 of the claude-api model reference (cache writes at 1.25 times input for 5 minutes and 2 times for 1 hour). A
@@ -250,7 +278,8 @@ It always exits 0, and a failure prints nothing. An unknown input prints one lin
   plus `using-methodology`) and the progress-tracking part. The merged context is capped at 9,500 characters, because
   Grok clips at 10,000. Each part runs only while its plugin is enabled in Claude.
 - Codex `stop` runs the progress gate and forwards a block as `{"decision":"block","reason":...}`.
-- Grok keeps delivery state per session, so the context goes out once.
+- Grok keeps delivery state per session, so the context goes out once. When fence is installed, the Grok context gets
+  one more line after the methodology part: `fence is active: a denied call is a stop-and-ask, never a retry.`
 - A Codex session start also starts a detached background run. It refreshes the skill links and the agent files, and
   runs `headjack cleanup --older-than 48h` when `~/.local/bin/headjack` exists.
 
@@ -278,13 +307,35 @@ push PLAN_FILE N                                                    push a submi
 N's PR body and never marks a PR ready. It refuses a phase that was not submitted (exit 3), and in local mode it pushes
 nothing. `submit --open` is the only command that marks a PR ready for review.
 
-`executing-plans` keeps four more scripts next to it in `skills/executing-plans/scripts/`: `sdd-workspace` (the plan's
-git-ignored workspace under `.methodology/sdd/`), `task-brief` (one task's text as a brief file), `review-package` (the
-diff a reviewer reads) and `tier-check`, which prints `ok <tier>` or `raise <from> <to>: <reason>: <paths>` for a task's
-range and never lowers a tier.
-
 Exit codes: 0 ok, 2 usage or a malformed plan, 3 a refused precondition (committed tracking mode is one), 5 a gh
 command failed.
+
+`executing-plans` keeps more scripts next to it in `skills/executing-plans/scripts/`: `sdd-workspace` (the plan's
+git-ignored workspace under `.methodology/sdd/`), `task-brief` (one task's text as a brief file), `review-package` (the
+diff a reviewer reads) and `tier-check`, which prints `ok <tier>` or `raise <from> <to>: <reason>: <paths>` for a task's
+range and never lowers a tier. Three more run the task loop. Each runs from the main checkout, is idempotent, prints
+`key: value` lines, and on a failure appends an `Error: <script> T<N> — exit <code> — <cause>` line to the plan's
+workspace ledger (a bad argument list, a run from a linked worktree and a worktree task's wait for an earlier task write
+none). Their exit codes are 0 ok, 2 usage or a bad argument (no such plan file, a malformed plan or a bad
+`--head`), 3 a refused precondition and 1 any other failure.
+
+- `task-open PLAN_FILE N [--worktree]` starts a task: the `start` move on the tracking ledger (when the repo is opted in
+  and the task is `pending`), the brief, and BASE, printed as `brief:`, `report:` and `base:`. With `--worktree` it
+  builds the task in `.claude/worktrees/<plan stem>-t<N>` on the branch `wt/<plan stem>-t<N>`, started at BASE, installs
+  from the worktree's lockfile (`npm ci`, `pnpm install --frozen-lockfile` or `yarn install --frozen-lockfile`) and
+  prints `workdir:`. It refuses (exit 3) a blocked task, a task whose plan has no node `Test:` file path when it is
+  opened with `--worktree`, and a coordinator task while an earlier task of its phase is open.
+- `task-prep PLAN_FILE N [--fix-round] [--head <sha>]` prepares a review: the `review` move (with `--fix-round`,
+  `rework` then `review`), the tier check and its raise, the hunter pick and the review package. It prints `tier:`,
+  `hunters:`, `package:`, `round:` and `full-review:`. `--head` is the commit to review; the default is the tip of the
+  task's worktree branch when there is one, else `HEAD`. It refuses (exit 3) a plain call at a new head once a `Prep:`
+  line exists, and a fix round with no new commit.
+- `task-close PLAN_FILE N [--provider claude|codex] [--head <sha>]` closes a reviewed task: it squashes the task's
+  commits (a worktree task is landed on the phase branch instead, in plan order, and its `Test:` files run), makes the
+  `done` move, writes the complete line, builds the `task-review` record from the saved reviewer outputs with
+  `triqual role-eval record` and writes the review progress entry. `--provider` selects the hunter model (default
+  `claude`). It prints `sha:` and `record:`. It exits 3 on a refusal, among them a worktree task whose earlier tasks have
+  not landed yet (a wait, with no `Error:` line) and a landing that a conflict or a failing test undid.
 
 ## Hooks
 
@@ -310,10 +361,21 @@ stamps.
 
 The 10 skills in `skills/`. Claude Code names them `methodology:<name>`.
 
-Plans run only through subagents. `executing-plans` dispatches a role agent for each task, sizes the task's review by
-its tier (`heavy`, `standard` or `light`, declared by `writing-plans` and raised, never lowered, by `tier-check`) and
-follows TDD on every task. It cooperates with fence when fence is installed and never works around a denial. The
-[root README](../../README.md#skills) has the review matrix.
+Plans run only through subagents. For each plan phase the main session dispatches one `roles:phase-orchestrator`, which
+runs the phase's task loop: it dispatches a role agent for each task, sizes the task's review by its tier (`heavy`,
+`standard` or `light`, declared by `writing-plans` and raised, never lowered, by `tier-check`) and follows TDD on every
+task. The main session reads only the orchestrator's summary of at most 20 lines, then runs the Phase check, the phase
+review (four hunters and one `roles:final-adversarial-reviewer`), `stack.mjs done` and `submit`. After each phase but the
+last it asks the human to `/clear` and say "continue the plan"; a fresh session resumes from the ledger. Independent
+tasks of one phase run at the same time, at most 3 implementers, one in the main checkout and the others in task
+worktrees that land on the phase branch in plan order (parallel runs need store or local tracking mode). When the
+orchestrator cannot be dispatched, or cannot dispatch (for example Codex at depth 1), the main session announces it and
+runs the phase loop itself with the same scripts.
+
+When fence is installed, `executing-plans` detects it once (`command -v fence`, then `fence version` exits 0) and writes a
+`Fence: <version>` or `Fence: none` ledger line. Installing a skill is then the human's step, never an implementer's, and
+a call fence denies is a stop to report, never one to retry another way; that last rule holds whatever the ledger says.
+The [root README](../../README.md#skills) has the review matrix.
 
 | Skill | Purpose |
 |---|---|
@@ -351,6 +413,7 @@ Files this plugin reads or writes. `~` is the home directory.
 | `~/.local/state/triqual/hook.log`, `hook.log.1`, `last-run-<harness>` | The launcher's log and stamps. |
 | `${XDG_DATA_HOME:-~/.local/share}/triqual/role-eval/comparisons.jsonl` | The role-eval store (and its `.lock`). |
 | `<repo root>/.methodology/stack/<plan file stem>.json` | The state file of `stack.mjs`. `.methodology/` holds a `.gitignore` with `*`. |
+| `<repo root>/.claude/worktrees/<plan stem>-t<N>` | The worktree of a task built in parallel (`task-open --worktree`), on the branch `wt/<plan stem>-t<N>`. `task-open` adds `.claude/worktrees/` to `.git/info/exclude` once; `task-close` removes the worktree and its branch when the task lands, and phase close removes any left behind. |
 | `<repo root>/.methodology/sdd/<plan file stem>/` | The workspace of one plan run: its ledger, briefs, reports and review packages. The stem is the plan file name without `.md`; a counter is added when two plans share a stem. |
 
 A machine that still has the previous name reads the directories under that name until `migrate` moves them.
@@ -361,6 +424,7 @@ Environment variables:
 |---|---|---|
 | `ROLE_EVAL_FILE` | `role-eval` | Names the store file. Its directory is not treated as the default directory. |
 | `TRIQUAL_TRANSCRIPTS_DIR` | `cost` | Replaces `~/.claude/projects` as the root of the transcripts it reads. |
+| `TRIQUAL_LANDING_TEST_TIMEOUT_MS` | `task-close` | How long the landing's `node --test` run of a worktree task may take before it counts as a failure, in milliseconds. Default 600000. A value that is not a positive whole number is exit 2. |
 | `XDG_DATA_HOME` | `role-eval` | Replaces `~/.local/share` as the base of the store. |
 | `TRIQUAL_REGISTRY_DIR` | `migrate` | An absolute path where the repo registry `repos.json` is read from. The old `CM_REGISTRY_DIR` still works for now. |
 | `CLAUDE_PLUGIN_ROOT` | `/methodology:setup`, hooks | The plugin's directory, set by Claude Code. |

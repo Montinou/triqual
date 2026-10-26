@@ -201,7 +201,7 @@ the plan's bare file name with or without `.md`, a path to it, or its stored pat
   branch) and every task as `pending`.
 - Reconciling appends tasks that are new in the plan, reports tasks no longer in the plan (kept) and tasks whose
   title changed (left alone), and gives pending tasks the plan's dependencies, skills and role. Adding a task
-  reactivates a closed plan. Run it again after editing a plan.
+  reactivates a closed plan, as do `reopen` and `restore`. Run it again after editing a plan.
 - `init` refuses a dependency on a task that neither the plan nor the existing ledger has.
 - `--adopt` first copies a plan drafted anywhere into the plans directory under its own name. It refuses a plan of
   that name that already exists, and removes its copy if a later step fails. Without `--adopt` the plan must already
@@ -235,9 +235,9 @@ Each move prints one line, `T<N>: <from> -> <to>`.
 |---|---|
 | `status [--json]` | One line per active plan, newest name first: `<name>: <done>/<total> done · in progress: <ids> · next: <id>`, each id followed by its effective tier in brackets when it has one. `--json` gives `name`, `ledgerPath`, `done`, `total`, `inProgress`, `next` and `tiers`, a map keyed by task id with the `tier` and `effectiveTier` of the in-progress tasks and the next one. Dropped tasks are not counted in `total`. |
 | `next [--plan ...] [--json]` | The first pending task whose dependencies are all done or dropped, as `T<N> <title> [<role>]`, or `none`. `--json` prints `{ id, title, role, tier, effectiveTier }`, or `null` when there is none. |
-| `check [--staged]` | Compares each ledger with its plan and the `status.md` Active plan section (task titles, roles, dependencies, commits that still resolve, the rendered section, the ledger schema). Prints one line per drift. `--staged` reads the index instead of the working tree in committed mode, and is accepted and ignored in the other modes. It takes no `--plan`. In store mode it compares each plan whose document exists, and there is no section to drift. |
+| `check [--staged]` | Compares each ledger with its plan and the `status.md` Active plan section: tasks that are in the plan but not the ledger, or the reverse (a dropped task missing from the plan is not drift), task titles, a role that is not one of the task roles (for tasks not yet done or dropped), commits that still resolve, the rendered section and the ledger schema. It never reads dependencies and never compares a role with the plan: `init` copies those. Prints one line per drift. `--staged` reads the index instead of the working tree in committed mode, and is accepted and ignored in the other modes. It takes no `--plan`. In store mode it compares each plan whose document exists, and there is no section to drift. |
 | `render` | Rewrites the Active plan section of `status.md`, between `<!-- tasks:start -->` and `<!-- tasks:end -->`. In store mode there is no `status.md`: it prints the section instead. |
-| `paths --json` | The tracking paths. Works outside an opted-in repo: `"optedIn": false`, exit 0. |
+| `paths --json` | The tracking paths, with `"optedIn": true` in every mode. Works outside an opted-in repo: `"optedIn": false`, exit 0. |
 | `export --json [--all]` | The tracking snapshot of this repo (schema `tracking-snapshot@1`, under the previous name), with `tier` and `effectiveTier` for every task. `--all` prints an array with the snapshot of every registered repo that still resolves, from any directory, and skips a failing repo with a warning. |
 | `line` | One status-line segment. See below. |
 
@@ -428,8 +428,9 @@ triqual tracking restore <snapshot> [--yes]
 ```
 
 Replaces every row of the database with the snapshot's. This covers every repo in the database, not just the current
-one. A snapshot is a `backups/tracking-<date>.db` file or any SQLite copy of the database. The snapshot must have the
-current schema version and pass an integrity check, or the command exits 2 and keeps the database.
+one. A snapshot is a `backups/tracking-<date>.db` file or any SQLite copy of the database. The snapshot must have
+schema version 1 up to the current one (a newer one is refused) and pass an integrity check, or the command exits 2 and keeps
+the database. A snapshot of an older schema is migrated in a private copy first; the snapshot file itself is never changed.
 
 - On a terminal it asks first and wants `yes`. Without a terminal it needs `--yes`: it exits 2 without either, and
   exits 1 if the prompt is answered no.
@@ -545,7 +546,7 @@ JSON `{ "decision": "block", "reason": ... }` on stdout.
 | Mode | Hook | Rule |
 |---|---|---|
 | committed | `pre-commit` runs `progress-gate.sh` | A commit with changes other than `progress.md`, `status.md` and `docs/plans/*.tasks.json` is rejected when either `progress.md` or `status.md` is not staged. The message names the missing one. A staged ledger must also pass `triqual tasks check --staged`; the check is skipped with a note when neither `triqual` nor `cm` is on `PATH`. |
-| local | `pre-commit` and `post-commit` run `pre-commit.mjs` | A commit with staged changes needs `progress.md` to have changed since the last gated commit (`state.json` holds the hash). The `post-commit` promotes the new hash once the commit lands, so an aborted commit consumes no entry. No gate checks `status.md`. |
+| local | `pre-commit` and `post-commit` run `pre-commit.mjs` | A commit with staged changes needs `progress.md` to have changed since the last gated commit (`state.json` holds the hash). The `post-commit` promotes the new hash once the commit lands, so an aborted commit consumes no entry. No gate checks `status.md`. With no hash recorded yet, only a `progress.md` holding at least one entry counts as changed. |
 | store | `progress-store-pre-commit.sh` and `progress-store-post-commit.sh` | See below. |
 
 Merges, cherry-picks, reverts and rebases pass every gate (the markers `MERGE_HEAD`, `CHERRY_PICK_HEAD`,
@@ -645,7 +646,11 @@ The date an entry shows is the draft's heading date. The entry is ordered by the
   store mode).
 - **Store mode needs Node 22.13 or newer** for `node:sqlite`. Committed and local repos never load it.
 - **The store schema is V2 since 0.5.0.** The two tier columns are added by an appended migration the first time a
-  0.5.0 command opens the store; existing tasks read as untiered. An older progress-tracking refuses the migrated store
+  0.5.0 command that writes opens the store (`tracking add`, a `tasks` transition); existing tasks read as untiered.
+  Read-only opens do not migrate and refuse an older database with `has schema N, older than this triqual's ...`: the
+  Stop hook, the session-start notice, the store `pre-commit`, `tasks status|next|check|render|export|line` and
+  `tracking status|log`. The fix is any write, for example `triqual tracking add` (`--no-commit` if no commit follows);
+  it upgrades the database in place. Do not restore a snapshot for this, even if the hook text suggests it. An older progress-tracking refuses the migrated store
   and its `pre-commit` gate would block commits in store-mode repos, so do not downgrade below 0.5.0.
 - **No tier is ever lowered.** `retier` refuses it, reconciling keeps the higher tier, and importing a snapshot keeps
   the higher effective tier.

@@ -202,6 +202,7 @@ The lines under the heading follow the task ledger's plan format:
 - `**Depends on:**` lists the tasks that must be done first, as `T1, T3`; omit the line when a task has none.
 - `**Skills:**` lists the vault skills the task needs. When headjack is installed, run `triqual suggest "<the task's text>" --json` per task and keep the fitting `suggestions[].slug` values. On a non-zero exit from `triqual suggest` (exit 3: headjack is not installed), on empty output, or when `triqual` is not on `PATH` (`command -v triqual` fails, or exit 127), omit the line silently.
 - `**Role:**` names the task's role (see Task Roles). A `roles:complex-implementer` task puts its reason, the live-state migration or the change across systems that one brief cannot describe, on the plain-text line directly under it. Reason lines never start with `**`.
+- `**Files:**` also decides which tasks run side by side (see methodology:executing-plans, Parallel tasks): list every file the task creates, modifies or tests, because two tasks of a phase that share a path run one after the other, and a path left off is caught only at landing. A task runs in parallel only when it has a `Test:` path that is one exact file ending `.mjs`, `.js` or `.cjs` (no glob, inside the repository); with any other `Test:` path, or none, it runs sequentially.
 
 Test-first applies to every task that changes behavior, at any tier. A task with no behavior change (docs, config values, a rollout step) replaces the test steps with a verification step: the command to run and the output that means it passed.
 

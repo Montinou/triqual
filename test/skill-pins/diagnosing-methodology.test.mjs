@@ -56,6 +56,22 @@ for (const prompt of ['prompts/plan-adherence.md', 'prompts/skill-timeline.md'])
   });
 }
 
+test('the ledger is the plan\'s shared one, deleted by the main session, and the newer ledger lines are named', () => {
+  const skill = flat('SKILL.md');
+  assert.ok(skill.includes('the main session deletes the workspace when the plan finishes'), 'SKILL.md does not say who deletes the workspace');
+  for (const needle of ['`Orchestrator:`', '`Prep:`', '`Landed:`', '`Phase review:`', '`Round 1: P<n>`']) {
+    assert.ok(skill.includes(needle), `SKILL.md does not name the ledger line ${needle}`);
+  }
+  for (const prompt of ['prompts/plan-adherence.md', 'prompts/skill-timeline.md']) {
+    const text = flat(prompt);
+    assert.doesNotMatch(text, /orchestrator's ledger|orchestrator deletes/i, `${prompt} still calls the ledger the orchestrator's or has it delete the workspace`);
+    assert.ok(text.includes("the plan's shared ledger"), `${prompt} does not call the ledger the plan's shared ledger`);
+    for (const needle of ['`Orchestrator:', '`Prep:', '`Landed:', '`Phase review:', '`Round 1: P<n>']) {
+      assert.ok(text.includes(needle), `${prompt} does not name the ledger line ${needle}`);
+    }
+  }
+});
+
 test('plan-adherence reports a raise without a verdict on it', () => {
   assert.match(flat('prompts/plan-adherence.md'), /Do not say whether a raise was right or wrong; quote the lines\./);
 });

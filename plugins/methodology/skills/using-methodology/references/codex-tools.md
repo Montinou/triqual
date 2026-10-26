@@ -69,10 +69,17 @@ Skills name roles and skills in their Claude Code form. In Codex:
   reasoning effort. Hunters, briefs and the safety gate use
   `gpt-6-luna` / `medium`; implementation and review fixes use
   `gpt-6.1-sol` / `low`; spec review and the
-  complex implementer use `gpt-6.1-sol` / `high`; the final adversarial
+  complex implementer use `gpt-6.1-sol` / `high`; the phase orchestrator
+  uses `gpt-6.1-sol` / `medium`; the final adversarial
   review uses `gpt-6-astra` / `medium`. These settings are independent of Claude's
   role models and efforts. The spawn sets neither `model` nor
   `reasoning_effort`: the custom agent file selects both.
+- **Nested dispatch:** the phase orchestrator spawns the task roles one level
+  below itself, so Codex needs `[agents] max_depth` of 2 or more in
+  `~/.codex/config.toml`. `triqual sync` raises it (never lowers it) and
+  `triqual doctor` fails when it is unset or below 2. At depth 1 the
+  orchestrator returns `BLOCKED: nested dispatch unavailable` and the main
+  session runs the phase itself.
 - **Restrictions:** the role's instructions end with "Tools you must not
   use: …" in Codex tool names (`spawn_agent` for Agent; `apply_patch`
   when both Edit and Write are out, "apply_patch on existing files" for

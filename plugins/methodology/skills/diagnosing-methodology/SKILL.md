@@ -40,9 +40,11 @@ Create a todo per step. Steps 5–7 run only on their stated condition.
    `~/.claude/plugins/cache/triqual/<plugin>/<version>/`
    (`methodology`, `roles`, `progress-tracking`, `workflow-gate`), and in
    the session's repo the SDD workspace `.methodology/sdd/<plan>/`
-   (`sdd-ledger.md`, whose `Tier:` and `Tier raised:` lines the analysts read;
-   the orchestrator deletes the workspace when a plan finishes, and then those
-   lines survive only in the transcript's tool calls that wrote them) and the
+   (`sdd-ledger.md`, the plan's shared ledger, whose `Tier:`, `Tier raised:`
+   and phase and review lines (`Orchestrator:`, `Prep:`, `Landed:`,
+   `Phase review:`, `Round 1: P<n>`) the analysts read; the main session
+   deletes the workspace when the plan finishes, and then those lines survive
+   only in the transcript's tool calls that wrote them) and the
    tracking files that `triqual tasks paths --json` names. In store mode (`"mode": "store"`) there are no tracking files to
    read: read the entries with `triqual tracking log --json` and the ledger
    state with `triqual tasks export --json` (details: `store-mode.md` under
