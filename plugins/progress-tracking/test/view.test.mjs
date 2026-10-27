@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  STATUS, pickRepo, orderPlans, pickPlan, planTitle, currentOf, headline, railCells, legend, chips, taskRows, entryView, dataKey,
+  STATUS, pickRepo, orderPlans, pickPlan, planTitle, currentOf, headline, railCells, legend, chips, taskRows, entryView, dataKey, nowItems, waitingCount, activity,
 } from '../ui/view.js';
 
 const task = (id, status, extra = {}) => ({ id, title: `Title ${id}`, status, reason: null, tier: null, effectiveTier: null, ...extra });
@@ -148,4 +148,54 @@ test('dataKey ignores generatedAt and changes with the data', () => {
   const snap = (generatedAt, status) => [{ generatedAt, repo: { root: '/a' }, plans: [plan([task('T1', status)])] }];
   assert.equal(dataKey(snap('2026-10-26T10:00:00Z', 'done')), dataKey(snap('2026-10-26T10:00:05Z', 'done')));
   assert.notEqual(dataKey(snap('2026-10-26T10:00:00Z', 'done')), dataKey(snap('2026-10-26T10:00:00Z', 'pending')));
+});
+
+
+const snap = (root, tasks = [], sessions = [], extraPlans = []) => ({ repo: { root, name: root.slice(1) }, plans: [plan(tasks), ...extraPlans], sessions });
+
+test('chips has a running chip and taskRows running returns in-progress tasks', () => {
+  const p = plan([task('T1', 'in_progress'), task('T2', 'pending'), task('T3', 'in_progress')]);
+  assert.deepEqual(chips(p)[0], { key: 'running', label: 'Running', count: 2 });
+  assert.deepEqual(taskRows(p, 'running').map(t => t.id), ['T1', 'T3']);
+  assert.ok(!chips(plan([])).some(c => c.key === 'running'));
+});
+
+test('nowItems lists in-progress tasks across repos newest first', () => {
+  const snaps = [snap('/a', [task('T1', 'in_progress', { since: 10 }), task('T2', 'blocked')], [], [plan([task('T9', 'in_progress', { since: 99 })], { state: 'done' })]), snap('/b', [task('T3', 'in_progress', { since: 20 })])];
+  assert.deepEqual(nowItems(snaps, 100), [
+    { repoRoot: '/b', repoName: 'b', planName: '2026-10-19-p', taskId: 'T3', title: 'Title T3', since: 20, elapsedMs: 80, agents: 0 },
+    { repoRoot: '/a', repoName: 'a', planName: '2026-10-19-p', taskId: 'T1', title: 'Title T1', since: 10, elapsedMs: 90, agents: 0 },
+  ]);
+  assert.equal(waitingCount(snaps), 1);
+});
+
+test('nowItems is empty when nothing runs', () => {
+  assert.deepEqual(nowItems([snap('/a', [task('T1', 'pending')])], 100), []);
+  assert.deepEqual(nowItems([], 100), []);
+  assert.equal(waitingCount([]), 0);
+});
+
+test('activity groups running, working and idle', () => {
+  const now = 4_000_000;
+  const idle = snap('/idle');
+  const older = snap('/older', [task('T1', 'in_progress', { since: 10 })]);
+  const newer = snap('/newer', [task('T2', 'in_progress', { since: 20 })]);
+  const running = snap('/running', [], [{ lastAt: now - 1_800_000, endedAt: null }]);
+  const recent = snap('/recent', [], [{ lastAt: now, endedAt: null }]);
+  const stale = snap('/stale', [], [{ lastAt: now - 1_800_001, endedAt: null }]);
+  const done = snap('/done', [], [{ lastAt: now, endedAt: now }]);
+  const input = [idle, older, running, stale, newer, done, recent];
+  assert.deepEqual(activity(input, now), { running: [recent, running], working: [newer, older], idle: [done, stale, idle] });
+  assert.deepEqual(input.map(s => s.repo.root), ['/idle', '/older', '/running', '/stale', '/newer', '/done', '/recent']);
+});
+
+test('pickRepo opens the most active repo only on first load', () => {
+  const a = snap('/a');
+  const b = snap('/b', [task('T1', 'in_progress', { since: 10 })]);
+  const c = snap('/c', [], [{ lastAt: 100, endedAt: null }]);
+  assert.equal(pickRepo([a, b, c], null, true, 100), c);
+  assert.equal(pickRepo([a, b], null, true, 100), b);
+  assert.equal(pickRepo([a, b, c], '/a', true, 100), a);
+  assert.equal(pickRepo([a, b, c], null, false, 100), a);
+  assert.equal(pickRepo([a, b, c], '/gone', true, 100), a);
 });

@@ -126,7 +126,7 @@ test('GET /api/snapshots returns the registered repos\' snapshots', () => withFi
     assert.equal(s.schema, `${BRAND.legacy.marketplace}/tracking-snapshot@1`);
     assert.deepEqual(s.repo, { name: 'alpha', root: repo, mode: 'committed', branch: 'main', shareable: false });
     assert.deepEqual(s.plans.map((p) => [p.name, p.done, p.total]), [['2026-09-27-p', 1, 2]]);
-    assert.deepEqual(s.plans[0].tasks[1], { id: 'T2', title: 'Beta', status: 'blocked', reason: 'waiting on review', tier: null, effectiveTier: null, commits: [], skills: [] });
+    assert.deepEqual(s.plans[0].tasks[1], { id: 'T2', title: 'Beta', status: 'blocked', since: null, reason: 'waiting on review', tier: null, effectiveTier: null, commits: [], skills: [] });
     assert.equal(s.status.text, STATUS);
     assert.deepEqual(s.progress.entries.map((e) => e.title), ['Fixture task']);
     // A query string does not change the route.

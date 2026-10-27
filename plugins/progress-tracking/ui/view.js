@@ -20,8 +20,43 @@ const GLYPH_MAX_TASKS = 20;
 const infoOf = (status) => STATUS[status] ?? { glyph: '?', label: status };
 const countOf = (plan, status) => plan.tasks.filter((t) => t.status === status).length;
 
-export function pickRepo(snaps, rememberedRoot) {
-  return snaps.find((s) => s.repo.root === rememberedRoot) ?? snaps[0] ?? null;
+export function pickRepo(snaps, rememberedRoot, firstLoad, nowMs) {
+  const remembered = snaps.find((s) => s.repo.root === rememberedRoot);
+  if (remembered) return remembered;
+  if (firstLoad && !rememberedRoot) {
+    const groups = activity(snaps, nowMs);
+    return groups.running[0] ?? groups.working[0] ?? snaps[0] ?? null;
+  }
+  return snaps[0] ?? null;
+}
+
+export function nowItems(snaps, nowMs) {
+  return snaps.flatMap((s) => (s.plans ?? [])
+    .filter((p) => p.state === 'active')
+    .flatMap((p) => p.tasks.filter((t) => t.status === 'in_progress').map((t) => ({
+      repoRoot: s.repo.root, repoName: s.repo.name, planName: p.name,
+      taskId: t.id, title: t.title, since: t.since ?? null,
+      elapsedMs: t.since == null ? null : nowMs - t.since, agents: 0,
+    }))))
+    .sort((a, b) => (b.since ?? 0) - (a.since ?? 0));
+}
+
+export function waitingCount(snaps) {
+  return snaps.reduce((sum, s) => sum + (s.plans ?? []).reduce((n, p) => n + countOf(p, 'blocked'), 0), 0);
+}
+
+export function activity(snaps, nowMs) {
+  const groups = { running: [], working: [], idle: [] };
+  const newest = (s) => Math.max(0,
+    ...(s.plans ?? []).flatMap((p) => p.tasks.map((t) => t.since ?? 0)),
+    ...(s.sessions ?? []).map((session) => session.lastAt ?? 0));
+  for (const s of snaps) {
+    const running = (s.sessions ?? []).some((session) => session.endedAt == null && nowMs - session.lastAt <= 30 * 60 * 1000);
+    const working = nowItems([s], nowMs).length > 0;
+    groups[running ? 'running' : working ? 'working' : 'idle'].push(s);
+  }
+  for (const group of Object.values(groups)) group.sort((a, b) => newest(b) - newest(a));
+  return groups;
 }
 
 // Active plans first, then newest name first.
@@ -87,6 +122,7 @@ export function legend(plan) {
 export function chips(plan) {
   const open = plan.tasks.filter((t) => t.status !== 'done' && t.status !== 'dropped').length;
   return [
+    ...(countOf(plan, 'in_progress') ? [{ key: 'running', label: 'Running', count: countOf(plan, 'in_progress') }] : []),
     { key: 'open', label: 'Open', count: open },
     { key: 'all', label: 'All', count: plan.tasks.length },
     ...CHIP_ORDER
@@ -97,7 +133,9 @@ export function chips(plan) {
 
 export function taskRows(plan, filter) {
   let tasks = plan.tasks;
-  if (filter === 'open') {
+  if (filter === 'running') {
+    tasks = tasks.filter((t) => t.status === 'in_progress');
+  } else if (filter === 'open') {
     // Array.prototype.sort is stable, so file order holds within a status.
     tasks = tasks.filter((t) => OPEN_ORDER.includes(t.status)).sort((a, b) => OPEN_ORDER.indexOf(a.status) - OPEN_ORDER.indexOf(b.status));
   } else if (filter !== 'all') {

@@ -82,6 +82,7 @@ export function planView(name, ledger) {
       id: t.id,
       title: t.title,
       status: t.status,
+      since: Number.isFinite(Date.parse(t.history?.at(-1)?.at)) ? Date.parse(t.history.at(-1).at) : null,
       reason: t.reason ?? null,
       tier: t.tier ?? null,
       effectiveTier: t.effectiveTier ?? null,
