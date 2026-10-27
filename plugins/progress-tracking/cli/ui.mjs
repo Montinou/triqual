@@ -18,6 +18,8 @@ import { parseArgs } from 'node:util';
 import { listResolved } from '../lib/registry.mjs';
 import { branchOf, buildSnapshot } from '../lib/snapshot.mjs';
 import { loadSqlite, storePaths } from '../lib/store.mjs';
+import { readSessions } from '../lib/sessions.mjs';
+import { readNotes } from '../lib/claude-mem-notes.mjs';
 
 export const DEFAULT_PORT = 47800;
 const LOOPBACK = '127.0.0.1';
@@ -63,10 +65,25 @@ export function createHub({ home, heartbeatMs = 60000, throttleMs = 1000, watchD
   const snapshots = async () => {
     const now = new Date();
     const out = [];
+    let sessions = [], db;
+    try {
+      if (dataDir) {
+        await loadSqlite();
+        const { DatabaseSync } = await import('node:sqlite');
+        db = new DatabaseSync(join(dataDir, 'sessions.db'), { readOnly: true });
+        sessions = readSessions(db, { since: now.getTime() - 2 * 60 * 60 * 1000, now: now.getTime() });
+      }
+    } catch { /* optional activity never prevents tracking snapshots */ }
+    finally { db?.close(); }
+    const notes = readNotes([...new Set(sessions.map(row => row.sessionId))], { home });
     for (const { tracking, shareable, branch } of repos) {
       try {
         if (tracking.mode === 'store') await loadSqlite();
-        out.push(await build(tracking, { now, shareable, home, branch }));
+        out.push({ ...await build(tracking, { now, shareable, home, branch }),
+          sessions: sessions.filter(row => row.repoRoot === tracking.repoRoot).map(row => ({
+            ...row, notes: notes.get(`${row.sessionId}\u0000${row.agentId}`) || [],
+          })),
+        });
       } catch { /* one unreadable repo never fails the whole list */ }
     }
     return out;

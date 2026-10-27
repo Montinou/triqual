@@ -12,6 +12,9 @@ import * as uiServer from '../cli/ui.mjs';
 import { BRAND } from '../lib/brand.mjs';
 import { registerRepo } from '../lib/registry.mjs';
 import { createLedger } from '../lib/ledger.mjs';
+import { openSessions, record } from '../lib/sessions.mjs';
+import { storePaths } from '../lib/store.mjs';
+const { DatabaseSync } = await import('node:sqlite');
 
 const PLUGIN = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(PLUGIN, 'cli', 'ui.mjs');
@@ -1304,3 +1307,54 @@ test('the default filter is running', async () => {
   assert.equal(byKey(app.els.app, 'chip:running').attrs['aria-pressed'], 'true');
   assert.deepEqual(app.rows().map((r) => r.attrs['data-id']), ['T2']);
 });
+
+
+test('a pushed repo lists fixture sessions with events and notes', () => withFixture(async ({ home, repo }) => {
+  const dataDir = storePaths({ home, env: process.env }).dataDir;
+  const db = openSessions(dataDir);
+  const now = Date.now();
+  const fixtures = readFileSync(join(PLUGIN, 'test', 'fixtures', 'hook-payloads.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  for (const [index, payload] of fixtures.entries()) record(db, payload, now + index, repo);
+  record(db, { session_id: 'other-repo', hook_event_name: 'SessionStart' }, now, repo + '-other');
+  record(db, { session_id: 'old-session', hook_event_name: 'SessionStart' }, now - 3 * 60 * 60 * 1000, repo);
+  db.close();
+  mkdirSync(join(home, '.claude-mem'));
+  const notes = new DatabaseSync(join(home, '.claude-mem', 'claude-mem.db'));
+  notes.exec(`CREATE TABLE sdk_sessions(memory_session_id TEXT, content_session_id TEXT);
+    CREATE TABLE observations(memory_session_id TEXT, agent_id TEXT, created_at_epoch INTEGER, type TEXT, title TEXT);
+    INSERT INTO sdk_sessions VALUES ('memory-fixture', 'fixture-session');
+    INSERT INTO observations VALUES ('memory-fixture', 'worker-1', ${now}, 'finding', 'Useful note');`);
+  notes.close();
+  await withLive(home, {}, async ({ messages }) => {
+    await until(() => messages.length);
+    const sessions = messages[0].data[0].sessions;
+    assert.equal(sessions.length, 4);
+    const worker = sessions.find(s => s.agentId === 'worker-1');
+    assert.ok(worker.events.length > 0);
+    assert.deepEqual(worker.notes, [{ at: now, type: 'finding', title: 'Useful note' }]);
+    assert.deepEqual(sessions.find(s => s.agentId === '').notes, []);
+  });
+}));
+
+test('sessions is [] when sessions.db is absent or corrupt', () => withFixture(async ({ home }) => {
+  const file = join(storePaths({ home, env: process.env }).dataDir, 'sessions.db');
+  for (const corrupt of [false, true]) {
+    if (corrupt) { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, 'not a database'); }
+    await withServer(home, async ({ port }) => {
+      assert.deepEqual(JSON.parse((await get(port, '/api/snapshots')).body)[0].sessions, []);
+    });
+  }
+}));
+
+test('triqual tasks export --json output is identical with sessions recorded', () => withFixture(async ({ home, repo }) => {
+  const run = () => JSON.parse(execFileSync(process.execPath, [join(PLUGIN, 'cli', 'tasks.mjs'), 'export', '--json'], { cwd: repo, env: cleanEnv(home), encoding: 'utf8' }));
+  const before = run();
+  const db = openSessions(storePaths({ home, env: process.env }).dataDir);
+  record(db, { session_id: 'fixture-session', hook_event_name: 'SessionStart' }, Date.now(), repo);
+  db.close();
+  const after = run();
+  // generatedAt is the export invocation time, independent of session recording.
+  after.generatedAt = before.generatedAt;
+  assert.deepEqual(after, before);
+  assert.equal('sessions' in after, false);
+}));
