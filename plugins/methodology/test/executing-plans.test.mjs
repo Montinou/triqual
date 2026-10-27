@@ -593,36 +593,35 @@ test('phase fixes: two rounds, own commits, never reopen a task, then a sixth st
   assert.ok(body.includes('sixth stop'), 'the phase review does not name the sixth stop');
 });
 
-// ---- the controller break per phase and lean reading (design: Controller context) ----
+// ---- no planned pause between phases, and lean reading (design: Controller context) ----
 
-const BREAK_LINE = 'Phase N done. Run /clear, then say "continue the plan" (or say "continue" to keep this session).';
-
-test('the continuous-execution rule names the phase break as its one planned pause', () => {
+test('the continuous-execution rule has no planned pause: phases run back to back', () => {
   const lines = skill().split('\n');
   const continuous = flat(lines.find((l) => l.startsWith('**Continuous execution:**')) ?? '');
   assert.ok(continuous, 'no Continuous execution paragraph');
   assert.ok(continuous.includes('The only reasons to stop are the seven named below'), 'the stop count changed');
-  assert.ok(continuous.includes('the one planned pause') && continuous.includes('the phase break'), ':16 does not name the phase break as the one planned pause');
+  assert.ok(continuous.includes('There is no planned pause between phases'), ':16 does not say there is no pause between phases');
+  assert.doesNotMatch(continuous, /planned pause \(the phase break/, ':16 still names a phase break');
   const stops = flat(lines.find((l) => l.startsWith('Seven things stop you')) ?? '');
   assert.ok(stops, 'no stops paragraph');
-  assert.ok(stops.includes('The phase break is the one planned pause, alongside these stops'), ':20 does not name the phase break as the one planned pause beside the stops');
-  assert.doesNotMatch(stops, /Eight things/, 'the break became an eighth stop');
+  assert.ok(stops.includes('Each is a decision only your human partner can make'), 'the stops are not framed as human-only decisions');
+  assert.ok(stops.includes('agreed in advance'), 'a stop agreed in advance is not honoured');
+  assert.doesNotMatch(stops, /phase break|Eight things/, 'the stops paragraph still names a break');
 });
 
-test('the controller stops after each phase but the last with the break line', () => {
+test('after a phase is submitted the next phase starts at once, with no break line', () => {
+  const text = skill();
+  assert.doesNotMatch(text, /Run \/clear, then say "continue the plan"/, 'the break line is still in the skill');
+  assert.doesNotMatch(text, /\*\*The break\.\*\*/, 'step 8 still has a The break bullet');
+  assert.doesNotMatch(text, /the phase break/, 'the skill still names the phase break');
   const body = phaseReview();
-  const at = body.indexOf('**The break.**');
-  assert.ok(at >= 0, 'step 8 has no The break bullet');
-  const text = body.slice(at);
-  assert.ok(text.includes(`\`${BREAK_LINE}\``), 'the break line is not verbatim');
+  const at = body.indexOf('**No break.**');
+  assert.ok(at >= 0, 'step 8 has no No break bullet');
   const submit = body.indexOf('`node scripts/stack.mjs submit PLAN_FILE N`');
-  assert.ok(submit >= 0 && submit < at, 'the break does not come after stack.mjs submit');
-  assert.ok(text.includes('After `submit` of every phase except the last'), 'the break is not for every phase but the last');
-  assert.ok(text.includes('no break after the last phase') || text.includes('There is no break after the last phase'), 'the text does not say no break after the last phase');
-  assert.ok(text.includes('the seams review, `--open` and Finish follow'), 'the text does not say what follows the last phase');
-  assert.ok(text.includes('none in a single-phase plan'), 'the text does not say no break in a single-phase plan');
-  assert.ok(text.includes('as after a compaction'), 'the text does not say a fresh session resumes as after a compaction');
-  assert.ok(text.includes('No setting'), 'the break is configurable');
+  assert.ok(submit >= 0 && submit < at, 'the No break bullet does not come after stack.mjs submit');
+  const rule = body.slice(at);
+  assert.ok(rule.includes('the next phase starts at once'), 'the next phase does not start at once');
+  assert.ok(rule.includes('as after a compaction'), 'the resume point after a compaction is not named');
 });
 
 test('the controller reads the plan, the spec Units and the current slice, and the spec sections a ruling depends on', () => {
@@ -2236,7 +2235,7 @@ test('the 1.4.0 CHANGELOG entry and the orchestrator prompt carry the parallel r
   for (const line of ['Parallel tasks', 'At most 3 implementers', '`task-open --worktree`', 'plan order', 'landing conflict', 'TRIQUAL_LANDING_TEST_TIMEOUT_MS']) {
     assert.ok(entry.includes(line), `the 1.4.0 CHANGELOG entry lacks: ${line}`);
   }
-  assert.equal(JSON.parse(readFileSync(join(PLUGIN, '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.4.1');
+  assert.equal(JSON.parse(readFileSync(join(PLUGIN, '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.4.2');
   assert.ok(PROMPT().includes('## Parallel Tasks'), 'the orchestrator prompt has no Parallel Tasks section');
 });
 

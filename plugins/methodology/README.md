@@ -365,8 +365,8 @@ Plans run only through subagents. For each plan phase the main session dispatche
 runs the phase's task loop: it dispatches a role agent for each task, sizes the task's review by its tier (`heavy`,
 `standard` or `light`, declared by `writing-plans` and raised, never lowered, by `tier-check`) and follows TDD on every
 task. The main session reads only the orchestrator's summary of at most 20 lines, then runs the Phase check, the phase
-review (four hunters and one `roles:final-adversarial-reviewer`), `stack.mjs done` and `submit`. After each phase but the
-last it asks the human to `/clear` and say "continue the plan"; a fresh session resumes from the ledger. Independent
+review (four hunters and one `roles:final-adversarial-reviewer`), `stack.mjs done` and `submit`. The next phase starts at
+once, with no pause; a compacted or new session resumes from the ledger. Independent
 tasks of one phase run at the same time, at most 3 implementers, one in the main checkout and the others in task
 worktrees that land on the phase branch in plan order (parallel runs need store or local tracking mode). When the
 orchestrator cannot be dispatched, or cannot dispatch (for example Codex at depth 1), the main session announces it and

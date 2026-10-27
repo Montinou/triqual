@@ -3,6 +3,16 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## methodology 1.4.2
+
+### Changed
+
+- **No pause between phases.** `executing-plans` no longer ends its turn after each phase's `submit` asking for
+  `/clear` and "continue the plan": the next phase starts at once in the same session, and compaction (with the
+  ledger and `stack.mjs status` as the resume point) handles context. The seven stops are framed as decisions only the
+  human can make; anything a ruling can settle is not a stop, and the only other stop is one the human agreed to in
+  advance.
+
 ## progress-tracking 0.6.0
 
 ### Changed
