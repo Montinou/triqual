@@ -657,18 +657,18 @@ test('renders the default plan of the first repo', async () => {
   assert.match(textOf(tabs[0]), /^alpha-work1\/4$/);
 });
 
-test('repo list shows the mode and branch with selectable buttons', async () => {
+test('the header pill names the open repo with its mode and branch; two repos get a board whose rows switch repos', async () => {
   const one = await mountApp({ snaps: [snap('alpha', ALPHA_PLANS(), { mode: 'store', branch: 'main' })] });
   const pill = byClass(one.els['repo-slot'], 'repo-pill');
   assert.equal(pill.length, 1);
-  assert.equal(pill[0].tag, 'button');
   assert.match(textOf(pill[0]), /alpha/);
   assert.match(textOf(pill[0]), /store/);
   assert.match(textOf(pill[0]), /main/);
-  assert.equal(flatten(one.els['repo-slot']).filter((n) => n.tag === 'select').length, 0);
+  assert.equal(byClass(one.els.app, 'board').length, 0, 'one repo goes straight to its plan');
   const two = await mountApp({ snaps: TWO_REPOS() });
-  assert.deepEqual(byClass(two.els['repo-slot'], 'repo-item').map((n) => n.attrs['data-key']), ['repo:/r/alpha', 'repo:/r/beta']);
-  assert.equal(byKey(two.els['repo-slot'], 'repo:/r/alpha').attrs['aria-pressed'], 'true');
+  assert.deepEqual(byClass(two.els.app, 'prow').map((n) => n.attrs['data-key']), ['repo:/r/alpha', 'repo:/r/beta']);
+  assert.equal(byKey(two.els.app, 'repo:/r/alpha').attrs['aria-pressed'], 'true');
+  assert.equal(byKey(two.els.app, 'repo:/r/beta').attrs['aria-pressed'], 'false');
   // The brand sits first in the header and holds the logo SVG.
   const brand = one.els.top.children[0];
   assert.ok(hasClass(brand, 'brand'));
@@ -686,12 +686,12 @@ test('the status panel is a folded details titled Status', async () => {
 
 test("a later message re-renders and keeps the viewer's selection", async () => {
   const app = await mountApp({ snaps: TWO_REPOS() });
-  byKey(app.els['repo-slot'], 'repo:/r/beta').fire('click');
+  byKey(app.els.app, 'repo:/r/beta').fire('click');
   assert.deepEqual(app.hero(), ['beta work']);
-  const again = byKey(app.els['repo-slot'], 'repo:/r/beta');
+  const again = byKey(app.els.app, 'repo:/r/beta');
   assert.equal(again.attrs['aria-pressed'], 'true');
   assert.equal(again.focuses, 1, 'focus returns to the rebuilt repo button');
-  byKey(app.els['repo-slot'], 'repo:/r/alpha').fire('click');
+  byKey(app.els.app, 'repo:/r/alpha').fire('click');
   assert.deepEqual(app.hero(), ['alpha work']);
   byKey(app.els.app, 'plan:2026-10-10-alpha-earlier').fire('click');
   assert.deepEqual(app.hero(), ['alpha earlier']);
@@ -718,7 +718,7 @@ test('picking a plan or switching repo resets the filter and the open entry', as
   assert.equal(byKey(app.els.app, 'chip:open').attrs['aria-pressed'], 'true');
   assert.equal(byKey(app.els.app, 'entry:0').attrs['aria-expanded'], 'true');
   byKey(app.els.app, 'chip:all').fire('click');
-  byKey(app.els['repo-slot'], 'repo:/r/beta').fire('click');
+  byKey(app.els.app, 'repo:/r/beta').fire('click');
   assert.equal(byKey(app.els.app, 'chip:open').attrs['aria-pressed'], 'true');
 });
 
@@ -1240,60 +1240,79 @@ test('a write during a build triggers a throttled trailing push', () => withFixt
 }));
 
 
-test('with three repos and one in-progress task the page opens on that repo and the Now strip shows the task', async () => {
+test('with three repos the page opens on the most active one and the board puts the blocked repo in Needs you', async () => {
   const app = await mountApp({ snaps: [snap('idle', BETA_PLANS()), ...TWO_REPOS()] });
   assert.deepEqual(app.hero(), ['alpha work']);
-  assert.match(textOf(byClass(app.els.app, 'now-strip')[0]), /alpha.*T2.*Task T2.*0 agents/);
-  assert.match(textOf(byClass(app.els.app, 'now-strip')[0]), /waiting on you: 1/);
+  const lane = (key) => byClass(app.els.app, 'lane').find((n) => hasClass(n, `st-${{ needs: 'blocked', running: 'in_progress', next: 'pending', quiet: 'done' }[key]}`));
+  assert.deepEqual(byClass(lane('needs'), 'prow').map((n) => n.attrs['data-key']), ['repo:/r/alpha']);
+  assert.match(textOf(byClass(lane('needs'), 'pline')[0]), /T4 · waiting/);
+  assert.deepEqual(byClass(lane('next'), 'prow').map((n) => n.attrs['data-key']), ['repo:/r/beta', 'repo:/r/idle']);
+  assert.match(textOf(byKey(app.els.app, 'lane:needs')), /1.*Needs you/);
 });
 
-test("clicking another repo's Now chip switches repo and plan", async () => {
+test('summary chips focus one lane and a second click restores them', async () => {
+  const app = await mountApp({ snaps: [snap('idle', BETA_PLANS()), ...TWO_REPOS()] });
+  assert.equal(byClass(app.els.app, 'lane').length, 2);
+  byKey(app.els.app, 'lane:next').fire('click');
+  assert.equal(byClass(app.els.app, 'lane').length, 1);
+  assert.equal(byKey(app.els.app, 'lane:next').attrs['aria-pressed'], 'true');
+  byKey(app.els.app, 'lane:next').fire('click');
+  assert.equal(byClass(app.els.app, 'lane').length, 2);
+});
+
+test("clicking a running project's row switches repo and plan and highlights its current task", async () => {
   const beta = snap('beta', [plan('beta-active', 'active', [task('T8', 'in_progress', { since: Date.UTC(2026, 9, 26, 11) })])]);
   const app = await mountApp({ snaps: [...TWO_REPOS().slice(0, 1), beta] });
-  byKey(app.els.app, 'now:/r/alpha:2026-10-20-alpha-work:T2').fire('click');
+  byKey(app.els.app, 'repo:/r/alpha').fire('click');
   assert.deepEqual(app.hero(), ['alpha work']);
-  byKey(app.els.app, 'now:/r/beta:beta-active:T8').fire('click');
+  byKey(app.els.app, 'repo:/r/beta').fire('click');
   assert.deepEqual(app.hero(), ['beta active']);
   assert.ok(hasClass(app.rows()[0], 'highlight'));
   assert.equal(app.rows()[0].attrs['data-id'], 'T8');
 });
 
-test('Nothing running shows when no task is in progress', async () => {
+test('a single repo with nothing running opens on the Open filter and shows no board', async () => {
   const app = await mountApp({ snaps: [snap('beta', BETA_PLANS())] });
-  assert.match(textOf(byClass(app.els.app, 'now-strip')[0]), /Nothing running/);
+  assert.equal(byClass(app.els.app, 'board').length, 0);
   assert.equal(byKey(app.els.app, 'chip:open').attrs['aria-pressed'], 'true');
 });
 
-test('idle repos are folded', async () => {
-  const app = await mountApp({ snaps: [snap('idle', BETA_PLANS()), ...TWO_REPOS()] });
-  const details = byClass(app.els['repo-slot'], 'idle-repos')[0];
-  assert.equal(details.tag, 'details'); assert.equal(details.open, false);
-  assert.equal(textOf(details.children[0]), '2 idle');
-  assert.deepEqual(byClass(app.els['repo-slot'], 'repo-item').map((n) => n.attrs['data-key']), ['repo:/r/alpha', 'repo:/r/idle', 'repo:/r/beta']);
+test('the Done & quiet lane starts folded and a lane shows four rows before Show more', async () => {
+  const done = snap('done', [plan('d', 'done', [task('T1', 'done')])]);
+  const app = await mountApp({ snaps: [done, ...TWO_REPOS()] });
+  const quiet = byClass(app.els.app, 'lane').find((n) => hasClass(n, 'st-done'));
+  assert.ok(!hasClass(quiet, 'open'));
+  assert.equal(byKey(app.els.app, 'lanehead:quiet').attrs['aria-expanded'], 'false');
+  byKey(app.els.app, 'lanehead:quiet').fire('click');
+  assert.ok(hasClass(byClass(app.els.app, 'lane').find((n) => hasClass(n, 'st-done')), 'open'));
+  const many = Array.from({ length: 6 }, (_, i) => snap(`p${i}`, [plan(`p${i}`, 'active', [task('T1', 'pending')])]));
+  const big = await mountApp({ snaps: many });
+  assert.equal(byClass(big.els.app, 'prow').length, 4);
+  byKey(big.els.app, 'more:next').fire('click');
+  assert.equal(byClass(big.els.app, 'prow').length, 6);
 });
 
 test('a later push never changes the selected repo', async () => {
   const app = await mountApp({ snaps: TWO_REPOS() });
-  byKey(app.els['repo-slot'], 'repo:/r/beta').fire('click');
+  byKey(app.els.app, 'repo:/r/beta').fire('click');
   app.state.data = [...TWO_REPOS(), snap('busy', [plan('busy', 'active', [task('T9', 'in_progress', { since: Date.UTC(2026, 9, 26, 12) })])])];
   await app.message(); assert.deepEqual(app.hero(), ['beta work']);
 });
 
-test('a planless selected repo keeps the global Now strip and navigation', async () => {
+test('a planless selected repo keeps the board and navigation', async () => {
   const app = await mountApp({ snaps: [...TWO_REPOS(), snap('empty', [])] });
-  byKey(app.els['repo-slot'], 'repo:/r/empty').fire('click');
+  byKey(app.els.app, 'repo:/r/empty').fire('click');
   assert.match(textOf(app.els.app), /No plans yet/);
-  const strip = byClass(app.els.app, 'now-strip');
-  assert.equal(strip.length, 1);
-  assert.match(textOf(strip[0]), /waiting on you: 1/);
-  byKey(app.els.app, 'now:/r/alpha:2026-10-20-alpha-work:T2').fire('click');
+  assert.equal(byClass(app.els.app, 'board').length, 1);
+  assert.match(textOf(byKey(app.els.app, 'lane:needs')), /1/);
+  byKey(app.els.app, 'repo:/r/alpha').fire('click');
   assert.deepEqual(app.hero(), ['alpha work']);
-  assert.ok(hasClass(app.rows().find((row) => row.attrs['data-id'] === 'T2'), 'highlight'));
+  assert.ok(hasClass(app.rows().find((row) => row.attrs['data-id'] === 'T4'), 'highlight'));
 });
 
 test('a selected repo returns after a transient snapshot omission', async () => {
   const app = await mountApp({ snaps: TWO_REPOS() });
-  byKey(app.els['repo-slot'], 'repo:/r/beta').fire('click');
+  byKey(app.els.app, 'repo:/r/beta').fire('click');
   app.state.data = TWO_REPOS().slice(0, 1);
   await app.message();
   assert.deepEqual(app.hero(), ['alpha work']);
