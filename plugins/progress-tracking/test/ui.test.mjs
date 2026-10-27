@@ -511,7 +511,7 @@ function stubNode(tag) {
   const attrs = {};
   const listeners = {};
   const node = {
-    tag, children: [], className: '', textContent: '', attrs, listeners, open: false, value: '', scrolls: 0, focuses: 0,
+    tag, children: [], className: '', textContent: '', attrs, listeners, open: false, value: '', scrolls: 0, focuses: 0, focusOptions: [],
     style: { vars: {}, setProperty(name, value) { this.vars[name] = value; } },
     classList: {
       add: (c) => { if (!node.classList.contains(c)) node.className = `${node.className} ${c}`.trim(); },
@@ -526,7 +526,7 @@ function stubNode(tag) {
     prepend(...kids) { node.children.unshift(...kids); },
     replaceChildren(...kids) { node.children = kids; },
     scrollIntoView() { node.scrolls++; },
-    focus() { node.focuses++; },
+    focus(options) { node.focuses++; node.focusOptions.push(options); },
   };
   return node;
 }
@@ -760,6 +760,31 @@ test('rail cell click highlights its row', async () => {
   await app.tick(1600);
   assert.equal(app.rows().filter((r) => hasClass(r, 'highlight')).length, 0);
   assert.equal(app.fetches(), 1);
+});
+
+test('focus is restored without scrolling, after a poll render and after the highlight timer', async () => {
+  const app = await mountApp({ snaps: TWO_REPOS() });
+  // A poll with changed data rebuilds the tree; the focused keyed control gets focus back on its new node.
+  const chip = byKey(app.els.app, 'chip:all');
+  app.document.activeElement = chip;
+  app.state.data = [snap('alpha', [plan('2026-10-20-alpha-work', 'active', [task('T1', 'done')])]), snap('beta', BETA_PLANS())];
+  await app.tick(5000);
+  const chipAfterPoll = byKey(app.els.app, 'chip:all');
+  assert.notEqual(chipAfterPoll, chip);
+  assert.equal(chipAfterPoll.focuses, 1, 'poll render returns focus');
+  assert.deepEqual(chipAfterPoll.focusOptions, [{ preventScroll: true }]);
+  // The highlight timer re-renders after the row was scrolled to; focus must not drag the page back to the cell.
+  app.state.data = TWO_REPOS();
+  await app.tick(5000);
+  const cell = byKey(app.els.app, 'cell:T1');
+  cell.fire('click');
+  const clicked = byKey(app.els.app, 'cell:T1');
+  assert.deepEqual(clicked.focusOptions, [{ preventScroll: true }], 'the click render');
+  app.document.activeElement = clicked;
+  await app.tick(1600);
+  const afterTimer = byKey(app.els.app, 'cell:T1');
+  assert.notEqual(afterTimer, clicked);
+  assert.deepEqual(afterTimer.focusOptions, [{ preventScroll: true }], 'the highlight-timer render');
 });
 
 test('status panel stays open', async () => {

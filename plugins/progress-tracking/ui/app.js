@@ -275,7 +275,8 @@ export function mount(env) {
     const root = el('div', introPending ? 'intro' : '', {}, [planSection(snap, plan), tasksSection(plan), entriesSection(snap), statusPanel(snap)]);
     introPending = false;
     app.replaceChildren(root);
-    (keyed.get(focus ?? activeKey))?.focus();
+    // preventScroll: restoring focus must not move the viewport back to the control (the highlight timer and polls render too).
+    (keyed.get(focus ?? activeKey))?.focus({ preventScroll: true });
     if (scrollTo !== null) rowNodes.get(scrollTo)?.scrollIntoView({ block: 'nearest' });
   }
 
