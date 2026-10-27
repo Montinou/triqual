@@ -19,11 +19,12 @@ import { listResolved } from '../lib/registry.mjs';
 import { buildSnapshot } from '../lib/snapshot.mjs';
 import { loadSqlite } from '../lib/store.mjs';
 
+export const DEFAULT_PORT = 47800;
 const LOOPBACK = '127.0.0.1';
 const UI_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'ui');
 const USAGE = 'usage: triqual ui [--port N] [--open]';
 const HELP = `${USAGE}
-  --port N    listen on port N (0-65535; default 0, a random free port)
+  --port N    listen on port N (0-65535; default 47800)
   --open      also open the URL in the default browser
   -h, --help  print this help`;
 const COMMON_HEADERS = {
@@ -71,6 +72,7 @@ function send(res, status, type, body, extra = {}) {
 async function handle(req, res, { home, port, assets }) {
   const host = req.headers.host;
   if (host !== `${LOOPBACK}:${port}` && host !== `localhost:${port}`) return send(res, 403, TEXT, 'forbidden\n');
+  if (req.headers['sec-fetch-site'] === 'cross-site') return send(res, 403, TEXT, 'forbidden\n');
   if (req.method !== 'GET') return send(res, 405, TEXT, 'method not allowed\n', { Allow: 'GET' });
   const path = (req.url ?? '').split('?')[0];
   if (Object.hasOwn(assets, path)) return send(res, 200, assets[path].type, assets[path].body);
@@ -120,7 +122,7 @@ function parse(argv) {
     args: argv, options: { port: { type: 'string' }, open: { type: 'boolean' } }, allowPositionals: true, strict: true,
   });
   if (positionals.length) throw new Error(`unexpected argument ${positionals[0]}`);
-  const port = values.port === undefined ? 0 : Number(values.port);
+  const port = values.port === undefined ? DEFAULT_PORT : Number(values.port);
   if (!/^\d+$/.test(values.port ?? '0') || !Number.isInteger(port) || port > 65535) throw new Error('--port must be 0-65535');
   return { port, open: values.open === true };
 }
@@ -140,7 +142,12 @@ async function main(argv) {
   }
   let started;
   try {
-    started = await startServer({ home: homedir(), port: opts.port });
+    try {
+      started = await startServer({ home: homedir(), port: opts.port });
+    } catch (err) {
+      if (err.code !== 'EADDRINUSE' || argv.includes('--port') || argv.some((arg) => arg.startsWith('--port='))) throw err;
+      started = await startServer({ home: homedir(), port: 0 });
+    }
   } catch (err) {
     process.stderr.write(`triqual ui: ${err.message}\n`);
     process.exitCode = 1;

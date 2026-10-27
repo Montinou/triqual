@@ -2,11 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { request } from 'node:http';
+import { createServer as createNetServer } from 'node:net';
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { startServer } from '../cli/ui.mjs';
+import * as uiServer from '../cli/ui.mjs';
 import { BRAND } from '../lib/brand.mjs';
 import { registerRepo } from '../lib/registry.mjs';
 import { createLedger } from '../lib/ledger.mjs';
@@ -78,9 +80,10 @@ async function withServer(home, fn) {
 }
 
 // One HTTP request with full control over the Host header (`host: null` sends none).
-function get(port, path, { method = 'GET', host = `127.0.0.1:${port}` } = {}) {
+function get(port, path, { method = 'GET', host = `127.0.0.1:${port}`, fetchSite } = {}) {
   return new Promise((resolve, reject) => {
     const headers = host === null ? {} : { Host: host };
+    if (fetchSite !== undefined) headers['Sec-Fetch-Site'] = fetchSite;
     const req = request({ host: '127.0.0.1', port, path, method, headers, setHost: false, agent: false }, (res) => {
       let body = '';
       res.setEncoding('utf8');
@@ -998,4 +1001,44 @@ test('a rail with more than 20 tasks drops the glyph and id of its cells', async
   assert.equal(byClass(app.els.app, 'cell').length, 21);
   assert.equal(byClass(app.els.app, 'cell-id').length, 0);
   assert.ok(byClass(app.els.app, 'bar').every((b) => b.textContent === ''));
+});
+
+
+test('a cross-site Sec-Fetch-Site request is 403', () => withFixture(async ({ home }) => {
+  await withServer(home, async ({ port }) => {
+    const denied = await get(port, '/', { fetchSite: 'cross-site' });
+    assert.equal(denied.status, 403);
+    assert.equal(denied.body, 'forbidden\n');
+    assert.equal((await get(port, '/', { fetchSite: 'same-origin' })).status, 200);
+    assert.equal((await get(port, '/')).status, 200);
+  });
+}));
+
+test('DEFAULT_PORT is 47800', () => {
+  assert.equal(uiServer.DEFAULT_PORT, 47800);
+});
+
+test('triqual ui without --port falls back to a free port when 47800 is taken', async (t) => {
+  const occupied = createNetServer();
+  try {
+    await new Promise((resolve, reject) => {
+      occupied.once('error', reject);
+      occupied.listen(47800, '127.0.0.1', resolve);
+    });
+  } catch (err) {
+    t.skip(`cannot occupy port 47800: ${err.code}`);
+    return;
+  }
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'pt-ui-fallback-')));
+  const cli = startCli([], cleanEnv(home));
+  try {
+    const { port } = await cli.ready;
+    assert.notEqual(port, 47800);
+    assert.equal((await get(port, '/')).status, 200);
+    assert.equal(cli.child.exitCode, null);
+  } finally {
+    await cli.stop();
+    await new Promise((resolve) => occupied.close(resolve));
+    rmSync(home, { recursive: true, force: true });
+  }
 });
