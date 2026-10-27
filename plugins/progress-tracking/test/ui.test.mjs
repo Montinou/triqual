@@ -304,6 +304,75 @@ test('index.html loads no external resources and nothing CSP would block', () =>
   assert.match(app, /5000/);
 });
 
+test('app.css is CSP-safe and covers the page', () => {
+  const css = readFileSync(join(PLUGIN, 'ui', 'app.css'), 'utf8');
+  assert.doesNotMatch(css, /https?:\/\//, 'no http(s) URL');
+  assert.doesNotMatch(css, /@import/);
+  const urls = [...css.matchAll(/url\(\s*([^)]*?)\s*\)/g)].map((m) => m[1].replace(/^['"]|['"]$/g, ''));
+  assert.deepEqual([...new Set(urls)].sort(), ['/fonts/bricolage.woff2', '/fonts/geist-mono.woff2', '/fonts/geist.woff2']);
+  // No url() other than the three fonts, and the radial-gradient dot grid needs none.
+  assert.equal(urls.length, 3, 'one url() per @font-face');
+  assert.equal(css.match(/@font-face/g)?.length, 3);
+  assert.match(css, /font-display:\s*swap/);
+  assert.match(css, /prefers-reduced-motion/);
+  assert.match(css, /prefers-color-scheme/);
+  assert.match(css, /@media \(max-width: 640px\)/);
+  assert.match(css, /overflow-wrap:\s*anywhere/);
+  assert.equal([...css].filter((c) => c === '{').length, [...css].filter((c) => c === '}').length, 'balanced braces');
+  // Every class app.js emits is styled (statuses: s-<status> for each of the six).
+  const classes = [
+    'top', 'brand', 'tag', 'repo-pill', 'live', 'live-dot', 'tabs', 'ptab', 'hero', 'hero-date', 'hero-title', 'headline',
+    'current', 'count', 'rail', 'cell', 'bar', 'pulse', 'cell-id', 'legend', 'panel', 'plan', 'tasks', 'chips', 'chip', 'trow',
+    't-glyph', 't-id', 't-title', 't-status', 't-tier', 't-reason', 'highlight', 'entries', 'entry', 'entry-h', 'entry-body',
+    'status-panel', 'card', 'card-tag', 'code', 'banner', 'banner-tag', 'banner-title', 'banner-text', 'hero-reason', 'empty',
+    'intro', 'logo',
+  ];
+  for (const name of classes) assert.ok(css.includes(`.${name}`), `.${name} is styled`);
+  for (const status of ['in_progress', 'in_review', 'blocked', 'pending', 'done', 'dropped']) {
+    assert.ok(css.includes(`.s-${status}`), `.s-${status} is styled`);
+  }
+  // The stagger and the phone adaptation of the spec.
+  assert.match(css, /animation-delay:\s*calc\(var\(--i\) \* 40ms\)/);
+  assert.match(css, /flex-wrap:\s*wrap/);
+});
+
+// app.js appends the state card straight under #app, as a div, like the board root. A selector scoped by the tag alone
+// (`#app > div`, specificity 1,0,1) would beat `.card` and turn the card into the board's two-column grid.
+test('the board grid rules do not apply to the state card', () => {
+  const css = readFileSync(join(PLUGIN, 'ui', 'app.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const boardRules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .map((m) => ({ selectors: m[1].split(',').map((x) => x.trim()), body: m[2] }))
+    .filter((r) => r.selectors.some((x) => /^#app\s*>\s*div\b/.test(x)));
+  assert.ok(boardRules.length >= 3, 'the board grid rules are found');
+  for (const { selectors, body } of boardRules) {
+    for (const sel of selectors.filter((x) => /^#app\s*>\s*div\b/.test(x))) {
+      assert.match(sel, /^#app\s*>\s*div:not\(\.card\)/, `"${sel}" must exclude the state card`);
+    }
+    if (/\bdisplay:\s*grid\b/.test(body)) assert.ok(selectors.every((x) => /:not\(\.card\)/.test(x)), 'the grid is for the board only');
+  }
+  assert.match(css, /\.card\s*\{[^}]*display:\s*flex/, 'the card lays itself out as a flex column');
+});
+
+// A native <select> sizes to its longest option, and `max-width: 100%` is ineffective while its parent is an inline span
+// with no definite width: the page then scrolls sideways on a phone. The slot must be a shrinkable box, the select must
+// fit it and clip with an ellipsis, and the plan-tab count (`6/6`) must not split across lines.
+test('the repo select shrinks to the phone width and the tab count stays whole', () => {
+  const css = readFileSync(join(PLUGIN, 'ui', 'app.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const bodyOf = (selector) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter((m) => m[1].split(',').map((x) => x.trim()).includes(selector)).map((m) => m[2]).join(';');
+  const slot = bodyOf('#repo-slot');
+  assert.match(slot, /\bmin-width:\s*0\b/, '#repo-slot can shrink below its content');
+  assert.match(slot, /\bmax-width:\s*100%/, '#repo-slot never exceeds the header');
+  assert.match(slot, /\bdisplay:\s*block\b/, '#repo-slot is a box with a definite width, not an inline span');
+  const select = bodyOf('select.repo-pill');
+  assert.match(select, /\bmax-width:\s*100%/, 'the select fits its slot');
+  assert.match(select, /\bmin-width:\s*0\b/);
+  assert.match(select, /\btext-overflow:\s*ellipsis/, 'a long option is clipped, not overflowed');
+  const count = bodyOf('.ptab span:last-child');
+  assert.match(count, /\bwhite-space:\s*nowrap/, 'the tab count is not split');
+  assert.match(count, /\boverflow-wrap:\s*normal/, 'overflow-wrap: anywhere is off for the count');
+});
+
 // Starts the CLI and resolves with its printed URL once it is listening.
 function startCli(args, env) {
   const child = spawn(process.execPath, [BIN, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
