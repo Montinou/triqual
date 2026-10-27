@@ -36,7 +36,7 @@ export function nowItems(snaps, nowMs) {
     .flatMap((p) => p.tasks.filter((t) => t.status === 'in_progress').map((t) => ({
       repoRoot: s.repo.root, repoName: s.repo.name, planName: p.name,
       taskId: t.id, title: t.title, since: t.since ?? null,
-      elapsedMs: t.since == null ? null : nowMs - t.since, agents: 0,
+      elapsedMs: t.since == null ? null : nowMs - t.since, agents: agentCount(s.sessions ?? [], nowMs),
     }))))
     .sort((a, b) => (b.since ?? 0) - (a.since ?? 0));
 }
@@ -51,7 +51,7 @@ export function activity(snaps, nowMs) {
     ...(s.plans ?? []).flatMap((p) => p.tasks.map((t) => t.since ?? 0)),
     ...(s.sessions ?? []).map((session) => session.lastAt ?? 0));
   for (const s of snaps) {
-    const running = (s.sessions ?? []).some((session) => session.endedAt == null && nowMs - session.lastAt <= 30 * 60 * 1000);
+    const running = agentCount(s.sessions ?? [], nowMs) > 0;
     const working = nowItems([s], nowMs).length > 0;
     groups[running ? 'running' : working ? 'working' : 'idle'].push(s);
   }
@@ -185,4 +185,57 @@ export function entryView(entry) {
 // The re-render key: the data without the one field that changes on every poll.
 export function dataKey(snaps) {
   return JSON.stringify(snaps.map((s) => ({ ...s, generatedAt: null })));
+}
+
+
+const agentState = (session, nowMs) => session.endedAt != null ? 'done'
+  : nowMs - session.lastAt <= 30 * 60 * 1000 ? 'running' : 'stale';
+const agentKey = (session) => `${session.sessionId}/${session.agentId}`;
+
+export function agentCount(sessions, nowMs) {
+  return sessions.filter((session) => agentState(session, nowMs) === 'running').length;
+}
+
+export function feedOf(session, showNotes) {
+  const events = (session.events ?? []).map((event) => ({ at: event.at, kind: event.kind.toUpperCase(), text: event.label }));
+  const notes = showNotes ? (session.notes ?? []).map((note) => ({ at: note.at, kind: 'NOTE', text: note.title })) : [];
+  return [...events, ...notes].sort((a, b) => b.at - a.at);
+}
+
+export function agentTree(sessions, nowMs) {
+  const byKey = new Map(sessions.map((session) => [agentKey(session), session]));
+  const children = new Map();
+  const parentOf = (session) => {
+    const controllerKey = `${session.sessionId}/`;
+    if (session.agentId === '' || !byKey.has(controllerKey)) return null;
+    const fallback = controllerKey;
+    if (session.parentAgentId == null) return fallback;
+    const parentKey = `${session.sessionId}/${session.parentAgentId}`;
+    let current = session;
+    const seen = new Set();
+    while (current && current.agentId !== '') {
+      const key = agentKey(current);
+      if (seen.has(key)) return fallback;
+      seen.add(key);
+      if (current.parentAgentId == null) break;
+      current = byKey.get(`${current.sessionId}/${current.parentAgentId}`);
+    }
+    return byKey.has(parentKey) ? parentKey : fallback;
+  };
+  for (const session of sessions) {
+    const parentKey = parentOf(session);
+    if (!children.has(parentKey)) children.set(parentKey, []);
+    children.get(parentKey).push(session);
+  }
+  const rows = [];
+  const visit = (session, depth, parentKey) => {
+    const key = agentKey(session);
+    const events = session.events ?? [];
+    rows.push({ key, depth, parentKey, agentType: session.agentType, task: session.task, model: session.model,
+      state: agentState(session, nowMs), elapsedMs: session.startedAt == null ? null : (session.endedAt ?? nowMs) - session.startedAt,
+      latest: [...events].sort((a, b) => b.at - a.at)[0]?.label ?? null, count: events.length });
+    for (const child of children.get(key) ?? []) visit(child, depth + 1, key);
+  };
+  for (const root of children.get(null) ?? []) visit(root, 0, null);
+  return rows;
 }

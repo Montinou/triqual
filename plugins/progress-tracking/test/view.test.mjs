@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  STATUS, pickRepo, orderPlans, pickPlan, planTitle, currentOf, headline, railCells, legend, chips, taskRows, entryView, dataKey, nowItems, waitingCount, activity,
+  STATUS, pickRepo, orderPlans, pickPlan, planTitle, currentOf, headline, railCells, legend, chips, taskRows, entryView, dataKey, nowItems, waitingCount, activity, agentTree, feedOf, agentCount,
 } from '../ui/view.js';
 
 const task = (id, status, extra = {}) => ({ id, title: `Title ${id}`, status, reason: null, tier: null, effectiveTier: null, ...extra });
@@ -198,4 +198,46 @@ test('pickRepo opens the most active repo only on first load', () => {
   assert.equal(pickRepo([a, b, c], '/a', true, 100), a);
   assert.equal(pickRepo([a, b, c], null, false, 100), a);
   assert.equal(pickRepo([a, b, c], '/gone', true, 100), a);
+});
+
+const agent = (agentId, parentAgentId = null, extra = {}) => ({ sessionId: 's', agentId, parentAgentId, agentType: agentId || 'controller', task: null, model: null, startedAt: 10, lastAt: 100, endedAt: null, events: [], ...extra });
+
+test('a controller, an orchestrator and two workers give four entries in parent/child order', () => {
+  const rows = agentTree([agent('w2', 'o'), agent('o', ''), agent(''), agent('w1', 'o')], 100);
+  assert.deepEqual(rows.map(r => [r.key, r.depth, r.parentKey]), [['s/', 0, null], ['s/o', 1, 's/'], ['s/w2', 2, 's/o'], ['s/w1', 2, 's/o']]);
+  assert.equal(rows[0].count, 0);
+  assert.equal(rows[0].elapsedMs, 90);
+});
+
+test('a cycle in parent links renders each card once', () => {
+  const rows = agentTree([agent('a', 'b'), agent('b', 'a'), agent('self', 'self'), agent('')], 100);
+  assert.deepEqual(rows.map(r => [r.key, r.parentKey]), [['s/', null], ['s/a', 's/'], ['s/b', 's/'], ['s/self', 's/']]);
+  assert.equal(new Set(rows.map(r => r.key)).size, 4);
+});
+
+test('a child with an unknown parent hangs under the controller', () => {
+  assert.equal(agentTree([agent('x', 'missing'), agent('')], 100)[1].parentKey, 's/');
+  assert.equal(agentTree([agent('x')], 100)[0].parentKey, null);
+  assert.equal(agentTree([agent('x'), agent('')], 100)[1].parentKey, 's/');
+});
+
+test('state is running, stale or done by the 30-minute rule', () => {
+  const now = 4_000_000;
+  const rows = agentTree([agent('', null, { lastAt: now - 1_800_000 }), agent('stale', '', { lastAt: now - 1_800_001 }), agent('done', '', { endedAt: 80 })], now);
+  assert.deepEqual(rows.map(r => r.state), ['running', 'stale', 'done']);
+  assert.equal(rows[2].elapsedMs, 70);
+  assert.equal(agentCount([agent('', null, { lastAt: now }), agent('old', '', { lastAt: 0 })], now), 1);
+});
+
+test('feedOf lists events newest first and adds notes only when asked', () => {
+  const row = agent('', null, { events: [{ at: 10, kind: 'start', label: 'start' }, { at: 30, kind: 'tool', label: 'Read f' }], notes: [{ at: 20, type: 'decision', title: 'Use ids' }] });
+  assert.deepEqual(feedOf(row, false), [{ at: 30, kind: 'TOOL', text: 'Read f' }, { at: 10, kind: 'START', text: 'start' }]);
+  assert.deepEqual(feedOf(row, true).map(r => [r.at, r.kind, r.text]), [[30, 'TOOL', 'Read f'], [20, 'NOTE', 'Use ids'], [10, 'START', 'start']]);
+});
+
+test('nowItems counts running agents for the repo', () => {
+  const now = 4_000_000;
+  const sessions = [agent('', null, { lastAt: now }), agent('a', '', { lastAt: now }), agent('b', '', { lastAt: 0 }), agent('c', '', { lastAt: now, endedAt: now })];
+  assert.equal(nowItems([snap('/a', [task('T1', 'in_progress')], sessions)], now)[0].agents, 2);
+  assert.equal(activity([snap('/a', [], sessions)], now).running.length, 1);
 });
