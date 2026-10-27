@@ -501,8 +501,16 @@ Internal. The installed store git hooks call it. See [Hooks](#hooks). Outside st
 triqual ui [--port N] [--open]
 ```
 
-A local, read-only run board of your registered repos. It shows one repo at a time, with a switcher to move between
-them, and for the repo in view:
+A local, read-only run board of your registered repos. With two or more repos it opens on a project board, readable in
+one look, and below it the plan of the repo you pick:
+
+- **Project board**: a proportional summary bar with four count chips (click one to focus that lane), then four lanes in
+  a fixed urgency order: **Needs you** (blocked, or running but silent for 15 minutes with no live agent), **Running**,
+  **Up next** and **Done & quiet** (folded). Each project is one row: state, name and branch, one line of what is
+  happening now, a task rail, done/total and age. A lane shows four rows before "Show N more". Click a row to open its
+  plan.
+
+For the repo in view:
 
 - **Plan tabs**: one tab per plan, and a plan rail with a cell for every task, coloured by status. A cell selects its
   task in the list.

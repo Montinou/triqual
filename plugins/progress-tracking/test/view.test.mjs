@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   STATUS, pickRepo, orderPlans, pickPlan, planTitle, currentOf, headline, railCells, legend, chips, taskRows, entryView, dataKey, nowItems, waitingCount, activity, agentTree, feedOf, agentCount,
+  fmtAge, projectState, projectOf, boardLanes, STALE_MS,
 } from '../ui/view.js';
 
 const task = (id, status, extra = {}) => ({ id, title: `Title ${id}`, status, reason: null, tier: null, effectiveTier: null, ...extra });
@@ -240,4 +241,47 @@ test('nowItems counts running agents for the repo', () => {
   const sessions = [agent('', null, { lastAt: now }), agent('a', '', { lastAt: now }), agent('b', '', { lastAt: 0 }), agent('c', '', { lastAt: now, endedAt: now })];
   assert.equal(nowItems([snap('/a', [task('T1', 'in_progress')], sessions)], now)[0].agents, 2);
   assert.equal(activity([snap('/a', [], sessions)], now).running.length, 1);
+});
+
+test('fmtAge is now, minutes, hours, then days', () => {
+  assert.deepEqual([null, 0, 44_000, 60_000, 59 * 60_000, 3_600_000, 23 * 3_600_000, 48 * 3_600_000].map(fmtAge), ['', 'now', 'now', '1m', '59m', '1h', '23h', '2d']);
+});
+
+test('projectState applies its precedence: blocked, done, stalled, running, in review, up next', () => {
+  const quiet = STALE_MS + 1;
+  assert.equal(projectState([task('T1', 'blocked'), task('T2', 'in_progress')], 0, 1), 'blocked');
+  assert.equal(projectState([task('T1', 'done'), task('T2', 'dropped')], quiet, 0), 'done');
+  assert.equal(projectState([task('T1', 'in_progress')], quiet, 0), 'stale');
+  assert.equal(projectState([task('T1', 'in_progress')], quiet, 1), 'running', 'a live agent is proof of life');
+  assert.equal(projectState([task('T1', 'in_progress')], STALE_MS, 0), 'running', 'exactly the limit is not stalled yet');
+  assert.equal(projectState([task('T1', 'in_review')], 0, 0), 'in_review');
+  assert.equal(projectState([task('T1', 'pending')], quiet, 0), 'next', 'idle pending work is only up next, never stalled');
+  assert.equal(projectState([], null, 0), 'next');
+});
+
+test('projectOf shows the active plan, its one line and how many plans are hidden', () => {
+  const s = snap('/a', [], []);
+  s.repo.name = 'a'; s.repo.branch = 'feat/x';
+  s.plans = [
+    plan([task('T1', 'done')], { name: '2026-10-01-old', state: 'done' }),
+    plan([task('T1', 'done'), task('T2', 'in_progress', { since: 900_000 }), task('T3', 'pending')], { name: '2026-10-20-new' }),
+  ];
+  const p = projectOf(s, 1_000_000);
+  assert.deepEqual([p.planName, p.otherPlans, p.state, p.line, p.currentId, p.done, p.total, p.idleMs], ['2026-10-20-new', 1, 'running', 'T2 · Title T2', 'T2', 1, 3, 100_000]);
+  s.plans[1].tasks[1].status = 'blocked'; s.plans[1].tasks[1].reason = 'needs a token';
+  const b = projectOf(s, 1_000_000);
+  assert.deepEqual([b.state, b.line, b.currentId], ['blocked', 'T2 · needs a token', 'T2']);
+  assert.equal(projectOf({ ...s, plans: [] }, 1).line, 'No plan yet');
+});
+
+test('boardLanes keeps the lane order and sorts rows by urgency, then recency, then name', () => {
+  const mk = (root, tasks, since) => { const s = snap(root, [], []); s.repo.name = root.slice(1); s.plans = [plan(tasks)]; if (since) s.plans[0].tasks[0].since = since; return s; };
+  const now = 10_000_000;
+  const lanes = boardLanes([
+    mk('/b-run', [task('T1', 'in_progress')], now - 1000), mk('/a-run', [task('T1', 'in_progress')], now - 1000),
+    mk('/stale', [task('T1', 'in_progress')], now - 2 * STALE_MS), mk('/blocked', [task('T1', 'blocked')], now - 5 * STALE_MS),
+    mk('/done', [task('T1', 'done')], now), mk('/next', [task('T1', 'pending')], now - 10),
+  ], now);
+  assert.deepEqual(lanes.map((l) => l.key), ['needs', 'running', 'next', 'quiet']);
+  assert.deepEqual(lanes.map((l) => l.projects.map((p) => p.name)), [['blocked', 'stale'], ['a-run', 'b-run'], ['next'], ['done']]);
 });

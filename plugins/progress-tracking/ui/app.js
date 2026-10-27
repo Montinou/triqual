@@ -2,11 +2,16 @@
 // receives messages and keeps the viewer's choices. Data goes in as textContent or attribute values, never as markup; dynamic
 // visual values go through style.setProperty on a custom property, so the page needs no inline style (CSP default-src 'self').
 import {
-  chips, currentOf, dataKey, entryView, headline, legend, pickPlan, pickRepo, planTitle, railCells, taskRows, orderPlans, nowItems, waitingCount, activity, agentTree, feedOf,
+  chips, currentOf, dataKey, entryView, headline, legend, pickPlan, pickRepo, planTitle, railCells, taskRows, orderPlans, agentTree, feedOf,
+  boardLanes, PROJECT_STATE, fmtAge,
 } from './view.js';
 
 const HIGHLIGHT_MS = 1600;
 const LATEST_ENTRIES = 5;
+// Rows a lane shows before "Show N more".
+const LANE_CAP = 4;
+// The rail turns into proportional blocks past this many tasks.
+const RAIL_MAX = 24;
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 const shortName = (name) => name.replace(/^\d{4}-\d{2}-\d{2}-/, '');
@@ -26,7 +31,7 @@ export function mount(env) {
   let lastKey = null;
   let introPending = true;
   let highlightTimer = null;
-  const viewer = { repo: null, planByRepo: new Map(), filter: 'running', openEntry: 0, statusOpen: false, highlight: null, agentsByRepo: new Map() };
+  const viewer = { repo: null, planByRepo: new Map(), filter: 'running', openEntry: 0, statusOpen: false, highlight: null, agentsByRepo: new Map(), only: null, laneMore: new Set(), laneOpen: new Map() };
   // Controls and task rows of the render in place, by their data-key / task id.
   const keyed = new Map();
   const rowNodes = new Map();
@@ -82,45 +87,96 @@ export function mount(env) {
     return `${snap.repo.mode} · ${snap.repo.branch ?? 'detached HEAD'}`;
   }
 
-  function renderRepo(snap, nowMs) {
+  // The header names the repo whose plan is open; switching happens on the board rows.
+  function renderRepo(snap) {
     if (!snap) { repoSlot.replaceChildren(); return; }
-    const groups = activity(snaps, nowMs);
-    const item = (s, running = false) => el('button', 'repo-pill repo-item', {
-      key: `repo:${s.repo.root}`,
-      attrs: { type: 'button', 'aria-pressed': s.repo.root === snap.repo.root },
-      on: { click: () => { viewer.repo = s.repo.root; resetView(); renderData({ focus: `repo:${s.repo.root}` }); } },
-    }, [
-      ...(running ? [el('span', 'repo-dot', { attrs: { 'aria-label': 'Running' } })] : []),
-      el('b', '', { text: s.repo.name }), el('span', '', { text: repoLabel(s) }),
-    ]);
-    repoSlot.replaceChildren(el('div', 'repo-list', { attrs: { 'aria-label': 'Repos' } }, [
-      ...groups.running.map((s) => item(s, true)), ...groups.working.map((s) => item(s)),
-      ...(groups.idle.length ? [el('details', 'idle-repos', {}, [
-        el('summary', '', { text: `${groups.idle.length} idle` }), ...groups.idle.map((s) => item(s)),
-      ])] : []),
+    repoSlot.replaceChildren(el('div', 'repo-list', { attrs: { 'aria-label': 'Repo' } }, [
+      el('span', 'repo-pill', {}, [el('b', '', { text: snap.repo.name }), el('span', '', { text: repoLabel(snap) })]),
     ]));
   }
 
-  function nowStrip(nowMs) {
-    const items = nowItems(snaps, nowMs);
-    const waiting = waitingCount(snaps);
-    return el('section', 'now-strip', { attrs: { 'aria-label': 'Now' } }, [
-      el('h2', '', { text: 'Now' }),
-      ...items.map((item) => el('button', 'now-chip', {
-        key: `now:${item.repoRoot}:${item.planName}:${item.taskId}`,
-        attrs: { type: 'button' },
-        on: { click: () => {
-          viewer.repo = item.repoRoot;
-          viewer.planByRepo.set(item.repoRoot, item.planName);
-          resetView();
-          const plan = snaps.find((s) => s.repo.root === item.repoRoot)?.plans.find((p) => p.name === item.planName);
-          pickCell(plan, item.taskId);
-        } },
-      }, [el('span', '', { text: `${item.repoName} · ${item.taskId} · ${item.title}` }),
-        el('span', '', { text: `${item.agents} agents · ${item.elapsedMs == null ? 'elapsed unknown' : `${Math.max(0, Math.floor(item.elapsedMs / 60000))}m elapsed`}` })])),
-      ...(items.length ? [] : [el('span', 'muted', { text: 'Nothing running' })]),
-      ...(waiting ? [el('span', 'waiting-chip', { text: `waiting on you: ${waiting}` })] : []),
+  // A rail of one segment per task (proportional blocks past RAIL_MAX), colored by status.
+  function miniRail(project) {
+    const order = ['done', 'in_review', 'in_progress', 'blocked', 'pending', 'dropped'];
+    const count = (status) => project.tasks.filter((t) => t.status === status).length;
+    const segs = project.tasks.length > RAIL_MAX
+      ? order.filter((st) => count(st) > 0).map((st) => el('span', `seg s-${st}${st === 'in_progress' ? ' run' : ''}`, { vars: { 'flex-grow': count(st) } }))
+      : project.tasks.map((t, i) => el('span', `seg s-${t.status}${t.status === 'in_progress' ? ' run' : ''}`, { vars: { '--i': i } }));
+    return el('span', 'mrail', { attrs: { role: 'img', 'aria-label': `${project.done} of ${project.total} tasks done` } }, segs);
+  }
+
+  // One project, one answer: state disc, name and branch, the one line of what now, rail, done/total, age.
+  function projectRow(project, selected) {
+    const st = PROJECT_STATE[project.state];
+    return el('button', `prow st-${st.tone} state-${project.state}${selected ? ' selected' : ''}`, {
+      key: `repo:${project.root}`,
+      attrs: { type: 'button', 'aria-pressed': selected, title: `${project.name}: ${st.label}` },
+      on: { click: () => {
+        viewer.repo = project.root;
+        if (project.planName) viewer.planByRepo.set(project.root, project.planName);
+        resetView();
+        const plan = snaps.find((s) => s.repo.root === project.root)?.plans.find((p) => p.name === project.planName);
+        if (plan && project.currentId) pickCell(plan, project.currentId);
+        else renderData({ focus: `repo:${project.root}` });
+      } },
+    }, [
+      el('span', `pdisc${project.state === 'running' ? ' ring' : ''}`, { attrs: { 'aria-hidden': 'true' } }, [
+        el('span', project.state === 'running' ? 'spin' : '', { text: st.glyph }),
+      ]),
+      el('span', 'pmain', {}, [
+        el('span', 'ptop', {}, [
+          el('b', 'pname', { text: project.name }),
+          ...(project.branch ? [el('span', 'pbranch', { text: `⑂ ${project.branch}` })] : []),
+          ...(project.otherPlans ? [el('span', 'pmore', { text: `+${project.otherPlans} ${project.otherPlans === 1 ? 'plan' : 'plans'}` })] : []),
+        ]),
+        el('span', `pline line-${project.state}`, { text: project.line }),
+      ]),
+      el('span', 'prail', {}, [miniRail(project)]),
+      el('span', 'pcount', {}, [el('b', '', { text: String(project.done) }), el('span', '', { text: `/${project.total}` })]),
+      el('span', `page${project.state === 'stale' ? ' stale' : ''}`, { text: fmtAge(project.idleMs) }),
+      el('span', 'pchev', { text: '›', attrs: { 'aria-hidden': 'true' } }),
     ]);
+  }
+
+  // The whole fleet in one look: a proportional bar, four count chips (focus a lane) and the lanes in fixed urgency
+  // order. Shown from two repos on; one repo goes straight to its plan.
+  function board(selectedRoot, nowMs) {
+    if (snaps.length < 2) return null;
+    const lanes = boardLanes(snaps, nowMs);
+    const bar = el('div', 'sum-bar', { attrs: { 'aria-hidden': 'true' } }, lanes.filter((l) => l.projects.length)
+      .map((l) => el('span', `sum-seg st-${l.tone}`, { vars: { 'flex-grow': l.projects.length } })));
+    const chipsRow = el('div', 'sum-chips', { attrs: { role: 'group', 'aria-label': 'Projects by state' } }, lanes.map((l) => el('button', `sum-chip st-${l.tone}`, {
+      key: `lane:${l.key}`,
+      attrs: { type: 'button', 'aria-pressed': viewer.only === l.key, ...(l.projects.length ? {} : { disabled: '' }) },
+      on: { click: () => { viewer.only = viewer.only === l.key ? null : l.key; renderData({ focus: `lane:${l.key}` }); } },
+    }, [el('span', 'sum-g', { text: l.glyph, attrs: { 'aria-hidden': 'true' } }), el('b', '', { text: String(l.projects.length) }), el('span', '', { text: l.title })])));
+    const laneNodes = lanes.filter((l) => l.projects.length && (!viewer.only || viewer.only === l.key)).map((l) => {
+      const collapsedByDefault = l.key === 'quiet' && !viewer.only;
+      const open = viewer.laneOpen.has(l.key) ? viewer.laneOpen.get(l.key) : !collapsedByDefault;
+      const all = viewer.laneMore.has(l.key) || viewer.only === l.key;
+      const shown = all ? l.projects : l.projects.slice(0, LANE_CAP);
+      const hidden = l.projects.length - shown.length;
+      return el('section', `lane st-${l.tone}${l.key === 'needs' ? ' attention' : ''}${open ? ' open' : ''}`, { attrs: { 'aria-label': l.title } }, [
+        el('button', 'lane-head', {
+          key: `lanehead:${l.key}`, attrs: { type: 'button', 'aria-expanded': open },
+          on: { click: () => { viewer.laneOpen.set(l.key, !open); renderData({ focus: `lanehead:${l.key}` }); } },
+        }, [
+          el('span', 'lane-g', { text: l.glyph, attrs: { 'aria-hidden': 'true' } }),
+          el('h2', 'lane-title', { text: l.title }),
+          el('span', 'lane-n', { text: String(l.projects.length) }),
+          el('span', 'lane-hint', { text: l.hint }),
+          el('span', 'lane-chev', { text: '›', attrs: { 'aria-hidden': 'true' } }),
+        ]),
+        el('div', 'lane-wrap', {}, [el('div', 'lane-inner', {}, [el('div', 'lane-body', {}, [
+          ...shown.map((p) => projectRow(p, p.root === selectedRoot)),
+          ...(hidden > 0 ? [el('button', 'showmore', {
+            key: `more:${l.key}`, text: `Show ${hidden} more`, attrs: { type: 'button' },
+            on: { click: () => { viewer.laneMore.add(l.key); renderData({ focus: `more:${l.key}` }); } },
+          })] : []),
+        ])])]),
+      ]);
+    });
+    return el('section', 'board', { attrs: { 'aria-label': 'Projects' } }, [el('div', 'sum', {}, [bar, chipsRow]), ...laneNodes]);
   }
 
   function agentsPanel(snap, nowMs) {
@@ -324,7 +380,8 @@ export function mount(env) {
     const nowMs = now().getTime();
     const snap = pickRepo(snaps, viewer.repo, introPending, nowMs);
     if (snap && viewer.repo === null) viewer.repo = snap.repo.root;
-    renderRepo(snap, nowMs);
+    renderRepo(snap);
+    const boardNode = board(snap?.repo.root ?? null, nowMs);
     const agents = snap ? agentsPanel(snap, nowMs) : null;
     const plan = snap ? pickPlan(snap.plans, viewer.planByRepo.get(snap.repo.root)) : null;
     if (!snap || !plan) {
@@ -337,10 +394,10 @@ export function mount(env) {
           command: '/progress-tracking:progress-init',
         });
       introPending = false;
-      app.replaceChildren(snap ? el('div', '', {}, [nowStrip(nowMs), ...(agents ? [agents] : []), card]) : card);
+      app.replaceChildren(snap ? el('div', '', {}, [...(boardNode ? [boardNode] : []), ...(agents ? [agents] : []), card]) : card);
       return;
     }
-    const root = el('div', introPending ? 'intro' : '', {}, [nowStrip(nowMs), ...(agents ? [agents] : []), planSection(snap, plan), tasksSection(plan), entriesSection(snap), statusPanel(snap)]);
+    const root = el('div', introPending ? 'intro' : '', {}, [...(boardNode ? [boardNode] : []), planSection(snap, plan), tasksSection(plan), entriesSection(snap), ...(agents ? [agents] : []), statusPanel(snap)]);
     introPending = false;
     app.replaceChildren(root);
     // preventScroll: restoring focus must not move the viewport back to the control (the highlight timer and messages render too).

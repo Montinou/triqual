@@ -59,6 +59,99 @@ export function activity(snaps, nowMs) {
   return groups;
 }
 
+// ---- The project board: one row per repo, grouped into lanes by what the viewer has to do ----
+
+// A project that has a task moving but no live agent and no event for this long counts as stalled.
+export const STALE_MS = 15 * 60 * 1000;
+// Fixed urgency order; a project moves between lanes, the lanes never reorder.
+export const LANES = [
+  { key: 'needs', title: 'Needs you', hint: 'Blocked or gone silent: a person has to act', tone: 'blocked', glyph: '⊘' },
+  { key: 'running', title: 'Running', hint: 'Agents are working: nothing to do', tone: 'in_progress', glyph: '◐' },
+  { key: 'next', title: 'Up next', hint: 'Planned, not started', tone: 'pending', glyph: '○' },
+  { key: 'quiet', title: 'Done & quiet', hint: 'Finished, nothing to watch', tone: 'done', glyph: '✓' },
+];
+// One state per project, shown as one word. `lane` says which lane each belongs to.
+export const PROJECT_STATE = {
+  blocked: { glyph: '⊘', label: 'Blocked', tone: 'blocked', lane: 'needs' },
+  stale: { glyph: '!', label: 'Stalled', tone: 'dropped', lane: 'needs' },
+  running: { glyph: '◐', label: 'Running', tone: 'in_progress', lane: 'running' },
+  in_review: { glyph: '◉', label: 'In review', tone: 'in_review', lane: 'running' },
+  next: { glyph: '○', label: 'Up next', tone: 'pending', lane: 'next' },
+  done: { glyph: '✓', label: 'Done', tone: 'done', lane: 'quiet' },
+};
+
+// 'now' under 45 s, then 12m, 3h, 2d.
+export function fmtAge(ms) {
+  if (ms == null) return '';
+  const s = Math.round(ms / 1000);
+  if (s < 45) return 'now';
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.round(m / 60);
+  return h < 24 ? `${h}h` : `${Math.round(h / 24)}d`;
+}
+
+const newestAt = (snap) => Math.max(0,
+  ...(snap.plans ?? []).flatMap((p) => p.tasks.map((t) => t.since ?? 0)),
+  ...(snap.sessions ?? []).map((session) => session.lastAt ?? 0));
+
+// The state of a project from its shown plan's tasks, by precedence: blocked, done, stalled, running, in review, up next.
+export function projectState(tasks, idleMs, agents) {
+  const n = (status) => tasks.filter((t) => t.status === status).length;
+  if (n('blocked') > 0) return 'blocked';
+  if (tasks.length > 0 && tasks.every((t) => t.status === 'done' || t.status === 'dropped')) return 'done';
+  const moving = n('in_progress') + n('in_review') > 0;
+  if (moving && agents === 0 && idleMs != null && idleMs > STALE_MS) return 'stale';
+  if (n('in_progress') > 0) return 'running';
+  if (n('in_review') > 0) return 'in_review';
+  return 'next';
+}
+
+// What a project row shows: its active plan (else the newest), the state and the one line of "what now".
+export function projectOf(snap, nowMs) {
+  const plans = orderPlans(snap.plans ?? []);
+  const plan = plans[0] ?? null;
+  const tasks = plan?.tasks ?? [];
+  const newest = newestAt(snap);
+  const idleMs = newest === 0 ? null : Math.max(0, nowMs - newest);
+  const agents = agentCount(snap.sessions ?? [], nowMs);
+  const state = projectState(tasks, idleMs, agents);
+  const first = (status) => tasks.find((t) => t.status === status);
+  const cur = first('in_progress') ?? first('in_review');
+  const label = (t) => `${t.id} · ${t.title ?? ''}`.trim();
+  const blocked = first('blocked');
+  const next = first('pending');
+  const line = {
+    blocked: blocked ? `${blocked.id} · ${blocked.reason ?? 'blocked, no reason given'}` : 'Blocked',
+    stale: `No activity for ${fmtAge(idleMs)}${cur ? ` · ${label(cur)}` : ''}`,
+    running: cur ? label(cur) : 'Running',
+    in_review: cur ? `${label(cur)} (in review)` : 'In review',
+    done: `All ${tasks.length} tasks done`,
+    next: !plan ? 'No plan yet' : next ? `Next: ${label(next)}` : 'Nothing planned',
+  }[state];
+  return {
+    root: snap.repo.root, name: snap.repo.name, branch: snap.repo.branch ?? null, mode: snap.repo.mode,
+    planName: plan?.name ?? null, otherPlans: Math.max(0, plans.length - 1),
+    tasks: tasks.map((t) => ({ id: t.id, status: t.status })),
+    done: tasks.filter((t) => t.status === 'done').length, total: tasks.length,
+    state, idleMs, agents, line, currentId: (state === 'blocked' ? blocked?.id : cur?.id) ?? null,
+  };
+}
+
+// The lanes with their projects; empty lanes stay in the list so the summary can show a zero.
+// Needs you: blocked before stalled, longest waiting first. Others: most recent first. Name breaks every tie.
+export function boardLanes(snaps, nowMs) {
+  const projects = snaps.map((s) => projectOf(s, nowMs));
+  const byName = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+  return LANES.map((lane) => {
+    const mine = projects.filter((p) => PROJECT_STATE[p.state].lane === lane.key);
+    mine.sort(lane.key === 'needs'
+      ? (a, b) => (a.state === 'blocked' ? 0 : 1) - (b.state === 'blocked' ? 0 : 1) || (b.idleMs ?? 0) - (a.idleMs ?? 0) || byName(a, b)
+      : (a, b) => (a.idleMs ?? Infinity) - (b.idleMs ?? Infinity) || byName(a, b));
+    return { ...lane, projects: mine };
+  });
+}
+
 // Active plans first, then newest name first.
 export function orderPlans(plans) {
   const rank = (p) => (p.state === 'active' ? 0 : 1);
