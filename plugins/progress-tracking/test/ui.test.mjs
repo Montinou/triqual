@@ -1276,6 +1276,29 @@ test('a later push never changes the selected repo', async () => {
   await app.message(); assert.deepEqual(app.hero(), ['beta work']);
 });
 
+test('a planless selected repo keeps the global Now strip and navigation', async () => {
+  const app = await mountApp({ snaps: [...TWO_REPOS(), snap('empty', [])] });
+  byKey(app.els['repo-slot'], 'repo:/r/empty').fire('click');
+  assert.match(textOf(app.els.app), /No plans yet/);
+  const strip = byClass(app.els.app, 'now-strip');
+  assert.equal(strip.length, 1);
+  assert.match(textOf(strip[0]), /waiting on you: 1/);
+  byKey(app.els.app, 'now:/r/alpha:2026-10-20-alpha-work:T2').fire('click');
+  assert.deepEqual(app.hero(), ['alpha work']);
+  assert.ok(hasClass(app.rows().find((row) => row.attrs['data-id'] === 'T2'), 'highlight'));
+});
+
+test('a selected repo returns after a transient snapshot omission', async () => {
+  const app = await mountApp({ snaps: TWO_REPOS() });
+  byKey(app.els['repo-slot'], 'repo:/r/beta').fire('click');
+  app.state.data = TWO_REPOS().slice(0, 1);
+  await app.message();
+  assert.deepEqual(app.hero(), ['alpha work']);
+  app.state.data = TWO_REPOS();
+  await app.message();
+  assert.deepEqual(app.hero(), ['beta work']);
+});
+
 test('the default filter is running', async () => {
   const app = await mountApp({ snaps: TWO_REPOS() });
   assert.equal(byKey(app.els.app, 'chip:running').attrs['aria-pressed'], 'true');

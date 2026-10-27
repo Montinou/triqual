@@ -275,7 +275,7 @@ export function mount(env) {
     rowNodes.clear();
     const nowMs = now().getTime();
     const snap = pickRepo(snaps, viewer.repo, introPending, nowMs);
-    if (snap) viewer.repo = snap.repo.root;
+    if (snap && viewer.repo === null) viewer.repo = snap.repo.root;
     renderRepo(snap, nowMs);
     const plan = snap ? pickPlan(snap.plans, viewer.planByRepo.get(snap.repo.root)) : null;
     if (!snap || !plan) {
@@ -288,7 +288,7 @@ export function mount(env) {
           command: '/progress-tracking:progress-init',
         });
       introPending = false;
-      app.replaceChildren(card);
+      app.replaceChildren(snap ? el('div', '', {}, [nowStrip(nowMs), card]) : card);
       return;
     }
     const root = el('div', introPending ? 'intro' : '', {}, [nowStrip(nowMs), planSection(snap, plan), tasksSection(plan), entriesSection(snap), statusPanel(snap)]);
