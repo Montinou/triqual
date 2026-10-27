@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 220" width="1600" height="220" role="img" aria-label="triqual run board">
+<defs>
+<pattern id="grid" width="22" height="22" patternUnits="userSpaceOnUse"><circle cx="11" cy="11" r="2" fill="#1a1f27"/></pattern>
+<pattern id="strip" width="12" height="10" patternUnits="userSpaceOnUse"><rect y="6" width="6" height="4" fill="#000" fill-opacity=".45"/></pattern>
+<clipPath id="clip"><rect x="224" y="172" width="700" height="10" rx="5"/></clipPath>
+</defs>
+<style>
+.bg{fill:#090b0e}.dots{fill:url(#grid)}
+.m{fill:#5eead4}.l{fill:#d4ff4d}.v{fill:#b9a2ff}.c{fill:#ff7d6e}
+.p{fill:none;stroke:#9aa5b8;stroke-width:2;stroke-dasharray:5 4}
+.track{fill:#232933}.run{fill:#d4ff4d}.strip{fill:url(#strip)}
+.cell,.bar,.ring,.strip{transform-box:fill-box}
+.cell{transform-origin:50% 50%;animation:pop 6s infinite both}
+.bar{transform-origin:50% 100%;animation:rise 6s infinite both}
+.b1{animation-delay:120ms}.b2{animation-delay:240ms}
+.rail rect:nth-child(1){animation-delay:0ms}.rail rect:nth-child(2){animation-delay:40ms}.rail rect:nth-child(3){animation-delay:80ms}.rail rect:nth-child(4){animation-delay:120ms}.rail rect:nth-child(5){animation-delay:160ms}.rail rect:nth-child(6){animation-delay:200ms}.rail rect:nth-child(7){animation-delay:240ms}.rail rect:nth-child(8){animation-delay:280ms}.rail rect:nth-child(9){animation-delay:320ms}.rail rect:nth-child(10){animation-delay:360ms}.rail rect:nth-child(11){animation-delay:400ms}.rail rect:nth-child(12){animation-delay:440ms}.rail rect:nth-child(13){animation-delay:480ms}.rail rect:nth-child(14){animation-delay:520ms}.rail rect:nth-child(15){animation-delay:560ms}
+.ring{fill:none;stroke:#d4ff4d;stroke-width:3;opacity:0;transform-origin:50% 50%;animation:ring 6s infinite both}
+.strip{animation:stripe .9s linear infinite}
+@keyframes pop{0%{opacity:0;transform:translateY(8px) scale(.6);animation-timing-function:cubic-bezier(.2,.9,.3,1.2)}7.5%{opacity:1;transform:none}93%{opacity:1;transform:none}100%{opacity:0;transform:translateY(8px) scale(.6)}}
+@keyframes rise{0%{opacity:0;transform:scaleY(0);animation-timing-function:cubic-bezier(.2,.9,.3,1.2)}7.5%{opacity:1;transform:none}93%{opacity:1;transform:none}100%{opacity:0;transform:scaleY(0)}}
+@keyframes ring{0%,12%{opacity:0}12.1%,38.1%,64.1%{opacity:.55;transform:none;animation-timing-function:ease-out}37.9%,63.9%,89.9%{opacity:0;transform:scale(1.25,1.28)}100%{opacity:0}}
+@keyframes stripe{to{transform:translateX(12px)}}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+</style>
+<rect class="bg" width="1600" height="220"/>
+<rect class="dots" width="1600" height="220"/>
+<rect class="m bar" x="66" y="119" width="15" height="24" rx="4.5"/>
+<rect class="l bar b1" x="91.5" y="98" width="15" height="45" rx="4.5"/>
+<rect class="v bar b2" x="117" y="77" width="15" height="66" rx="4.5"/>
+<g class="rail">
+<rect class="cell m" x="224" y="74" width="80" height="72" rx="8"/>
+<rect class="cell m" x="312" y="74" width="80" height="72" rx="8"/>
+<rect class="cell m" x="400" y="74" width="80" height="72" rx="8"/>
+<rect class="cell m" x="488" y="74" width="80" height="72" rx="8"/>
+<rect class="cell m" x="576" y="74" width="80" height="72" rx="8"/>
+<rect class="cell m" x="664" y="74" width="80" height="72" rx="8"/>
+<rect class="cell m" x="752" y="74" width="80" height="72" rx="8"/>
+<rect class="cell m" x="840" y="74" width="80" height="72" rx="8"/>
+<rect class="cell m" x="928" y="74" width="80" height="72" rx="8"/>
+<rect class="cell v" x="1016" y="74" width="80" height="72" rx="8"/>
+<rect class="cell l" x="1104" y="74" width="80" height="72" rx="8"/>
+<rect class="cell c" x="1192" y="74" width="80" height="72" rx="8"/>
+<rect class="cell p" x="1280" y="74" width="80" height="72" rx="8"/>
+<rect class="cell p" x="1368" y="74" width="80" height="72" rx="8"/>
+<rect class="cell p" x="1456" y="74" width="80" height="72" rx="8"/>
+</g>
+<rect class="ring" x="1104" y="74" width="80" height="72" rx="8"/>
+<rect class="track" x="224" y="172" width="1312" height="10" rx="5"/>
+<rect class="run" x="224" y="172" width="700" height="10" rx="5"/>
+<g clip-path="url(#clip)"><rect class="strip" x="212" y="172" width="724" height="10"/></g>
+</svg>

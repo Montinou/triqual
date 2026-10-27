@@ -3,6 +3,19 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## progress-tracking 0.6.0
+
+### Changed
+
+- **`triqual ui` is the run board.** The dashboard shows one registered repo at a time, with a switcher, instead of
+  every repo on one page. For the repo in view it has a tab per plan, a plan rail with a cell per task, the plan's tasks
+  with filter chips (Open by default, All, and one per status), the latest progress entries, and the `status.md` text
+  in a folded panel. An empty registry, a repo with no plan, a plan with nothing open, a blocked plan and a lost
+  connection each have their own state, and a failed refresh keeps the last good data under a banner. The fonts (Geist,
+  Geist Mono and Bricolage Grotesque) ship with the plugin, so the page loads nothing from outside. The guarantees are
+  unchanged: it binds `127.0.0.1`, answers `GET` only for a fixed list of paths, checks the `Host` header, and sends
+  `Content-Security-Policy: default-src 'self'` and `Cache-Control: no-store`.
+
 ## progress-tracking 0.5.4
 
 ### Fixed
