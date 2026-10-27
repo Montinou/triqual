@@ -356,10 +356,8 @@ test('the board grid rules do not apply to the state card', () => {
   assert.match(css, /\.card\s*\{[^}]*display:\s*flex/, 'the card lays itself out as a flex column');
 });
 
-// A native <select> sizes to its longest option, and `max-width: 100%` is ineffective while its parent is an inline span
-// with no definite width: the page then scrolls sideways on a phone. The slot must be a shrinkable box, the select must
-// fit it and clip with an ellipsis, and the plan-tab count (`6/6`) must not split across lines.
-test('the repo select shrinks to the phone width and the tab count stays whole', () => {
+// Repo controls wrap inside the header; plan-tab counts stay whole.
+test('the repo list fits the phone width and the tab count stays whole', () => {
   const css = readFileSync(join(PLUGIN, 'ui', 'app.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   const bodyOf = (selector) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
     .filter((m) => m[1].split(',').map((x) => x.trim()).includes(selector)).map((m) => m[2]).join(';');
@@ -367,10 +365,8 @@ test('the repo select shrinks to the phone width and the tab count stays whole',
   assert.match(slot, /\bmin-width:\s*0\b/, '#repo-slot can shrink below its content');
   assert.match(slot, /\bmax-width:\s*100%/, '#repo-slot never exceeds the header');
   assert.match(slot, /\bdisplay:\s*block\b/, '#repo-slot is a box with a definite width, not an inline span');
-  const select = bodyOf('select.repo-pill');
-  assert.match(select, /\bmax-width:\s*100%/, 'the select fits its slot');
-  assert.match(select, /\bmin-width:\s*0\b/);
-  assert.match(select, /\btext-overflow:\s*ellipsis/, 'a long option is clipped, not overflowed');
+  assert.match(bodyOf('.repo-list'), /flex-wrap:\s*wrap/, 'repo buttons wrap to the slot');
+  assert.match(bodyOf('.repo-pill'), /max-width:\s*100%/, 'repo controls fit their slot');
   const count = bodyOf('.ptab span:last-child');
   assert.match(count, /\bwhite-space:\s*nowrap/, 'the tab count is not split');
   assert.match(count, /\boverflow-wrap:\s*normal/, 'overflow-wrap: anywhere is off for the count');
@@ -651,27 +647,25 @@ test('renders the default plan of the first repo', async () => {
   assert.match(textOf(byClass(app.els.app, 'headline')[0]), /1 in progress/);
   assert.match(textOf(byClass(app.els.app, 'count')[0]), /1\/4/);
   // Open filter: the done task is hidden, blocked comes first.
-  assert.deepEqual(app.rows().map((r) => textOf(byClass(r, 't-id')[0])), ['T4', 'T2', 'T3']);
-  assert.match(textOf(byClass(app.rows()[0], 't-reason')[0]), /waiting/);
+  assert.deepEqual(app.rows().map((r) => textOf(byClass(r, 't-id')[0])), ['T2']);
   // Plan tabs: active first, short name with the full name in title.
   const tabs = byClass(app.els.app, 'ptab');
   assert.deepEqual(tabs.map((t) => t.attrs.title), ['2026-10-20-alpha-work', '2026-10-10-alpha-earlier']);
   assert.match(textOf(tabs[0]), /^alpha-work1\/4$/);
 });
 
-test('repo pill shows the mode and branch; several repos give a select', async () => {
+test('repo list shows the mode and branch with selectable buttons', async () => {
   const one = await mountApp({ snaps: [snap('alpha', ALPHA_PLANS(), { mode: 'store', branch: 'main' })] });
   const pill = byClass(one.els['repo-slot'], 'repo-pill');
   assert.equal(pill.length, 1);
-  assert.equal(pill[0].tag, 'span');
+  assert.equal(pill[0].tag, 'button');
   assert.match(textOf(pill[0]), /alpha/);
   assert.match(textOf(pill[0]), /store/);
   assert.match(textOf(pill[0]), /main/);
   assert.equal(flatten(one.els['repo-slot']).filter((n) => n.tag === 'select').length, 0);
   const two = await mountApp({ snaps: TWO_REPOS() });
-  const select = flatten(two.els['repo-slot']).find((n) => n.tag === 'select');
-  assert.deepEqual(select.children.map((o) => o.attrs.value), ['/r/alpha', '/r/beta']);
-  assert.equal(select.value, '/r/alpha');
+  assert.deepEqual(byClass(two.els['repo-slot'], 'repo-item').map((n) => n.attrs['data-key']), ['repo:/r/alpha', 'repo:/r/beta']);
+  assert.equal(byKey(two.els['repo-slot'], 'repo:/r/alpha').attrs['aria-pressed'], 'true');
   // The brand sits first in the header and holds the logo SVG.
   const brand = one.els.top.children[0];
   assert.ok(hasClass(brand, 'brand'));
@@ -689,15 +683,12 @@ test('the status panel is a folded details titled Status', async () => {
 
 test("a later message re-renders and keeps the viewer's selection", async () => {
   const app = await mountApp({ snaps: TWO_REPOS() });
-  const select = flatten(app.els['repo-slot']).find((n) => n.tag === 'select');
-  select.value = '/r/beta';
-  select.fire('change');
+  byKey(app.els['repo-slot'], 'repo:/r/beta').fire('click');
   assert.deepEqual(app.hero(), ['beta work']);
-  const again = flatten(app.els['repo-slot']).find((n) => n.tag === 'select');
-  assert.equal(again.value, '/r/beta');
-  assert.equal(again.focuses, 1, 'focus returns to the rebuilt select');
-  again.value = '/r/alpha';
-  again.fire('change');
+  const again = byKey(app.els['repo-slot'], 'repo:/r/beta');
+  assert.equal(again.attrs['aria-pressed'], 'true');
+  assert.equal(again.focuses, 1, 'focus returns to the rebuilt repo button');
+  byKey(app.els['repo-slot'], 'repo:/r/alpha').fire('click');
   assert.deepEqual(app.hero(), ['alpha work']);
   byKey(app.els.app, 'plan:2026-10-10-alpha-earlier').fire('click');
   assert.deepEqual(app.hero(), ['alpha earlier']);
@@ -724,9 +715,7 @@ test('picking a plan or switching repo resets the filter and the open entry', as
   assert.equal(byKey(app.els.app, 'chip:open').attrs['aria-pressed'], 'true');
   assert.equal(byKey(app.els.app, 'entry:0').attrs['aria-expanded'], 'true');
   byKey(app.els.app, 'chip:all').fire('click');
-  const select = flatten(app.els['repo-slot']).find((n) => n.tag === 'select');
-  select.value = '/r/beta';
-  select.fire('change');
+  byKey(app.els['repo-slot'], 'repo:/r/beta').fire('click');
   assert.equal(byKey(app.els.app, 'chip:open').attrs['aria-pressed'], 'true');
 });
 
@@ -767,7 +756,7 @@ test('the time is written by messages only, so a viewer action never blanks it',
 
 test('rail cell click highlights its row', async () => {
   const app = await mountApp({ snaps: TWO_REPOS() });
-  assert.equal(app.rows().length, 3);
+  assert.equal(app.rows().length, 1);
   byKey(app.els.app, 'cell:T1').fire('click');
   assert.equal(byKey(app.els.app, 'chip:all').attrs['aria-pressed'], 'true', 'the filter widens to All');
   const lit = app.rows().filter((r) => hasClass(r, 'highlight'));
@@ -845,7 +834,7 @@ test('entries: five at most, the first open; pressed and expanded states are att
   byKey(app.els.app, 'entry:1').fire('click');
   assert.equal(byClass(app.els.app, 'entry-body').length, 0, 'clicking the open entry closes it');
   const pressed = flatten(app.els.app).filter((n) => n.attrs['aria-pressed'] === 'true');
-  assert.deepEqual(pressed.map((n) => n.attrs['data-key']), ['plan:2026-10-20-alpha-work', 'chip:open']);
+  assert.deepEqual(pressed.map((n) => n.attrs['data-key']), ['plan:2026-10-20-alpha-work', 'chip:running']);
 });
 
 test('a selected plan that disappears falls back to the default plan', async () => {
@@ -1246,3 +1235,49 @@ test('a write during a build triggers a throttled trailing push', () => withFixt
     assert.ok(times[1] - times[0] >= 75, times.join(','));
   } finally { release?.(); stop(); hub.close(); }
 }));
+
+
+test('with three repos and one in-progress task the page opens on that repo and the Now strip shows the task', async () => {
+  const app = await mountApp({ snaps: [snap('idle', BETA_PLANS()), ...TWO_REPOS()] });
+  assert.deepEqual(app.hero(), ['alpha work']);
+  assert.match(textOf(byClass(app.els.app, 'now-strip')[0]), /alpha.*T2.*Task T2.*0 agents/);
+  assert.match(textOf(byClass(app.els.app, 'now-strip')[0]), /waiting on you: 1/);
+});
+
+test("clicking another repo's Now chip switches repo and plan", async () => {
+  const beta = snap('beta', [plan('beta-active', 'active', [task('T8', 'in_progress', { since: Date.UTC(2026, 9, 26, 11) })])]);
+  const app = await mountApp({ snaps: [...TWO_REPOS().slice(0, 1), beta] });
+  byKey(app.els.app, 'now:/r/alpha:2026-10-20-alpha-work:T2').fire('click');
+  assert.deepEqual(app.hero(), ['alpha work']);
+  byKey(app.els.app, 'now:/r/beta:beta-active:T8').fire('click');
+  assert.deepEqual(app.hero(), ['beta active']);
+  assert.ok(hasClass(app.rows()[0], 'highlight'));
+  assert.equal(app.rows()[0].attrs['data-id'], 'T8');
+});
+
+test('Nothing running shows when no task is in progress', async () => {
+  const app = await mountApp({ snaps: [snap('beta', BETA_PLANS())] });
+  assert.match(textOf(byClass(app.els.app, 'now-strip')[0]), /Nothing running/);
+  assert.equal(byKey(app.els.app, 'chip:open').attrs['aria-pressed'], 'true');
+});
+
+test('idle repos are folded', async () => {
+  const app = await mountApp({ snaps: [snap('idle', BETA_PLANS()), ...TWO_REPOS()] });
+  const details = byClass(app.els['repo-slot'], 'idle-repos')[0];
+  assert.equal(details.tag, 'details'); assert.equal(details.open, false);
+  assert.equal(textOf(details.children[0]), '2 idle');
+  assert.deepEqual(byClass(app.els['repo-slot'], 'repo-item').map((n) => n.attrs['data-key']), ['repo:/r/alpha', 'repo:/r/idle', 'repo:/r/beta']);
+});
+
+test('a later push never changes the selected repo', async () => {
+  const app = await mountApp({ snaps: TWO_REPOS() });
+  byKey(app.els['repo-slot'], 'repo:/r/beta').fire('click');
+  app.state.data = [...TWO_REPOS(), snap('busy', [plan('busy', 'active', [task('T9', 'in_progress', { since: Date.UTC(2026, 9, 26, 12) })])])];
+  await app.message(); assert.deepEqual(app.hero(), ['beta work']);
+});
+
+test('the default filter is running', async () => {
+  const app = await mountApp({ snaps: TWO_REPOS() });
+  assert.equal(byKey(app.els.app, 'chip:running').attrs['aria-pressed'], 'true');
+  assert.deepEqual(app.rows().map((r) => r.attrs['data-id']), ['T2']);
+});

@@ -156,7 +156,7 @@ select:focus-visible, summary:focus-visible { outline: 2px solid var(--live); ou
   border: 1px solid var(--line); border-radius: 6px; padding: 1px 7px;
 }
 .logo { display: block; flex: none; }
-/* The slot is a flex item of the header: a box that may shrink to the line, so the select inside it can fit. */
+/* The repo list can shrink and wrap within the header. */
 #repo-slot { display: block; min-width: 0; max-width: 100%; }
 .repo-pill {
   display: inline-flex; align-items: center; gap: 8px; max-width: 100%; min-height: 36px;
@@ -164,15 +164,6 @@ select:focus-visible, summary:focus-visible { outline: 2px solid var(--live); ou
 }
 .repo-pill b { font-weight: 600; overflow-wrap: anywhere; }
 .repo-pill span { font-family: var(--mono); font-weight: 500; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
-select.repo-pill {
-  max-width: 100%; min-width: 0; text-overflow: ellipsis;
-  font: inherit; font-weight: 600; appearance: none; -webkit-appearance: none; cursor: pointer; padding-right: 32px;
-  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
-  background-position: calc(100% - 17px) 55%, calc(100% - 12px) 55%;
-  background-size: 5px 5px; background-repeat: no-repeat;
-}
-select.repo-pill:hover { border-color: var(--muted); }
-select.repo-pill option { background: var(--panel); color: var(--text); }
 .live { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-left: auto; color: var(--muted); font-size: 13px; }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--live); display: inline-block; animation: blink 1.6s ease-in-out infinite; }
 
@@ -350,3 +341,18 @@ select.repo-pill option { background: var(--panel); color: var(--text); }
 .theme-switch { display: inline-flex; gap: 4px; }
 .theme-button { border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; background: var(--raise); }
 .theme-button[aria-pressed="true"] { border-color: var(--live); color: var(--live); }
+
+/* Live work comes first; idle repositories stay available in a folded group. */
+.repo-list { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.repo-item { text-align: left; }
+.repo-item[aria-pressed="true"] { border-color: var(--live); }
+.idle-repos summary { cursor: pointer; color: var(--muted); padding: 6px; }
+.idle-repos .repo-item { margin: 4px; }
+.repo-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--live); animation: blink 1.6s ease-in-out infinite; flex: none; }
+#app > div:not(.card) > .now-strip { grid-column: 1 / -1; }
+.now-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.now-strip h2 { font-family: var(--display); font-size: 18px; }
+.now-chip { display: flex; flex-direction: column; gap: 3px; text-align: left; border: 1px solid var(--live); background: var(--panel); border-radius: 10px; padding: 8px 12px; max-width: 100%; overflow-wrap: anywhere; }
+.now-chip span:last-child, .muted, .waiting-chip { color: var(--muted); font-size: 12px; }
+.waiting-chip { border: 1px solid var(--line); border-radius: 999px; padding: 6px 10px; }
+@media (prefers-reduced-motion: reduce) { .repo-dot { animation: none; } }

@@ -2,7 +2,7 @@
 // receives messages and keeps the viewer's choices. Data goes in as textContent or attribute values, never as markup; dynamic
 // visual values go through style.setProperty on a custom property, so the page needs no inline style (CSP default-src 'self').
 import {
-  chips, currentOf, dataKey, entryView, headline, legend, pickPlan, pickRepo, planTitle, railCells, taskRows, orderPlans,
+  chips, currentOf, dataKey, entryView, headline, legend, pickPlan, pickRepo, planTitle, railCells, taskRows, orderPlans, nowItems, waitingCount, activity,
 } from './view.js';
 
 const HIGHLIGHT_MS = 1600;
@@ -26,7 +26,7 @@ export function mount(env) {
   let lastKey = null;
   let introPending = true;
   let highlightTimer = null;
-  const viewer = { repo: null, planByRepo: new Map(), filter: 'open', openEntry: 0, statusOpen: false, highlight: null };
+  const viewer = { repo: null, planByRepo: new Map(), filter: 'running', openEntry: 0, statusOpen: false, highlight: null };
   // Controls and task rows of the render in place, by their data-key / task id.
   const keyed = new Map();
   const rowNodes = new Map();
@@ -82,29 +82,50 @@ export function mount(env) {
     return `${snap.repo.mode} · ${snap.repo.branch ?? 'detached HEAD'}`;
   }
 
-  function renderRepo(snap) {
-    if (!snap) {
-      repoSlot.replaceChildren();
-      return;
-    }
-    if (snaps.length > 1) {
-      const options = snaps.map((s) => el('option', '', { text: `${s.repo.name} · ${repoLabel(s)}`, attrs: { value: s.repo.root } }));
-      const select = el('select', 'repo-pill', { key: 'repo', attrs: { 'aria-label': 'Repo' } }, options);
-      select.value = snap.repo.root;
-      select.addEventListener('change', () => {
-        viewer.repo = select.value;
-        resetView();
-        renderData({ focus: 'repo' });
-      });
-      repoSlot.replaceChildren(select);
-      return;
-    }
-    repoSlot.replaceChildren(el('span', 'repo-pill', {}, [el('b', '', { text: snap.repo.name }), el('span', '', { text: repoLabel(snap) })]));
+  function renderRepo(snap, nowMs) {
+    if (!snap) { repoSlot.replaceChildren(); return; }
+    const groups = activity(snaps, nowMs);
+    const item = (s, running = false) => el('button', 'repo-pill repo-item', {
+      key: `repo:${s.repo.root}`,
+      attrs: { type: 'button', 'aria-pressed': s.repo.root === snap.repo.root },
+      on: { click: () => { viewer.repo = s.repo.root; resetView(); renderData({ focus: `repo:${s.repo.root}` }); } },
+    }, [
+      ...(running ? [el('span', 'repo-dot', { attrs: { 'aria-label': 'Running' } })] : []),
+      el('b', '', { text: s.repo.name }), el('span', '', { text: repoLabel(s) }),
+    ]);
+    repoSlot.replaceChildren(el('div', 'repo-list', { attrs: { 'aria-label': 'Repos' } }, [
+      ...groups.running.map((s) => item(s, true)), ...groups.working.map((s) => item(s)),
+      ...(groups.idle.length ? [el('details', 'idle-repos', {}, [
+        el('summary', '', { text: `${groups.idle.length} idle` }), ...groups.idle.map((s) => item(s)),
+      ])] : []),
+    ]));
+  }
+
+  function nowStrip(nowMs) {
+    const items = nowItems(snaps, nowMs);
+    const waiting = waitingCount(snaps);
+    return el('section', 'now-strip', { attrs: { 'aria-label': 'Now' } }, [
+      el('h2', '', { text: 'Now' }),
+      ...items.map((item) => el('button', 'now-chip', {
+        key: `now:${item.repoRoot}:${item.planName}:${item.taskId}`,
+        attrs: { type: 'button' },
+        on: { click: () => {
+          viewer.repo = item.repoRoot;
+          viewer.planByRepo.set(item.repoRoot, item.planName);
+          resetView();
+          const plan = snaps.find((s) => s.repo.root === item.repoRoot)?.plans.find((p) => p.name === item.planName);
+          pickCell(plan, item.taskId);
+        } },
+      }, [el('span', '', { text: `${item.repoName} · ${item.taskId} · ${item.title}` }),
+        el('span', '', { text: `${item.agents} agents · ${item.elapsedMs == null ? 'elapsed unknown' : `${Math.max(0, Math.floor(item.elapsedMs / 60000))}m elapsed`}` })])),
+      ...(items.length ? [] : [el('span', 'muted', { text: 'Nothing running' })]),
+      ...(waiting ? [el('span', 'waiting-chip', { text: `waiting on you: ${waiting}` })] : []),
+    ]);
   }
 
   // A different plan or repo starts from the default view.
   function resetView() {
-    viewer.filter = 'open';
+    viewer.filter = 'running';
     viewer.openEntry = 0;
     viewer.highlight = null;
     clearTimeout(highlightTimer);
@@ -252,8 +273,10 @@ export function mount(env) {
     const activeKey = document.activeElement?.getAttribute?.('data-key') ?? null;
     keyed.clear();
     rowNodes.clear();
-    const snap = pickRepo(snaps, viewer.repo);
-    renderRepo(snap);
+    const nowMs = now().getTime();
+    const snap = pickRepo(snaps, viewer.repo, introPending, nowMs);
+    if (snap) viewer.repo = snap.repo.root;
+    renderRepo(snap, nowMs);
     const plan = snap ? pickPlan(snap.plans, viewer.planByRepo.get(snap.repo.root)) : null;
     if (!snap || !plan) {
       const card = snap
@@ -268,7 +291,7 @@ export function mount(env) {
       app.replaceChildren(card);
       return;
     }
-    const root = el('div', introPending ? 'intro' : '', {}, [planSection(snap, plan), tasksSection(plan), entriesSection(snap), statusPanel(snap)]);
+    const root = el('div', introPending ? 'intro' : '', {}, [nowStrip(nowMs), planSection(snap, plan), tasksSection(plan), entriesSection(snap), statusPanel(snap)]);
     introPending = false;
     app.replaceChildren(root);
     // preventScroll: restoring focus must not move the viewport back to the control (the highlight timer and messages render too).
