@@ -468,7 +468,7 @@ function execFileSyncStatus(args, env) {
 
 // ---- final fix wave ----
 
-test('each /api/snapshots poll resolves each registered repo once', () => withFixture(async ({ dir, home }) => {
+test('each /api/snapshots request uses the cached registered repos', () => withFixture(async ({ dir, home }) => {
   const bin = join(dir, 'fake-git');
   mkdirSync(bin);
   const log = join(dir, 'git.log');
@@ -482,7 +482,7 @@ test('each /api/snapshots poll resolves each registered repo once', () => withFi
       writeFileSync(log, '');
       assert.equal((await get(port, '/api/snapshots')).status, 200);
       const calls = readFileSync(log, 'utf8').split('\n').filter((l) => l.includes('--show-toplevel'));
-      assert.equal(calls.length, 1, calls.join('\n'));
+      assert.equal(calls.length, 0, calls.join('\n'));
     });
   } finally {
     process.env.PATH = path;
@@ -1080,3 +1080,150 @@ test('mounting renders three theme buttons and clicking Dark sets data-theme=dar
   assert.equal(app.document.documentElement.dataset.theme, undefined);
   assert.equal(app.state['triqual-ui:theme'], 'system');
 });
+
+// ---- cached server and SSE ----
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+async function openStream(port) {
+  return new Promise((resolve, reject) => {
+    const req = request({ host: '127.0.0.1', port, path: '/api/events', agent: false }, res => {
+      const messages = []; let text = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => {
+        text += chunk;
+        let end;
+        while ((end = text.indexOf('\n\n')) >= 0) {
+          const frame = text.slice(0, end); text = text.slice(end + 2);
+          if (frame.startsWith('data: ')) messages.push({ at: Date.now(), data: JSON.parse(frame.slice(6)) });
+        }
+      });
+      resolve({ res, messages, close() { req.destroy(); res.destroy(); } });
+    });
+    req.on('error', reject); req.end();
+  });
+}
+async function until(fn, ms = 2000) {
+  const end = Date.now() + ms;
+  while (!fn()) { if (Date.now() > end) assert.fail('timed out waiting for stream'); await delay(10); }
+}
+async function withLive(home, options, fn) {
+  const { server } = await startServer({ home, ...options });
+  let stream;
+  try { stream = await openStream(server.address().port); await fn(stream, server); }
+  finally { stream?.close(); await new Promise(resolve => server.close(resolve)); }
+}
+
+test('/api/events sends the snapshot list on connect with event-stream headers', () => withFixture(async ({ home, repo }) => {
+  await withLive(home, {}, async ({ res, messages }) => {
+    assert.equal(res.statusCode, 200); assert.match(res.headers['content-type'], /^text\/event-stream/);
+    assertCommonHeaders({ headers: res.headers });
+    await until(() => messages.length); assert.equal(messages[0].data[0].repo.root, repo);
+  });
+}));
+
+test('no snapshot build happens with no client connected', () => withFixture(async ({ home }) => {
+  let builds = 0;
+  const { server } = await startServer({ home, heartbeatMs: 30, build() { builds++; return {}; } });
+  try { await delay(100); assert.equal(builds, 0); }
+  finally { await new Promise(resolve => server.close(resolve)); }
+}));
+
+test('a tracking add reaches an open stream within 2 s', () => withFixture(async ({ dir, home, repo }) => {
+  const previous = process.env.TRIQUAL_TRACKING_DB;
+  process.env.TRIQUAL_TRACKING_DB = join(dir, 'data', 'tracking.db');
+  execFileSync(process.execPath, [join(PLUGIN, 'cli', 'progress-init.mjs'), '--store', '--accept-unparsed'], { cwd: repo, env: cleanEnv(home), stdio: 'pipe' });
+  const draft = join(dir, 'entry.json');
+  const add = title => {
+    writeFileSync(draft, JSON.stringify({ title, stage_task: 'fixture', done: 'fixture', files: 'none', verification: 'fixture', next: 'none' }));
+    execFileSync(process.execPath, [join(PLUGIN, 'cli', 'tracking.mjs'), 'add', draft, '--no-commit'], { cwd: repo, env: cleanEnv(home), stdio: 'pipe' });
+  };
+  try {
+    add('before');
+    await withLive(home, { heartbeatMs: 10000, throttleMs: 30 }, async ({ messages }) => {
+      await until(() => messages.length); add('after');
+      await until(() => messages.some(m => m.data[0].progress.entries.some(e => e.title === 'after')));
+    });
+  } finally { if (previous === undefined) delete process.env.TRIQUAL_TRACKING_DB; else process.env.TRIQUAL_TRACKING_DB = previous; }
+}));
+
+test('a burst of changes yields at most one push per throttle window and a final push', () => withFixture(async ({ dir, home }) => {
+  const watchDir = join(dir, 'watch'); mkdirSync(watchDir);
+  let builds = 0; const times = [];
+  const hub = uiServer.createHub({ home, watchDir, throttleMs: 70, heartbeatMs: 10000, build() { builds++; return {}; } });
+  const unsub = hub.subscribe(() => times.push(Date.now()));
+  try {
+    await until(() => times.length === 1);
+    for (let i = 0; i < 9; i++) { writeFileSync(join(watchDir, 'tracking.db'), String(i).repeat(i + 1)); await delay(15); }
+    await delay(120);
+    assert.ok(times.length >= 2); assert.equal(times.length, builds);
+    for (let i = 1; i < times.length; i++) assert.ok(times[i] - times[i - 1] >= 65, times.join(','));
+    assert.ok(times.at(-1) >= times[0] + 130, 'trailing push follows the last change');
+  } finally { unsub(); hub.close(); }
+}));
+
+test('a closed client is unsubscribed', () => withFixture(async ({ home }) => {
+  let builds = 0;
+  await withLive(home, { heartbeatMs: 40, build() { builds++; return {}; } }, async stream => {
+    await until(() => stream.messages.length); stream.close(); await delay(25);
+    const before = builds; await delay(130); assert.equal(builds, before);
+  });
+}));
+
+test('with a client connected and no writes there is no push after the first', () => withFixture(async ({ dir, home }) => {
+  const watchDir = join(dir, 'watch'); mkdirSync(watchDir);
+  // Reading empty WALs must not create a self-triggered push loop.
+  const hub = uiServer.createHub({ home, watchDir, heartbeatMs: 10000, throttleMs: 30, build() {
+    writeFileSync(join(watchDir, 'tracking.db-wal'), ''); rmSync(join(watchDir, 'tracking.db-wal'));
+    return {};
+  } });
+  const messages = []; const stop = hub.subscribe(x => messages.push(x));
+  try { await until(() => messages.length); await delay(100); assert.equal(messages.length, 1); }
+  finally { stop(); hub.close(); }
+}));
+
+test('a missing data directory gives a 200 stream with heartbeat pushes only', () => withFixture(async ({ dir, home }) => {
+  await withLive(home, { watchDir: join(dir, 'missing'), heartbeatMs: 60, throttleMs: 20 }, async ({ res, messages }) => {
+    assert.equal(res.statusCode, 200); await until(() => messages.length >= 2);
+    assert.ok(messages[1].at - messages[0].at >= 45);
+  });
+}));
+
+for (const name of ['a push does not re-resolve repos, the heartbeat does', 'no git rev-parse --abbrev-ref runs on a push, only on the heartbeat']) test(name, () => withFixture(async ({ dir, home }) => {
+  const bin = join(dir, 'git-bin'); mkdirSync(bin);
+  const log = join(dir, 'git-calls');
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  writeFileSync(join(bin, 'git'), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${log}"\nexec "${realGit}" "$@"\n`); chmodSync(join(bin, 'git'), 0o755);
+  const oldPath = process.env.PATH; process.env.PATH = `${bin}:${oldPath}`;
+  const watchDir = join(dir, 'watch'); mkdirSync(watchDir);
+  try {
+    await withLive(home, { watchDir, heartbeatMs: 400, throttleMs: 20 }, async ({ messages }) => {
+      await until(() => messages.length); writeFileSync(log, '');
+      writeFileSync(join(watchDir, 'tracking.db'), 'changed'); await until(() => messages.length === 2);
+      assert.doesNotMatch(readFileSync(log, 'utf8'), /--show-toplevel/);
+      assert.doesNotMatch(readFileSync(log, 'utf8'), /--abbrev-ref/);
+      await until(() => messages.length >= 3);
+      assert.match(readFileSync(log, 'utf8'), /--show-toplevel/);
+      assert.match(readFileSync(log, 'utf8'), /--abbrev-ref/);
+    });
+  } finally { process.env.PATH = oldPath; }
+}));
+
+
+test('a write during a build triggers a throttled trailing push', () => withFixture(async ({ dir, home }) => {
+  const watchDir = join(dir, 'watch'); mkdirSync(watchDir);
+  let release; let builds = 0;
+  const times = [];
+  const hub = uiServer.createHub({ home, watchDir, heartbeatMs: 10000, throttleMs: 80, async build() {
+    builds++;
+    if (builds === 1) await new Promise(resolve => { release = resolve; });
+    return {};
+  } });
+  const stop = hub.subscribe(() => times.push(Date.now()));
+  try {
+    await until(() => release);
+    writeFileSync(join(watchDir, 'tracking.db'), 'concurrent write');
+    await delay(100); release();
+    await until(() => times.length >= 2);
+    assert.equal(builds, 2);
+    assert.ok(times[1] - times[0] >= 75, times.join(','));
+  } finally { release?.(); stop(); hub.close(); }
+}));

@@ -48,7 +48,7 @@ export function parseProgressEntries(text, max = MAX_ENTRIES) {
 }
 
 // The current branch name, or null on a detached HEAD (git prints `HEAD`) or when git fails.
-function branchOf(repoRoot) {
+export function branchOf(repoRoot) {
   const env = { ...process.env };
   for (const key of INHERITED_GIT_ENV) delete env[key];
   try {
@@ -203,7 +203,8 @@ function storeViews(t, io) {
 }
 
 // The tracking snapshot of a repository. A store repository is read from the store (`home` and `env` locate it).
-export function buildSnapshot(t, { now, shareable, home = homedir(), env = process.env }) {
+export function buildSnapshot(t, options) {
+  const { now, shareable, home = homedir(), env = process.env } = options;
   const store = t.mode === 'store' ? storeViews(t, { home, env }) : null;
   return {
     schema: SNAPSHOT_SCHEMA,
@@ -212,7 +213,7 @@ export function buildSnapshot(t, { now, shareable, home = homedir(), env = proce
       name: basename(t.repoRoot),
       root: t.repoRoot,
       mode: t.mode,
-      branch: branchOf(t.repoRoot),
+      branch: Object.hasOwn(options, 'branch') ? options.branch : branchOf(t.repoRoot),
       // A store repository is shareable only when the registry and its frozen store row both say so: the row stays 0
       // for one switched from local mode, whatever the registry is later set to.
       shareable: shareable === true && t.mode !== 'local' && (store === null || store.shareable),
