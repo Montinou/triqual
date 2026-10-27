@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { BRAND } from '../plugins/methodology/cli/lib/brand.mjs';
@@ -374,4 +374,24 @@ test('README gives npx triqual setup as the terminal path and links the package 
   assert.ok(README.includes('from triqual 0.1.0'), 'the release it arrives in');
   assert.ok(!README.includes('need the full setup from a clone'), 'Codex and Grok no longer need a clone');
   assert.ok(README.includes('](packages/triqual/README.md)'), 'the package page is linked');
+});
+
+test('README header: banner, real-text line and hero image sit in order under the first heading, then the unchanged first paragraph', () => {
+  const lines = README.split('\n');
+  const title = lines.findIndex((line) => line.startsWith('# '));
+  assert.equal(lines[title], '# Triqual');
+  const banner = '<p align="center"><img src="assets/run-board-banner.svg" alt="triqual — a working method for AI coding agents, with a live run board" width="100%"></p>';
+  const tagline = '<p align="center"><b>A working method for AI coding agents</b>: a plan before the code, a review for every task, and a live run board.</p>';
+  const hero = '![triqual run board: plans, tasks and progress at a glance](https://github.com/Montinou/triqual/releases/download/readme-assets/run-board-hero.png)';
+  const paragraph = 'Triqual is a Claude Code plugin marketplace (`triqual`) that gives an AI coding agent a working method: a plan before';
+  assert.deepEqual(lines.slice(title + 1, title + 9), ['', banner, '', tagline, '', hero, '', paragraph]);
+});
+
+test('README header: the only image file it references is the banner, which exists, and the hero is the release asset', () => {
+  const header = README.slice(0, README.indexOf('Triqual is a Claude Code plugin marketplace'));
+  const sources = [...header.matchAll(/<img src="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(sources, ['assets/run-board-banner.svg']);
+  for (const source of sources) assert.ok(existsSync(join(ROOT, source)), `${source} exists`);
+  // The hero is a release asset, not a file in the tree.
+  assert.ok(header.includes('https://github.com/Montinou/triqual/releases/download/readme-assets/run-board-hero.png'));
 });

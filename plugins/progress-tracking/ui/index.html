@@ -3,16 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
-<title>Tracking dashboard</title>
-<script src="/app.js" defer></script>
+<meta name="color-scheme" content="dark light">
+<title>triqual · run board</title>
+<link rel="stylesheet" href="/app.css">
+<script type="module" src="/app.js"></script>
 </head>
 <body>
-<header class="top">
-  <h1>Tracking dashboard</h1>
-  <p class="meta" id="state" role="status">Loading…</p>
+<header id="top" class="top">
+  <span id="repo-slot"></span>
+  <span class="live"><span class="live-dot" aria-hidden="true"></span><span>Live · every 5 s · read-only</span><span id="updated"></span></span>
 </header>
-<main id="repos"></main>
-<noscript>This dashboard needs JavaScript: it reads /api/snapshots.</noscript>
+<div id="banner" role="status"></div>
+<main id="app"></main>
+<noscript>This page needs JavaScript: it reads /api/snapshots.</noscript>
 </body>
 </html>

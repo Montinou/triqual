@@ -16,7 +16,7 @@ one-line command table. The agent-facing rules are in the
 | CLI `triqual progress-init` | The installer (`scripts/init.mjs`). |
 | CLI `triqual tasks` | The task ledger (`cli/tasks.mjs`). |
 | CLI `triqual tracking` | Writes and reads entries, status and documents; moves data in and out of the store; runs the store git hooks (`cli/tracking.mjs`). |
-| CLI `triqual ui` | A local, read-only dashboard (`cli/ui.mjs`). |
+| CLI `triqual ui` | A local, read-only run board (`cli/ui.mjs`, the page in `ui/`). |
 | Claude Code hooks | `SessionStart` and `Stop` (`hooks/hooks.json`, `scripts/gate.mjs`). |
 | Git hooks | Installed per repo by `progress-init`; one set for each mode. |
 
@@ -484,9 +484,21 @@ Internal. The installed store git hooks call it. See [Hooks](#hooks). Outside st
 triqual ui [--port N] [--open]
 ```
 
-A local, read-only dashboard of every registered repo: plans with progress and tasks by status (blocked and dropped
-reasons included), the `status.md` text, and the latest progress entries. It prints `triqual ui: <url>` and runs
-until Ctrl-C.
+A local, read-only run board of your registered repos. It shows one repo at a time, with a switcher to move between
+them, and for the repo in view:
+
+- **Plan tabs**: one tab per plan, and a plan rail with a cell for every task, coloured by status. A cell selects its
+  task in the list.
+- **Tasks**: the plan's tasks with filter chips (Open by default, All, and one chip for each status the plan has); a
+  blocked or dropped task carries its reason.
+- **Latest entries**: the most recent progress entries, one open at a time.
+- **Status**: the `status.md` text, in a panel folded away until you open it.
+- **States**: an empty registry, a repo with no plan, a plan with nothing open, a plan blocked on a task (its reason
+  right under the headline) and a lost connection to the server each get their own message instead of an empty page;
+  on a failed refresh the last good data stays on screen under a banner.
+
+The page bundles its fonts (Geist, Geist Mono and Bricolage Grotesque) and loads nothing from outside. It prints
+`triqual ui: <url>` and runs until Ctrl-C.
 
 | Flag | Meaning |
 |---|---|
@@ -494,14 +506,15 @@ until Ctrl-C.
 | `--open` | Also open the URL in the default browser. |
 
 - It binds `127.0.0.1` only.
-- It answers `GET /`, `GET /app.js` and `GET /api/snapshots`. A request with another method gets 405 and any other
-  path gets 404.
+- It answers `GET` for a fixed list of paths and nothing else: `/`, its script and stylesheet files, the three bundled
+  fonts under `/fonts/`, and `/api/snapshots`. A request with another method gets 405 and any other path gets 404; no
+  request path ever reaches the filesystem.
 - A `Host` header other than `127.0.0.1:<port>` or `localhost:<port>`, a missing one included, gets 403. That guards
   against DNS rebinding.
 - Every response carries `Content-Security-Policy: default-src 'self'` and `Cache-Control: no-store`.
 - The page refreshes every 5 seconds while the tab is visible. Each refresh runs git in every registered repo, so a
-  hidden tab stops polling.
-- The snapshot of each repo carries up to 20 entries. The page shows the latest 5 per repo.
+  hidden tab stops polling and polls again as soon as it is visible.
+- The snapshot of each repo carries up to 20 entries. The page shows the latest 5 of the repo in view.
 - A repo that no longer resolves, or whose snapshot fails (a store that cannot be read, say), is skipped.
 
 Exit codes: 0 for `--help`, 2 for a bad argument, 1 if it cannot listen. Otherwise it runs until stopped.

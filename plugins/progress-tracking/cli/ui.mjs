@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // `triqual ui [--port N] [--open]`: the local, read-only tracking dashboard (spec Addendum D.4). A node:http server bound
-// to 127.0.0.1 serves one page (`GET /`), its script (`GET /app.js`) and the snapshots of every registered repo
-// (`GET /api/snapshots`). Any other method is 405 and any other path 404. A Host header other than
+// to 127.0.0.1 serves one page (`GET /`), its scripts (`GET /app.js`, `GET /view.js`), its stylesheet (`GET /app.css`),
+// three bundled fonts (`GET /fonts/geist.woff2`, `/fonts/geist-mono.woff2`, `/fonts/bricolage.woff2`) and the snapshots
+// of every registered repo (`GET /api/snapshots`). Assets come from a fixed allowlist (ASSETS), each read once at start;
+// no request path ever reaches the filesystem. Any other method is 405 and any other path 404. A Host header other than
 // `127.0.0.1:<port>` or `localhost:<port>` (a missing one included) is 403, which guards against DNS rebinding. Every
 // response carries `Content-Security-Policy: default-src 'self'` and `Cache-Control: no-store`, and none echoes
 // request data. Exit codes: 0 for --help/-h (usage only, no server), 2 bad arguments, 1 the server cannot listen;
@@ -30,6 +32,17 @@ const COMMON_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
 };
 const TEXT = 'text/plain; charset=utf-8';
+// The only files the server serves, by request path. `base64` entries are stored as base64 text (so the fonts survive
+// the repo's content gate) and decoded once at start.
+const ASSETS = {
+  '/': { file: 'index.html', type: 'text/html; charset=utf-8' },
+  '/app.js': { file: 'app.js', type: 'text/javascript; charset=utf-8' },
+  '/view.js': { file: 'view.js', type: 'text/javascript; charset=utf-8' },
+  '/app.css': { file: 'app.css', type: 'text/css; charset=utf-8' },
+  '/fonts/geist.woff2': { file: 'fonts/geist.woff2.b64', type: 'font/woff2', base64: true },
+  '/fonts/geist-mono.woff2': { file: 'fonts/geist-mono.woff2.b64', type: 'font/woff2', base64: true },
+  '/fonts/bricolage.woff2': { file: 'fonts/bricolage.woff2.b64', type: 'font/woff2', base64: true },
+};
 
 // The snapshot of every registered repo that still resolves, each repo resolved once per poll. A repo whose snapshot
 // throws is skipped, so one bad repo never fails the whole response. node:sqlite is loaded (once) only when a store
@@ -55,13 +68,12 @@ function send(res, status, type, body, extra = {}) {
 
 // Fixed bodies only: nothing from the request (path, Host, method) is ever written back. Returns a promise for the one
 // route that reads the store (the others answer at once).
-async function handle(req, res, { home, port, pages }) {
+async function handle(req, res, { home, port, assets }) {
   const host = req.headers.host;
   if (host !== `${LOOPBACK}:${port}` && host !== `localhost:${port}`) return send(res, 403, TEXT, 'forbidden\n');
   if (req.method !== 'GET') return send(res, 405, TEXT, 'method not allowed\n', { Allow: 'GET' });
   const path = (req.url ?? '').split('?')[0];
-  if (path === '/') return send(res, 200, 'text/html; charset=utf-8', pages.index);
-  if (path === '/app.js') return send(res, 200, 'text/javascript; charset=utf-8', pages.app);
+  if (Object.hasOwn(assets, path)) return send(res, 200, assets[path].type, assets[path].body);
   if (path === '/api/snapshots') return send(res, 200, 'application/json; charset=utf-8', JSON.stringify(await snapshots(home)));
   return send(res, 404, TEXT, 'not found\n');
 }
@@ -69,10 +81,11 @@ async function handle(req, res, { home, port, pages }) {
 // Starts the dashboard on 127.0.0.1 (the only host it accepts) and resolves once it listens; port 0 picks a free one.
 export function startServer({ home, port = 0, host = LOOPBACK }) {
   if (host !== LOOPBACK) return Promise.reject(new Error(`triqual ui binds ${LOOPBACK} only, not ${host}`));
-  const pages = {
-    index: readFileSync(join(UI_DIR, 'index.html'), 'utf8'),
-    app: readFileSync(join(UI_DIR, 'app.js'), 'utf8'),
-  };
+  const assets = {};
+  for (const [path, { file, type, base64 }] of Object.entries(ASSETS)) {
+    const text = readFileSync(join(UI_DIR, file), 'utf8');
+    assets[path] = { type, body: base64 ? Buffer.from(text, 'base64') : text };
+  }
   return new Promise((resolve, reject) => {
     // requireHostHeader off: a request without Host reaches the handler, which answers 403 (not Node's bare 400).
     const server = createServer({ requireHostHeader: false }, (req, res) => {
@@ -80,7 +93,7 @@ export function startServer({ home, port = 0, host = LOOPBACK }) {
         if (!res.headersSent) send(res, 500, TEXT, 'internal error\n');
         else res.destroy();
       };
-      handle(req, res, { home, port: server.address().port, pages }).catch(fail);
+      handle(req, res, { home, port: server.address().port, assets }).catch(fail);
     });
     server.once('error', reject);
     server.listen(port, LOOPBACK, () => {
