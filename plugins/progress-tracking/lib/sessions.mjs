@@ -70,6 +70,8 @@ export function record(db, payload, now, repoRoot) {
   try {
     upsert(aid, null, payload.agent_type || null, null, null, ['SubagentStop', 'SessionEnd'].includes(hook) ? now : null);
     if (hook === 'SessionStart') {
+      // A lifecycle start reopens the controller; ordinary upserts preserve terminal state.
+      db.prepare("UPDATE sessions SET ended_at = NULL WHERE session_id = ? AND agent_id = ''").run(sid);
       db.prepare('DELETE FROM sessions WHERE last_at < ?').run(now - RETENTION_MS);
       db.prepare('DELETE FROM events WHERE at < ?').run(now - RETENTION_MS);
     } else if (hook === 'SubagentStart') event('start', (payload.agent_type || 'Agent').slice(0, LABEL_LIMIT));
