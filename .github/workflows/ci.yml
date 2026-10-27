@@ -1,5 +1,5 @@
-# Runs on every pull request of the public repository and repeats the local hooks there: the test suite, the content gate
-# (without the private deny list, which CI does not have) and the commit identity check. In any other repository every job is skipped.
+# Runs the test suite and content gate on every pull request of the public repository.
+# The content gate omits the private deny list, which CI does not have. Every job is skipped in other repositories.
 name: ci
 
 on:
@@ -42,42 +42,18 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: node bin/lib/content-gate.mjs --range "$BASE_SHA...$HEAD_SHA" --no-terms
 
-  identity:
-    if: github.repository == 'Montinou/triqual'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-      - name: Commit identities, strict for the maintainer account
-        if: github.event.pull_request.user.login == 'Montinou'
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: node bin/lib/identity.mjs --range "$BASE_SHA..$HEAD_SHA" --strict
-      - name: Commit identities
-        if: github.event.pull_request.user.login != 'Montinou'
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: node bin/lib/identity.mjs --range "$BASE_SHA..$HEAD_SHA"
-
   ci:
     if: always() && github.repository == 'Montinou/triqual'
-    needs: [test, gate, identity]
+    needs: [test, gate]
     runs-on: ubuntu-latest
     steps:
-      - name: Fail unless test, gate and identity all succeeded
+      - name: Fail unless test and gate both succeeded
         env:
           TEST_RESULT: ${{ needs.test.result }}
           GATE_RESULT: ${{ needs.gate.result }}
-          IDENTITY_RESULT: ${{ needs.identity.result }}
         run: |
-          echo "test=$TEST_RESULT gate=$GATE_RESULT identity=$IDENTITY_RESULT"
-          if [ "$TEST_RESULT" = success ] && [ "$GATE_RESULT" = success ] && [ "$IDENTITY_RESULT" = success ]; then
+          echo "test=$TEST_RESULT gate=$GATE_RESULT"
+          if [ "$TEST_RESULT" = success ] && [ "$GATE_RESULT" = success ]; then
             exit 0
           fi
           exit 1

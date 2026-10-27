@@ -39,13 +39,14 @@ protected: every change goes through a pull request that the maintainer merges o
 ### For the maintainer
 
 - After `triqual progress-init --store`, `node bin/install-hooks.mjs` installs the local hooks after the store gate that
-  `progress-init --store` installs: the content gate on every commit and the identity check on every push.
+  `progress-init --store` installs: the content gate on every commit and the authenticated account routing check on every push.
 - The deny list is never in the repository. It lives in the file named by `PUBLIC_EXPORT_DENY`, else in
   `~/.config/triqual/public-export-deny.txt`, plus the `clientTerms` and `neverSend` of the memory-report config; never
   commit it. After changing it, run `node bin/lib/content-gate.mjs --all`, so the new entries are checked against the
   files that already exist.
-- The maintainer's own pull requests need every commit authored and committed with the public `noreply` identity, and CI
-  checks it. A GitHub "Update branch" merge commit fails that check: rebase or merge locally instead.
+- The local push hook checks the SSH destination and authenticated maintainer account. Commit authors, committers and
+  Claude attribution trailers are unrestricted, including GitHub "Update branch" commits. Merge authorization is enforced
+  through GitHub repository access and branch protection; CI requires tests and the content gate.
 
 ## Layout
 

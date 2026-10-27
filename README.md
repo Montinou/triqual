@@ -492,8 +492,9 @@ Development happens in this repository, `Montinou/triqual`. Pull requests from o
 
 The maintainer's checkout also carries local hooks. After `triqual progress-init --store`, `node bin/install-hooks.mjs`
 installs them after the store gate that `progress-init --store` installs: the content gate on every commit and the
-identity check on every push. The deny list is never in the repository: it lives in the file named by
+authenticated account routing check on every push. The deny list is never in the repository: it lives in the file named by
 `PUBLIC_EXPORT_DENY`, else in `~/.config/triqual/public-export-deny.txt`, plus the `clientTerms` and `neverSend` of the
 memory-report config, and it must never be committed. After changing it, run `node bin/lib/content-gate.mjs --all` to
-check every tracked file against it. The maintainer's own pull requests need every commit authored and committed with the public `noreply`
-identity, and CI checks it, so a GitHub "Update branch" merge commit fails: rebase or merge locally instead.
+check every tracked file against it. The local push hook checks the SSH destination and authenticated maintainer account.
+Commit authors, committers and Claude attribution trailers are unrestricted, including GitHub "Update branch" commits.
+Merge authorization is enforced through GitHub repository access and branch protection; CI requires tests and the content gate.

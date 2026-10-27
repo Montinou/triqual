@@ -3,6 +3,7 @@
 // repository and is skipped everywhere else (the private repository has the hooks and no deny-list-free runner).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -60,9 +61,9 @@ test('the token is read-only at the top level and no job widens it', () => {
   assert.ok(!lines.some((line) => /^\s+permissions:/.test(line)), 'no job-level permissions');
 });
 
-test('the jobs are test, gate, identity and ci, each skipped outside the public repository', () => {
-  assert.deepEqual(jobNames, ['test', 'gate', 'identity', 'ci']);
-  for (const name of ['test', 'gate', 'identity']) assert.ok(has(job(name), REPO_IF), `${name} has the repository condition`);
+test('the jobs are test, gate and ci, each skipped outside the public repository', () => {
+  assert.deepEqual(jobNames, ['test', 'gate', 'ci']);
+  for (const name of ['test', 'gate']) assert.ok(has(job(name), REPO_IF), `${name} has the repository condition`);
   assert.ok(has(job('ci'), "if: always() && github.repository == 'Montinou/triqual'"), 'ci runs always, in the public repository only');
   for (const name of jobNames) assert.equal(job(name).filter((line) => /^ {4}if:/.test(line)).length, 1, `${name} has one job-level if`);
 });
@@ -76,7 +77,7 @@ test('test runs npm test on Node 22 and 24', () => {
 });
 
 test('every checkout takes the full history', () => {
-  for (const name of ['test', 'gate', 'identity']) {
+  for (const name of ['test', 'gate']) {
     const body = job(name);
     const at = body.findIndex((line) => /uses: actions\/checkout@v\d+/.test(line));
     assert.notEqual(at, -1, `${name} checks out`);
@@ -91,35 +92,32 @@ test('gate checks the files changed from the merge base, without the deny list',
   assert.deepEqual(runLines(body), ['node bin/lib/content-gate.mjs --range "$BASE_SHA...$HEAD_SHA" --no-terms']);
 });
 
-test('identity checks the commits of the pull request, strictly for the maintainer account', () => {
-  const body = job('identity');
-  assert.ok(has(body, 'BASE_SHA: ${{ github.event.pull_request.base.sha }}'));
-  assert.ok(has(body, 'HEAD_SHA: ${{ github.event.pull_request.head.sha }}'));
-  const runs = runLines(body);
-  assert.deepEqual(runs.filter((line) => line.includes('identity.mjs')), [
-    'node bin/lib/identity.mjs --range "$BASE_SHA..$HEAD_SHA" --strict',
-    'node bin/lib/identity.mjs --range "$BASE_SHA..$HEAD_SHA"',
-  ]);
-  const strictAt = body.findIndex((line) => line.includes('--strict'));
-  const plainAt = body.findIndex((line) => line.includes('identity.mjs') && !line.includes('--strict'));
-  const conditionOf = (at) => body.slice(Math.max(0, at - 4), at).reverse().find((line) => line.trim().startsWith('if:'))?.trim();
-  assert.equal(conditionOf(strictAt), "if: github.event.pull_request.user.login == 'Montinou'");
-  assert.equal(conditionOf(plainAt), "if: github.event.pull_request.user.login != 'Montinou'");
-});
-
 test('no expression is interpolated into a run script: shas and results go through env', () => {
-  for (const name of ['test', 'gate', 'identity', 'ci']) {
+  for (const name of ['test', 'gate', 'ci']) {
     for (const line of runLines(job(name))) assert.ok(!line.includes('${{'), `${name} run line interpolates an expression: ${line}`);
   }
 });
 
-test('ci needs test, gate and identity and fails unless all three succeeded', () => {
+test('ci needs test and gate and fails unless both succeeded', () => {
   const body = job('ci');
-  assert.ok(has(body, 'needs: [test, gate, identity]'));
-  for (const name of ['test', 'gate', 'identity']) assert.ok(body.some((line) => line.includes('${{ needs.' + name + '.result }}')), `${name} result is read`);
+  assert.ok(has(body, 'needs: [test, gate]'));
+  for (const name of ['test', 'gate']) assert.ok(body.some((line) => line.includes('${{ needs.' + name + '.result }}')), `${name} result is read`);
   const runs = runLines(body).join('\n');
-  for (const name of ['test', 'gate', 'identity']) assert.ok(runs.includes(`"$${name.toUpperCase()}_RESULT" = success`), `${name} result is compared with success`);
+  for (const name of ['test', 'gate']) assert.ok(runs.includes(`"$${name.toUpperCase()}_RESULT" = success`), `${name} result is compared with success`);
   assert.ok(/\bexit 1\b/.test(runs), 'a result other than success fails the job');
+});
+
+test('the aggregate accepts successful tests and content gate without an identity result', () => {
+  const script = runLines(job('ci')).join('\n');
+  for (const [tests, gate, expected] of [
+    ['success', 'success', 0], ['failure', 'success', 1], ['success', 'failure', 1],
+    ['cancelled', 'success', 1], ['success', 'skipped', 1],
+  ]) {
+    const result = spawnSync('sh', ['-c', script], {
+      env: { TEST_RESULT: tests, GATE_RESULT: gate }, encoding: 'utf8',
+    });
+    assert.equal(result.status, expected, `${tests}/${gate}: ${result.stderr}`);
+  }
 });
 
 test('public-export.json exports .github/ and keeps the target-owned copy', () => {

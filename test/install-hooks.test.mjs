@@ -210,9 +210,10 @@ test('the store gate runs before the content gate: when it refuses, the content 
   assert.doesNotMatch(refused.stderr, /local-term/);
 });
 
-test('the installed pre-push line passes the remote name, URL and stdin ranges to the identity hook', () => {
+test('the installed pre-push accepts foreign metadata and Claude attribution but keeps account routing', () => {
   const { repo, hooks, install, must, run } = makeRepo();
   assert.equal(install().status, 0);
+  must(repo, 'commit', '--allow-empty', '-m', 'feat: from another session\n\nCo-Authored-By: Claude <bot@example.invalid>');
   const head = must(repo, 'rev-parse', 'HEAD').stdout.trim();
   const ranges = `refs/heads/main ${head} refs/heads/main ${'0'.repeat(40)}\n`;
   const push = join(hooks, 'pre-push');
@@ -223,8 +224,11 @@ test('the installed pre-push line passes the remote name, URL and stdin ranges t
   assert.match(https.stderr, /identity: refusing the push, the remote URL is not /);
   assert.doesNotMatch(https.stderr, /usage/);
 
-  // The stdin ranges arrived: over the right URL as the owner, the commit by someone else is found in the range.
+  // The existing commit has the fixture's foreign author/committer and Claude attribution.
   const ssh = run(repo, 'sh', [push, 'origin', PUBLIC_SSH_URL], {}, ranges);
-  assert.equal(ssh.status, 1, ssh.stderr);
-  assert.match(ssh.stderr, /^identity: [0-9a-f]{40} · /m);
+  assert.equal(ssh.status, 0, ssh.stderr);
+  assert.equal(ssh.stderr, '');
+  const wrongAccount = run(repo, 'sh', [push, 'origin', PUBLIC_SSH_URL], { FAKE_SSH_LOGIN: 'other-login' }, ranges);
+  assert.equal(wrongAccount.status, 1);
+  assert.match(wrongAccount.stderr, /ssh authenticates as other-login/);
 });
