@@ -355,6 +355,23 @@ export function mount(env) {
     if (!document.hidden) refresh();
   }
 
+  let theme = 'system';
+  try {
+    const saved = env.localStorage?.getItem('triqual-ui:theme');
+    if (saved === 'light' || saved === 'dark') theme = saved;
+  } catch {}
+  const themeButtons = ['system', 'light', 'dark'].map((value) => el('button', 'theme-button', {
+    text: value[0].toUpperCase() + value.slice(1),
+    attrs: { type: 'button', 'aria-pressed': value === theme },
+    on: { click: () => {
+      theme = value;
+      if (value === 'system') delete document.documentElement.dataset.theme;
+      else document.documentElement.dataset.theme = value;
+      try { env.localStorage?.setItem('triqual-ui:theme', value); } catch {}
+      themeButtons.forEach((button, index) => button.setAttribute('aria-pressed', ['system', 'light', 'dark'][index] === theme));
+    } },
+  }));
+  top.append(el('div', 'theme-switch', { attrs: { role: 'group', 'aria-label': 'Theme' } }, themeButtons));
   top.prepend(brand());
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
@@ -372,6 +389,7 @@ export function mount(env) {
 if (globalThis.document) {
   mount({
     document: globalThis.document,
+    get localStorage() { return globalThis.localStorage; },
     fetch: (...args) => globalThis.fetch(...args),
     setTimeout: (...args) => globalThis.setTimeout(...args),
     clearTimeout: (...args) => globalThis.clearTimeout(...args),

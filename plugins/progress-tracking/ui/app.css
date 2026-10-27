@@ -2,7 +2,7 @@
    Content-Security-Policy "default-src 'self'". Fonts must be bundled (see ../README.md, Fonts). */
 
 :root,
-[data-theme="dark"] {
+:root[data-theme="dark"] {
   --bg: #090b0e;
   --panel: #101318;
   --raise: #171b22;
@@ -22,7 +22,7 @@
   --commit: #ff8fd0;
 }
 
-[data-theme="light"] {
+:root[data-theme="light"] {
   --bg: #f2f3ee;
   --panel: #ffffff;
   --raise: #eef0ea;
@@ -345,3 +345,8 @@ select.repo-pill option { background: var(--panel); color: var(--text); }
   .entry-body { padding-left: 14px; padding-right: 14px; }
   .card { margin-top: 24px; padding: 20px; }
 }
+
+/* Palette choice stays in the header and uses the existing control tokens. */
+.theme-switch { display: inline-flex; gap: 4px; }
+.theme-button { border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; background: var(--raise); }
+.theme-button[aria-pressed="true"] { border-color: var(--live); color: var(--live); }

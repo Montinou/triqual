@@ -301,7 +301,7 @@ test('index.html loads no external resources and nothing CSP would block', () =>
   assert.doesNotMatch(index, /https?:\/\//, 'index.html has no http(s) URL');
   // default-src 'self' blocks inline scripts, inline styles and style attributes.
   assert.doesNotMatch(index, /<style|\sstyle=|\son[a-z]+=/i);
-  assert.deepEqual([...index.matchAll(/<script\b[^>]*>/g)].map((m) => m[0]), ['<script type="module" src="/app.js">']);
+  assert.deepEqual([...index.matchAll(/<script\b[^>]*>/g)].map((m) => m[0]), ['<script src="/theme.js">', '<script type="module" src="/app.js">']);
   assert.match(index, /<link rel="stylesheet" href="\/app\.css">/);
   assert.match(app, /\/api\/snapshots/);
   assert.match(app, /5000/);
@@ -547,6 +547,7 @@ async function mountApp({ snaps = [], hidden = false, failing = false } = {}) {
   const listeners = {};
   const document = {
     hidden,
+    documentElement: { dataset: {} },
     addEventListener: (type, fn) => { (listeners[type] ??= []).push(fn); },
     getElementById: (id) => els[id] ?? null,
     createElement: stubNode,
@@ -559,6 +560,7 @@ async function mountApp({ snaps = [], hidden = false, failing = false } = {}) {
   const state = { data: snaps, failing, status: 200 };
   const env = {
     document,
+    localStorage: { getItem: (key) => state[key] ?? null, setItem: (key, value) => { state[key] = value; } },
     fetch: async (url) => {
       fetches++;
       assert.equal(url, '/api/snapshots');
@@ -1041,4 +1043,40 @@ test('triqual ui without --port falls back to a free port when 47800 is taken', 
     await new Promise((resolve) => occupied.close(resolve));
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+
+test('GET /theme.js is served as javascript', async () => {
+  await withFixture(async ({ home }) => withServer(home, async ({ port }) => {
+    const response = await get(port, '/theme.js');
+    assert.equal(response.status, 200);
+    assert.match(response.headers['content-type'], /javascript/);
+  }));
+});
+
+test('index.html loads theme.js in head before app.css', () => {
+  const html = readFileSync(INDEX, 'utf8');
+  const head = html.slice(html.indexOf('<head>'), html.indexOf('</head>'));
+  assert.match(head, /<script src="\/theme.js"><\/script>/);
+  assert.ok(head.indexOf('/theme.js') < head.indexOf('/app.css'));
+});
+
+test('app.css defines both data-theme palettes', () => {
+  const css = readFileSync(join(PLUGIN, 'ui/app.css'), 'utf8');
+  assert.match(css, /:root\[data-theme="light"\]\s*\{/);
+  assert.match(css, /:root\[data-theme="dark"\]\s*\{/);
+  assert.match(css, /prefers-color-scheme: light/);
+});
+
+test('mounting renders three theme buttons and clicking Dark sets data-theme=dark and stores the key', async () => {
+  const app = await mountApp();
+  const buttons = byClass(app.els.top, 'theme-button');
+  assert.deepEqual(buttons.map(textOf), ['System', 'Light', 'Dark']);
+  buttons[2].fire('click');
+  assert.equal(app.document.documentElement.dataset.theme, 'dark');
+  assert.equal(app.state['triqual-ui:theme'], 'dark');
+  assert.deepEqual(buttons.map((b) => b.attrs['aria-pressed']), ['false', 'false', 'true']);
+  buttons[0].fire('click');
+  assert.equal(app.document.documentElement.dataset.theme, undefined);
+  assert.equal(app.state['triqual-ui:theme'], 'system');
 });
