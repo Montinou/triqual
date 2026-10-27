@@ -303,8 +303,8 @@ test('index.html loads no external resources and nothing CSP would block', () =>
   assert.doesNotMatch(index, /<style|\sstyle=|\son[a-z]+=/i);
   assert.deepEqual([...index.matchAll(/<script\b[^>]*>/g)].map((m) => m[0]), ['<script src="/theme.js">', '<script type="module" src="/app.js">']);
   assert.match(index, /<link rel="stylesheet" href="\/app\.css">/);
-  assert.match(app, /\/api\/snapshots/);
-  assert.match(app, /5000/);
+  assert.match(app, /\/api\/events/);
+  assert.match(app, /new EventSource/);
 });
 
 test('app.css is CSP-safe and covers the page', () => {
@@ -540,7 +540,7 @@ const textOf = (node) => [node.textContent, ...node.children.map(textOf)].join('
 const byClass = (root, cls) => flatten(root).filter((n) => hasClass(n, cls));
 const byKey = (root, key) => flatten(root).find((n) => n.attrs['data-key'] === key);
 
-// mount() against a stub document, a counting fetch (answers `data`; rejects while `failing`) and captured timers.
+// mount() against a stub document, a fake EventSource and captured highlight timers.
 async function mountApp({ snaps = [], hidden = false, failing = false } = {}) {
   const flush = () => new Promise((resolve) => setImmediate(resolve));
   const els = Object.fromEntries(['top', 'repo-slot', 'updated', 'banner', 'app'].map((id) => [id, stubNode('div')]));
@@ -556,26 +556,37 @@ async function mountApp({ snaps = [], hidden = false, failing = false } = {}) {
   };
   const timers = [];
   let fetches = 0;
-  let minute = 0;
-  const state = { data: snaps, failing, status: 200 };
+  let time = Date.UTC(2026, 9, 26, 12, 0, 0);
+  let stream;
+  const state = { data: snaps, failing, closed: false };
+  class EventSource {
+    static CLOSED = 2;
+    constructor(url) { this.url = url; this.readyState = 1; stream = this; }
+    addEventListener(type, fn) { this[type] = fn; }
+  }
+  const message = async () => {
+    time += 1000;
+    if (stream) {
+      stream.readyState = state.closed ? EventSource.CLOSED : 1;
+      if (state.failing) stream.error?.({});
+      else stream.message?.({ data: JSON.stringify(state.data) });
+    }
+    await flush();
+  };
   const env = {
     document,
     localStorage: { getItem: (key) => state[key] ?? null, setItem: (key, value) => { state[key] = value; } },
-    fetch: async (url) => {
-      fetches++;
-      assert.equal(url, '/api/snapshots');
-      if (state.failing) throw new Error('offline');
-      return { ok: state.status === 200, status: state.status, json: async () => state.data };
-    },
+    EventSource,
+    fetch: async () => { fetches++; throw new Error('reconnecting is forbidden'); },
     setTimeout: (fn, ms) => { timers.push({ fn, ms, live: true }); return timers.length; },
     clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].live = false; },
-    now: () => new Date(Date.UTC(2026, 9, 26, 12, minute++, 0)),
+    now: () => new Date(time),
   };
   const { mount } = await import(pathToFileURL(APP).href);
   mount(env);
-  await flush();
+  await message();
   return {
-    document, els, state, fetches: () => fetches, settle: flush,
+    document, els, state, stream: () => stream, message, advance: (ms) => { time += ms; }, fetches: () => fetches, settle: flush,
     fire: (type) => (listeners[type] ?? []).forEach((fn) => fn()),
     // Runs the live timers set with `ms` (any when omitted); the others stay.
     tick: async (ms) => {
@@ -615,19 +626,18 @@ test('importing app.js in node mounts nothing', async () => {
   assert.equal(typeof mod.mount, 'function');
 });
 
-test('app.js polls only while the tab is visible and refreshes when it becomes visible again', async () => {
-  const app = await mountApp({ hidden: true });
-  await app.tick();
-  assert.equal(app.fetches(), 0, 'no fetch while hidden');
-  app.document.hidden = false;
-  app.fire('visibilitychange');
-  await app.settle();
-  assert.equal(app.fetches(), 1, 'refreshes once visible');
-  await app.tick(5000);
-  assert.equal(app.fetches(), 2, 'keeps polling every 5000 ms while visible');
-  app.document.hidden = true;
-  await app.tick();
-  assert.equal(app.fetches(), 2, 'stops polling once hidden');
+test('mount opens /api/events and renders the first message', async () => {
+  const app = await mountApp({ snaps: TWO_REPOS(), hidden: true });
+  assert.equal(app.stream()?.url, '/api/events');
+  assert.deepEqual(app.hero(), ['alpha work']);
+  assert.equal(app.fetches(), 0);
+});
+
+test('app.js no longer polls /api/snapshots', async () => {
+  const source = readFileSync(APP, 'utf8');
+  assert.doesNotMatch(source, /fetch|REFRESH_MS|visibilitychange/);
+  const html = readFileSync(INDEX, 'utf8');
+  assert.match(html, /<noscript>[\s\S]*\/api\/events/);
 });
 
 test('renders the default plan of the first repo', async () => {
@@ -677,7 +687,7 @@ test('the status panel is a folded details titled Status', async () => {
   assert.equal(textOf(panel.children.find((n) => n.tag === 'pre')), 'status of alpha');
 });
 
-test('repo switch, plan tab and chip re-render without fetching', async () => {
+test("a later message re-renders and keeps the viewer's selection", async () => {
   const app = await mountApp({ snaps: TWO_REPOS() });
   const select = flatten(app.els['repo-slot']).find((n) => n.tag === 'select');
   select.value = '/r/beta';
@@ -695,7 +705,13 @@ test('repo switch, plan tab and chip re-render without fetching', async () => {
   byKey(app.els.app, 'chip:all').fire('click');
   assert.equal(app.rows().length, 3);
   assert.equal(byKey(app.els.app, 'chip:all').focuses, 1, 'focus moves to the new chip');
-  assert.equal(app.fetches(), 1, 'viewer actions never fetch');
+  const before = app.root();
+  app.state.data = TWO_REPOS().map((repo) => ({ ...repo, status: { text: 'new status' } }));
+  await app.message();
+  assert.notEqual(app.root(), before);
+  assert.deepEqual(app.hero(), ['alpha earlier']);
+  assert.equal(byKey(app.els.app, 'chip:all').attrs['aria-pressed'], 'true');
+  assert.equal(app.fetches(), 0, 'viewer actions never fetch');
 });
 
 test('picking a plan or switching repo resets the filter and the open entry', async () => {
@@ -720,28 +736,31 @@ test('intro only on the first data render', async () => {
   byKey(app.els.app, 'chip:all').fire('click');
   assert.ok(!hasClass(app.root(), 'intro'), 'a viewer action does not replay it');
   app.state.data = [snap('alpha', [plan('2026-10-20-alpha-work', 'active', [task('T1', 'done')])]), snap('beta', BETA_PLANS())];
-  await app.tick(5000);
-  assert.equal(app.fetches(), 2);
+  await app.message();
+  assert.equal(app.fetches(), 0);
   assert.deepEqual(app.hero(), ['alpha work']);
   assert.ok(!hasClass(app.root(), 'intro'), 'new data does not either');
 });
 
-test('a poll with unchanged data keeps the tree; only generatedAt changing is not a change', async () => {
+test('a message with unchanged data in the same minute keeps the tree, and one a minute later re-renders', async () => {
   const app = await mountApp({ snaps: TWO_REPOS() });
   const before = app.root();
   app.state.data = TWO_REPOS().map((s) => ({ ...s, generatedAt: '2026-10-26T12:00:05.000Z' }));
-  await app.tick(5000);
-  assert.equal(app.fetches(), 2);
+  await app.message();
+  assert.equal(app.fetches(), 0);
   assert.equal(app.root(), before);
+  app.advance(60000);
+  await app.message();
+  assert.notEqual(app.root(), before);
 });
 
-test('the time is written by polls only, so a viewer action never blanks it', async () => {
+test('the time is written by messages only, so a viewer action never blanks it', async () => {
   const app = await mountApp({ snaps: TWO_REPOS() });
   const first = app.els.updated.textContent;
   assert.match(first, /updated \d\d:\d\d:\d\d/);
   byKey(app.els.app, 'chip:all').fire('click');
   assert.equal(app.els.updated.textContent, first);
-  await app.tick(5000);
+  await app.message();
   assert.notEqual(app.els.updated.textContent, first);
   assert.match(app.els.updated.textContent, /updated \d\d:\d\d:\d\d/);
 });
@@ -764,23 +783,23 @@ test('rail cell click highlights its row', async () => {
   // The highlight ends after 1600 ms.
   await app.tick(1600);
   assert.equal(app.rows().filter((r) => hasClass(r, 'highlight')).length, 0);
-  assert.equal(app.fetches(), 1);
+  assert.equal(app.fetches(), 0);
 });
 
-test('focus is restored without scrolling, after a poll render and after the highlight timer', async () => {
+test('focus is restored without scrolling, after a message render and after the highlight timer', async () => {
   const app = await mountApp({ snaps: TWO_REPOS() });
-  // A poll with changed data rebuilds the tree; the focused keyed control gets focus back on its new node.
+  // A message with changed data rebuilds the tree; the focused keyed control gets focus back on its new node.
   const chip = byKey(app.els.app, 'chip:all');
   app.document.activeElement = chip;
   app.state.data = [snap('alpha', [plan('2026-10-20-alpha-work', 'active', [task('T1', 'done')])]), snap('beta', BETA_PLANS())];
-  await app.tick(5000);
+  await app.message();
   const chipAfterPoll = byKey(app.els.app, 'chip:all');
   assert.notEqual(chipAfterPoll, chip);
-  assert.equal(chipAfterPoll.focuses, 1, 'poll render returns focus');
+  assert.equal(chipAfterPoll.focuses, 1, 'message render returns focus');
   assert.deepEqual(chipAfterPoll.focusOptions, [{ preventScroll: true }]);
   // The highlight timer re-renders after the row was scrolled to; focus must not drag the page back to the cell.
   app.state.data = TWO_REPOS();
-  await app.tick(5000);
+  await app.message();
   const cell = byKey(app.els.app, 'cell:T1');
   cell.fire('click');
   const clicked = byKey(app.els.app, 'cell:T1');
@@ -834,20 +853,20 @@ test('a selected plan that disappears falls back to the default plan', async () 
   byKey(app.els.app, 'plan:2026-10-10-alpha-earlier').fire('click');
   assert.deepEqual(app.hero(), ['alpha earlier']);
   app.state.data = [snap('alpha', [ALPHA_PLANS()[1]])];
-  await app.tick(5000);
+  await app.message();
   assert.deepEqual(app.hero(), ['alpha work']);
 });
 
-test('a poll that fails keeps the last render and keeps polling', async () => {
+test('a message that fails keeps the last render and keeps reconnecting', async () => {
   const app = await mountApp({ snaps: TWO_REPOS() });
   const before = app.root();
   app.state.failing = true;
-  await app.tick(5000);
-  assert.equal(app.fetches(), 2);
+  await app.message();
+  assert.equal(app.fetches(), 0);
   assert.equal(app.root(), before);
   app.state.failing = false;
-  await app.tick(5000);
-  assert.equal(app.fetches(), 3);
+  await app.message();
+  assert.equal(app.fetches(), 0);
 });
 
 // ---- states ----
@@ -883,7 +902,7 @@ test('a state card gives way to the board when data arrives', async () => {
   const app = await mountApp({ snaps: [] });
   assert.equal(byClass(app.els.app, 'card').length, 1);
   app.state.data = [snap('alpha', ALPHA_PLANS())];
-  await app.tick(5000);
+  await app.message();
   assert.equal(byClass(app.els.app, 'card').length, 0);
   assert.deepEqual(app.hero(), ['alpha work']);
 });
@@ -894,17 +913,16 @@ test('connection lost keeps the last tree', async () => {
   assert.ok(before.length > 0);
   assert.equal(bannerText(app), '');
   app.state.failing = true;
-  await app.tick(5000);
+  await app.message();
   assert.deepEqual(app.els.app.children, before);
   assert.ok(app.els.app.children.every((c, i) => c === before[i]));
   assert.ok(hasClass(app.els.banner, 'banner'));
   assert.match(bannerText(app), /Cannot reach the local server/);
-  assert.match(bannerText(app), /offline/);
-  assert.match(bannerText(app), /Retrying every 5 s; the last good data stays on screen/);
+  assert.match(bannerText(app), /reconnect[\s\S]*last good data stays on screen/i);
   assert.deepEqual(codeOf(app.els.banner), ['triqual ui --open']);
-  // Still polling, banner stays while it keeps failing.
-  await app.tick(5000);
-  assert.equal(app.fetches(), 3);
+  // Still reconnecting, banner stays while it keeps failing.
+  await app.message();
+  assert.equal(app.fetches(), 0);
   assert.match(bannerText(app), /Cannot reach the local server/);
 });
 
@@ -913,19 +931,19 @@ test('a first load that fails shows the banner and no card', async () => {
   assert.equal(app.els.app.children.length, 0, 'no data yet, so neither the board nor the empty-state cards');
   assert.match(bannerText(app), /Cannot reach the local server/);
   app.state.failing = false;
-  await app.tick(5000);
+  await app.message();
   assert.deepEqual(app.hero(), ['alpha work']);
   assert.equal(bannerText(app), '');
 });
 
-test('a good poll clears the banner and updates the time', async () => {
+test('an error shows the banner and a later message clears it', async () => {
   const app = await mountApp({ snaps: TWO_REPOS() });
   app.state.failing = true;
-  await app.tick(5000);
+  await app.message();
   assert.ok(bannerText(app).length > 0);
   const failedAt = app.els.updated.textContent;
   app.state.failing = false;
-  await app.tick(5000);
+  await app.message();
   assert.equal(bannerText(app), '');
   assert.equal(app.els.banner.children.length, 0);
   assert.ok(!hasClass(app.els.banner, 'banner'), 'the banner class goes with the banner');
@@ -933,29 +951,30 @@ test('a good poll clears the banner and updates the time', async () => {
   assert.match(app.els.updated.textContent, /updated \d\d:\d\d:\d\d/);
 });
 
-test('an HTTP error shows its status in the banner', async () => {
+test('a closed EventSource asks the viewer to reload', async () => {
   const app = await mountApp({ snaps: TWO_REPOS() });
-  app.state.status = 500;
-  await app.tick(5000);
-  assert.match(bannerText(app), /HTTP 500/);
+  app.state.failing = true;
+  app.state.closed = true;
+  await app.message();
+  assert.match(bannerText(app), /reload/i);
 });
 
-test('a render that throws shows the banner, keeps the last tree and is retried by the next poll', async () => {
+test('a render that throws shows the banner, keeps the last tree and is retried by the next message', async () => {
   const app = await mountApp({ snaps: TWO_REPOS() });
   const before = app.els.app.children[0];
   const broken = TWO_REPOS();
   broken[0].plans = 'not a list';
   app.state.data = broken;
-  await app.tick(5000);
+  await app.message();
   assert.equal(app.els.app.children[0], before, 'the stale tree is not replaced by half a render');
   assert.ok(hasClass(app.els.banner, 'banner'));
-  assert.match(bannerText(app), /Retrying every 5 s/);
+  assert.match(bannerText(app), /last good data stays on screen/);
   // The same bad data is tried again, not skipped as "unchanged".
-  await app.tick(5000);
+  await app.message();
   assert.ok(hasClass(app.els.banner, 'banner'));
   // Good data renders and clears the banner.
   app.state.data = [snap('alpha', [plan('2026-10-20-alpha-fresh', 'active', [task('T1', 'pending')])])];
-  await app.tick(5000);
+  await app.message();
   assert.deepEqual(app.hero(), ['alpha fresh']);
   assert.equal(bannerText(app), '');
 });

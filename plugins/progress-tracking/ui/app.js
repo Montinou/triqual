@@ -1,12 +1,10 @@
-// The run board: a read-only page over /api/snapshots (tracking-snapshot@1 documents), refreshed every 5 s while the tab
-// is visible. view.js turns snapshots and viewer choices into what the page shows; this module only builds the DOM,
-// polls and keeps the viewer's choices. Data goes in as textContent or attribute values, never as markup; dynamic
+// The run board: a read-only page over the /api/events snapshot stream. view.js turns snapshots and viewer choices into what the page shows; this module only builds the DOM,
+// receives messages and keeps the viewer's choices. Data goes in as textContent or attribute values, never as markup; dynamic
 // visual values go through style.setProperty on a custom property, so the page needs no inline style (CSP default-src 'self').
 import {
   chips, currentOf, dataKey, entryView, headline, legend, pickPlan, pickRepo, planTitle, railCells, taskRows, orderPlans,
 } from './view.js';
 
-const REFRESH_MS = 5000;
 const HIGHLIGHT_MS = 1600;
 const LATEST_ENTRIES = 5;
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -14,10 +12,10 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const shortName = (name) => name.replace(/^\d{4}-\d{2}-\d{2}-/, '');
 const clock = (date) => date.toTimeString().slice(0, 8);
 
-// env = { document, fetch, setTimeout, clearTimeout, now }. All state lives in this closure; the env functions are
+// env = { document, EventSource, setTimeout, clearTimeout, now }. All state lives in this closure; the env functions are
 // always called unbound.
 export function mount(env) {
-  const { document, fetch, setTimeout, clearTimeout, now } = env;
+  const { document, EventSource, setTimeout, clearTimeout, now } = env;
   const top = document.getElementById('top');
   const repoSlot = document.getElementById('repo-slot');
   const updated = document.getElementById('updated');
@@ -27,9 +25,7 @@ export function mount(env) {
   let snaps = [];
   let lastKey = null;
   let introPending = true;
-  let pollTimer = null;
   let highlightTimer = null;
-  let inFlight = false;
   const viewer = { repo: null, planByRepo: new Map(), filter: 'open', openEntry: 0, statusOpen: false, highlight: null };
   // Controls and task rows of the render in place, by their data-key / task id.
   const keyed = new Map();
@@ -275,13 +271,13 @@ export function mount(env) {
     const root = el('div', introPending ? 'intro' : '', {}, [planSection(snap, plan), tasksSection(plan), entriesSection(snap), statusPanel(snap)]);
     introPending = false;
     app.replaceChildren(root);
-    // preventScroll: restoring focus must not move the viewport back to the control (the highlight timer and polls render too).
+    // preventScroll: restoring focus must not move the viewport back to the control (the highlight timer and messages render too).
     (keyed.get(focus ?? activeKey))?.focus({ preventScroll: true });
     if (scrollTo !== null) rowNodes.get(scrollTo)?.scrollIntoView({ block: 'nearest' });
   }
 
   // The live indicator's time and the banner; written only here, so a viewer action never blanks them. Called after
-  // every poll: a good one stamps the time and clears the banner, a failed one (`failure`: tag, title, error, optional command) raises it
+  // every message: a good one stamps the time and clears the banner, a failed one (`failure`: tag, title, error, optional command) raises it
   // above the last good render.
   function renderChrome(failure) {
     if (failure) {
@@ -289,7 +285,7 @@ export function mount(env) {
       banner.replaceChildren(
         el('span', 'banner-tag', { text: failure.tag }),
         el('b', 'banner-title', { text: failure.title }),
-        el('span', 'banner-text', { text: `${failure.error}. Retrying every 5 s; the last good data stays on screen.` }),
+        el('span', 'banner-text', { text: `${failure.error}. ${failure.closed ? 'Reload the page to reconnect' : 'The browser will reconnect automatically'}; the last good data stays on screen.` }),
         ...(failure.command ? [el('code', 'code', { text: failure.command })] : []),
       );
       return;
@@ -299,16 +295,11 @@ export function mount(env) {
     banner.replaceChildren();
   }
 
-  function schedule() {
-    clearTimeout(pollTimer);
-    pollTimer = null;
-    if (!document.hidden) pollTimer = setTimeout(tick, REFRESH_MS);
-  }
-
   // Shows `data` unless it is what is on screen already. lastKey moves only after the render succeeds, so a render that
-  // throws leaves the last good tree and is tried again by the next poll.
+  // throws leaves the last good tree and is tried again by the next message.
   function show(data) {
-    const key = dataKey(data);
+    const nowMs = now().getTime();
+    const key = `${dataKey(data)}:${Math.floor(nowMs / 60000)}`;
     if (key === lastKey) return;
     const previous = snaps;
     snaps = data;
@@ -321,39 +312,26 @@ export function mount(env) {
     lastKey = key;
   }
 
-  async function refresh() {
-    if (inFlight) return;
-    inFlight = true;
+  const stream = new EventSource('/api/events');
+  stream.addEventListener('message', (event) => {
+    let data;
     try {
-      let data;
-      try {
-        const res = await fetch('/api/snapshots');
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        data = await res.json();
-        if (!Array.isArray(data)) throw new Error('unexpected response');
-      } catch (error) {
-        // The last good render stays on screen; the next poll tries again.
-        renderChrome({ tag: 'Connection lost', title: 'Cannot reach the local server', error: error?.message || 'Request failed', command: 'triqual ui --open' });
-        return;
-      }
-      try {
-        show(data);
-      } catch (error) {
-        renderChrome({ tag: 'Display error', title: 'Cannot show the latest data', error: error?.message || 'Render failed' });
-        return;
-      }
-      renderChrome(null);
-    } finally {
-      inFlight = false;
-      schedule();
+      data = JSON.parse(event.data);
+      if (!Array.isArray(data)) throw new Error('unexpected response');
+    } catch (error) {
+      renderChrome({ tag: 'Connection lost', title: 'Cannot reach the local server', error: error?.message || 'Invalid message' });
+      return;
     }
-  }
-
-  // A hidden tab stops the loop (each poll runs git in every registered repo); becoming visible refreshes at once.
-  function tick() {
-    pollTimer = null;
-    if (!document.hidden) refresh();
-  }
+    try {
+      show(data);
+      renderChrome(null);
+    } catch (error) {
+      renderChrome({ tag: 'Display error', title: 'Cannot show the latest data', error: error?.message || 'Render failed' });
+    }
+  });
+  stream.addEventListener('error', () => {
+    renderChrome({ tag: 'Connection lost', title: 'Cannot reach the local server', error: 'Event stream disconnected', closed: stream.readyState === EventSource.CLOSED, command: 'triqual ui --open' });
+  });
 
   let theme = 'system';
   try {
@@ -373,15 +351,7 @@ export function mount(env) {
   }));
   top.append(el('div', 'theme-switch', { attrs: { role: 'group', 'aria-label': 'Theme' } }, themeButtons));
   top.prepend(brand());
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) {
-      clearTimeout(pollTimer);
-      pollTimer = null;
-    } else {
-      refresh();
-    }
-  });
-  if (!document.hidden) refresh();
+
 }
 
 // In a browser the page mounts itself; importing this module anywhere else (node tests) mounts nothing. The wrappers
@@ -390,7 +360,7 @@ if (globalThis.document) {
   mount({
     document: globalThis.document,
     get localStorage() { return globalThis.localStorage; },
-    fetch: (...args) => globalThis.fetch(...args),
+    EventSource: globalThis.EventSource,
     setTimeout: (...args) => globalThis.setTimeout(...args),
     clearTimeout: (...args) => globalThis.clearTimeout(...args),
     now: () => new Date(),
