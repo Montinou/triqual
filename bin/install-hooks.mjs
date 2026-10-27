@@ -1,6 +1,6 @@
 // Installs the public-repository hooks into the clone it runs in, after the store gate that `triqual progress-init --store`
 // wrote: the content gate (bin/hooks/content-gate-pre-commit.mjs) goes into <git-common-dir>/hooks/pre-commit on the line right
-// after the one that calls the store gate, and the identity hook (bin/hooks/identity-pre-push.mjs) is appended to
+// after the one that calls the store gate, and the account-routing hook (bin/hooks/identity-pre-push.mjs) is appended to
 // <git-common-dir>/hooks/pre-push, each once. progress-init puts the store line right after the shebang, above whatever the
 // hook already had, so the lines the user kept sit after it: appending at the end of file would land the content gate after a
 // trailing `exec` or `exit` where it never runs. The store gate still runs first. The common dir is the clone's, so one install

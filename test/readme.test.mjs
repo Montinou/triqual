@@ -362,7 +362,7 @@ test('README and CONTRIBUTING say development happens in the public repository, 
     assert.match(flat, /pull requests? from outside[^.]*welcome|outside (contributors|pull requests?)[^.]*welcome/i, `${name}: outside pull requests are welcome`);
     assert.ok(flat.includes('node bin/install-hooks.mjs') && flat.includes('triqual progress-init --store'), `${name}: the hooks install`);
     assert.ok(flat.includes('node bin/lib/content-gate.mjs --all'), `${name}: the full gate run after a deny-list change`);
-    assert.match(flat, /noreply/, `${name}: the public noreply identity`);
+    assert.match(flat, /Commit authors, committers and Claude attribution trailers are unrestricted/, `${name}: commit metadata is unrestricted`);
     assert.match(flat, /Update branch/, `${name}: the Update branch merge commit`);
     for (const term of forbidden) assert.ok(!text.includes(term), `${name}: no private or legacy name (${term})`);
   }
