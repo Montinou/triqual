@@ -9,7 +9,7 @@
 // request data. Exit codes: 0 for --help/-h (usage only, no server), 2 bad arguments, 1 the server cannot listen;
 // otherwise it runs until Ctrl-C.
 import { spawn } from 'node:child_process';
-import { readFileSync, realpathSync, statSync, watch } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync, watch } from 'node:fs';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -18,8 +18,6 @@ import { parseArgs } from 'node:util';
 import { listResolved } from '../lib/registry.mjs';
 import { branchOf, buildSnapshot } from '../lib/snapshot.mjs';
 import { loadSqlite, storePaths } from '../lib/store.mjs';
-import { readSessions } from '../lib/sessions.mjs';
-import { readNotes } from '../lib/claude-mem-notes.mjs';
 
 export const DEFAULT_PORT = 47800;
 const LOOPBACK = '127.0.0.1';
@@ -66,8 +64,10 @@ export function createHub({ home, heartbeatMs = 60000, throttleMs = 1000, watchD
     const now = new Date();
     const out = [];
     let sessions = [], db;
+    let notes = new Map();
     try {
-      if (dataDir) {
+      if (dataDir && existsSync(join(dataDir, 'sessions.db'))) {
+        const { readSessions } = await import('../lib/sessions.mjs');
         await loadSqlite();
         const { DatabaseSync } = await import('node:sqlite');
         db = new DatabaseSync(join(dataDir, 'sessions.db'), { readOnly: true });
@@ -75,7 +75,10 @@ export function createHub({ home, heartbeatMs = 60000, throttleMs = 1000, watchD
       }
     } catch { /* optional activity never prevents tracking snapshots */ }
     finally { db?.close(); }
-    const notes = readNotes([...new Set(sessions.map(row => row.sessionId))], { home });
+    if (sessions.length) {
+      const { readNotes } = await import('../lib/claude-mem-notes.mjs');
+      notes = readNotes([...new Set(sessions.map(row => row.sessionId))], { home });
+    }
     for (const { tracking, shareable, branch } of repos) {
       try {
         if (tracking.mode === 'store') await loadSqlite();
