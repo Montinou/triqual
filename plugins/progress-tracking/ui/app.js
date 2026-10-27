@@ -59,12 +59,27 @@ export function mount(env) {
     return node;
   }
 
-  function brand() {
+  function logo(size) {
     const bar = (x, y, height, color) => svgEl('rect', { x, y, width: 5, height, rx: 1.5, fill: `var(--s-${color})` });
-    const logo = svgEl('svg', { width: 26, height: 26, viewBox: '0 0 26 26', 'aria-hidden': 'true', class: 'logo' }, [
+    return svgEl('svg', { width: size, height: size, viewBox: '0 0 26 26', 'aria-hidden': 'true', class: 'logo' }, [
       bar(2, 16, 8, 'done'), bar(10.5, 9, 15, 'in_progress'), bar(19, 2, 22, 'in_review'),
     ]);
-    return el('span', 'brand', {}, [logo, el('b', '', { text: 'triqual' }), el('span', 'tag', { text: 'run board' })]);
+  }
+
+  function brand() {
+    return el('span', 'brand', {}, [logo(26), el('b', '', { text: 'triqual' }), el('span', 'tag', { text: 'run board' })]);
+  }
+
+  // A state card: what happened and the one thing to do next (a command to copy). `mark` adds the logo above the title.
+  function stateCard({ tag, title, text, command, mark = false }) {
+    const intro = introPending ? ' intro' : '';
+    return el('div', `card${intro}`, {}, [
+      ...(mark ? [logo(40)] : []),
+      ...(tag ? [el('span', 'card-tag', { text: tag })] : []),
+      el('h2', '', { text: title }),
+      el('p', '', { text }),
+      el('code', 'code', { text: command }),
+    ]);
   }
 
   function repoLabel(snap) {
@@ -140,6 +155,8 @@ export function mount(env) {
 
     const { date, title } = planTitle(plan.name);
     const current = currentOf(plan);
+    // A plan whose current is a blocked task says why, right under the headline.
+    const blockedReason = current?.endsWith(' blocked') ? (plan.tasks.find((t) => t.status === 'blocked')?.reason ?? null) : null;
     const pct = plan.total ? Math.round((plan.done / plan.total) * 100) : 0;
     const hero = el('div', 'hero', {}, [
       el('div', '', {}, [
@@ -147,6 +164,7 @@ export function mount(env) {
         el('h1', 'hero-title', { text: title }),
         el('span', 'headline', { text: headline(plan) }),
         ...(current === null ? [] : [el('span', 'current', { text: `▸ ${current}` })]),
+        ...(blockedReason === null ? [] : [el('span', 'hero-reason', { text: blockedReason })]),
       ]),
       el('div', 'count', {}, [
         el('b', '', { text: String(plan.done) }, [el('span', '', { text: `/${plan.total}` })]),
@@ -173,6 +191,11 @@ export function mount(env) {
     return el('section', 'panel plan', {}, [tabs, hero, rail, key]);
   }
 
+  function nothingOpen(plan) {
+    if (plan.total === 0) return 'Nothing here. This plan has no tasks yet.';
+    return plan.done === plan.total ? 'Nothing here. Every task in this plan is done.' : 'Nothing here. No task in this plan is open.';
+  }
+
   function tasksSection(plan) {
     if (!chips(plan).some((c) => c.key === viewer.filter)) viewer.filter = 'open';
     const chipNodes = chips(plan).map((c) => el('button', 'chip', {
@@ -192,7 +215,8 @@ export function mount(env) {
       rowNodes.set(r.id, node);
       return node;
     });
-    return el('section', 'panel tasks', {}, [el('div', 'chips', {}, [el('h2', '', { text: 'Tasks' }), ...chipNodes]), ...rows]);
+    const empty = rows.length > 0 || viewer.filter !== 'open' ? [] : [el('p', 'empty', { text: nothingOpen(plan) })];
+    return el('section', 'panel tasks', {}, [el('div', 'chips', {}, [el('h2', '', { text: 'Tasks' }), ...chipNodes]), ...rows, ...empty]);
   }
 
   function entriesSection(snap) {
@@ -235,8 +259,17 @@ export function mount(env) {
     const snap = pickRepo(snaps, viewer.repo);
     renderRepo(snap);
     const plan = snap ? pickPlan(snap.plans, viewer.planByRepo.get(snap.repo.root)) : null;
-    if (!plan) {
-      app.replaceChildren();
+    if (!snap || !plan) {
+      const card = snap
+        ? stateCard({ title: 'No plans yet', text: 'This repo tracks progress, but has no plan. Write one and its tasks show up here.', command: 'triqual tracking write plan' })
+        : stateCard({
+          mark: true,
+          title: 'No repos registered yet',
+          text: 'Open a Claude Code session in a repo that tracks progress, or opt one in from its folder.',
+          command: '/progress-tracking:progress-init',
+        });
+      introPending = false;
+      app.replaceChildren(card);
       return;
     }
     const root = el('div', introPending ? 'intro' : '', {}, [planSection(snap, plan), tasksSection(plan), entriesSection(snap), statusPanel(snap)]);
@@ -246,10 +279,22 @@ export function mount(env) {
     if (scrollTo !== null) rowNodes.get(scrollTo)?.scrollIntoView({ block: 'nearest' });
   }
 
-  // The live indicator's time; written only here, so a viewer action never blanks it. Called after every poll.
-  function renderChrome(ok) {
-    if (!ok) return;
+  // The live indicator's time and the banner; written only here, so a viewer action never blanks them. Called after
+  // every poll: a good one stamps the time and clears the banner, a failed one (`failure`: tag, title, error, optional command) raises it
+  // above the last good render.
+  function renderChrome(failure) {
+    if (failure) {
+      banner.className = 'banner';
+      banner.replaceChildren(
+        el('span', 'banner-tag', { text: failure.tag }),
+        el('b', 'banner-title', { text: failure.title }),
+        el('span', 'banner-text', { text: `${failure.error}. Retrying every 5 s; the last good data stays on screen.` }),
+        ...(failure.command ? [el('code', 'code', { text: failure.command })] : []),
+      );
+      return;
+    }
     updated.textContent = `· updated ${clock(now())}`;
+    banner.className = '';
     banner.replaceChildren();
   }
 
@@ -259,24 +304,44 @@ export function mount(env) {
     if (!document.hidden) pollTimer = setTimeout(tick, REFRESH_MS);
   }
 
+  // Shows `data` unless it is what is on screen already. lastKey moves only after the render succeeds, so a render that
+  // throws leaves the last good tree and is tried again by the next poll.
+  function show(data) {
+    const key = dataKey(data);
+    if (key === lastKey) return;
+    const previous = snaps;
+    snaps = data;
+    try {
+      renderData();
+    } catch (error) {
+      snaps = previous;
+      throw error;
+    }
+    lastKey = key;
+  }
+
   async function refresh() {
     if (inFlight) return;
     inFlight = true;
     try {
-      const res = await fetch('/api/snapshots');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      if (!Array.isArray(data)) throw new Error('unexpected response');
-      renderChrome(true);
-      const key = dataKey(data);
-      if (key !== lastKey) {
-        lastKey = key;
-        snaps = data;
-        renderData();
+      let data;
+      try {
+        const res = await fetch('/api/snapshots');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        data = await res.json();
+        if (!Array.isArray(data)) throw new Error('unexpected response');
+      } catch (error) {
+        // The last good render stays on screen; the next poll tries again.
+        renderChrome({ tag: 'Connection lost', title: 'Cannot reach the local server', error: error?.message || 'Request failed', command: 'triqual ui --open' });
+        return;
       }
-    } catch {
-      // The last good render stays on screen; the next poll tries again.
-      renderChrome(false);
+      try {
+        show(data);
+      } catch (error) {
+        renderChrome({ tag: 'Display error', title: 'Cannot show the latest data', error: error?.message || 'Render failed' });
+        return;
+      }
+      renderChrome(null);
     } finally {
       inFlight = false;
       schedule();

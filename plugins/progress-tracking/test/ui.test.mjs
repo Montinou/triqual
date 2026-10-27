@@ -469,7 +469,7 @@ const byClass = (root, cls) => flatten(root).filter((n) => hasClass(n, cls));
 const byKey = (root, key) => flatten(root).find((n) => n.attrs['data-key'] === key);
 
 // mount() against a stub document, a counting fetch (answers `data`; rejects while `failing`) and captured timers.
-async function mountApp({ snaps = [], hidden = false } = {}) {
+async function mountApp({ snaps = [], hidden = false, failing = false } = {}) {
   const flush = () => new Promise((resolve) => setImmediate(resolve));
   const els = Object.fromEntries(['top', 'repo-slot', 'updated', 'banner', 'app'].map((id) => [id, stubNode('div')]));
   const listeners = {};
@@ -484,14 +484,14 @@ async function mountApp({ snaps = [], hidden = false } = {}) {
   const timers = [];
   let fetches = 0;
   let minute = 0;
-  const state = { data: snaps, failing: false };
+  const state = { data: snaps, failing, status: 200 };
   const env = {
     document,
     fetch: async (url) => {
       fetches++;
       assert.equal(url, '/api/snapshots');
       if (state.failing) throw new Error('offline');
-      return { ok: true, json: async () => state.data };
+      return { ok: state.status === 200, status: state.status, json: async () => state.data };
     },
     setTimeout: (fn, ms) => { timers.push({ fn, ms, live: true }); return timers.length; },
     clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].live = false; },
@@ -751,12 +751,151 @@ test('a poll that fails keeps the last render and keeps polling', async () => {
   assert.equal(app.fetches(), 3);
 });
 
-test('no repos or no plans renders an empty board without throwing', async () => {
-  const none = await mountApp({ snaps: [] });
-  assert.equal(none.els.app.children.length, 0);
-  const bare = await mountApp({ snaps: [snap('alpha', [])] });
-  assert.equal(bare.els.app.children.length, 0);
-  assert.match(textOf(byClass(bare.els['repo-slot'], 'repo-pill')[0]), /alpha/);
+// ---- states ----
+
+const codeOf = (root) => flatten(root).filter((n) => n.tag === 'code').map(textOf);
+const bannerText = (app) => textOf(app.els.banner);
+
+test('no repos card', async () => {
+  const app = await mountApp({ snaps: [] });
+  assert.equal(app.els.app.children.length, 1);
+  const cards = byClass(app.els.app, 'card');
+  assert.equal(cards.length, 1);
+  assert.equal(app.els.app.children[0], cards[0]);
+  assert.match(textOf(cards[0]), /No repos registered yet/);
+  assert.deepEqual(codeOf(cards[0]), ['/progress-tracking:progress-init']);
+  assert.equal(app.els['repo-slot'].children.length, 0);
+  assert.equal(bannerText(app), '');
+});
+
+test('no plans card', async () => {
+  const app = await mountApp({ snaps: [snap('alpha', [], { branch: null })] });
+  const cards = byClass(app.els.app, 'card');
+  assert.equal(app.els.app.children.length, 1);
+  assert.equal(cards.length, 1);
+  assert.match(textOf(cards[0]), /No plans yet/);
+  assert.deepEqual(codeOf(cards[0]), ['triqual tracking write plan']);
+  const pill = byClass(app.els['repo-slot'], 'repo-pill')[0];
+  assert.match(textOf(pill), /alpha/);
+  assert.match(textOf(pill), /detached HEAD/);
+});
+
+test('a state card gives way to the board when data arrives', async () => {
+  const app = await mountApp({ snaps: [] });
+  assert.equal(byClass(app.els.app, 'card').length, 1);
+  app.state.data = [snap('alpha', ALPHA_PLANS())];
+  await app.tick(5000);
+  assert.equal(byClass(app.els.app, 'card').length, 0);
+  assert.deepEqual(app.hero(), ['alpha work']);
+});
+
+test('connection lost keeps the last tree', async () => {
+  const app = await mountApp({ snaps: TWO_REPOS() });
+  const before = [...app.els.app.children];
+  assert.ok(before.length > 0);
+  assert.equal(bannerText(app), '');
+  app.state.failing = true;
+  await app.tick(5000);
+  assert.deepEqual(app.els.app.children, before);
+  assert.ok(app.els.app.children.every((c, i) => c === before[i]));
+  assert.ok(hasClass(app.els.banner, 'banner'));
+  assert.match(bannerText(app), /Cannot reach the local server/);
+  assert.match(bannerText(app), /offline/);
+  assert.match(bannerText(app), /Retrying every 5 s; the last good data stays on screen/);
+  assert.deepEqual(codeOf(app.els.banner), ['triqual ui --open']);
+  // Still polling, banner stays while it keeps failing.
+  await app.tick(5000);
+  assert.equal(app.fetches(), 3);
+  assert.match(bannerText(app), /Cannot reach the local server/);
+});
+
+test('a first load that fails shows the banner and no card', async () => {
+  const app = await mountApp({ snaps: TWO_REPOS(), failing: true });
+  assert.equal(app.els.app.children.length, 0, 'no data yet, so neither the board nor the empty-state cards');
+  assert.match(bannerText(app), /Cannot reach the local server/);
+  app.state.failing = false;
+  await app.tick(5000);
+  assert.deepEqual(app.hero(), ['alpha work']);
+  assert.equal(bannerText(app), '');
+});
+
+test('a good poll clears the banner and updates the time', async () => {
+  const app = await mountApp({ snaps: TWO_REPOS() });
+  app.state.failing = true;
+  await app.tick(5000);
+  assert.ok(bannerText(app).length > 0);
+  const failedAt = app.els.updated.textContent;
+  app.state.failing = false;
+  await app.tick(5000);
+  assert.equal(bannerText(app), '');
+  assert.equal(app.els.banner.children.length, 0);
+  assert.ok(!hasClass(app.els.banner, 'banner'), 'the banner class goes with the banner');
+  assert.notEqual(app.els.updated.textContent, failedAt);
+  assert.match(app.els.updated.textContent, /updated \d\d:\d\d:\d\d/);
+});
+
+test('an HTTP error shows its status in the banner', async () => {
+  const app = await mountApp({ snaps: TWO_REPOS() });
+  app.state.status = 500;
+  await app.tick(5000);
+  assert.match(bannerText(app), /HTTP 500/);
+});
+
+test('a render that throws shows the banner, keeps the last tree and is retried by the next poll', async () => {
+  const app = await mountApp({ snaps: TWO_REPOS() });
+  const before = app.els.app.children[0];
+  const broken = TWO_REPOS();
+  broken[0].plans = 'not a list';
+  app.state.data = broken;
+  await app.tick(5000);
+  assert.equal(app.els.app.children[0], before, 'the stale tree is not replaced by half a render');
+  assert.ok(hasClass(app.els.banner, 'banner'));
+  assert.match(bannerText(app), /Retrying every 5 s/);
+  // The same bad data is tried again, not skipped as "unchanged".
+  await app.tick(5000);
+  assert.ok(hasClass(app.els.banner, 'banner'));
+  // Good data renders and clears the banner.
+  app.state.data = [snap('alpha', [plan('2026-10-20-alpha-fresh', 'active', [task('T1', 'pending')])])];
+  await app.tick(5000);
+  assert.deepEqual(app.hero(), ['alpha fresh']);
+  assert.equal(bannerText(app), '');
+});
+
+test('blocked current', async () => {
+  const blocked = plan('2026-10-20-alpha-work', 'active', [task('T1', 'done'), task('T2', 'blocked', { reason: 'Waiting on owner' })]);
+  const app = await mountApp({ snaps: [snap('alpha', [blocked])] });
+  assert.deepEqual(byClass(app.els.app, 'current').map(textOf), ['▸ T2 blocked']);
+  const hero = byClass(app.els.app, 'hero')[0];
+  assert.deepEqual(byClass(hero, 'hero-reason').map(textOf), ['Waiting on owner']);
+});
+
+test('blocked current without a reason shows no reason line; a normal current never does', async () => {
+  const bare = plan('2026-10-20-alpha-work', 'active', [task('T1', 'done'), task('T2', 'blocked')]);
+  const a = await mountApp({ snaps: [snap('alpha', [bare])] });
+  assert.deepEqual(byClass(a.els.app, 'current').map(textOf), ['▸ T2 blocked']);
+  assert.equal(byClass(a.els.app, 'hero-reason').length, 0);
+  const b = await mountApp({ snaps: [snap('alpha', ALPHA_PLANS())] });
+  assert.equal(byClass(b.els.app, 'hero-reason').length, 0, 'T4 is blocked but T2 is in progress');
+});
+
+test('nothing open', async () => {
+  const finished = plan('2026-10-20-alpha-work', 'done', [task('T1', 'done'), task('T2', 'done')]);
+  const app = await mountApp({ snaps: [snap('alpha', [finished])] });
+  assert.equal(app.rows().length, 0);
+  const empty = byClass(app.els.app, 'empty');
+  assert.equal(empty.length, 1);
+  assert.equal(textOf(empty[0]), 'Nothing here. Every task in this plan is done.');
+  byKey(app.els.app, 'chip:all').fire('click');
+  assert.equal(byClass(app.els.app, 'empty').length, 0, 'the message goes once rows show');
+  assert.equal(app.rows().length, 2);
+});
+
+test('nothing open in a plan with open work left elsewhere is not "all done"', async () => {
+  const app = await mountApp({ snaps: [snap('alpha', [plan('2026-10-20-alpha-work', 'active', [])])] });
+  assert.equal(textOf(byClass(app.els.app, 'empty')[0]), 'Nothing here. This plan has no tasks yet.');
+  const dropped = plan('2026-10-21-alpha-drop', 'active', [task('T1', 'done'), task('T2', 'dropped')]);
+  const b = await mountApp({ snaps: [snap('alpha', [dropped])] });
+  assert.equal(textOf(byClass(b.els.app, 'empty')[0]), 'Nothing here. No task in this plan is open.');
 });
 
 test('a rail with more than 20 tasks drops the glyph and id of its cells', async () => {
