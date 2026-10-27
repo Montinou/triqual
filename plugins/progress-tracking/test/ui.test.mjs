@@ -5,8 +5,7 @@ import { request } from 'node:http';
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import vm from 'node:vm';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { startServer } from '../cli/ui.mjs';
 import { BRAND } from '../lib/brand.mjs';
 import { registerRepo } from '../lib/registry.mjs';
@@ -164,7 +163,7 @@ test('GET / serves the page with the CSP header', () => withFixture(async ({ hom
     assert.match(r.headers['content-type'], /^text\/html; charset=utf-8/);
     assertCommonHeaders(r);
     assert.equal(r.body, readFileSync(INDEX, 'utf8'));
-    assert.match(r.body, /<script src="\/app\.js"/);
+    assert.match(r.body, /<script type="module" src="\/app\.js">/);
     // localhost:<port> is the other accepted Host.
     assert.equal((await get(port, '/', { host: `localhost:${port}` })).status, 200);
   });
@@ -284,24 +283,25 @@ test('startServer binds 127.0.0.1 only', () => withFixture(async ({ home }) => {
   await assert.rejects(startServer({ home, host: '0.0.0.0' }), /127\.0\.0\.1/);
 }));
 
-test('app.js never assigns innerHTML', () => {
-  const app = readFileSync(APP, 'utf8');
-  assert.doesNotMatch(app, /innerHTML\s*=/);
-  assert.doesNotMatch(app, /outerHTML|insertAdjacentHTML|document\.write/);
+test('app.js and view.js never build markup from data', () => {
+  for (const file of ['app.js', 'view.js']) {
+    const text = readFileSync(join(PLUGIN, 'ui', file), 'utf8');
+    assert.doesNotMatch(text, /innerHTML\s*=|outerHTML|insertAdjacentHTML|document\.write/, file);
+    // Only the SVG namespace string is a URL.
+    assert.doesNotMatch(text, /https?:\/\/(?!www\.w3\.org\/2000\/svg\b)/, `${file} has no http(s) URL`);
+  }
 });
 
-test('index.html and app.js load no external resources and nothing CSP would block', () => {
+test('index.html loads no external resources and nothing CSP would block', () => {
   const index = readFileSync(INDEX, 'utf8');
   const app = readFileSync(APP, 'utf8');
-  for (const [name, text] of [['index.html', index], ['app.js', app]]) {
-    assert.doesNotMatch(text, /https?:\/\//, `${name} has no http(s) URL`);
-  }
+  assert.doesNotMatch(index, /https?:\/\//, 'index.html has no http(s) URL');
   // default-src 'self' blocks inline scripts, inline styles and style attributes.
   assert.doesNotMatch(index, /<style|\sstyle=|\son[a-z]+=/i);
-  assert.deepEqual([...index.matchAll(/<script\b[^>]*>/g)].map((m) => m[0]), ['<script src="/app.js" defer>']);
+  assert.deepEqual([...index.matchAll(/<script\b[^>]*>/g)].map((m) => m[0]), ['<script type="module" src="/app.js">']);
+  assert.match(index, /<link rel="stylesheet" href="\/app\.css">/);
   assert.match(app, /\/api\/snapshots/);
   assert.match(app, /5000/);
-  assert.match(app, /prefers-color-scheme/);
 });
 
 // Starts the CLI and resolves with its printed URL once it is listening.
@@ -417,59 +417,6 @@ test('each /api/snapshots poll resolves each registered repo once', () => withFi
   }
 }));
 
-// Runs app.js in a VM with a minimal DOM: `hidden` drives document.hidden; returns the fetch count and the hooks.
-function loadApp({ hidden }) {
-  const listeners = {};
-  const timers = [];
-  let fetches = 0;
-  const node = () => ({
-    append() {}, replaceChildren() {}, setAttribute() {}, addEventListener() {}, className: '', textContent: '',
-  });
-  const document = {
-    hidden,
-    adoptedStyleSheets: [],
-    addEventListener: (type, fn) => { (listeners[type] ??= []).push(fn); },
-    getElementById: () => node(),
-    createElement: () => node(),
-    createTextNode: () => node(),
-  };
-  const context = vm.createContext({
-    document,
-    CSSStyleSheet: class { replaceSync() {} },
-    fetch: async () => { fetches++; return { ok: true, json: async () => [] }; },
-    setTimeout: (fn) => { timers.push(fn); return timers.length; },
-    clearTimeout: () => {},
-    Date,
-  });
-  vm.runInContext(readFileSync(APP, 'utf8'), context);
-  return {
-    document,
-    fetches: () => fetches,
-    fire: (type) => (listeners[type] ?? []).forEach((fn) => fn()),
-    tick: () => timers.splice(0).forEach((fn) => fn()),
-  };
-}
-
-test('app.js polls only while the tab is visible and refreshes when it becomes visible again', async () => {
-  const flush = () => new Promise((resolve) => setImmediate(resolve));
-  const app = loadApp({ hidden: true });
-  await flush();
-  app.tick();
-  await flush();
-  assert.equal(app.fetches(), 0, 'no fetch while hidden');
-  app.document.hidden = false;
-  app.fire('visibilitychange');
-  await flush();
-  assert.equal(app.fetches(), 1, 'refreshes once visible');
-  app.tick();
-  await flush();
-  assert.equal(app.fetches(), 2, 'keeps polling while visible');
-  app.document.hidden = true;
-  app.tick();
-  await flush();
-  assert.equal(app.fetches(), 2, 'stops polling once hidden');
-});
-
 test('triqual ui --help and -h print the usage and its flag lines, exit 0 and start no server', () => {
   for (const args of [['--help'], ['-h'], ['--port', '0', '--help']]) {
     const home = realpathSync(mkdtempSync(join(tmpdir(), 'pt-ui-help-')));
@@ -488,55 +435,334 @@ test('triqual ui --help and -h print the usage and its flag lines, exit 0 and st
   }
 });
 
-// Runs app.js against a recording DOM and returns the tree it rendered for `snaps`.
-async function renderTree(snaps) {
-  const flush = () => new Promise((resolve) => setImmediate(resolve));
-  const make = (tag) => ({
-    tag, className: '', textContent: '', children: [],
-    append(...kids) { this.children.push(...kids); },
-    replaceChildren(...kids) { this.children = kids; },
-    setAttribute() {}, addEventListener() {},
-  });
-  const root = make('main');
-  const document = {
-    hidden: false,
-    adoptedStyleSheets: [],
-    addEventListener() {},
-    getElementById: (id) => (id === 'repos' ? root : make('span')),
-    createElement: make,
-    createTextNode: (text) => ({ ...make('#text'), textContent: text }),
+// ---- renderer ----
+
+// A recording stub DOM: just enough of the browser for mount(), with the calls the tests assert on kept on the nodes.
+function stubNode(tag) {
+  const attrs = {};
+  const listeners = {};
+  const node = {
+    tag, children: [], className: '', textContent: '', attrs, listeners, open: false, value: '', scrolls: 0, focuses: 0,
+    style: { vars: {}, setProperty(name, value) { this.vars[name] = value; } },
+    classList: {
+      add: (c) => { if (!node.classList.contains(c)) node.className = `${node.className} ${c}`.trim(); },
+      remove: (c) => { node.className = node.className.split(/\s+/).filter((x) => x && x !== c).join(' '); },
+      contains: (c) => node.className.split(/\s+/).includes(c),
+    },
+    setAttribute(name, value) { attrs[name] = String(value); },
+    getAttribute: (name) => (name in attrs ? attrs[name] : null),
+    addEventListener(type, fn) { (listeners[type] ??= []).push(fn); },
+    fire(type) { (listeners[type] ?? []).forEach((fn) => fn()); },
+    append(...kids) { node.children.push(...kids); },
+    prepend(...kids) { node.children.unshift(...kids); },
+    replaceChildren(...kids) { node.children = kids; },
+    scrollIntoView() { node.scrolls++; },
+    focus() { node.focuses++; },
   };
-  const context = vm.createContext({
-    document,
-    CSSStyleSheet: class { replaceSync() {} },
-    fetch: async () => ({ ok: true, json: async () => snaps }),
-    setTimeout: () => 1,
-    clearTimeout: () => {},
-    Date,
-  });
-  vm.runInContext(readFileSync(APP, 'utf8'), context);
-  await flush();
-  return root;
+  return node;
 }
 
 const flatten = (node) => [node, ...(node.children ?? []).flatMap(flatten)];
+const hasClass = (node, cls) => node.className.split(/\s+/).includes(cls);
+const textOf = (node) => [node.textContent, ...node.children.map(textOf)].join('');
+const byClass = (root, cls) => flatten(root).filter((n) => hasClass(n, cls));
+const byKey = (root, key) => flatten(root).find((n) => n.attrs['data-key'] === key);
 
-test('the status panel is titled "status" and a store-mode repo gets the store badge', async () => {
-  const snap = (mode) => ({
-    schema: `${BRAND.marketplace}/tracking-snapshot@1`,
-    repo: { name: 'alpha', root: '/r/alpha', mode, branch: 'main', shareable: false },
-    plans: [], status: { text: 'S' }, progress: { entries: [] },
-  });
-  const store = flatten(await renderTree([snap('store')]));
-  const badges = store.filter((n) => /\bbadge\b/.test(n.className));
-  assert.ok(badges.some((b) => b.textContent === 'store' && /\bstore\b/.test(b.className)), 'a badge with the store class says store');
-  const summaries = store.filter((n) => n.tag === 'summary').map((n) => n.textContent);
-  assert.ok(summaries.includes('status'), `the status summary reads "status": ${summaries.join(' | ')}`);
-  assert.ok(!summaries.includes('status.md'));
-  // The other modes keep their badge classes.
-  const local = flatten(await renderTree([snap('local')])).filter((n) => /\bbadge\b/.test(n.className));
-  assert.ok(local.some((b) => b.textContent === 'local' && /\blocal\b/.test(b.className) && !/\bstore\b/.test(b.className)));
-  const committed = flatten(await renderTree([snap('committed')])).filter((n) => /\bbadge\b/.test(n.className));
-  assert.ok(committed.some((b) => b.textContent === 'committed' && !/\b(local|store)\b/.test(b.className)));
-  assert.match(readFileSync(APP, 'utf8'), /\.badge\.store\s*\{/, 'the stylesheet styles .badge.store');
+// mount() against a stub document, a counting fetch (answers `data`; rejects while `failing`) and captured timers.
+async function mountApp({ snaps = [], hidden = false } = {}) {
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  const els = Object.fromEntries(['top', 'repo-slot', 'updated', 'banner', 'app'].map((id) => [id, stubNode('div')]));
+  const listeners = {};
+  const document = {
+    hidden,
+    addEventListener: (type, fn) => { (listeners[type] ??= []).push(fn); },
+    getElementById: (id) => els[id] ?? null,
+    createElement: stubNode,
+    createElementNS: (ns, tag) => Object.assign(stubNode(tag), { ns }),
+    createTextNode: (text) => Object.assign(stubNode('#text'), { textContent: text }),
+  };
+  const timers = [];
+  let fetches = 0;
+  let minute = 0;
+  const state = { data: snaps, failing: false };
+  const env = {
+    document,
+    fetch: async (url) => {
+      fetches++;
+      assert.equal(url, '/api/snapshots');
+      if (state.failing) throw new Error('offline');
+      return { ok: true, json: async () => state.data };
+    },
+    setTimeout: (fn, ms) => { timers.push({ fn, ms, live: true }); return timers.length; },
+    clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].live = false; },
+    now: () => new Date(Date.UTC(2026, 9, 26, 12, minute++, 0)),
+  };
+  const { mount } = await import(pathToFileURL(APP).href);
+  mount(env);
+  await flush();
+  return {
+    document, els, state, fetches: () => fetches, settle: flush,
+    fire: (type) => (listeners[type] ?? []).forEach((fn) => fn()),
+    // Runs the live timers set with `ms` (any when omitted); the others stay.
+    tick: async (ms) => {
+      for (const t of timers) {
+        if (t.live && (ms === undefined || t.ms === ms)) {
+          t.live = false;
+          t.fn();
+        }
+      }
+      await flush();
+    },
+    root: () => els.app.children[0],
+    hero: () => byClass(els.app, 'hero-title').map(textOf),
+    rows: () => byClass(els.app, 'trow'),
+  };
+}
+
+const task = (id, status, extra = {}) => ({ id, title: `Task ${id}`, status, reason: null, tier: null, effectiveTier: null, commits: [], skills: [], ...extra });
+const plan = (name, state, tasks) => ({ name, state, tasks, total: tasks.length, done: tasks.filter((t) => t.status === 'done').length });
+const BODY = '- **Stage/task:** Plan x · T1\n- **Done:** did it\n- **Verification:** ran it\n- **Next:** ship it\n';
+const entry = (i, body = BODY) => ({ date: '2026-10-26', title: `Entry ${i}`, stageTask: `Plan x · T${i}`, body });
+const snap = (name, plans, { mode = 'store', branch = 'main', entries = [] } = {}) => ({
+  schema: `${BRAND.marketplace}/tracking-snapshot@1`,
+  repo: { name, root: `/r/${name}`, mode, branch, shareable: false },
+  plans, status: { text: `status of ${name}` }, progress: { entries }, generatedAt: '2026-10-26T12:00:00.000Z',
+});
+const ALPHA_PLANS = () => [
+  plan('2026-10-10-alpha-earlier', 'done', [task('T1', 'done'), task('T2', 'done'), task('T3', 'done')]),
+  plan('2026-10-20-alpha-work', 'active', [task('T1', 'done'), task('T2', 'in_progress'), task('T3', 'pending'), task('T4', 'blocked', { reason: 'waiting' })]),
+];
+const BETA_PLANS = () => [plan('2026-10-22-beta-work', 'active', [task('T1', 'pending'), task('T2', 'pending')])];
+const TWO_REPOS = () => [snap('alpha', ALPHA_PLANS(), { entries: [entry(1)] }), snap('beta', BETA_PLANS())];
+
+test('importing app.js in node mounts nothing', async () => {
+  assert.equal(globalThis.document, undefined);
+  const mod = await import(pathToFileURL(APP).href);
+  assert.equal(typeof mod.mount, 'function');
+});
+
+test('app.js polls only while the tab is visible and refreshes when it becomes visible again', async () => {
+  const app = await mountApp({ hidden: true });
+  await app.tick();
+  assert.equal(app.fetches(), 0, 'no fetch while hidden');
+  app.document.hidden = false;
+  app.fire('visibilitychange');
+  await app.settle();
+  assert.equal(app.fetches(), 1, 'refreshes once visible');
+  await app.tick(5000);
+  assert.equal(app.fetches(), 2, 'keeps polling every 5000 ms while visible');
+  app.document.hidden = true;
+  await app.tick();
+  assert.equal(app.fetches(), 2, 'stops polling once hidden');
+});
+
+test('renders the default plan of the first repo', async () => {
+  const app = await mountApp({ snaps: TWO_REPOS() });
+  assert.deepEqual(app.hero(), ['alpha work']);
+  assert.equal(byClass(app.els.app, 'cell').length, 4);
+  assert.deepEqual(byClass(app.els.app, 'cell').map((c) => c.style.vars['--i']), [0, 1, 2, 3]);
+  assert.deepEqual(byClass(app.els.app, 'pulse').length, 1, 'the in_progress cell pulses');
+  assert.deepEqual(byClass(app.els.app, 'hero-date').map(textOf), ['2026-10-20']);
+  assert.deepEqual(byClass(app.els.app, 'current').map(textOf), ['▸ T2']);
+  assert.match(textOf(byClass(app.els.app, 'headline')[0]), /1 in progress/);
+  assert.match(textOf(byClass(app.els.app, 'count')[0]), /1\/4/);
+  // Open filter: the done task is hidden, blocked comes first.
+  assert.deepEqual(app.rows().map((r) => textOf(byClass(r, 't-id')[0])), ['T4', 'T2', 'T3']);
+  assert.match(textOf(byClass(app.rows()[0], 't-reason')[0]), /waiting/);
+  // Plan tabs: active first, short name with the full name in title.
+  const tabs = byClass(app.els.app, 'ptab');
+  assert.deepEqual(tabs.map((t) => t.attrs.title), ['2026-10-20-alpha-work', '2026-10-10-alpha-earlier']);
+  assert.match(textOf(tabs[0]), /^alpha-work1\/4$/);
+});
+
+test('repo pill shows the mode and branch; several repos give a select', async () => {
+  const one = await mountApp({ snaps: [snap('alpha', ALPHA_PLANS(), { mode: 'store', branch: 'main' })] });
+  const pill = byClass(one.els['repo-slot'], 'repo-pill');
+  assert.equal(pill.length, 1);
+  assert.equal(pill[0].tag, 'span');
+  assert.match(textOf(pill[0]), /alpha/);
+  assert.match(textOf(pill[0]), /store/);
+  assert.match(textOf(pill[0]), /main/);
+  assert.equal(flatten(one.els['repo-slot']).filter((n) => n.tag === 'select').length, 0);
+  const two = await mountApp({ snaps: TWO_REPOS() });
+  const select = flatten(two.els['repo-slot']).find((n) => n.tag === 'select');
+  assert.deepEqual(select.children.map((o) => o.attrs.value), ['/r/alpha', '/r/beta']);
+  assert.equal(select.value, '/r/alpha');
+  // The brand sits first in the header and holds the logo SVG.
+  const brand = one.els.top.children[0];
+  assert.ok(hasClass(brand, 'brand'));
+  assert.ok(flatten(brand).some((n) => n.tag === 'svg' && n.ns === 'http://www.w3.org/2000/svg'));
+});
+
+test('the status panel is a folded details titled Status', async () => {
+  const app = await mountApp({ snaps: [snap('alpha', ALPHA_PLANS())] });
+  const [panel] = byClass(app.els.app, 'status-panel');
+  assert.equal(panel.tag, 'details');
+  assert.equal(panel.open, false);
+  assert.deepEqual(panel.children.filter((n) => n.tag === 'summary').map(textOf), ['Status']);
+  assert.equal(textOf(panel.children.find((n) => n.tag === 'pre')), 'status of alpha');
+});
+
+test('repo switch, plan tab and chip re-render without fetching', async () => {
+  const app = await mountApp({ snaps: TWO_REPOS() });
+  const select = flatten(app.els['repo-slot']).find((n) => n.tag === 'select');
+  select.value = '/r/beta';
+  select.fire('change');
+  assert.deepEqual(app.hero(), ['beta work']);
+  const again = flatten(app.els['repo-slot']).find((n) => n.tag === 'select');
+  assert.equal(again.value, '/r/beta');
+  assert.equal(again.focuses, 1, 'focus returns to the rebuilt select');
+  again.value = '/r/alpha';
+  again.fire('change');
+  assert.deepEqual(app.hero(), ['alpha work']);
+  byKey(app.els.app, 'plan:2026-10-10-alpha-earlier').fire('click');
+  assert.deepEqual(app.hero(), ['alpha earlier']);
+  assert.equal(app.rows().length, 0, 'nothing is open in a finished plan');
+  byKey(app.els.app, 'chip:all').fire('click');
+  assert.equal(app.rows().length, 3);
+  assert.equal(byKey(app.els.app, 'chip:all').focuses, 1, 'focus moves to the new chip');
+  assert.equal(app.fetches(), 1, 'viewer actions never fetch');
+});
+
+test('picking a plan or switching repo resets the filter and the open entry', async () => {
+  const entries = [entry(1), entry(2)];
+  const app = await mountApp({ snaps: [snap('alpha', ALPHA_PLANS(), { entries }), snap('beta', BETA_PLANS())] });
+  byKey(app.els.app, 'chip:all').fire('click');
+  byKey(app.els.app, 'entry:1').fire('click');
+  assert.equal(byKey(app.els.app, 'entry:1').attrs['aria-expanded'], 'true');
+  byKey(app.els.app, 'plan:2026-10-10-alpha-earlier').fire('click');
+  assert.equal(byKey(app.els.app, 'chip:open').attrs['aria-pressed'], 'true');
+  assert.equal(byKey(app.els.app, 'entry:0').attrs['aria-expanded'], 'true');
+  byKey(app.els.app, 'chip:all').fire('click');
+  const select = flatten(app.els['repo-slot']).find((n) => n.tag === 'select');
+  select.value = '/r/beta';
+  select.fire('change');
+  assert.equal(byKey(app.els.app, 'chip:open').attrs['aria-pressed'], 'true');
+});
+
+test('intro only on the first data render', async () => {
+  const app = await mountApp({ snaps: TWO_REPOS() });
+  assert.ok(hasClass(app.root(), 'intro'));
+  byKey(app.els.app, 'chip:all').fire('click');
+  assert.ok(!hasClass(app.root(), 'intro'), 'a viewer action does not replay it');
+  app.state.data = [snap('alpha', [plan('2026-10-20-alpha-work', 'active', [task('T1', 'done')])]), snap('beta', BETA_PLANS())];
+  await app.tick(5000);
+  assert.equal(app.fetches(), 2);
+  assert.deepEqual(app.hero(), ['alpha work']);
+  assert.ok(!hasClass(app.root(), 'intro'), 'new data does not either');
+});
+
+test('a poll with unchanged data keeps the tree; only generatedAt changing is not a change', async () => {
+  const app = await mountApp({ snaps: TWO_REPOS() });
+  const before = app.root();
+  app.state.data = TWO_REPOS().map((s) => ({ ...s, generatedAt: '2026-10-26T12:00:05.000Z' }));
+  await app.tick(5000);
+  assert.equal(app.fetches(), 2);
+  assert.equal(app.root(), before);
+});
+
+test('the time is written by polls only, so a viewer action never blanks it', async () => {
+  const app = await mountApp({ snaps: TWO_REPOS() });
+  const first = app.els.updated.textContent;
+  assert.match(first, /updated \d\d:\d\d:\d\d/);
+  byKey(app.els.app, 'chip:all').fire('click');
+  assert.equal(app.els.updated.textContent, first);
+  await app.tick(5000);
+  assert.notEqual(app.els.updated.textContent, first);
+  assert.match(app.els.updated.textContent, /updated \d\d:\d\d:\d\d/);
+});
+
+test('rail cell click highlights its row', async () => {
+  const app = await mountApp({ snaps: TWO_REPOS() });
+  assert.equal(app.rows().length, 3);
+  byKey(app.els.app, 'cell:T1').fire('click');
+  assert.equal(byKey(app.els.app, 'chip:all').attrs['aria-pressed'], 'true', 'the filter widens to All');
+  const lit = app.rows().filter((r) => hasClass(r, 'highlight'));
+  assert.deepEqual(lit.map((r) => textOf(byClass(r, 't-id')[0])), ['T1']);
+  assert.equal(lit[0].scrolls, 1);
+  assert.equal(app.rows().reduce((n, r) => n + r.scrolls, 0), 1);
+  assert.equal(byKey(app.els.app, 'cell:T1').focuses, 1);
+  // A cell whose row is already visible keeps the filter.
+  byKey(app.els.app, 'chip:open').fire('click');
+  byKey(app.els.app, 'cell:T3').fire('click');
+  assert.equal(byKey(app.els.app, 'chip:open').attrs['aria-pressed'], 'true');
+  assert.equal(app.rows().filter((r) => hasClass(r, 'highlight')).length, 1);
+  // The highlight ends after 1600 ms.
+  await app.tick(1600);
+  assert.equal(app.rows().filter((r) => hasClass(r, 'highlight')).length, 0);
+  assert.equal(app.fetches(), 1);
+});
+
+test('status panel stays open', async () => {
+  const app = await mountApp({ snaps: TWO_REPOS() });
+  const [panel] = byClass(app.els.app, 'status-panel');
+  panel.open = true;
+  panel.fire('toggle');
+  byKey(app.els.app, 'chip:all').fire('click');
+  const [next] = byClass(app.els.app, 'status-panel');
+  assert.notEqual(next, panel);
+  assert.equal(next.open, true);
+});
+
+test('entries: five at most, the first open; pressed and expanded states are attributes', async () => {
+  const entries = Array.from({ length: 8 }, (_, i) => entry(i + 1));
+  entries[1] = entry(2, 'free text without labelled lines');
+  const app = await mountApp({ snaps: [snap('alpha', ALPHA_PLANS(), { entries })] });
+  const nodes = byClass(app.els.app, 'entry');
+  assert.equal(nodes.length, 5);
+  const heads = byClass(app.els.app, 'entry-h');
+  assert.deepEqual(heads.map((h) => h.attrs['aria-expanded']), ['true', 'false', 'false', 'false', 'false']);
+  assert.match(textOf(heads[0]), /Entry 1/);
+  assert.match(textOf(heads[0]), /Plan x · T1/);
+  const body = textOf(byClass(nodes[0], 'entry-body')[0]);
+  assert.match(body, /Done did it/);
+  assert.match(body, /Verification ran it/);
+  assert.match(body, /Next ship it/);
+  assert.equal(byClass(app.els.app, 'entry-body').length, 1);
+  // Opening another entry closes the first; one without labelled lines shows its body.
+  byKey(app.els.app, 'entry:1').fire('click');
+  assert.deepEqual(byClass(app.els.app, 'entry-h').map((h) => h.attrs['aria-expanded']), ['false', 'true', 'false', 'false', 'false']);
+  assert.equal(textOf(byClass(app.els.app, 'entry-body')[0]), 'free text without labelled lines');
+  assert.equal(byClass(app.els.app, 'entry-body')[0].children[0].tag, 'pre');
+  byKey(app.els.app, 'entry:1').fire('click');
+  assert.equal(byClass(app.els.app, 'entry-body').length, 0, 'clicking the open entry closes it');
+  const pressed = flatten(app.els.app).filter((n) => n.attrs['aria-pressed'] === 'true');
+  assert.deepEqual(pressed.map((n) => n.attrs['data-key']), ['plan:2026-10-20-alpha-work', 'chip:open']);
+});
+
+test('a selected plan that disappears falls back to the default plan', async () => {
+  const app = await mountApp({ snaps: [snap('alpha', ALPHA_PLANS())] });
+  byKey(app.els.app, 'plan:2026-10-10-alpha-earlier').fire('click');
+  assert.deepEqual(app.hero(), ['alpha earlier']);
+  app.state.data = [snap('alpha', [ALPHA_PLANS()[1]])];
+  await app.tick(5000);
+  assert.deepEqual(app.hero(), ['alpha work']);
+});
+
+test('a poll that fails keeps the last render and keeps polling', async () => {
+  const app = await mountApp({ snaps: TWO_REPOS() });
+  const before = app.root();
+  app.state.failing = true;
+  await app.tick(5000);
+  assert.equal(app.fetches(), 2);
+  assert.equal(app.root(), before);
+  app.state.failing = false;
+  await app.tick(5000);
+  assert.equal(app.fetches(), 3);
+});
+
+test('no repos or no plans renders an empty board without throwing', async () => {
+  const none = await mountApp({ snaps: [] });
+  assert.equal(none.els.app.children.length, 0);
+  const bare = await mountApp({ snaps: [snap('alpha', [])] });
+  assert.equal(bare.els.app.children.length, 0);
+  assert.match(textOf(byClass(bare.els['repo-slot'], 'repo-pill')[0]), /alpha/);
+});
+
+test('a rail with more than 20 tasks drops the glyph and id of its cells', async () => {
+  const many = plan('2026-10-20-big', 'active', Array.from({ length: 21 }, (_, i) => task(`T${i + 1}`, 'pending')));
+  const app = await mountApp({ snaps: [snap('alpha', [many])] });
+  assert.equal(byClass(app.els.app, 'cell').length, 21);
+  assert.equal(byClass(app.els.app, 'cell-id').length, 0);
+  assert.ok(byClass(app.els.app, 'bar').every((b) => b.textContent === ''));
 });
