@@ -356,3 +356,20 @@ select:focus-visible, summary:focus-visible { outline: 2px solid var(--live); ou
 .now-chip span:last-child, .muted, .waiting-chip { color: var(--muted); font-size: 12px; }
 .waiting-chip { border: 1px solid var(--line); border-radius: 999px; padding: 6px 10px; }
 @media (prefers-reduced-motion: reduce) { .repo-dot { animation: none; } }
+
+/* Session cards use the existing panel and control tokens; elbows have a fixed view box. */
+.agents-panel { grid-column: 1 / -1; min-width: 0; padding: 16px; }
+.agents-toggle { display: block; width: 100%; text-align: left; font-family: var(--display); font-size: 18px; }
+.agent-tree { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.agent-row { display: flex; align-items: flex-start; padding-left: calc(var(--depth) * 24px); min-width: 0; }
+.agent-elbow { flex: none; margin-left: -24px; color: var(--line); }
+.agent-card { flex: 1; min-width: 0; text-align: left; background: var(--raise); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow-wrap: anywhere; }
+.agent-card[aria-pressed="true"] { border-color: var(--live); }
+.agent-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; }
+.agent-latest { display: block; margin-top: 5px; color: var(--muted); font-size: 12px; }
+.agent-pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--live); animation: blink 1.6s ease-in-out infinite; flex: none; }
+.agent-feed { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
+.agent-events { list-style: none; padding: 0; margin: 10px 0 0; }
+.agent-feed-item { display: flex; gap: 10px; padding: 6px 0; overflow-wrap: anywhere; }
+.agent-event-kind { color: var(--muted); font-size: 11px; min-width: 44px; }
+@media (prefers-reduced-motion: reduce) { .agent-pulse { animation: none; } }

@@ -17,7 +17,7 @@ one-line command table. The agent-facing rules are in the
 | CLI `triqual tasks` | The task ledger (`cli/tasks.mjs`). |
 | CLI `triqual tracking` | Writes and reads entries, status and documents; moves data in and out of the store; runs the store git hooks (`cli/tracking.mjs`). |
 | CLI `triqual ui` | A local, read-only run board (`cli/ui.mjs`, the page in `ui/`). |
-| Claude Code hooks | `SessionStart` and `Stop` (`hooks/hooks.json`, `scripts/gate.mjs`). |
+| Claude Code hooks | State injection and enforcement (`SessionStart`, `Stop`, `scripts/gate.mjs`), plus six async recorder hooks (`scripts/session-event.mjs`). |
 | Git hooks | Installed per repo by `progress-init`; one set for each mode. |
 
 The `triqual` command is a shim that finds the installed plugin and runs the script. Without it on `PATH`, run the
@@ -26,6 +26,23 @@ plugin or the command is not installed.
 
 Every command takes `--help` or `-h`: it prints the usage, exits 0 and does nothing else. The hooks and the commands
 act only in an opted-in repo.
+
+## Live agents (0.7.0)
+
+`triqual ui` serves the read-only run board on port **47800** (override with `--port`; a busy default port falls back
+to a free port). Updates arrive through an event stream. The collapsible Agents panel shows indented session cards
+with parent links, task, model, elapsed time and latest tool activity. Select a card for its newest-first feed;
+the Notes toggle adds read-only claude-mem notes. Viewer selections survive pushes.
+
+Six asynchronous recorder hooks — `SessionStart`, `SubagentStart`, `SubagentStop`, `PostToolUse`, `PostToolUseFailure`
+and `SessionEnd` — record Claude Code's session and agent ids in a separate `sessions.db` under the data directory
+(default `~/.local/share/triqual/`). They never open `tracking.db`. The recorder stores safe labels, never commands,
+prompts or tool output; recording failures never fail the agent. Set `TRIQUAL_SESSIONS=0` to turn recording off.
+A harness that runs hooks synchronously, such as the Grok compatibility layer, pays about **120 ms per event**.
+
+To roll out the new hooks: run `triqual sync --yes`, run `triqual doctor`, then `/reload-plugins` in Claude Code.
+Start a short subagent and open `triqual ui` to check the tree. Reloading is required for existing sessions to load
+the new hooks.
 
 ## Modes
 

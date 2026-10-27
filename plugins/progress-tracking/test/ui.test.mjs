@@ -1358,3 +1358,78 @@ test('triqual tasks export --json output is identical with sessions recorded', (
   assert.deepEqual(after, before);
   assert.equal('sessions' in after, false);
 }));
+
+// ---- live agent panel ----
+const agentFixture = () => {
+  const at = Date.UTC(2026, 9, 26, 12);
+  return ['', 'orchestrator', 'worker-1', 'worker-2'].map((agentId, index) => ({
+    sessionId: 'fixture-session', agentId,
+    parentAgentId: index === 0 ? null : index === 1 ? '' : 'orchestrator',
+    agentType: index === 0 ? 'controller' : index === 1 ? 'orchestrator' : 'worker',
+    task: index > 1 ? `T${index}` : null, model: 'fixture-model',
+    startedAt: at - 120000, lastAt: at, endedAt: null,
+    events: [{ at: at - 2000, kind: 'start', label: 'Started' }, { at, kind: 'tool', label: `Latest ${agentId || 'controller'}` }],
+    notes: [{ at: at - 1000, type: 'finding', title: 'A useful note' }],
+  }));
+};
+const agentSnap = () => ({ ...snap('alpha', ALPHA_PLANS()), sessions: agentFixture() });
+
+test('a fixture with a controller, an orchestrator and two workers renders four cards and three elbows', async () => {
+  const app = await mountApp({ snaps: [agentSnap()] });
+  const cards = byClass(app.els.app, 'agent-card');
+  assert.equal(cards.length, 4);
+  assert.deepEqual(cards.map(n => n.attrs['data-key']), ['agent:fixture-session/', 'agent:fixture-session/orchestrator', 'agent:fixture-session/worker-1', 'agent:fixture-session/worker-2']);
+  const elbows = flatten(app.els.app).filter(n => n.attrs.class === 'agent-elbow');
+  assert.equal(elbows.length, 3);
+  assert.ok(elbows.every(n => n.tag === 'svg' && n.attrs.width && n.attrs.height));
+  assert.match(textOf(cards[2]), /worker.*T2.*fixture-model.*2m.*Latest worker-1/);
+  assert.equal(byClass(app.els.app, 'agent-pulse').length, 4);
+  assert.equal(byKey(app.els.app, 'agents:toggle').attrs['aria-expanded'], 'true');
+});
+
+test('no panel renders without sessions', async () => {
+  const app = await mountApp({ snaps: TWO_REPOS() });
+  assert.equal(byClass(app.els.app, 'agents-panel').length, 0);
+});
+
+test('clicking a card shows its feed newest first', async () => {
+  const app = await mountApp({ snaps: [agentSnap()] });
+  byKey(app.els.app, 'agent:fixture-session/worker-1').fire('click');
+  assert.deepEqual(byClass(app.els.app, 'agent-feed-item').map(textOf), ['TOOLLatest worker-1', 'STARTStarted']);
+});
+
+test('the notes toggle shows and hides notes', async () => {
+  const app = await mountApp({ snaps: [agentSnap()] });
+  byKey(app.els.app, 'agent:fixture-session/worker-1').fire('click');
+  assert.doesNotMatch(textOf(app.els.app), /A useful note/);
+  byKey(app.els.app, 'agents:notes').fire('click');
+  assert.deepEqual(byClass(app.els.app, 'agent-feed-item').map(textOf), ['TOOLLatest worker-1', 'NOTEA useful note', 'STARTStarted']);
+  byKey(app.els.app, 'agents:notes').fire('click');
+  assert.doesNotMatch(textOf(app.els.app), /A useful note/);
+});
+
+test('the selected card survives a push', async () => {
+  const app = await mountApp({ snaps: [agentSnap()] });
+  byKey(app.els.app, 'agent:fixture-session/worker-2').fire('click');
+  byKey(app.els.app, 'agents:notes').fire('click');
+  const next = agentSnap(); next.sessions[3].events.push({ at: Date.UTC(2026, 9, 26, 12, 0, 2), kind: 'tool', label: 'New activity' });
+  app.state.data = [next]; await app.message();
+  assert.equal(byKey(app.els.app, 'agent:fixture-session/worker-2').attrs['aria-pressed'], 'true');
+  assert.equal(byKey(app.els.app, 'agents:notes').attrs['aria-pressed'], 'true');
+  assert.match(textOf(byClass(app.els.app, 'agent-feed-item')[0]), /New activity/);
+  byKey(app.els.app, 'agents:toggle').fire('click');
+  app.state.data[0].sessions[0].lastAt++; await app.message();
+  assert.equal(byKey(app.els.app, 'agents:toggle').attrs['aria-expanded'], 'false');
+  assert.equal(byClass(app.els.app, 'agent-card').length, 0);
+});
+
+test('reduced motion stops the pulse', () => {
+  assert.match(readFileSync(join(PLUGIN, 'ui', 'app.css'), 'utf8'), /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{[^}]*\.agent-pulse[^}]*animation:\s*none/s);
+});
+
+test('a planless repo still shows its recorded agents', async () => {
+  const fixture = agentSnap(); fixture.plans = [];
+  const app = await mountApp({ snaps: [fixture] });
+  assert.equal(byClass(app.els.app, 'agent-card').length, 4);
+  assert.match(textOf(app.els.app), /No plans yet/);
+});

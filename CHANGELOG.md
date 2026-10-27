@@ -13,6 +13,13 @@ What changed in each plugin, newest first. The plugin version in each entry is t
   human can make; anything a ruling can settle is not a stop, and the only other stop is one the human agreed to in
   advance.
 
+## progress-tracking 0.7.0
+
+- The run board now pushes live snapshots over SSE, defaults to port 47800, remembers its theme, and puts active repos and tasks first.
+- Six asynchronous hooks record session and agent ids with safe tool labels in a separate private `sessions.db`; `TRIQUAL_SESSIONS=0` disables recording.
+- The collapsible Agents panel shows parent-linked cards and newest-first feeds with optional read-only claude-mem notes; viewer selections survive pushes.
+- Update with `triqual sync --yes`, check `triqual doctor`, then `/reload-plugins` to load recorder hooks. Synchronous harnesses such as Grok pay about 120 ms per event.
+
 ## progress-tracking 0.6.0
 
 ### Changed

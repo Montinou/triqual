@@ -2,7 +2,7 @@
 // receives messages and keeps the viewer's choices. Data goes in as textContent or attribute values, never as markup; dynamic
 // visual values go through style.setProperty on a custom property, so the page needs no inline style (CSP default-src 'self').
 import {
-  chips, currentOf, dataKey, entryView, headline, legend, pickPlan, pickRepo, planTitle, railCells, taskRows, orderPlans, nowItems, waitingCount, activity,
+  chips, currentOf, dataKey, entryView, headline, legend, pickPlan, pickRepo, planTitle, railCells, taskRows, orderPlans, nowItems, waitingCount, activity, agentTree, feedOf,
 } from './view.js';
 
 const HIGHLIGHT_MS = 1600;
@@ -26,7 +26,7 @@ export function mount(env) {
   let lastKey = null;
   let introPending = true;
   let highlightTimer = null;
-  const viewer = { repo: null, planByRepo: new Map(), filter: 'running', openEntry: 0, statusOpen: false, highlight: null };
+  const viewer = { repo: null, planByRepo: new Map(), filter: 'running', openEntry: 0, statusOpen: false, highlight: null, agentsByRepo: new Map() };
   // Controls and task rows of the render in place, by their data-key / task id.
   const keyed = new Map();
   const rowNodes = new Map();
@@ -121,6 +121,54 @@ export function mount(env) {
       ...(items.length ? [] : [el('span', 'muted', { text: 'Nothing running' })]),
       ...(waiting ? [el('span', 'waiting-chip', { text: `waiting on you: ${waiting}` })] : []),
     ]);
+  }
+
+  function agentsPanel(snap, nowMs) {
+    const sessions = snap.sessions ?? [];
+    if (!sessions.length) return null;
+    const rows = agentTree(sessions, nowMs);
+    let state = viewer.agentsByRepo.get(snap.repo.root);
+    if (!state) {
+      state = { open: rows.some((row) => row.state === 'running'), selected: null, notes: false };
+      viewer.agentsByRepo.set(snap.repo.root, state);
+    }
+    const toggle = el('button', 'agents-toggle', {
+      key: 'agents:toggle', text: `Agents · ${rows.length}`,
+      attrs: { type: 'button', 'aria-expanded': state.open, 'aria-controls': 'agents-body' },
+      on: { click: () => { state.open = !state.open; renderData({ focus: 'agents:toggle' }); } },
+    });
+    if (!state.open) return el('section', 'panel agents-panel', {}, [toggle]);
+    const tree = el('div', 'agent-tree', { attrs: { 'aria-label': 'Agent tree' } }, rows.map((row) => el('div', 'agent-row', {
+      vars: { '--depth': row.depth },
+    }, [
+      ...(row.parentKey === null ? [] : [svgEl('svg', { class: 'agent-elbow', width: 24, height: 36, viewBox: '0 0 24 36', 'aria-hidden': 'true' }, [
+        svgEl('path', { d: 'M2 0 V18 H22', fill: 'none', stroke: 'currentColor' }),
+      ])]),
+      el('button', `agent-card agent-${row.state}`, {
+        key: `agent:${row.key}`, attrs: { type: 'button', 'aria-pressed': state.selected === row.key },
+        on: { click: () => { state.selected = row.key; renderData({ focus: `agent:${row.key}` }); } },
+      }, [
+        el('span', 'agent-heading', {}, [
+          ...(row.state === 'running' ? [el('span', 'agent-pulse', { attrs: { 'aria-label': 'Running' } })] : []),
+          el('b', '', { text: row.agentType ?? 'controller' }),
+          ...(row.task ? [el('span', '', { text: row.task })] : []),
+          ...(row.model ? [el('span', '', { text: row.model })] : []),
+          el('span', 'muted', { text: `${row.elapsedMs === null ? 'elapsed unknown' : `${Math.max(0, Math.floor(row.elapsedMs / 60000))}m elapsed`} · ${row.state}` }),
+        ]),
+        el('span', 'agent-latest', { text: row.latest ?? 'No events yet' }),
+      ]),
+    ])));
+    const selected = sessions.find((session) => `${session.sessionId}/${session.agentId}` === state.selected);
+    const feed = selected ? [el('section', 'agent-feed', { attrs: { 'aria-label': 'Selected agent feed' } }, [
+      el('button', 'chip', {
+        key: 'agents:notes', text: 'Notes', attrs: { type: 'button', 'aria-pressed': state.notes },
+        on: { click: () => { state.notes = !state.notes; renderData({ focus: 'agents:notes' }); } },
+      }),
+      el('ol', 'agent-events', {}, feedOf(selected, state.notes).map((event) => el('li', 'agent-feed-item', {}, [
+        el('span', 'agent-event-kind', { text: event.kind }), el('span', '', { text: event.text }),
+      ]))),
+    ])] : [];
+    return el('section', 'panel agents-panel', {}, [toggle, el('div', 'agents-body', { attrs: { id: 'agents-body' } }, [tree, ...feed])]);
   }
 
   // A different plan or repo starts from the default view.
@@ -277,6 +325,7 @@ export function mount(env) {
     const snap = pickRepo(snaps, viewer.repo, introPending, nowMs);
     if (snap && viewer.repo === null) viewer.repo = snap.repo.root;
     renderRepo(snap, nowMs);
+    const agents = snap ? agentsPanel(snap, nowMs) : null;
     const plan = snap ? pickPlan(snap.plans, viewer.planByRepo.get(snap.repo.root)) : null;
     if (!snap || !plan) {
       const card = snap
@@ -288,10 +337,10 @@ export function mount(env) {
           command: '/progress-tracking:progress-init',
         });
       introPending = false;
-      app.replaceChildren(snap ? el('div', '', {}, [nowStrip(nowMs), card]) : card);
+      app.replaceChildren(snap ? el('div', '', {}, [nowStrip(nowMs), ...(agents ? [agents] : []), card]) : card);
       return;
     }
-    const root = el('div', introPending ? 'intro' : '', {}, [nowStrip(nowMs), planSection(snap, plan), tasksSection(plan), entriesSection(snap), statusPanel(snap)]);
+    const root = el('div', introPending ? 'intro' : '', {}, [nowStrip(nowMs), ...(agents ? [agents] : []), planSection(snap, plan), tasksSection(plan), entriesSection(snap), statusPanel(snap)]);
     introPending = false;
     app.replaceChildren(root);
     // preventScroll: restoring focus must not move the viewport back to the control (the highlight timer and messages render too).
