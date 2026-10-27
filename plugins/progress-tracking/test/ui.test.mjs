@@ -93,9 +93,23 @@ function get(port, path, { method = 'GET', host = `127.0.0.1:${port}` } = {}) {
   });
 }
 
+// Like get, but the body stays a Buffer (no setEncoding), for binary assets.
+function getBinary(port, path) {
+  return new Promise((resolve, reject) => {
+    const req = request({ host: '127.0.0.1', port, path, method: 'GET', headers: { Host: `127.0.0.1:${port}` }, setHost: false, agent: false }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 const assertCommonHeaders = (r) => {
   assert.equal(r.headers['content-security-policy'], CSP);
   assert.equal(r.headers['cache-control'], 'no-store');
+  assert.equal(r.headers['x-content-type-options'], 'nosniff');
 };
 
 test('GET /api/snapshots returns the registered repos\' snapshots', () => withFixture(async ({ home, repo }) => {
@@ -165,6 +179,52 @@ test('GET /app.js is served', () => withFixture(async ({ home }) => {
     assert.equal(r.body, readFileSync(APP, 'utf8'));
   });
 }));
+
+test('each allowlisted asset is served with its type', () => withFixture(async ({ home }) => {
+  await withServer(home, async ({ port }) => {
+    for (const [path, type, file] of [['/view.js', 'text/javascript; charset=utf-8', 'view.js'], ['/app.css', 'text/css; charset=utf-8', 'app.css']]) {
+      const r = await get(port, path);
+      assert.equal(r.status, 200, path);
+      assert.equal(r.headers['content-type'], type, path);
+      assertCommonHeaders(r);
+      assert.equal(r.body, readFileSync(join(PLUGIN, 'ui', file), 'utf8'), path);
+    }
+  });
+}));
+
+test('fonts are served as decoded woff2', () => withFixture(async ({ home }) => {
+  await withServer(home, async ({ port }) => {
+    let total = 0;
+    for (const [path, file] of [['/fonts/geist.woff2', 'geist'], ['/fonts/geist-mono.woff2', 'geist-mono'], ['/fonts/bricolage.woff2', 'bricolage']]) {
+      const r = await getBinary(port, path);
+      assert.equal(r.status, 200, path);
+      assert.equal(r.headers['content-type'], 'font/woff2', path);
+      assertCommonHeaders(r);
+      assert.equal(r.body.subarray(0, 4).toString('latin1'), 'wOF2', path);
+      assert.ok(r.body.equals(Buffer.from(readFileSync(join(PLUGIN, 'ui', 'fonts', `${file}.woff2.b64`), 'utf8'), 'base64')), path);
+      total += r.body.length;
+    }
+    assert.ok(total < 400 * 1024, `fonts total ${total} bytes`);
+  });
+}));
+
+test('paths outside the allowlist are 404', () => withFixture(async ({ home }) => {
+  await withServer(home, async ({ port }) => {
+    for (const path of ['/fonts/other.woff2', '/fonts/geist.woff2.b64', '/fonts/../app.js', '/ui/app.js', '/app.js/', '/OFL.txt', '/fonts/OFL.txt']) {
+      const r = await get(port, path);
+      assert.equal(r.status, 404, path);
+      assert.equal(r.body, 'not found\n', path);
+      assertCommonHeaders(r);
+    }
+  });
+}));
+
+test('OFL.txt names both fonts', () => {
+  const ofl = readFileSync(join(PLUGIN, 'ui', 'fonts', 'OFL.txt'), 'utf8');
+  assert.match(ofl, /Geist/);
+  assert.match(ofl, /Bricolage Grotesque/);
+  assert.match(ofl, /SIL Open Font License/i);
+});
 
 test('POST is 405, unknown path is 404', () => withFixture(async ({ home }) => {
   await withServer(home, async ({ port }) => {
