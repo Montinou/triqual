@@ -1,5 +1,11 @@
 # Triqual
 
+<p align="center"><img src="assets/run-board-banner.svg" alt="triqual — a working method for AI coding agents, with a live run board" width="100%"></p>
+
+<p align="center"><b>A working method for AI coding agents</b>: a plan before the code, a review for every task, and a live run board.</p>
+
+![triqual run board: plans, tasks and progress at a glance](https://github.com/Montinou/triqual/releases/download/readme-assets/run-board-hero.png)
+
 Triqual is a Claude Code plugin marketplace (`triqual`) that gives an AI coding agent a working method: a plan before
 the code, a review for every task, a progress log it cannot skip, and guards on the scripts it runs. One command
 installs it and keeps it in sync across Claude Code, Codex and Grok.
