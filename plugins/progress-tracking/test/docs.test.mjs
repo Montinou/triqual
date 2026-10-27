@@ -166,3 +166,24 @@ test('README Tiers section documents the heavy-tier warning at registration', ()
     /more than 80% of the tasks of a plan of at least 5 are `heavy`[^.]*warning[^.]*stderr[^.]*exit code and the ledger/,
     'README #### Tiers: the warning, its threshold, stderr, and that nothing else changes');
 });
+
+test('plugin.json, marketplace.json and the README table agree on 0.7.0', () => {
+  const root = join(PLUGIN, '..', '..');
+  const plugin = JSON.parse(readFileSync(join(PLUGIN, '.claude-plugin', 'plugin.json'), 'utf8'));
+  const market = JSON.parse(readFileSync(join(root, '.claude-plugin', 'marketplace.json'), 'utf8'));
+  assert.equal(plugin.version, '0.7.0');
+  assert.equal(market.plugins.find(p => p.name === 'progress-tracking').version, '0.7.0');
+  assert.match(readFileSync(join(root, 'README.md'), 'utf8'), /\| `progress-tracking` \| 0\.7\.0 \|/);
+});
+
+test('the CHANGELOG has a 0.7.0 section', () => {
+  assert.match(readFileSync(join(PLUGIN, '..', '..', 'CHANGELOG.md'), 'utf8'), /^## progress-tracking 0\.7\.0$/m);
+});
+
+test('both READMEs document recording, compatibility cost and rollout', () => {
+  const root = readFileSync(join(PLUGIN, '..', '..', 'README.md'), 'utf8');
+  const row = root.split('\n').find(line => line.startsWith('| `progress-tracking` |'));
+  for (const text of [row, readFileSync(join(PLUGIN, 'README.md'), 'utf8')]) {
+    for (const value of ['SessionStart', 'SubagentStart', 'SubagentStop', 'PostToolUse', 'PostToolUseFailure', 'SessionEnd', 'sessions.db', 'TRIQUAL_SESSIONS=0', '47800', '120 ms', 'Grok', 'triqual sync --yes', 'triqual doctor', '/reload-plugins']) assert.ok(text.includes(value), value);
+  }
+});

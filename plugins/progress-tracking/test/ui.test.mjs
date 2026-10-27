@@ -2,14 +2,19 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { request } from 'node:http';
+import { createServer as createNetServer } from 'node:net';
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { startServer } from '../cli/ui.mjs';
+import * as uiServer from '../cli/ui.mjs';
 import { BRAND } from '../lib/brand.mjs';
 import { registerRepo } from '../lib/registry.mjs';
 import { createLedger } from '../lib/ledger.mjs';
+import { openSessions, record } from '../lib/sessions.mjs';
+import { storePaths } from '../lib/store.mjs';
+const { DatabaseSync } = await import('node:sqlite');
 
 const PLUGIN = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(PLUGIN, 'cli', 'ui.mjs');
@@ -78,9 +83,10 @@ async function withServer(home, fn) {
 }
 
 // One HTTP request with full control over the Host header (`host: null` sends none).
-function get(port, path, { method = 'GET', host = `127.0.0.1:${port}` } = {}) {
+function get(port, path, { method = 'GET', host = `127.0.0.1:${port}`, fetchSite } = {}) {
   return new Promise((resolve, reject) => {
     const headers = host === null ? {} : { Host: host };
+    if (fetchSite !== undefined) headers['Sec-Fetch-Site'] = fetchSite;
     const req = request({ host: '127.0.0.1', port, path, method, headers, setHost: false, agent: false }, (res) => {
       let body = '';
       res.setEncoding('utf8');
@@ -123,7 +129,7 @@ test('GET /api/snapshots returns the registered repos\' snapshots', () => withFi
     assert.equal(s.schema, `${BRAND.legacy.marketplace}/tracking-snapshot@1`);
     assert.deepEqual(s.repo, { name: 'alpha', root: repo, mode: 'committed', branch: 'main', shareable: false });
     assert.deepEqual(s.plans.map((p) => [p.name, p.done, p.total]), [['2026-09-27-p', 1, 2]]);
-    assert.deepEqual(s.plans[0].tasks[1], { id: 'T2', title: 'Beta', status: 'blocked', reason: 'waiting on review', tier: null, effectiveTier: null, commits: [], skills: [] });
+    assert.deepEqual(s.plans[0].tasks[1], { id: 'T2', title: 'Beta', status: 'blocked', since: null, reason: 'waiting on review', tier: null, effectiveTier: null, commits: [], skills: [] });
     assert.equal(s.status.text, STATUS);
     assert.deepEqual(s.progress.entries.map((e) => e.title), ['Fixture task']);
     // A query string does not change the route.
@@ -298,10 +304,10 @@ test('index.html loads no external resources and nothing CSP would block', () =>
   assert.doesNotMatch(index, /https?:\/\//, 'index.html has no http(s) URL');
   // default-src 'self' blocks inline scripts, inline styles and style attributes.
   assert.doesNotMatch(index, /<style|\sstyle=|\son[a-z]+=/i);
-  assert.deepEqual([...index.matchAll(/<script\b[^>]*>/g)].map((m) => m[0]), ['<script type="module" src="/app.js">']);
+  assert.deepEqual([...index.matchAll(/<script\b[^>]*>/g)].map((m) => m[0]), ['<script src="/theme.js">', '<script type="module" src="/app.js">']);
   assert.match(index, /<link rel="stylesheet" href="\/app\.css">/);
-  assert.match(app, /\/api\/snapshots/);
-  assert.match(app, /5000/);
+  assert.match(app, /\/api\/events/);
+  assert.match(app, /new EventSource/);
 });
 
 test('app.css is CSP-safe and covers the page', () => {
@@ -353,10 +359,8 @@ test('the board grid rules do not apply to the state card', () => {
   assert.match(css, /\.card\s*\{[^}]*display:\s*flex/, 'the card lays itself out as a flex column');
 });
 
-// A native <select> sizes to its longest option, and `max-width: 100%` is ineffective while its parent is an inline span
-// with no definite width: the page then scrolls sideways on a phone. The slot must be a shrinkable box, the select must
-// fit it and clip with an ellipsis, and the plan-tab count (`6/6`) must not split across lines.
-test('the repo select shrinks to the phone width and the tab count stays whole', () => {
+// Repo controls wrap inside the header; plan-tab counts stay whole.
+test('the repo list fits the phone width and the tab count stays whole', () => {
   const css = readFileSync(join(PLUGIN, 'ui', 'app.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   const bodyOf = (selector) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
     .filter((m) => m[1].split(',').map((x) => x.trim()).includes(selector)).map((m) => m[2]).join(';');
@@ -364,10 +368,8 @@ test('the repo select shrinks to the phone width and the tab count stays whole',
   assert.match(slot, /\bmin-width:\s*0\b/, '#repo-slot can shrink below its content');
   assert.match(slot, /\bmax-width:\s*100%/, '#repo-slot never exceeds the header');
   assert.match(slot, /\bdisplay:\s*block\b/, '#repo-slot is a box with a definite width, not an inline span');
-  const select = bodyOf('select.repo-pill');
-  assert.match(select, /\bmax-width:\s*100%/, 'the select fits its slot');
-  assert.match(select, /\bmin-width:\s*0\b/);
-  assert.match(select, /\btext-overflow:\s*ellipsis/, 'a long option is clipped, not overflowed');
+  assert.match(bodyOf('.repo-list'), /flex-wrap:\s*wrap/, 'repo buttons wrap to the slot');
+  assert.match(bodyOf('.repo-pill'), /max-width:\s*100%/, 'repo controls fit their slot');
   const count = bodyOf('.ptab span:last-child');
   assert.match(count, /\bwhite-space:\s*nowrap/, 'the tab count is not split');
   assert.match(count, /\boverflow-wrap:\s*normal/, 'overflow-wrap: anywhere is off for the count');
@@ -465,7 +467,7 @@ function execFileSyncStatus(args, env) {
 
 // ---- final fix wave ----
 
-test('each /api/snapshots poll resolves each registered repo once', () => withFixture(async ({ dir, home }) => {
+test('each /api/snapshots request uses the cached registered repos', () => withFixture(async ({ dir, home }) => {
   const bin = join(dir, 'fake-git');
   mkdirSync(bin);
   const log = join(dir, 'git.log');
@@ -479,7 +481,7 @@ test('each /api/snapshots poll resolves each registered repo once', () => withFi
       writeFileSync(log, '');
       assert.equal((await get(port, '/api/snapshots')).status, 200);
       const calls = readFileSync(log, 'utf8').split('\n').filter((l) => l.includes('--show-toplevel'));
-      assert.equal(calls.length, 1, calls.join('\n'));
+      assert.equal(calls.length, 0, calls.join('\n'));
     });
   } finally {
     process.env.PATH = path;
@@ -537,13 +539,14 @@ const textOf = (node) => [node.textContent, ...node.children.map(textOf)].join('
 const byClass = (root, cls) => flatten(root).filter((n) => hasClass(n, cls));
 const byKey = (root, key) => flatten(root).find((n) => n.attrs['data-key'] === key);
 
-// mount() against a stub document, a counting fetch (answers `data`; rejects while `failing`) and captured timers.
+// mount() against a stub document, a fake EventSource and captured highlight timers.
 async function mountApp({ snaps = [], hidden = false, failing = false } = {}) {
   const flush = () => new Promise((resolve) => setImmediate(resolve));
   const els = Object.fromEntries(['top', 'repo-slot', 'updated', 'banner', 'app'].map((id) => [id, stubNode('div')]));
   const listeners = {};
   const document = {
     hidden,
+    documentElement: { dataset: {} },
     addEventListener: (type, fn) => { (listeners[type] ??= []).push(fn); },
     getElementById: (id) => els[id] ?? null,
     createElement: stubNode,
@@ -552,25 +555,37 @@ async function mountApp({ snaps = [], hidden = false, failing = false } = {}) {
   };
   const timers = [];
   let fetches = 0;
-  let minute = 0;
-  const state = { data: snaps, failing, status: 200 };
+  let time = Date.UTC(2026, 9, 26, 12, 0, 0);
+  let stream;
+  const state = { data: snaps, failing, closed: false };
+  class EventSource {
+    static CLOSED = 2;
+    constructor(url) { this.url = url; this.readyState = 1; stream = this; }
+    addEventListener(type, fn) { this[type] = fn; }
+  }
+  const message = async () => {
+    time += 1000;
+    if (stream) {
+      stream.readyState = state.closed ? EventSource.CLOSED : 1;
+      if (state.failing) stream.error?.({});
+      else stream.message?.({ data: JSON.stringify(state.data) });
+    }
+    await flush();
+  };
   const env = {
     document,
-    fetch: async (url) => {
-      fetches++;
-      assert.equal(url, '/api/snapshots');
-      if (state.failing) throw new Error('offline');
-      return { ok: state.status === 200, status: state.status, json: async () => state.data };
-    },
+    localStorage: { getItem: (key) => state[key] ?? null, setItem: (key, value) => { state[key] = value; } },
+    EventSource,
+    fetch: async () => { fetches++; throw new Error('reconnecting is forbidden'); },
     setTimeout: (fn, ms) => { timers.push({ fn, ms, live: true }); return timers.length; },
     clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].live = false; },
-    now: () => new Date(Date.UTC(2026, 9, 26, 12, minute++, 0)),
+    now: () => new Date(time),
   };
   const { mount } = await import(pathToFileURL(APP).href);
   mount(env);
-  await flush();
+  await message();
   return {
-    document, els, state, fetches: () => fetches, settle: flush,
+    document, els, state, stream: () => stream, message, advance: (ms) => { time += ms; }, fetches: () => fetches, settle: flush,
     fire: (type) => (listeners[type] ?? []).forEach((fn) => fn()),
     // Runs the live timers set with `ms` (any when omitted); the others stay.
     tick: async (ms) => {
@@ -610,19 +625,18 @@ test('importing app.js in node mounts nothing', async () => {
   assert.equal(typeof mod.mount, 'function');
 });
 
-test('app.js polls only while the tab is visible and refreshes when it becomes visible again', async () => {
-  const app = await mountApp({ hidden: true });
-  await app.tick();
-  assert.equal(app.fetches(), 0, 'no fetch while hidden');
-  app.document.hidden = false;
-  app.fire('visibilitychange');
-  await app.settle();
-  assert.equal(app.fetches(), 1, 'refreshes once visible');
-  await app.tick(5000);
-  assert.equal(app.fetches(), 2, 'keeps polling every 5000 ms while visible');
-  app.document.hidden = true;
-  await app.tick();
-  assert.equal(app.fetches(), 2, 'stops polling once hidden');
+test('mount opens /api/events and renders the first message', async () => {
+  const app = await mountApp({ snaps: TWO_REPOS(), hidden: true });
+  assert.equal(app.stream()?.url, '/api/events');
+  assert.deepEqual(app.hero(), ['alpha work']);
+  assert.equal(app.fetches(), 0);
+});
+
+test('app.js no longer polls /api/snapshots', async () => {
+  const source = readFileSync(APP, 'utf8');
+  assert.doesNotMatch(source, /fetch|REFRESH_MS|visibilitychange/);
+  const html = readFileSync(INDEX, 'utf8');
+  assert.match(html, /<noscript>[\s\S]*\/api\/events/);
 });
 
 test('renders the default plan of the first repo', async () => {
@@ -636,27 +650,25 @@ test('renders the default plan of the first repo', async () => {
   assert.match(textOf(byClass(app.els.app, 'headline')[0]), /1 in progress/);
   assert.match(textOf(byClass(app.els.app, 'count')[0]), /1\/4/);
   // Open filter: the done task is hidden, blocked comes first.
-  assert.deepEqual(app.rows().map((r) => textOf(byClass(r, 't-id')[0])), ['T4', 'T2', 'T3']);
-  assert.match(textOf(byClass(app.rows()[0], 't-reason')[0]), /waiting/);
+  assert.deepEqual(app.rows().map((r) => textOf(byClass(r, 't-id')[0])), ['T2']);
   // Plan tabs: active first, short name with the full name in title.
   const tabs = byClass(app.els.app, 'ptab');
   assert.deepEqual(tabs.map((t) => t.attrs.title), ['2026-10-20-alpha-work', '2026-10-10-alpha-earlier']);
   assert.match(textOf(tabs[0]), /^alpha-work1\/4$/);
 });
 
-test('repo pill shows the mode and branch; several repos give a select', async () => {
+test('repo list shows the mode and branch with selectable buttons', async () => {
   const one = await mountApp({ snaps: [snap('alpha', ALPHA_PLANS(), { mode: 'store', branch: 'main' })] });
   const pill = byClass(one.els['repo-slot'], 'repo-pill');
   assert.equal(pill.length, 1);
-  assert.equal(pill[0].tag, 'span');
+  assert.equal(pill[0].tag, 'button');
   assert.match(textOf(pill[0]), /alpha/);
   assert.match(textOf(pill[0]), /store/);
   assert.match(textOf(pill[0]), /main/);
   assert.equal(flatten(one.els['repo-slot']).filter((n) => n.tag === 'select').length, 0);
   const two = await mountApp({ snaps: TWO_REPOS() });
-  const select = flatten(two.els['repo-slot']).find((n) => n.tag === 'select');
-  assert.deepEqual(select.children.map((o) => o.attrs.value), ['/r/alpha', '/r/beta']);
-  assert.equal(select.value, '/r/alpha');
+  assert.deepEqual(byClass(two.els['repo-slot'], 'repo-item').map((n) => n.attrs['data-key']), ['repo:/r/alpha', 'repo:/r/beta']);
+  assert.equal(byKey(two.els['repo-slot'], 'repo:/r/alpha').attrs['aria-pressed'], 'true');
   // The brand sits first in the header and holds the logo SVG.
   const brand = one.els.top.children[0];
   assert.ok(hasClass(brand, 'brand'));
@@ -672,17 +684,14 @@ test('the status panel is a folded details titled Status', async () => {
   assert.equal(textOf(panel.children.find((n) => n.tag === 'pre')), 'status of alpha');
 });
 
-test('repo switch, plan tab and chip re-render without fetching', async () => {
+test("a later message re-renders and keeps the viewer's selection", async () => {
   const app = await mountApp({ snaps: TWO_REPOS() });
-  const select = flatten(app.els['repo-slot']).find((n) => n.tag === 'select');
-  select.value = '/r/beta';
-  select.fire('change');
+  byKey(app.els['repo-slot'], 'repo:/r/beta').fire('click');
   assert.deepEqual(app.hero(), ['beta work']);
-  const again = flatten(app.els['repo-slot']).find((n) => n.tag === 'select');
-  assert.equal(again.value, '/r/beta');
-  assert.equal(again.focuses, 1, 'focus returns to the rebuilt select');
-  again.value = '/r/alpha';
-  again.fire('change');
+  const again = byKey(app.els['repo-slot'], 'repo:/r/beta');
+  assert.equal(again.attrs['aria-pressed'], 'true');
+  assert.equal(again.focuses, 1, 'focus returns to the rebuilt repo button');
+  byKey(app.els['repo-slot'], 'repo:/r/alpha').fire('click');
   assert.deepEqual(app.hero(), ['alpha work']);
   byKey(app.els.app, 'plan:2026-10-10-alpha-earlier').fire('click');
   assert.deepEqual(app.hero(), ['alpha earlier']);
@@ -690,7 +699,13 @@ test('repo switch, plan tab and chip re-render without fetching', async () => {
   byKey(app.els.app, 'chip:all').fire('click');
   assert.equal(app.rows().length, 3);
   assert.equal(byKey(app.els.app, 'chip:all').focuses, 1, 'focus moves to the new chip');
-  assert.equal(app.fetches(), 1, 'viewer actions never fetch');
+  const before = app.root();
+  app.state.data = TWO_REPOS().map((repo) => ({ ...repo, status: { text: 'new status' } }));
+  await app.message();
+  assert.notEqual(app.root(), before);
+  assert.deepEqual(app.hero(), ['alpha earlier']);
+  assert.equal(byKey(app.els.app, 'chip:all').attrs['aria-pressed'], 'true');
+  assert.equal(app.fetches(), 0, 'viewer actions never fetch');
 });
 
 test('picking a plan or switching repo resets the filter and the open entry', async () => {
@@ -703,9 +718,7 @@ test('picking a plan or switching repo resets the filter and the open entry', as
   assert.equal(byKey(app.els.app, 'chip:open').attrs['aria-pressed'], 'true');
   assert.equal(byKey(app.els.app, 'entry:0').attrs['aria-expanded'], 'true');
   byKey(app.els.app, 'chip:all').fire('click');
-  const select = flatten(app.els['repo-slot']).find((n) => n.tag === 'select');
-  select.value = '/r/beta';
-  select.fire('change');
+  byKey(app.els['repo-slot'], 'repo:/r/beta').fire('click');
   assert.equal(byKey(app.els.app, 'chip:open').attrs['aria-pressed'], 'true');
 });
 
@@ -715,35 +728,38 @@ test('intro only on the first data render', async () => {
   byKey(app.els.app, 'chip:all').fire('click');
   assert.ok(!hasClass(app.root(), 'intro'), 'a viewer action does not replay it');
   app.state.data = [snap('alpha', [plan('2026-10-20-alpha-work', 'active', [task('T1', 'done')])]), snap('beta', BETA_PLANS())];
-  await app.tick(5000);
-  assert.equal(app.fetches(), 2);
+  await app.message();
+  assert.equal(app.fetches(), 0);
   assert.deepEqual(app.hero(), ['alpha work']);
   assert.ok(!hasClass(app.root(), 'intro'), 'new data does not either');
 });
 
-test('a poll with unchanged data keeps the tree; only generatedAt changing is not a change', async () => {
+test('a message with unchanged data in the same minute keeps the tree, and one a minute later re-renders', async () => {
   const app = await mountApp({ snaps: TWO_REPOS() });
   const before = app.root();
   app.state.data = TWO_REPOS().map((s) => ({ ...s, generatedAt: '2026-10-26T12:00:05.000Z' }));
-  await app.tick(5000);
-  assert.equal(app.fetches(), 2);
+  await app.message();
+  assert.equal(app.fetches(), 0);
   assert.equal(app.root(), before);
+  app.advance(60000);
+  await app.message();
+  assert.notEqual(app.root(), before);
 });
 
-test('the time is written by polls only, so a viewer action never blanks it', async () => {
+test('the time is written by messages only, so a viewer action never blanks it', async () => {
   const app = await mountApp({ snaps: TWO_REPOS() });
   const first = app.els.updated.textContent;
   assert.match(first, /updated \d\d:\d\d:\d\d/);
   byKey(app.els.app, 'chip:all').fire('click');
   assert.equal(app.els.updated.textContent, first);
-  await app.tick(5000);
+  await app.message();
   assert.notEqual(app.els.updated.textContent, first);
   assert.match(app.els.updated.textContent, /updated \d\d:\d\d:\d\d/);
 });
 
 test('rail cell click highlights its row', async () => {
   const app = await mountApp({ snaps: TWO_REPOS() });
-  assert.equal(app.rows().length, 3);
+  assert.equal(app.rows().length, 1);
   byKey(app.els.app, 'cell:T1').fire('click');
   assert.equal(byKey(app.els.app, 'chip:all').attrs['aria-pressed'], 'true', 'the filter widens to All');
   const lit = app.rows().filter((r) => hasClass(r, 'highlight'));
@@ -759,23 +775,23 @@ test('rail cell click highlights its row', async () => {
   // The highlight ends after 1600 ms.
   await app.tick(1600);
   assert.equal(app.rows().filter((r) => hasClass(r, 'highlight')).length, 0);
-  assert.equal(app.fetches(), 1);
+  assert.equal(app.fetches(), 0);
 });
 
-test('focus is restored without scrolling, after a poll render and after the highlight timer', async () => {
+test('focus is restored without scrolling, after a message render and after the highlight timer', async () => {
   const app = await mountApp({ snaps: TWO_REPOS() });
-  // A poll with changed data rebuilds the tree; the focused keyed control gets focus back on its new node.
+  // A message with changed data rebuilds the tree; the focused keyed control gets focus back on its new node.
   const chip = byKey(app.els.app, 'chip:all');
   app.document.activeElement = chip;
   app.state.data = [snap('alpha', [plan('2026-10-20-alpha-work', 'active', [task('T1', 'done')])]), snap('beta', BETA_PLANS())];
-  await app.tick(5000);
+  await app.message();
   const chipAfterPoll = byKey(app.els.app, 'chip:all');
   assert.notEqual(chipAfterPoll, chip);
-  assert.equal(chipAfterPoll.focuses, 1, 'poll render returns focus');
+  assert.equal(chipAfterPoll.focuses, 1, 'message render returns focus');
   assert.deepEqual(chipAfterPoll.focusOptions, [{ preventScroll: true }]);
   // The highlight timer re-renders after the row was scrolled to; focus must not drag the page back to the cell.
   app.state.data = TWO_REPOS();
-  await app.tick(5000);
+  await app.message();
   const cell = byKey(app.els.app, 'cell:T1');
   cell.fire('click');
   const clicked = byKey(app.els.app, 'cell:T1');
@@ -821,7 +837,7 @@ test('entries: five at most, the first open; pressed and expanded states are att
   byKey(app.els.app, 'entry:1').fire('click');
   assert.equal(byClass(app.els.app, 'entry-body').length, 0, 'clicking the open entry closes it');
   const pressed = flatten(app.els.app).filter((n) => n.attrs['aria-pressed'] === 'true');
-  assert.deepEqual(pressed.map((n) => n.attrs['data-key']), ['plan:2026-10-20-alpha-work', 'chip:open']);
+  assert.deepEqual(pressed.map((n) => n.attrs['data-key']), ['plan:2026-10-20-alpha-work', 'chip:running']);
 });
 
 test('a selected plan that disappears falls back to the default plan', async () => {
@@ -829,20 +845,20 @@ test('a selected plan that disappears falls back to the default plan', async () 
   byKey(app.els.app, 'plan:2026-10-10-alpha-earlier').fire('click');
   assert.deepEqual(app.hero(), ['alpha earlier']);
   app.state.data = [snap('alpha', [ALPHA_PLANS()[1]])];
-  await app.tick(5000);
+  await app.message();
   assert.deepEqual(app.hero(), ['alpha work']);
 });
 
-test('a poll that fails keeps the last render and keeps polling', async () => {
+test('a message that fails keeps the last render and keeps reconnecting', async () => {
   const app = await mountApp({ snaps: TWO_REPOS() });
   const before = app.root();
   app.state.failing = true;
-  await app.tick(5000);
-  assert.equal(app.fetches(), 2);
+  await app.message();
+  assert.equal(app.fetches(), 0);
   assert.equal(app.root(), before);
   app.state.failing = false;
-  await app.tick(5000);
-  assert.equal(app.fetches(), 3);
+  await app.message();
+  assert.equal(app.fetches(), 0);
 });
 
 // ---- states ----
@@ -878,7 +894,7 @@ test('a state card gives way to the board when data arrives', async () => {
   const app = await mountApp({ snaps: [] });
   assert.equal(byClass(app.els.app, 'card').length, 1);
   app.state.data = [snap('alpha', ALPHA_PLANS())];
-  await app.tick(5000);
+  await app.message();
   assert.equal(byClass(app.els.app, 'card').length, 0);
   assert.deepEqual(app.hero(), ['alpha work']);
 });
@@ -889,17 +905,16 @@ test('connection lost keeps the last tree', async () => {
   assert.ok(before.length > 0);
   assert.equal(bannerText(app), '');
   app.state.failing = true;
-  await app.tick(5000);
+  await app.message();
   assert.deepEqual(app.els.app.children, before);
   assert.ok(app.els.app.children.every((c, i) => c === before[i]));
   assert.ok(hasClass(app.els.banner, 'banner'));
   assert.match(bannerText(app), /Cannot reach the local server/);
-  assert.match(bannerText(app), /offline/);
-  assert.match(bannerText(app), /Retrying every 5 s; the last good data stays on screen/);
+  assert.match(bannerText(app), /reconnect[\s\S]*last good data stays on screen/i);
   assert.deepEqual(codeOf(app.els.banner), ['triqual ui --open']);
-  // Still polling, banner stays while it keeps failing.
-  await app.tick(5000);
-  assert.equal(app.fetches(), 3);
+  // Still reconnecting, banner stays while it keeps failing.
+  await app.message();
+  assert.equal(app.fetches(), 0);
   assert.match(bannerText(app), /Cannot reach the local server/);
 });
 
@@ -908,19 +923,19 @@ test('a first load that fails shows the banner and no card', async () => {
   assert.equal(app.els.app.children.length, 0, 'no data yet, so neither the board nor the empty-state cards');
   assert.match(bannerText(app), /Cannot reach the local server/);
   app.state.failing = false;
-  await app.tick(5000);
+  await app.message();
   assert.deepEqual(app.hero(), ['alpha work']);
   assert.equal(bannerText(app), '');
 });
 
-test('a good poll clears the banner and updates the time', async () => {
+test('an error shows the banner and a later message clears it', async () => {
   const app = await mountApp({ snaps: TWO_REPOS() });
   app.state.failing = true;
-  await app.tick(5000);
+  await app.message();
   assert.ok(bannerText(app).length > 0);
   const failedAt = app.els.updated.textContent;
   app.state.failing = false;
-  await app.tick(5000);
+  await app.message();
   assert.equal(bannerText(app), '');
   assert.equal(app.els.banner.children.length, 0);
   assert.ok(!hasClass(app.els.banner, 'banner'), 'the banner class goes with the banner');
@@ -928,29 +943,30 @@ test('a good poll clears the banner and updates the time', async () => {
   assert.match(app.els.updated.textContent, /updated \d\d:\d\d:\d\d/);
 });
 
-test('an HTTP error shows its status in the banner', async () => {
+test('a closed EventSource asks the viewer to reload', async () => {
   const app = await mountApp({ snaps: TWO_REPOS() });
-  app.state.status = 500;
-  await app.tick(5000);
-  assert.match(bannerText(app), /HTTP 500/);
+  app.state.failing = true;
+  app.state.closed = true;
+  await app.message();
+  assert.match(bannerText(app), /reload/i);
 });
 
-test('a render that throws shows the banner, keeps the last tree and is retried by the next poll', async () => {
+test('a render that throws shows the banner, keeps the last tree and is retried by the next message', async () => {
   const app = await mountApp({ snaps: TWO_REPOS() });
   const before = app.els.app.children[0];
   const broken = TWO_REPOS();
   broken[0].plans = 'not a list';
   app.state.data = broken;
-  await app.tick(5000);
+  await app.message();
   assert.equal(app.els.app.children[0], before, 'the stale tree is not replaced by half a render');
   assert.ok(hasClass(app.els.banner, 'banner'));
-  assert.match(bannerText(app), /Retrying every 5 s/);
+  assert.match(bannerText(app), /last good data stays on screen/);
   // The same bad data is tried again, not skipped as "unchanged".
-  await app.tick(5000);
+  await app.message();
   assert.ok(hasClass(app.els.banner, 'banner'));
   // Good data renders and clears the banner.
   app.state.data = [snap('alpha', [plan('2026-10-20-alpha-fresh', 'active', [task('T1', 'pending')])])];
-  await app.tick(5000);
+  await app.message();
   assert.deepEqual(app.hero(), ['alpha fresh']);
   assert.equal(bannerText(app), '');
 });
@@ -998,4 +1014,422 @@ test('a rail with more than 20 tasks drops the glyph and id of its cells', async
   assert.equal(byClass(app.els.app, 'cell').length, 21);
   assert.equal(byClass(app.els.app, 'cell-id').length, 0);
   assert.ok(byClass(app.els.app, 'bar').every((b) => b.textContent === ''));
+});
+
+
+test('a cross-site Sec-Fetch-Site request is 403', () => withFixture(async ({ home }) => {
+  await withServer(home, async ({ port }) => {
+    const denied = await get(port, '/', { fetchSite: 'cross-site' });
+    assert.equal(denied.status, 403);
+    assert.equal(denied.body, 'forbidden\n');
+    assert.equal((await get(port, '/', { fetchSite: 'same-origin' })).status, 200);
+    assert.equal((await get(port, '/')).status, 200);
+  });
+}));
+
+test('DEFAULT_PORT is 47800', () => {
+  assert.equal(uiServer.DEFAULT_PORT, 47800);
+});
+
+test('triqual ui without --port falls back to a free port when 47800 is taken', async (t) => {
+  const occupied = createNetServer();
+  try {
+    await new Promise((resolve, reject) => {
+      occupied.once('error', reject);
+      occupied.listen(47800, '127.0.0.1', resolve);
+    });
+  } catch (err) {
+    t.skip(`cannot occupy port 47800: ${err.code}`);
+    return;
+  }
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'pt-ui-fallback-')));
+  const cli = startCli([], cleanEnv(home));
+  try {
+    const { port } = await cli.ready;
+    assert.notEqual(port, 47800);
+    assert.equal((await get(port, '/')).status, 200);
+    assert.equal(cli.child.exitCode, null);
+  } finally {
+    await cli.stop();
+    await new Promise((resolve) => occupied.close(resolve));
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+
+test('GET /theme.js is served as javascript', async () => {
+  await withFixture(async ({ home }) => withServer(home, async ({ port }) => {
+    const response = await get(port, '/theme.js');
+    assert.equal(response.status, 200);
+    assert.match(response.headers['content-type'], /javascript/);
+  }));
+});
+
+test('index.html loads theme.js in head before app.css', () => {
+  const html = readFileSync(INDEX, 'utf8');
+  const head = html.slice(html.indexOf('<head>'), html.indexOf('</head>'));
+  assert.match(head, /<script src="\/theme.js"><\/script>/);
+  assert.ok(head.indexOf('/theme.js') < head.indexOf('/app.css'));
+});
+
+test('app.css defines both data-theme palettes', () => {
+  const css = readFileSync(join(PLUGIN, 'ui/app.css'), 'utf8');
+  assert.match(css, /:root\[data-theme="light"\]\s*\{/);
+  assert.match(css, /:root\[data-theme="dark"\]\s*\{/);
+  assert.match(css, /prefers-color-scheme: light/);
+});
+
+test('mounting renders three theme buttons and clicking Dark sets data-theme=dark and stores the key', async () => {
+  const app = await mountApp();
+  const buttons = byClass(app.els.top, 'theme-button');
+  assert.deepEqual(buttons.map(textOf), ['System', 'Light', 'Dark']);
+  buttons[2].fire('click');
+  assert.equal(app.document.documentElement.dataset.theme, 'dark');
+  assert.equal(app.state['triqual-ui:theme'], 'dark');
+  assert.deepEqual(buttons.map((b) => b.attrs['aria-pressed']), ['false', 'false', 'true']);
+  buttons[0].fire('click');
+  assert.equal(app.document.documentElement.dataset.theme, undefined);
+  assert.equal(app.state['triqual-ui:theme'], 'system');
+});
+
+// ---- cached server and SSE ----
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+async function openStream(port) {
+  return new Promise((resolve, reject) => {
+    const req = request({ host: '127.0.0.1', port, path: '/api/events', agent: false }, res => {
+      const messages = []; let text = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => {
+        text += chunk;
+        let end;
+        while ((end = text.indexOf('\n\n')) >= 0) {
+          const frame = text.slice(0, end); text = text.slice(end + 2);
+          if (frame.startsWith('data: ')) messages.push({ at: Date.now(), data: JSON.parse(frame.slice(6)) });
+        }
+      });
+      resolve({ res, messages, close() { req.destroy(); res.destroy(); } });
+    });
+    req.on('error', reject); req.end();
+  });
+}
+async function until(fn, ms = 2000) {
+  const end = Date.now() + ms;
+  while (!fn()) { if (Date.now() > end) assert.fail('timed out waiting for stream'); await delay(10); }
+}
+async function withLive(home, options, fn) {
+  const { server } = await startServer({ home, ...options });
+  let stream;
+  try { stream = await openStream(server.address().port); await fn(stream, server); }
+  finally { stream?.close(); await new Promise(resolve => server.close(resolve)); }
+}
+
+test('/api/events sends the snapshot list on connect with event-stream headers', () => withFixture(async ({ home, repo }) => {
+  await withLive(home, {}, async ({ res, messages }) => {
+    assert.equal(res.statusCode, 200); assert.match(res.headers['content-type'], /^text\/event-stream/);
+    assertCommonHeaders({ headers: res.headers });
+    await until(() => messages.length); assert.equal(messages[0].data[0].repo.root, repo);
+  });
+}));
+
+test('no snapshot build happens with no client connected', () => withFixture(async ({ home }) => {
+  let builds = 0;
+  const { server } = await startServer({ home, heartbeatMs: 30, build() { builds++; return {}; } });
+  try { await delay(100); assert.equal(builds, 0); }
+  finally { await new Promise(resolve => server.close(resolve)); }
+}));
+
+test('a tracking add reaches an open stream within 2 s', () => withFixture(async ({ dir, home, repo }) => {
+  const previous = process.env.TRIQUAL_TRACKING_DB;
+  process.env.TRIQUAL_TRACKING_DB = join(dir, 'data', 'tracking.db');
+  execFileSync(process.execPath, [join(PLUGIN, 'cli', 'progress-init.mjs'), '--store', '--accept-unparsed'], { cwd: repo, env: cleanEnv(home), stdio: 'pipe' });
+  const draft = join(dir, 'entry.json');
+  const add = title => {
+    writeFileSync(draft, JSON.stringify({ title, stage_task: 'fixture', done: 'fixture', files: 'none', verification: 'fixture', next: 'none' }));
+    execFileSync(process.execPath, [join(PLUGIN, 'cli', 'tracking.mjs'), 'add', draft, '--no-commit'], { cwd: repo, env: cleanEnv(home), stdio: 'pipe' });
+  };
+  try {
+    add('before');
+    await withLive(home, { heartbeatMs: 10000, throttleMs: 30 }, async ({ messages }) => {
+      await until(() => messages.length); add('after');
+      await until(() => messages.some(m => m.data[0].progress.entries.some(e => e.title === 'after')));
+    });
+  } finally { if (previous === undefined) delete process.env.TRIQUAL_TRACKING_DB; else process.env.TRIQUAL_TRACKING_DB = previous; }
+}));
+
+test('a burst of changes yields at most one push per throttle window and a final push', () => withFixture(async ({ dir, home }) => {
+  const watchDir = join(dir, 'watch'); mkdirSync(watchDir);
+  let builds = 0; const times = [];
+  const hub = uiServer.createHub({ home, watchDir, throttleMs: 70, heartbeatMs: 10000, build() { builds++; return {}; } });
+  const unsub = hub.subscribe(() => times.push(Date.now()));
+  try {
+    await until(() => times.length === 1);
+    for (let i = 0; i < 9; i++) { writeFileSync(join(watchDir, 'tracking.db'), String(i).repeat(i + 1)); await delay(15); }
+    await delay(120);
+    assert.ok(times.length >= 2); assert.equal(times.length, builds);
+    for (let i = 1; i < times.length; i++) assert.ok(times[i] - times[i - 1] >= 65, times.join(','));
+    assert.ok(times.at(-1) >= times[0] + 130, 'trailing push follows the last change');
+  } finally { unsub(); hub.close(); }
+}));
+
+test('a closed client is unsubscribed', () => withFixture(async ({ home }) => {
+  let builds = 0;
+  await withLive(home, { heartbeatMs: 40, build() { builds++; return {}; } }, async stream => {
+    await until(() => stream.messages.length); stream.close(); await delay(25);
+    const before = builds; await delay(130); assert.equal(builds, before);
+  });
+}));
+
+test('with a client connected and no writes there is no push after the first', () => withFixture(async ({ dir, home }) => {
+  const watchDir = join(dir, 'watch'); mkdirSync(watchDir);
+  // Reading empty WALs must not create a self-triggered push loop.
+  const hub = uiServer.createHub({ home, watchDir, heartbeatMs: 10000, throttleMs: 30, build() {
+    writeFileSync(join(watchDir, 'tracking.db-wal'), ''); rmSync(join(watchDir, 'tracking.db-wal'));
+    return {};
+  } });
+  const messages = []; const stop = hub.subscribe(x => messages.push(x));
+  try { await until(() => messages.length); await delay(100); assert.equal(messages.length, 1); }
+  finally { stop(); hub.close(); }
+}));
+
+test('a missing data directory gives a 200 stream with heartbeat pushes only', () => withFixture(async ({ dir, home }) => {
+  await withLive(home, { watchDir: join(dir, 'missing'), heartbeatMs: 60, throttleMs: 20 }, async ({ res, messages }) => {
+    assert.equal(res.statusCode, 200); await until(() => messages.length >= 2);
+    assert.ok(messages[1].at - messages[0].at >= 45);
+  });
+}));
+
+for (const name of ['a push does not re-resolve repos, the heartbeat does', 'no git rev-parse --abbrev-ref runs on a push, only on the heartbeat']) test(name, () => withFixture(async ({ dir, home }) => {
+  const bin = join(dir, 'git-bin'); mkdirSync(bin);
+  const log = join(dir, 'git-calls');
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  writeFileSync(join(bin, 'git'), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${log}"\nexec "${realGit}" "$@"\n`); chmodSync(join(bin, 'git'), 0o755);
+  const oldPath = process.env.PATH; process.env.PATH = `${bin}:${oldPath}`;
+  const watchDir = join(dir, 'watch'); mkdirSync(watchDir);
+  try {
+    await withLive(home, { watchDir, heartbeatMs: 400, throttleMs: 20 }, async ({ messages }) => {
+      await until(() => messages.length); writeFileSync(log, '');
+      writeFileSync(join(watchDir, 'tracking.db'), 'changed'); await until(() => messages.length === 2);
+      assert.doesNotMatch(readFileSync(log, 'utf8'), /--show-toplevel/);
+      assert.doesNotMatch(readFileSync(log, 'utf8'), /--abbrev-ref/);
+      await until(() => messages.length >= 3);
+      assert.match(readFileSync(log, 'utf8'), /--show-toplevel/);
+      assert.match(readFileSync(log, 'utf8'), /--abbrev-ref/);
+    });
+  } finally { process.env.PATH = oldPath; }
+}));
+
+
+test('a write during a build triggers a throttled trailing push', () => withFixture(async ({ dir, home }) => {
+  const watchDir = join(dir, 'watch'); mkdirSync(watchDir);
+  let release; let builds = 0;
+  const times = [];
+  const hub = uiServer.createHub({ home, watchDir, heartbeatMs: 10000, throttleMs: 80, async build() {
+    builds++;
+    if (builds === 1) await new Promise(resolve => { release = resolve; });
+    return {};
+  } });
+  const stop = hub.subscribe(() => times.push(Date.now()));
+  try {
+    await until(() => release);
+    writeFileSync(join(watchDir, 'tracking.db'), 'concurrent write');
+    await delay(100); release();
+    await until(() => times.length >= 2);
+    assert.equal(builds, 2);
+    assert.ok(times[1] - times[0] >= 75, times.join(','));
+  } finally { release?.(); stop(); hub.close(); }
+}));
+
+
+test('with three repos and one in-progress task the page opens on that repo and the Now strip shows the task', async () => {
+  const app = await mountApp({ snaps: [snap('idle', BETA_PLANS()), ...TWO_REPOS()] });
+  assert.deepEqual(app.hero(), ['alpha work']);
+  assert.match(textOf(byClass(app.els.app, 'now-strip')[0]), /alpha.*T2.*Task T2.*0 agents/);
+  assert.match(textOf(byClass(app.els.app, 'now-strip')[0]), /waiting on you: 1/);
+});
+
+test("clicking another repo's Now chip switches repo and plan", async () => {
+  const beta = snap('beta', [plan('beta-active', 'active', [task('T8', 'in_progress', { since: Date.UTC(2026, 9, 26, 11) })])]);
+  const app = await mountApp({ snaps: [...TWO_REPOS().slice(0, 1), beta] });
+  byKey(app.els.app, 'now:/r/alpha:2026-10-20-alpha-work:T2').fire('click');
+  assert.deepEqual(app.hero(), ['alpha work']);
+  byKey(app.els.app, 'now:/r/beta:beta-active:T8').fire('click');
+  assert.deepEqual(app.hero(), ['beta active']);
+  assert.ok(hasClass(app.rows()[0], 'highlight'));
+  assert.equal(app.rows()[0].attrs['data-id'], 'T8');
+});
+
+test('Nothing running shows when no task is in progress', async () => {
+  const app = await mountApp({ snaps: [snap('beta', BETA_PLANS())] });
+  assert.match(textOf(byClass(app.els.app, 'now-strip')[0]), /Nothing running/);
+  assert.equal(byKey(app.els.app, 'chip:open').attrs['aria-pressed'], 'true');
+});
+
+test('idle repos are folded', async () => {
+  const app = await mountApp({ snaps: [snap('idle', BETA_PLANS()), ...TWO_REPOS()] });
+  const details = byClass(app.els['repo-slot'], 'idle-repos')[0];
+  assert.equal(details.tag, 'details'); assert.equal(details.open, false);
+  assert.equal(textOf(details.children[0]), '2 idle');
+  assert.deepEqual(byClass(app.els['repo-slot'], 'repo-item').map((n) => n.attrs['data-key']), ['repo:/r/alpha', 'repo:/r/idle', 'repo:/r/beta']);
+});
+
+test('a later push never changes the selected repo', async () => {
+  const app = await mountApp({ snaps: TWO_REPOS() });
+  byKey(app.els['repo-slot'], 'repo:/r/beta').fire('click');
+  app.state.data = [...TWO_REPOS(), snap('busy', [plan('busy', 'active', [task('T9', 'in_progress', { since: Date.UTC(2026, 9, 26, 12) })])])];
+  await app.message(); assert.deepEqual(app.hero(), ['beta work']);
+});
+
+test('a planless selected repo keeps the global Now strip and navigation', async () => {
+  const app = await mountApp({ snaps: [...TWO_REPOS(), snap('empty', [])] });
+  byKey(app.els['repo-slot'], 'repo:/r/empty').fire('click');
+  assert.match(textOf(app.els.app), /No plans yet/);
+  const strip = byClass(app.els.app, 'now-strip');
+  assert.equal(strip.length, 1);
+  assert.match(textOf(strip[0]), /waiting on you: 1/);
+  byKey(app.els.app, 'now:/r/alpha:2026-10-20-alpha-work:T2').fire('click');
+  assert.deepEqual(app.hero(), ['alpha work']);
+  assert.ok(hasClass(app.rows().find((row) => row.attrs['data-id'] === 'T2'), 'highlight'));
+});
+
+test('a selected repo returns after a transient snapshot omission', async () => {
+  const app = await mountApp({ snaps: TWO_REPOS() });
+  byKey(app.els['repo-slot'], 'repo:/r/beta').fire('click');
+  app.state.data = TWO_REPOS().slice(0, 1);
+  await app.message();
+  assert.deepEqual(app.hero(), ['alpha work']);
+  app.state.data = TWO_REPOS();
+  await app.message();
+  assert.deepEqual(app.hero(), ['beta work']);
+});
+
+test('the default filter is running', async () => {
+  const app = await mountApp({ snaps: TWO_REPOS() });
+  assert.equal(byKey(app.els.app, 'chip:running').attrs['aria-pressed'], 'true');
+  assert.deepEqual(app.rows().map((r) => r.attrs['data-id']), ['T2']);
+});
+
+
+test('a pushed repo lists fixture sessions with events and notes', () => withFixture(async ({ home, repo }) => {
+  const dataDir = storePaths({ home, env: process.env }).dataDir;
+  const db = openSessions(dataDir);
+  const now = Date.now();
+  const fixtures = readFileSync(join(PLUGIN, 'test', 'fixtures', 'hook-payloads.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  for (const [index, payload] of fixtures.entries()) record(db, payload, now + index, repo);
+  record(db, { session_id: 'other-repo', hook_event_name: 'SessionStart' }, now, repo + '-other');
+  record(db, { session_id: 'old-session', hook_event_name: 'SessionStart' }, now - 3 * 60 * 60 * 1000, repo);
+  db.close();
+  mkdirSync(join(home, '.claude-mem'));
+  const notes = new DatabaseSync(join(home, '.claude-mem', 'claude-mem.db'));
+  notes.exec(`CREATE TABLE sdk_sessions(memory_session_id TEXT, content_session_id TEXT);
+    CREATE TABLE observations(memory_session_id TEXT, agent_id TEXT, created_at_epoch INTEGER, type TEXT, title TEXT);
+    INSERT INTO sdk_sessions VALUES ('memory-fixture', 'fixture-session');
+    INSERT INTO observations VALUES ('memory-fixture', 'worker-1', ${now}, 'finding', 'Useful note');`);
+  notes.close();
+  await withLive(home, {}, async ({ messages }) => {
+    await until(() => messages.length);
+    const sessions = messages[0].data[0].sessions;
+    assert.equal(sessions.length, 4);
+    const worker = sessions.find(s => s.agentId === 'worker-1');
+    assert.ok(worker.events.length > 0);
+    assert.deepEqual(worker.notes, [{ at: now, type: 'finding', title: 'Useful note' }]);
+    assert.deepEqual(sessions.find(s => s.agentId === '').notes, []);
+  });
+}));
+
+test('sessions is [] when sessions.db is absent or corrupt', () => withFixture(async ({ home }) => {
+  const file = join(storePaths({ home, env: process.env }).dataDir, 'sessions.db');
+  for (const corrupt of [false, true]) {
+    if (corrupt) { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, 'not a database'); }
+    await withServer(home, async ({ port }) => {
+      assert.deepEqual(JSON.parse((await get(port, '/api/snapshots')).body)[0].sessions, []);
+    });
+  }
+}));
+
+test('triqual tasks export --json output is identical with sessions recorded', () => withFixture(async ({ home, repo }) => {
+  const run = () => JSON.parse(execFileSync(process.execPath, [join(PLUGIN, 'cli', 'tasks.mjs'), 'export', '--json'], { cwd: repo, env: cleanEnv(home), encoding: 'utf8' }));
+  const before = run();
+  const db = openSessions(storePaths({ home, env: process.env }).dataDir);
+  record(db, { session_id: 'fixture-session', hook_event_name: 'SessionStart' }, Date.now(), repo);
+  db.close();
+  const after = run();
+  // generatedAt is the export invocation time, independent of session recording.
+  after.generatedAt = before.generatedAt;
+  assert.deepEqual(after, before);
+  assert.equal('sessions' in after, false);
+}));
+
+// ---- live agent panel ----
+const agentFixture = () => {
+  const at = Date.UTC(2026, 9, 26, 12);
+  return ['', 'orchestrator', 'worker-1', 'worker-2'].map((agentId, index) => ({
+    sessionId: 'fixture-session', agentId,
+    parentAgentId: index === 0 ? null : index === 1 ? '' : 'orchestrator',
+    agentType: index === 0 ? 'controller' : index === 1 ? 'orchestrator' : 'worker',
+    task: index > 1 ? `T${index}` : null, model: 'fixture-model',
+    startedAt: at - 120000, lastAt: at, endedAt: null,
+    events: [{ at: at - 2000, kind: 'start', label: 'Started' }, { at, kind: 'tool', label: `Latest ${agentId || 'controller'}` }],
+    notes: [{ at: at - 1000, type: 'finding', title: 'A useful note' }],
+  }));
+};
+const agentSnap = () => ({ ...snap('alpha', ALPHA_PLANS()), sessions: agentFixture() });
+
+test('a fixture with a controller, an orchestrator and two workers renders four cards and three elbows', async () => {
+  const app = await mountApp({ snaps: [agentSnap()] });
+  const cards = byClass(app.els.app, 'agent-card');
+  assert.equal(cards.length, 4);
+  assert.deepEqual(cards.map(n => n.attrs['data-key']), ['agent:fixture-session/', 'agent:fixture-session/orchestrator', 'agent:fixture-session/worker-1', 'agent:fixture-session/worker-2']);
+  const elbows = flatten(app.els.app).filter(n => n.attrs.class === 'agent-elbow');
+  assert.equal(elbows.length, 3);
+  assert.ok(elbows.every(n => n.tag === 'svg' && n.attrs.width && n.attrs.height));
+  assert.match(textOf(cards[2]), /worker.*T2.*fixture-model.*2m.*Latest worker-1/);
+  assert.equal(byClass(app.els.app, 'agent-pulse').length, 4);
+  assert.equal(byKey(app.els.app, 'agents:toggle').attrs['aria-expanded'], 'true');
+});
+
+test('no panel renders without sessions', async () => {
+  const app = await mountApp({ snaps: TWO_REPOS() });
+  assert.equal(byClass(app.els.app, 'agents-panel').length, 0);
+});
+
+test('clicking a card shows its feed newest first', async () => {
+  const app = await mountApp({ snaps: [agentSnap()] });
+  byKey(app.els.app, 'agent:fixture-session/worker-1').fire('click');
+  assert.deepEqual(byClass(app.els.app, 'agent-feed-item').map(textOf), ['TOOLLatest worker-1', 'STARTStarted']);
+});
+
+test('the notes toggle shows and hides notes', async () => {
+  const app = await mountApp({ snaps: [agentSnap()] });
+  byKey(app.els.app, 'agent:fixture-session/worker-1').fire('click');
+  assert.doesNotMatch(textOf(app.els.app), /A useful note/);
+  byKey(app.els.app, 'agents:notes').fire('click');
+  assert.deepEqual(byClass(app.els.app, 'agent-feed-item').map(textOf), ['TOOLLatest worker-1', 'NOTEA useful note', 'STARTStarted']);
+  byKey(app.els.app, 'agents:notes').fire('click');
+  assert.doesNotMatch(textOf(app.els.app), /A useful note/);
+});
+
+test('the selected card survives a push', async () => {
+  const app = await mountApp({ snaps: [agentSnap()] });
+  byKey(app.els.app, 'agent:fixture-session/worker-2').fire('click');
+  byKey(app.els.app, 'agents:notes').fire('click');
+  const next = agentSnap(); next.sessions[3].events.push({ at: Date.UTC(2026, 9, 26, 12, 0, 2), kind: 'tool', label: 'New activity' });
+  app.state.data = [next]; await app.message();
+  assert.equal(byKey(app.els.app, 'agent:fixture-session/worker-2').attrs['aria-pressed'], 'true');
+  assert.equal(byKey(app.els.app, 'agents:notes').attrs['aria-pressed'], 'true');
+  assert.match(textOf(byClass(app.els.app, 'agent-feed-item')[0]), /New activity/);
+  byKey(app.els.app, 'agents:toggle').fire('click');
+  app.state.data[0].sessions[0].lastAt++; await app.message();
+  assert.equal(byKey(app.els.app, 'agents:toggle').attrs['aria-expanded'], 'false');
+  assert.equal(byClass(app.els.app, 'agent-card').length, 0);
+});
+
+test('reduced motion stops the pulse', () => {
+  assert.match(readFileSync(join(PLUGIN, 'ui', 'app.css'), 'utf8'), /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{[^}]*\.agent-pulse[^}]*animation:\s*none/s);
+});
+
+test('a planless repo still shows its recorded agents', async () => {
+  const fixture = agentSnap(); fixture.plans = [];
+  const app = await mountApp({ snaps: [fixture] });
+  assert.equal(byClass(app.els.app, 'agent-card').length, 4);
+  assert.match(textOf(app.els.app), /No plans yet/);
 });

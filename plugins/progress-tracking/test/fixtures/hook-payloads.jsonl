@@ -1,0 +1,18 @@
+{"session_id":"fixture-session","cwd":"/work/repo","hook_event_name":"SessionStart"}
+{"session_id":"fixture-session","cwd":"/work/repo","hook_event_name":"PostToolUse","tool_name":"Read","tool_input":{"file_path":"/work/repo/sample.txt"}}
+{"session_id":"fixture-session","cwd":"/work/repo","hook_event_name":"SubagentStart","agent_id":"orchestrator","agent_type":"fixture-orchestrator"}
+{"session_id":"fixture-session","cwd":"/work/repo","hook_event_name":"PostToolUse","tool_name":"Agent","tool_input":{"description":"T8 fixture orchestrator","subagent_type":"fixture-orchestrator","prompt":"Read task-8-brief.md and run one fixture tool."},"tool_response":{"agentId":"orchestrator","resolvedModel":"fixture-model"}}
+{"session_id":"fixture-session","cwd":"/work/repo","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"description":"Fixture command","command":"fixture-command"}}
+{"session_id":"fixture-session","cwd":"/work/repo","hook_event_name":"PostToolUse","agent_id":"orchestrator","agent_type":"fixture-orchestrator","tool_name":"Bash","tool_input":{"description":"Fixture command","command":"fixture-command"}}
+{"session_id":"fixture-session","cwd":"/work/repo","hook_event_name":"SubagentStart","agent_id":"worker-1","agent_type":"fixture-worker"}
+{"session_id":"fixture-session","cwd":"/work/repo","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"API_KEY=zqdummyzq run-it","description":"Run fixture validation"},"agent_id":"worker-1","agent_type":"fixture-worker"}
+{"session_id":"fixture-session","cwd":"/work/repo","hook_event_name":"PostToolUse","tool_name":"Agent","tool_input":{"subagent_type":"fixture-worker","description":"T9 fixture worker","prompt":"Read task-9-brief.md.","model":"fixture-input-model"},"tool_response":{"agentId":"worker-1","resolvedModel":"fixture-resolved-model"},"agent_id":"orchestrator","agent_type":"fixture-orchestrator"}
+{"session_id":"fixture-session","cwd":"/work/repo","hook_event_name":"SubagentStop","agent_id":"worker-1","agent_type":"fixture-worker"}
+{"session_id":"fixture-session","cwd":"/work/repo","hook_event_name":"SubagentStart","agent_id":"worker-2","agent_type":"fixture-worker"}
+{"session_id":"fixture-session","cwd":"/work/repo","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"API_KEY=zqdummyzq run-it"},"agent_id":"worker-2","agent_type":"fixture-worker"}
+{"session_id":"fixture-session","cwd":"/work/repo","hook_event_name":"PostToolUse","tool_name":"Agent","tool_input":{"subagent_type":"fixture-worker","description":"T10 fixture worker","prompt":"Read task-10-brief.md."},"tool_response":{"agentId":"worker-2","resolvedModel":"fixture-resolved-model"},"agent_id":"orchestrator","agent_type":"fixture-orchestrator"}
+{"session_id":"fixture-session","cwd":"/work/repo","hook_event_name":"SubagentStop","agent_id":"worker-2","agent_type":"fixture-worker"}
+{"session_id":"fixture-session","cwd":"/work/repo","hook_event_name":"PostToolUse","tool_name":"Agent","tool_input":{"subagent_type":"fixture-worker","description":"Background fixture","prompt":"Fixture prompt."},"tool_response":{},"agent_id":"orchestrator","agent_type":"fixture-orchestrator"}
+{"session_id":"fixture-session","cwd":"/work/repo","hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"fixture-failure","description":"Fixture tool fails"},"agent_id":"orchestrator","agent_type":"fixture-orchestrator"}
+{"session_id":"fixture-session","cwd":"/work/repo","hook_event_name":"SubagentStop","agent_id":"orchestrator","agent_type":"fixture-orchestrator"}
+{"session_id":"fixture-session","cwd":"/work/repo","hook_event_name":"SessionEnd"}

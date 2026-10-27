@@ -1,12 +1,10 @@
-// The run board: a read-only page over /api/snapshots (tracking-snapshot@1 documents), refreshed every 5 s while the tab
-// is visible. view.js turns snapshots and viewer choices into what the page shows; this module only builds the DOM,
-// polls and keeps the viewer's choices. Data goes in as textContent or attribute values, never as markup; dynamic
+// The run board: a read-only page over the /api/events snapshot stream. view.js turns snapshots and viewer choices into what the page shows; this module only builds the DOM,
+// receives messages and keeps the viewer's choices. Data goes in as textContent or attribute values, never as markup; dynamic
 // visual values go through style.setProperty on a custom property, so the page needs no inline style (CSP default-src 'self').
 import {
-  chips, currentOf, dataKey, entryView, headline, legend, pickPlan, pickRepo, planTitle, railCells, taskRows, orderPlans,
+  chips, currentOf, dataKey, entryView, headline, legend, pickPlan, pickRepo, planTitle, railCells, taskRows, orderPlans, nowItems, waitingCount, activity, agentTree, feedOf,
 } from './view.js';
 
-const REFRESH_MS = 5000;
 const HIGHLIGHT_MS = 1600;
 const LATEST_ENTRIES = 5;
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -14,10 +12,10 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const shortName = (name) => name.replace(/^\d{4}-\d{2}-\d{2}-/, '');
 const clock = (date) => date.toTimeString().slice(0, 8);
 
-// env = { document, fetch, setTimeout, clearTimeout, now }. All state lives in this closure; the env functions are
+// env = { document, EventSource, setTimeout, clearTimeout, now }. All state lives in this closure; the env functions are
 // always called unbound.
 export function mount(env) {
-  const { document, fetch, setTimeout, clearTimeout, now } = env;
+  const { document, EventSource, setTimeout, clearTimeout, now } = env;
   const top = document.getElementById('top');
   const repoSlot = document.getElementById('repo-slot');
   const updated = document.getElementById('updated');
@@ -27,10 +25,8 @@ export function mount(env) {
   let snaps = [];
   let lastKey = null;
   let introPending = true;
-  let pollTimer = null;
   let highlightTimer = null;
-  let inFlight = false;
-  const viewer = { repo: null, planByRepo: new Map(), filter: 'open', openEntry: 0, statusOpen: false, highlight: null };
+  const viewer = { repo: null, planByRepo: new Map(), filter: 'running', openEntry: 0, statusOpen: false, highlight: null, agentsByRepo: new Map() };
   // Controls and task rows of the render in place, by their data-key / task id.
   const keyed = new Map();
   const rowNodes = new Map();
@@ -86,29 +82,98 @@ export function mount(env) {
     return `${snap.repo.mode} · ${snap.repo.branch ?? 'detached HEAD'}`;
   }
 
-  function renderRepo(snap) {
-    if (!snap) {
-      repoSlot.replaceChildren();
-      return;
+  function renderRepo(snap, nowMs) {
+    if (!snap) { repoSlot.replaceChildren(); return; }
+    const groups = activity(snaps, nowMs);
+    const item = (s, running = false) => el('button', 'repo-pill repo-item', {
+      key: `repo:${s.repo.root}`,
+      attrs: { type: 'button', 'aria-pressed': s.repo.root === snap.repo.root },
+      on: { click: () => { viewer.repo = s.repo.root; resetView(); renderData({ focus: `repo:${s.repo.root}` }); } },
+    }, [
+      ...(running ? [el('span', 'repo-dot', { attrs: { 'aria-label': 'Running' } })] : []),
+      el('b', '', { text: s.repo.name }), el('span', '', { text: repoLabel(s) }),
+    ]);
+    repoSlot.replaceChildren(el('div', 'repo-list', { attrs: { 'aria-label': 'Repos' } }, [
+      ...groups.running.map((s) => item(s, true)), ...groups.working.map((s) => item(s)),
+      ...(groups.idle.length ? [el('details', 'idle-repos', {}, [
+        el('summary', '', { text: `${groups.idle.length} idle` }), ...groups.idle.map((s) => item(s)),
+      ])] : []),
+    ]));
+  }
+
+  function nowStrip(nowMs) {
+    const items = nowItems(snaps, nowMs);
+    const waiting = waitingCount(snaps);
+    return el('section', 'now-strip', { attrs: { 'aria-label': 'Now' } }, [
+      el('h2', '', { text: 'Now' }),
+      ...items.map((item) => el('button', 'now-chip', {
+        key: `now:${item.repoRoot}:${item.planName}:${item.taskId}`,
+        attrs: { type: 'button' },
+        on: { click: () => {
+          viewer.repo = item.repoRoot;
+          viewer.planByRepo.set(item.repoRoot, item.planName);
+          resetView();
+          const plan = snaps.find((s) => s.repo.root === item.repoRoot)?.plans.find((p) => p.name === item.planName);
+          pickCell(plan, item.taskId);
+        } },
+      }, [el('span', '', { text: `${item.repoName} · ${item.taskId} · ${item.title}` }),
+        el('span', '', { text: `${item.agents} agents · ${item.elapsedMs == null ? 'elapsed unknown' : `${Math.max(0, Math.floor(item.elapsedMs / 60000))}m elapsed`}` })])),
+      ...(items.length ? [] : [el('span', 'muted', { text: 'Nothing running' })]),
+      ...(waiting ? [el('span', 'waiting-chip', { text: `waiting on you: ${waiting}` })] : []),
+    ]);
+  }
+
+  function agentsPanel(snap, nowMs) {
+    const sessions = snap.sessions ?? [];
+    if (!sessions.length) return null;
+    const rows = agentTree(sessions, nowMs);
+    let state = viewer.agentsByRepo.get(snap.repo.root);
+    if (!state) {
+      state = { open: rows.some((row) => row.state === 'running'), selected: null, notes: false };
+      viewer.agentsByRepo.set(snap.repo.root, state);
     }
-    if (snaps.length > 1) {
-      const options = snaps.map((s) => el('option', '', { text: `${s.repo.name} · ${repoLabel(s)}`, attrs: { value: s.repo.root } }));
-      const select = el('select', 'repo-pill', { key: 'repo', attrs: { 'aria-label': 'Repo' } }, options);
-      select.value = snap.repo.root;
-      select.addEventListener('change', () => {
-        viewer.repo = select.value;
-        resetView();
-        renderData({ focus: 'repo' });
-      });
-      repoSlot.replaceChildren(select);
-      return;
-    }
-    repoSlot.replaceChildren(el('span', 'repo-pill', {}, [el('b', '', { text: snap.repo.name }), el('span', '', { text: repoLabel(snap) })]));
+    const toggle = el('button', 'agents-toggle', {
+      key: 'agents:toggle', text: `Agents · ${rows.length}`,
+      attrs: { type: 'button', 'aria-expanded': state.open, 'aria-controls': 'agents-body' },
+      on: { click: () => { state.open = !state.open; renderData({ focus: 'agents:toggle' }); } },
+    });
+    if (!state.open) return el('section', 'panel agents-panel', {}, [toggle]);
+    const tree = el('div', 'agent-tree', { attrs: { 'aria-label': 'Agent tree' } }, rows.map((row) => el('div', 'agent-row', {
+      vars: { '--depth': row.depth },
+    }, [
+      ...(row.parentKey === null ? [] : [svgEl('svg', { class: 'agent-elbow', width: 24, height: 36, viewBox: '0 0 24 36', 'aria-hidden': 'true' }, [
+        svgEl('path', { d: 'M2 0 V18 H22', fill: 'none', stroke: 'currentColor' }),
+      ])]),
+      el('button', `agent-card agent-${row.state}`, {
+        key: `agent:${row.key}`, attrs: { type: 'button', 'aria-pressed': state.selected === row.key },
+        on: { click: () => { state.selected = row.key; renderData({ focus: `agent:${row.key}` }); } },
+      }, [
+        el('span', 'agent-heading', {}, [
+          ...(row.state === 'running' ? [el('span', 'agent-pulse', { attrs: { 'aria-label': 'Running' } })] : []),
+          el('b', '', { text: row.agentType ?? 'controller' }),
+          ...(row.task ? [el('span', '', { text: row.task })] : []),
+          ...(row.model ? [el('span', '', { text: row.model })] : []),
+          el('span', 'muted', { text: `${row.elapsedMs === null ? 'elapsed unknown' : `${Math.max(0, Math.floor(row.elapsedMs / 60000))}m elapsed`} · ${row.state}` }),
+        ]),
+        el('span', 'agent-latest', { text: row.latest ?? 'No events yet' }),
+      ]),
+    ])));
+    const selected = sessions.find((session) => `${session.sessionId}/${session.agentId}` === state.selected);
+    const feed = selected ? [el('section', 'agent-feed', { attrs: { 'aria-label': 'Selected agent feed' } }, [
+      el('button', 'chip', {
+        key: 'agents:notes', text: 'Notes', attrs: { type: 'button', 'aria-pressed': state.notes },
+        on: { click: () => { state.notes = !state.notes; renderData({ focus: 'agents:notes' }); } },
+      }),
+      el('ol', 'agent-events', {}, feedOf(selected, state.notes).map((event) => el('li', 'agent-feed-item', {}, [
+        el('span', 'agent-event-kind', { text: event.kind }), el('span', '', { text: event.text }),
+      ]))),
+    ])] : [];
+    return el('section', 'panel agents-panel', {}, [toggle, el('div', 'agents-body', { attrs: { id: 'agents-body' } }, [tree, ...feed])]);
   }
 
   // A different plan or repo starts from the default view.
   function resetView() {
-    viewer.filter = 'open';
+    viewer.filter = 'running';
     viewer.openEntry = 0;
     viewer.highlight = null;
     clearTimeout(highlightTimer);
@@ -256,8 +321,11 @@ export function mount(env) {
     const activeKey = document.activeElement?.getAttribute?.('data-key') ?? null;
     keyed.clear();
     rowNodes.clear();
-    const snap = pickRepo(snaps, viewer.repo);
-    renderRepo(snap);
+    const nowMs = now().getTime();
+    const snap = pickRepo(snaps, viewer.repo, introPending, nowMs);
+    if (snap && viewer.repo === null) viewer.repo = snap.repo.root;
+    renderRepo(snap, nowMs);
+    const agents = snap ? agentsPanel(snap, nowMs) : null;
     const plan = snap ? pickPlan(snap.plans, viewer.planByRepo.get(snap.repo.root)) : null;
     if (!snap || !plan) {
       const card = snap
@@ -269,19 +337,19 @@ export function mount(env) {
           command: '/progress-tracking:progress-init',
         });
       introPending = false;
-      app.replaceChildren(card);
+      app.replaceChildren(snap ? el('div', '', {}, [nowStrip(nowMs), ...(agents ? [agents] : []), card]) : card);
       return;
     }
-    const root = el('div', introPending ? 'intro' : '', {}, [planSection(snap, plan), tasksSection(plan), entriesSection(snap), statusPanel(snap)]);
+    const root = el('div', introPending ? 'intro' : '', {}, [nowStrip(nowMs), ...(agents ? [agents] : []), planSection(snap, plan), tasksSection(plan), entriesSection(snap), statusPanel(snap)]);
     introPending = false;
     app.replaceChildren(root);
-    // preventScroll: restoring focus must not move the viewport back to the control (the highlight timer and polls render too).
+    // preventScroll: restoring focus must not move the viewport back to the control (the highlight timer and messages render too).
     (keyed.get(focus ?? activeKey))?.focus({ preventScroll: true });
     if (scrollTo !== null) rowNodes.get(scrollTo)?.scrollIntoView({ block: 'nearest' });
   }
 
   // The live indicator's time and the banner; written only here, so a viewer action never blanks them. Called after
-  // every poll: a good one stamps the time and clears the banner, a failed one (`failure`: tag, title, error, optional command) raises it
+  // every message: a good one stamps the time and clears the banner, a failed one (`failure`: tag, title, error, optional command) raises it
   // above the last good render.
   function renderChrome(failure) {
     if (failure) {
@@ -289,7 +357,7 @@ export function mount(env) {
       banner.replaceChildren(
         el('span', 'banner-tag', { text: failure.tag }),
         el('b', 'banner-title', { text: failure.title }),
-        el('span', 'banner-text', { text: `${failure.error}. Retrying every 5 s; the last good data stays on screen.` }),
+        el('span', 'banner-text', { text: `${failure.error}. ${failure.closed ? 'Reload the page to reconnect' : 'The browser will reconnect automatically'}; the last good data stays on screen.` }),
         ...(failure.command ? [el('code', 'code', { text: failure.command })] : []),
       );
       return;
@@ -299,16 +367,11 @@ export function mount(env) {
     banner.replaceChildren();
   }
 
-  function schedule() {
-    clearTimeout(pollTimer);
-    pollTimer = null;
-    if (!document.hidden) pollTimer = setTimeout(tick, REFRESH_MS);
-  }
-
   // Shows `data` unless it is what is on screen already. lastKey moves only after the render succeeds, so a render that
-  // throws leaves the last good tree and is tried again by the next poll.
+  // throws leaves the last good tree and is tried again by the next message.
   function show(data) {
-    const key = dataKey(data);
+    const nowMs = now().getTime();
+    const key = `${dataKey(data)}:${Math.floor(nowMs / 60000)}`;
     if (key === lastKey) return;
     const previous = snaps;
     snaps = data;
@@ -321,50 +384,46 @@ export function mount(env) {
     lastKey = key;
   }
 
-  async function refresh() {
-    if (inFlight) return;
-    inFlight = true;
+  const stream = new EventSource('/api/events');
+  stream.addEventListener('message', (event) => {
+    let data;
     try {
-      let data;
-      try {
-        const res = await fetch('/api/snapshots');
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        data = await res.json();
-        if (!Array.isArray(data)) throw new Error('unexpected response');
-      } catch (error) {
-        // The last good render stays on screen; the next poll tries again.
-        renderChrome({ tag: 'Connection lost', title: 'Cannot reach the local server', error: error?.message || 'Request failed', command: 'triqual ui --open' });
-        return;
-      }
-      try {
-        show(data);
-      } catch (error) {
-        renderChrome({ tag: 'Display error', title: 'Cannot show the latest data', error: error?.message || 'Render failed' });
-        return;
-      }
-      renderChrome(null);
-    } finally {
-      inFlight = false;
-      schedule();
+      data = JSON.parse(event.data);
+      if (!Array.isArray(data)) throw new Error('unexpected response');
+    } catch (error) {
+      renderChrome({ tag: 'Connection lost', title: 'Cannot reach the local server', error: error?.message || 'Invalid message' });
+      return;
     }
-  }
-
-  // A hidden tab stops the loop (each poll runs git in every registered repo); becoming visible refreshes at once.
-  function tick() {
-    pollTimer = null;
-    if (!document.hidden) refresh();
-  }
-
-  top.prepend(brand());
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) {
-      clearTimeout(pollTimer);
-      pollTimer = null;
-    } else {
-      refresh();
+    try {
+      show(data);
+      renderChrome(null);
+    } catch (error) {
+      renderChrome({ tag: 'Display error', title: 'Cannot show the latest data', error: error?.message || 'Render failed' });
     }
   });
-  if (!document.hidden) refresh();
+  stream.addEventListener('error', () => {
+    renderChrome({ tag: 'Connection lost', title: 'Cannot reach the local server', error: 'Event stream disconnected', closed: stream.readyState === EventSource.CLOSED, command: 'triqual ui --open' });
+  });
+
+  let theme = 'system';
+  try {
+    const saved = env.localStorage?.getItem('triqual-ui:theme');
+    if (saved === 'light' || saved === 'dark') theme = saved;
+  } catch {}
+  const themeButtons = ['system', 'light', 'dark'].map((value) => el('button', 'theme-button', {
+    text: value[0].toUpperCase() + value.slice(1),
+    attrs: { type: 'button', 'aria-pressed': value === theme },
+    on: { click: () => {
+      theme = value;
+      if (value === 'system') delete document.documentElement.dataset.theme;
+      else document.documentElement.dataset.theme = value;
+      try { env.localStorage?.setItem('triqual-ui:theme', value); } catch {}
+      themeButtons.forEach((button, index) => button.setAttribute('aria-pressed', ['system', 'light', 'dark'][index] === theme));
+    } },
+  }));
+  top.append(el('div', 'theme-switch', { attrs: { role: 'group', 'aria-label': 'Theme' } }, themeButtons));
+  top.prepend(brand());
+
 }
 
 // In a browser the page mounts itself; importing this module anywhere else (node tests) mounts nothing. The wrappers
@@ -372,7 +431,8 @@ export function mount(env) {
 if (globalThis.document) {
   mount({
     document: globalThis.document,
-    fetch: (...args) => globalThis.fetch(...args),
+    get localStorage() { return globalThis.localStorage; },
+    EventSource: globalThis.EventSource,
     setTimeout: (...args) => globalThis.setTimeout(...args),
     clearTimeout: (...args) => globalThis.clearTimeout(...args),
     now: () => new Date(),

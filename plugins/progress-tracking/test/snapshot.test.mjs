@@ -97,10 +97,10 @@ const EXPECTED_PLANS = [
     done: 1,
     total: 3,
     tasks: [
-      { id: 'T1', title: 'Alpha', status: 'done', reason: null, tier: null, effectiveTier: null, commits: ['abc1234'], skills: ['a'] },
-      { id: 'T2', title: 'Beta', status: 'in_progress', reason: null, tier: null, effectiveTier: null, commits: [], skills: [] },
-      { id: 'T3', title: 'Gamma', status: 'dropped', reason: 'not needed', tier: null, effectiveTier: null, commits: [], skills: [] },
-      { id: 'T4', title: 'Delta', status: 'blocked', reason: 'waiting on T9', tier: null, effectiveTier: null, commits: [], skills: [] },
+      { id: 'T1', title: 'Alpha', status: 'done', since: null, reason: null, tier: null, effectiveTier: null, commits: ['abc1234'], skills: ['a'] },
+      { id: 'T2', title: 'Beta', status: 'in_progress', since: null, reason: null, tier: null, effectiveTier: null, commits: [], skills: [] },
+      { id: 'T3', title: 'Gamma', status: 'dropped', since: null, reason: 'not needed', tier: null, effectiveTier: null, commits: [], skills: [] },
+      { id: 'T4', title: 'Delta', status: 'blocked', since: null, reason: 'waiting on T9', tier: null, effectiveTier: null, commits: [], skills: [] },
     ],
   },
   {
@@ -108,7 +108,7 @@ const EXPECTED_PLANS = [
     state: 'done',
     done: 1,
     total: 1,
-    tasks: [{ id: 'T1', title: 'Alpha', status: 'done', reason: null, tier: null, effectiveTier: null, commits: ['def5678'], skills: ['a'] }],
+    tasks: [{ id: 'T1', title: 'Alpha', status: 'done', since: null, reason: null, tier: null, effectiveTier: null, commits: ['def5678'], skills: ['a'] }],
   },
 ];
 
@@ -279,3 +279,27 @@ test('planView gives each task its skills array, [] when the ledger task has non
   view.tasks[0].skills.push('mutated');
   assert.deepEqual(ledger.tasks[0].skills, ['a'], 'planView shares the ledger task\'s skills array');
 });
+
+
+test('planView sets since to the last history at in epoch ms', () => {
+  const ledger = { state: 'active', tasks: [
+    { id: 'T1', status: 'in_progress', history: [{ at: '2026-10-20T12:00:00Z' }, { at: '2026-10-21T13:00:00Z' }] },
+    { id: 'T2', status: 'pending', history: [] },
+    { id: 'T3', status: 'pending' },
+  ] };
+  assert.deepEqual(planView('p', ledger).tasks.map(t => t.since), [Date.parse('2026-10-21T13:00:00Z'), null, null]);
+});
+
+
+test('buildSnapshot uses the given branch and does not run git', () => withDir(({ dir, makeRepo }) => {
+  const t = committedRepo(makeRepo('repo'));
+  const bin = join(dir, 'no-git'); mkdirSync(bin);
+  const log = join(dir, 'calls');
+  writeFileSync(join(bin, 'git'), `#!/bin/sh\necho called >> "${log}"\nexit 1\n`); chmodSync(join(bin, 'git'), 0o755);
+  const old = process.env.PATH; process.env.PATH = `${bin}:${old}`;
+  try {
+    assert.equal(buildSnapshot(t, { now: NOW, branch: 'cached' }).repo.branch, 'cached');
+    assert.equal(buildSnapshot(t, { now: NOW, branch: null }).repo.branch, null);
+    assert.throws(() => readFileSync(log));
+  } finally { process.env.PATH = old; }
+}));

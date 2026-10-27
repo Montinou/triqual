@@ -9,21 +9,22 @@
 // request data. Exit codes: 0 for --help/-h (usage only, no server), 2 bad arguments, 1 the server cannot listen;
 // otherwise it runs until Ctrl-C.
 import { spawn } from 'node:child_process';
-import { readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync, watch } from 'node:fs';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { listResolved } from '../lib/registry.mjs';
-import { buildSnapshot } from '../lib/snapshot.mjs';
-import { loadSqlite } from '../lib/store.mjs';
+import { branchOf, buildSnapshot } from '../lib/snapshot.mjs';
+import { loadSqlite, storePaths } from '../lib/store.mjs';
 
+export const DEFAULT_PORT = 47800;
 const LOOPBACK = '127.0.0.1';
 const UI_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'ui');
 const USAGE = 'usage: triqual ui [--port N] [--open]';
 const HELP = `${USAGE}
-  --port N    listen on port N (0-65535; default 0, a random free port)
+  --port N    listen on port N (0-65535; default 47800)
   --open      also open the URL in the default browser
   -h, --help  print this help`;
 const COMMON_HEADERS = {
@@ -37,6 +38,7 @@ const TEXT = 'text/plain; charset=utf-8';
 const ASSETS = {
   '/': { file: 'index.html', type: 'text/html; charset=utf-8' },
   '/app.js': { file: 'app.js', type: 'text/javascript; charset=utf-8' },
+  '/theme.js': { file: 'theme.js', type: 'text/javascript; charset=utf-8' },
   '/view.js': { file: 'view.js', type: 'text/javascript; charset=utf-8' },
   '/app.css': { file: 'app.css', type: 'text/css; charset=utf-8' },
   '/fonts/geist.woff2': { file: 'fonts/geist.woff2.b64', type: 'font/woff2', base64: true },
@@ -44,21 +46,97 @@ const ASSETS = {
   '/fonts/bricolage.woff2': { file: 'fonts/bricolage.woff2.b64', type: 'font/woff2', base64: true },
 };
 
-// The snapshot of every registered repo that still resolves, each repo resolved once per poll. A repo whose snapshot
-// throws is skipped, so one bad repo never fails the whole response. node:sqlite is loaded (once) only when a store
-// repo is reached; a repo of any other mode never loads it, and a store repo whose database cannot be read is skipped.
-async function snapshots(home) {
-  const now = new Date();
-  const out = [];
-  for (const { tracking, shareable } of listResolved(home)) {
+// A hub owns the cached repo/branch resolution and one lazy watch for every connected viewer.
+export function createHub({ home, heartbeatMs = 60000, throttleMs = 1000, watchDir, build = buildSnapshot }) {
+  const dataDir = watchDir === undefined ? storePaths({ home, env: process.env })?.dataDir : watchDir;
+  const subscribers = new Set();
+  let repos, watcher, heartbeat, timer, baseline, latest;
+  let building = false, dirty = false, closed = false, lastPush = -Infinity;
+  const refresh = () => { repos = listResolved(home).map(repo => ({ ...repo, branch: branchOf(repo.tracking.repoRoot) })); };
+  refresh();
+  const fingerprint = () => JSON.stringify(['tracking.db', 'tracking.db-wal', 'sessions.db', 'sessions.db-wal'].map(name => {
     try {
-      if (tracking.mode === 'store') await loadSqlite();
-      out.push(buildSnapshot(tracking, { now, shareable, home }));
-    } catch {
-      // skipped: unreadable tracking files, a vanished repo
+      const { mtimeMs, size } = statSync(join(dataDir, name));
+      return name.endsWith('-wal') && size === 0 ? null : [mtimeMs, size];
+    } catch { return null; }
+  }));
+  const snapshots = async () => {
+    const now = new Date();
+    const out = [];
+    let sessions = [], db;
+    let notes = new Map();
+    try {
+      if (dataDir && existsSync(join(dataDir, 'sessions.db'))) {
+        const { readSessions } = await import('../lib/sessions.mjs');
+        await loadSqlite();
+        const { DatabaseSync } = await import('node:sqlite');
+        db = new DatabaseSync(join(dataDir, 'sessions.db'), { readOnly: true });
+        sessions = readSessions(db, { since: now.getTime() - 2 * 60 * 60 * 1000, now: now.getTime() });
+      }
+    } catch { /* optional activity never prevents tracking snapshots */ }
+    finally { db?.close(); }
+    if (sessions.length) {
+      const { readNotes } = await import('../lib/claude-mem-notes.mjs');
+      notes = readNotes([...new Set(sessions.map(row => row.sessionId))], { home });
     }
-  }
-  return out;
+    for (const { tracking, shareable, branch } of repos) {
+      try {
+        if (tracking.mode === 'store') await loadSqlite();
+        out.push({ ...await build(tracking, { now, shareable, home, branch }),
+          sessions: sessions.filter(row => row.repoRoot === tracking.repoRoot).map(row => ({
+            ...row, notes: notes.get(`${row.sessionId}\u0000${row.agentId}`) || [],
+          })),
+        });
+      } catch { /* one unreadable repo never fails the whole list */ }
+    }
+    return out;
+  };
+  const schedule = () => {
+    if (!subscribers.size || closed || building || timer) return;
+    const wait = Math.max(0, lastPush + throttleMs - Date.now());
+    timer = setTimeout(() => { timer = null; push(); }, wait);
+  };
+  const push = async () => {
+    if (!subscribers.size || closed || building) return;
+    building = true; dirty = false;
+    // Save before reads: a concurrent write must remain dirty for the trailing push.
+    baseline = fingerprint();
+    try {
+      latest = await snapshots();
+      lastPush = Date.now();
+      for (const send of subscribers) send(latest);
+    } finally { building = false; if (dirty) schedule(); }
+  };
+  const watchStore = () => {
+    if (watcher || !dataDir || !subscribers.size) return;
+    try {
+      watcher = watch(dataDir, (_event, file) => {
+        if (!subscribers.size || !/^(tracking|sessions)\.db/.test(String(file))) return;
+        if (fingerprint() !== baseline) { dirty = true; schedule(); }
+      });
+      watcher.on('error', () => { watcher?.close(); watcher = null; });
+    } catch { /* missing directory: retry on the next heartbeat */ }
+  };
+  const stop = () => {
+    clearInterval(heartbeat); clearTimeout(timer); heartbeat = timer = null;
+    watcher?.close(); watcher = null; latest = undefined;
+  };
+  return {
+    snapshots,
+    subscribe(send) {
+      if (closed) return () => {};
+      const first = subscribers.size === 0;
+      subscribers.add(send);
+      if (first) {
+        watchStore();
+        heartbeat = setInterval(() => { refresh(); watchStore(); dirty = true; schedule(); }, heartbeatMs);
+        // A new connection gets an immediate snapshot, independently of a previous connection's throttle.
+        lastPush = -Infinity; push();
+      } else if (latest !== undefined) send(latest);
+      return () => { subscribers.delete(send); if (!subscribers.size) stop(); };
+    },
+    close() { closed = true; subscribers.clear(); stop(); },
+  };
 }
 
 function send(res, status, type, body, extra = {}) {
@@ -68,24 +146,35 @@ function send(res, status, type, body, extra = {}) {
 
 // Fixed bodies only: nothing from the request (path, Host, method) is ever written back. Returns a promise for the one
 // route that reads the store (the others answer at once).
-async function handle(req, res, { home, port, assets }) {
+async function handle(req, res, { port, assets, hub, streams }) {
   const host = req.headers.host;
   if (host !== `${LOOPBACK}:${port}` && host !== `localhost:${port}`) return send(res, 403, TEXT, 'forbidden\n');
+  if (req.headers['sec-fetch-site'] === 'cross-site') return send(res, 403, TEXT, 'forbidden\n');
   if (req.method !== 'GET') return send(res, 405, TEXT, 'method not allowed\n', { Allow: 'GET' });
   const path = (req.url ?? '').split('?')[0];
   if (Object.hasOwn(assets, path)) return send(res, 200, assets[path].type, assets[path].body);
-  if (path === '/api/snapshots') return send(res, 200, 'application/json; charset=utf-8', JSON.stringify(await snapshots(home)));
+  if (path === '/api/snapshots') return send(res, 200, 'application/json; charset=utf-8', JSON.stringify(await hub.snapshots()));
+  if (path === '/api/events') {
+    res.writeHead(200, { ...COMMON_HEADERS, 'Content-Type': 'text/event-stream; charset=utf-8' });
+    res.flushHeaders();
+    streams.add(res);
+    const unsubscribe = hub.subscribe(data => res.write(`data: ${JSON.stringify(data)}\n\n`));
+    res.on('close', () => { unsubscribe(); streams.delete(res); });
+    return;
+  }
   return send(res, 404, TEXT, 'not found\n');
 }
 
 // Starts the dashboard on 127.0.0.1 (the only host it accepts) and resolves once it listens; port 0 picks a free one.
-export function startServer({ home, port = 0, host = LOOPBACK }) {
+export function startServer({ home, port = 0, host = LOOPBACK, heartbeatMs, throttleMs, watchDir, build }) {
   if (host !== LOOPBACK) return Promise.reject(new Error(`triqual ui binds ${LOOPBACK} only, not ${host}`));
   const assets = {};
   for (const [path, { file, type, base64 }] of Object.entries(ASSETS)) {
     const text = readFileSync(join(UI_DIR, file), 'utf8');
     assets[path] = { type, body: base64 ? Buffer.from(text, 'base64') : text };
   }
+  const hub = createHub({ home, heartbeatMs, throttleMs, watchDir, build });
+  const streams = new Set();
   return new Promise((resolve, reject) => {
     // requireHostHeader off: a request without Host reaches the handler, which answers 403 (not Node's bare 400).
     const server = createServer({ requireHostHeader: false }, (req, res) => {
@@ -93,11 +182,13 @@ export function startServer({ home, port = 0, host = LOOPBACK }) {
         if (!res.headersSent) send(res, 500, TEXT, 'internal error\n');
         else res.destroy();
       };
-      handle(req, res, { home, port: server.address().port, assets }).catch(fail);
+      handle(req, res, { port: server.address().port, assets, hub, streams }).catch(fail);
     });
-    server.once('error', reject);
+    const close = server.close.bind(server);
+    server.close = (...args) => { hub.close(); for (const stream of streams) stream.end(); return close(...args); };
+    server.once('error', err => { hub.close(); reject(err); });
     server.listen(port, LOOPBACK, () => {
-      server.off('error', reject);
+
       resolve({ server, url: `http://${LOOPBACK}:${server.address().port}/` });
     });
   });
@@ -120,7 +211,7 @@ function parse(argv) {
     args: argv, options: { port: { type: 'string' }, open: { type: 'boolean' } }, allowPositionals: true, strict: true,
   });
   if (positionals.length) throw new Error(`unexpected argument ${positionals[0]}`);
-  const port = values.port === undefined ? 0 : Number(values.port);
+  const port = values.port === undefined ? DEFAULT_PORT : Number(values.port);
   if (!/^\d+$/.test(values.port ?? '0') || !Number.isInteger(port) || port > 65535) throw new Error('--port must be 0-65535');
   return { port, open: values.open === true };
 }
@@ -140,7 +231,12 @@ async function main(argv) {
   }
   let started;
   try {
-    started = await startServer({ home: homedir(), port: opts.port });
+    try {
+      started = await startServer({ home: homedir(), port: opts.port });
+    } catch (err) {
+      if (err.code !== 'EADDRINUSE' || argv.includes('--port') || argv.some((arg) => arg.startsWith('--port='))) throw err;
+      started = await startServer({ home: homedir(), port: 0 });
+    }
   } catch (err) {
     process.stderr.write(`triqual ui: ${err.message}\n`);
     process.exitCode = 1;
