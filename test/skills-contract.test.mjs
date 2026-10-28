@@ -339,9 +339,9 @@ const pinProblems = ({ skills }, pins = PINS) =>
     return flat.includes(text) ? [] : [`${skill}/SKILL.md lost its pinned line: ${text} (${why})`];
   });
 
-// The ten skills of 1.0, and nothing else.
+// The eleven skills (the ten of 1.0 and auditing-performance), and nothing else.
 const TEN_SKILLS = [
-  'brainstorming', 'diagnosing-methodology', 'executing-plans', 'finishing-branch', 'reviewing-code',
+  'auditing-performance', 'brainstorming', 'diagnosing-methodology', 'executing-plans', 'finishing-branch', 'reviewing-code',
   'systematic-debugging', 'test-driven-development', 'using-methodology', 'verification-before-completion', 'writing-plans',
 ];
 

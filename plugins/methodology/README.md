@@ -389,6 +389,7 @@ The [root README](../../README.md#skills) has the review matrix.
 | `verification-before-completion` | Run the verification commands and read the output before claiming work is done, fixed or passing. |
 | `finishing-branch` | When implementation is complete and tests pass: close the plan and decide how to integrate the work. |
 | `diagnosing-methodology` | Find why a session that ran these skills went wrong, or build a bug report for this system's repository, on any harness. |
+| `auditing-performance` | Audit cost, latency, review yield and hook overhead of the plugins from transcripts and the role-eval store (`scripts/collect.mjs`), publish the report, and record what could not be measured. |
 
 Removed in 1.0: the old orchestrator skill (now `executing-plans`), the old inline `executing-plans`,
 `requesting-code-review` and `receiving-code-review` (merged into `reviewing-code`), `using-git-worktrees` (a section of
