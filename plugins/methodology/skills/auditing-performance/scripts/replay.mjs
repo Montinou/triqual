@@ -4,23 +4,40 @@
 // not resolve in their repo (`git cat-file -e`), and writes <dir>/sample.json (rows { repo, root, plan, task, tier, sha }).
 // `node replay.mjs package --sample <file> --out <dir> [--max-bytes N]` builds, for each sampled row, <dir>/NN/{diff.patch,message.txt}
 // (lib/replay-package.mjs) and writes <dir>/packages.json (rows { dir, bytes, tooLarge } or { dir, error }).
-// Both print counts and paths only, never task, diff or commit-message text. Exit 0 done, 1 failed, 2 usage.
+// `node replay.mjs score --results <file>` reads judged runs ([{ task, setting, findings, verdicts | null, usd, seconds }])
+// (lib/replay-score.mjs), prints the per-setting summary as JSON and writes it to replay_summary.json beside <file>.
+// All three print counts, rates and paths only, never task, diff or commit-message text. Exit 0 done, 1 failed, 2 usage.
 // Pass a scratch directory outside the repository as --out: replay outputs never enter it.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { normalizeExport, sampleTasks } from './lib/replay-sample.mjs';
 import { buildPackage } from './lib/replay-package.mjs';
+import { summarize } from './lib/replay-score.mjs';
 
 const USAGE = 'usage: replay.mjs sample --out <dir> [--n 20] [--seed N] [--exclude <regex>]\n'
-  + '       replay.mjs package --sample <file> --out <dir> [--max-bytes N]\n';
+  + '       replay.mjs package --sample <file> --out <dir> [--max-bytes N]\n'
+  + '       replay.mjs score --results <file>\n';
 const [command, ...rest] = process.argv.slice(2);
 const opt = (name, fallback) => { const i = rest.indexOf(`--${name}`); return i < 0 ? fallback : rest[i + 1]; };
 const usage = () => { process.stderr.write(USAGE); process.exit(2); };
 
-if (command !== 'sample' && command !== 'package') usage();
+if (command !== 'sample' && command !== 'package' && command !== 'score') usage();
 if (command === 'package') runPackage();
+else if (command === 'score') runScore();
 else runSample();
+
+function runScore() {
+  const resultsPath = opt('results');
+  if (!resultsPath) usage();
+  let results;
+  try { results = JSON.parse(readFileSync(resultsPath, 'utf8')); } catch { process.stderr.write('results file is missing or not JSON\n'); process.exit(1); }
+  let summary;
+  try { summary = summarize(results); } catch (err) { process.stderr.write(`${err instanceof Error ? err.message : 'results are malformed'}\n`); process.exit(1); }
+  const json = `${JSON.stringify(summary, null, 2)}\n`;
+  writeFileSync(join(dirname(resultsPath), 'replay_summary.json'), json);
+  process.stdout.write(json);
+}
 
 function runPackage() {
   const samplePath = opt('sample');
