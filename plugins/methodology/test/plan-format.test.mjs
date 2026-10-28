@@ -222,12 +222,13 @@ test('## Task Tiers carries the three-tier rubric and its rules', () => {
   }
   assert.match(bullet('heavy'), /any of:/);
   for (const phrase of [
-    'only: docs, comments, config values, version bumps, renames with no behavior change',
-    'within the light code allowance (at most 20 added+removed lines in total, test lines included, no new file, no prompt-like Markdown, no sensitive path)',
+    'the default',
+    'docs, comments, config values, version bumps, renames with no behavior change',
+    'within the light code allowance (at most 100 non-test added+removed lines in total, no new non-test file, no prompt-like Markdown, no sensitive path)',
   ]) {
     assert.ok(bullet('light').includes(phrase), `the light bullet lacks "${phrase}"`);
   }
-  assert.ok(bullet('standard').includes('everything else'), 'the standard bullet lacks "everything else"');
+  assert.ok(bullet('standard').includes('only with a one-line reason'), 'the standard bullet lacks "only with a one-line reason"');
   for (const phrase of [
     'all-or-none per plan',
     '`coordinator` tasks must be `light`',
@@ -384,6 +385,35 @@ test('## Task Tiers: heavy is security, live state, a parsed contract or complex
   assert.ok(rubric, 'executing-plans has no tier rubric line');
   for (const phrase of [...RUBRIC_PHRASES, 'gate/enforcement hooks']) assert.ok(rubric.includes(phrase), `the executing-plans rubric lacks "${phrase}"`);
   assert.ok(!rubric.includes('changes spanning more than one plugin or system'), 'the executing-plans rubric still makes a multi-plugin change heavy');
+});
+
+// Light by default (spec: lean tiers): both rubrics say it in the same words, with the T2 numbers and test-path rules.
+const executingRubric = () => readFileSync(join(SKILLS, 'executing-plans/SKILL.md'), 'utf8').split('\n').find((line) => line.startsWith('- **The tier rubric**')) ?? '';
+test('both rubrics name light as the default and complex-implementer as heavy', () => {
+  const texts = { 'writing-plans': section(PLANS, '## Task Tiers').join('\n'), 'executing-plans': executingRubric() };
+  for (const [name, text] of Object.entries(texts)) {
+    for (const phrase of ['light is the default', '`roles:complex-implementer`', 'only with a one-line reason', 'at most 100 non-test', '`**Test paths:**`']) {
+      assert.ok(text.includes(phrase), `the ${name} rubric lacks "${phrase}"`);
+    }
+    assert.ok(!text.includes('at most 20'), `the ${name} rubric still says "at most 20"`);
+    assert.ok(!text.includes('test lines included'), `the ${name} rubric still counts test lines`);
+  }
+});
+
+test('the tier-check rules paragraph states the non-test numbers and the test-path rules', () => {
+  const para = read('executing-plans/SKILL.md').split('\n').find((line) => line.startsWith('- **`tier-check`**')) ?? '';
+  for (const phrase of ['300 non-test lines', 'at most 100 non-test lines', '`**/test/**`', '`**/*.spec.*`', '`**Test paths:**`', 'a sensitive path always wins over a test path', 'a new test file alone stays light', '`--fix-round`']) {
+    assert.ok(para.includes(phrase), `the tier-check paragraph lacks "${phrase}"`);
+  }
+  for (const stale of ['at most 20', 'test lines count', 'a new test file is a raise']) assert.ok(!para.includes(stale), `the tier-check paragraph still says "${stale}"`);
+});
+
+test('the header template carries the optional Test paths line and Self-Review 7 checks a default-light heavy trigger', () => {
+  const header = block(section(PLANS, '## Plan Document Header'), '**Test paths:**');
+  assert.match(header, /optional/, 'the Test paths header field is not optional');
+  assert.match(header, /added to the default test paths/, 'the Test paths header field does not extend the default set');
+  const item = section(PLANS, '## Self-Review').find((line) => line.startsWith('**7. Tiers:**'));
+  assert.match(item, /left at the default `?light`? that matches a heavy trigger/, 'Self-Review item 7 does not check a default-light task against the heavy triggers');
 });
 
 test('complex-implementer needs a named reason', () => {
