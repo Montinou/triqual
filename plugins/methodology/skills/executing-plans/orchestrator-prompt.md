@@ -19,7 +19,7 @@ Subagent (roles:phase-orchestrator):
     ## What To Do
 
     Follow `methodology:executing-plans` for this phase only: its Task Loop for every task of phase [PHASE] in
-    dependency order, its review tiers, its fix loop and its Ledger vocabulary, through the three scripts
+    dependency order, its review tiers, its fix loop and its Ledger vocabulary (`references/ledger-vocabulary.md` of that skill), through the three scripts
     (`task-open`, `task-prep`, `task-close`) run from the main checkout. Read the plan's tasks of this phase, not the
     whole plan. The workspace ledger is [LEDGER_PATH]: trust it, and `git log`, over your own recollection; a task
     with a `Task <N>: complete` line is done and is never dispatched again, unless the resume note reopens it (see

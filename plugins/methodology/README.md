@@ -372,6 +372,12 @@ worktrees that land on the phase branch in plan order (parallel runs need store 
 orchestrator cannot be dispatched, or cannot dispatch (for example Codex at depth 1), the main session announces it and
 runs the phase loop itself with the same scripts.
 
+`executing-plans` keeps its core in `SKILL.md` and holds the long procedures it rarely needs in
+`skills/executing-plans/references/` (`setup`, `records`, `ledger-vocabulary`, `worktrees`, `final-review`, `example`,
+`parallel-tasks`), read when the step they serve comes up. A session can run the execution on a cheaper model: its
+judgment stops escalate to the session's stronger model, it compacts at about 250K tokens of context and it dispatches
+every phase to its orchestrator. The quality of a cheaper controller is unverified.
+
 When fence is installed, `executing-plans` detects it once (`command -v fence`, then `fence version` exits 0) and writes a
 `Fence: <version>` or `Fence: none` ledger line. Installing a skill is then the human's step, never an implementer's, and
 a call fence denies is a stop to report, never one to retry another way; that last rule holds whatever the ledger says.

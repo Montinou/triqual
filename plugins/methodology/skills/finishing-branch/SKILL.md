@@ -227,7 +227,7 @@ Read the status first, from the checkout where the stack lives, never from `MAIN
 
 ### After any merge: escapes
 
-After a plan merges, whenever a `fix:` commit or a red CI on trunk is traced to the plan, record it with `triqual role-eval record --plan <plan file> <json-file>`, an `escape` record (format and example in executing-plans, Records):
+After a plan merges, whenever a `fix:` commit or a red CI on trunk is traced to the plan, record it with `triqual role-eval record --plan <plan file> <json-file>`, an `escape` record (format and example in `executing-plans/references/records.md`):
 
 ```json
 { "v": 2, "at": "2026-10-21T09:15:00Z", "kind": "escape", "source": "red-ci", "ref": "128", "task": "T3" }
@@ -277,7 +277,7 @@ workspace the host owns), the session stays where it is.
 **If `GIT_DIR == GIT_COMMON`:** Normal repo, no worktree to clean up. Done.
 
 **If `WORKTREE_PATH` is under `.worktrees/` or `worktrees/`:**
-the Worktrees section of methodology:executing-plans created this worktree — we own cleanup:
+the Worktrees reference of methodology:executing-plans (`executing-plans/references/worktrees.md`) created this worktree — we own cleanup:
 
 ```bash
 git -C <MAIN_ROOT> worktree remove <WORKTREE_PATH>
