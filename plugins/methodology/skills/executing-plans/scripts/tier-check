@@ -9,13 +9,16 @@
 //
 // Rules, in order (never lowering):
 //   floor    the higher of --floor and the plan's declared tier; a tierless task with no --floor floors at standard.
-//   heavy    the diff touches a sensitive path, or its added + removed lines exceed 300.
+//   heavy    the diff touches a sensitive path, or its non-test added + removed lines exceed 300.
 //   standard (from light) the diff touches anything outside the light classes: Markdown outside the excluded classes
-//            and JSON whose only changed top-level key is `version`. Lockfiles are never light. Other files stay light
-//            while, together, they add + remove at most 20 lines, create no file and are not binary.
-//   fix round (--fix-round, floor light) any change outside the light classes raises to standard, whatever its size: the
-//            light code allowance covers a task's first build, never code added by a fix.
-// A rename touches both its old and new path; a pure rename adds 0 lines and is not a create.
+//            and JSON whose only changed top-level key is `version`. Lockfiles are never light. Other non-test files
+//            stay light while, together, they add + remove at most 100 lines, create no file and are not binary.
+//   fix round (--fix-round, floor light) any non-test change outside the light classes raises to standard, whatever its
+//            size: the light code allowance covers a task's first build, never code added by a fix.
+// A test change is one whose every path matches a test glob (DEFAULT_TEST plus the plan's `**Test paths:**`) and none a
+// sensitive one: its lines never count toward the heavy limit or the light allowance, and a new test file is not a
+// create. A sensitive path always wins over a test path. A rename touches both its old and new path; a pure rename adds
+// 0 lines and is not a create.
 //
 // Plain Node, node: built-ins only. Written so that it runs as ESM or CommonJS (dynamic imports only, no `require`, no
 // `import.meta`): the plugin may be installed with or without a package.json above it.
@@ -25,12 +28,13 @@ const rank = (tier) => TIERS.length - TIERS.indexOf(tier); // heavy 3 .. light 1
 const FALLBACK_TIER = 'standard';
 const EXIT_BAD_INPUT = 2;
 const HEAVY_LINE_LIMIT = 300;
-const LIGHT_CODE_LINE_LIMIT = 20;
+const LIGHT_CODE_LINE_LIMIT = 100;
 
 const DEFAULT_SENSITIVE = [
   '**/hooks/**', '**/setup/**', '**/*schema*', '**/migrations/**', '**/drizzle/**', '.github/**',
   'plugins/workflow-gate/**',
 ];
+const DEFAULT_TEST = ['**/test/**', '**/tests/**', '**/__tests__/**', '**/*.test.*', '**/*.spec.*'];
 const EXCLUDED_MARKDOWN = [
   '**/skills/**', '**/agents/**', '**/rules/**', '**/commands/**', '**/templates/**', '**/*-prompt.md', '**/CLAUDE*.md',
   '**/AGENTS*.md',
@@ -133,9 +137,10 @@ async function main(argv) {
   }
   let tasks;
   let sensitivePaths;
+  let testPaths;
   try {
     tasks = planLib.readTasks(planText);
-    sensitivePaths = planLib.readPhases(planText, basename(planFile).replace(/\.md$/, '')).sensitivePaths;
+    ({ sensitivePaths, testPaths } = planLib.readPhases(planText, basename(planFile).replace(/\.md$/, '')));
   } catch (e) {
     if (e instanceof planLib.PlanError) throw new BadInput(e.message);
     throw e;
@@ -215,6 +220,7 @@ async function main(argv) {
   }
   const sensitive = [...DEFAULT_SENSITIVE, ...sensitivePaths].map(matcherFor);
   const excluded = EXCLUDED_MARKDOWN.map(matcherFor);
+  const tests = [...DEFAULT_TEST, ...testPaths].map(matcherFor);
 
   const show = (rev, path) => {
     const r = git('show', `${rev}:${path}`);
@@ -236,7 +242,7 @@ async function main(argv) {
     }
   };
 
-  const verdict = decide({ floor, fixRound, changes, sensitive, excluded, versionOnly });
+  const verdict = decide({ floor, fixRound, changes, sensitive, excluded, versionOnly, tests });
   if (verdict.to === floor) return `ok ${floor}`;
   return `raise ${floor} ${verdict.to}: ${verdict.reason}: ${verdict.paths.join(', ')}`;
 }
@@ -287,16 +293,19 @@ const touched = (c) => (c.oldPath ? [c.oldPath, c.path] : [c.path]);
 const uniq = (list) => [...new Set(list)];
 
 // The pure decision: { to, reason, paths } with `to` the resulting tier (the floor when nothing raises it).
-function decide({ floor, fixRound, changes, sensitive, excluded, versionOnly }) {
+function decide({ floor, fixRound, changes, sensitive, excluded, versionOnly, tests = [] }) {
+  // A test change: every path it touches matches a test matcher and none a sensitive one.
+  const isTest = (c) => touched(c).every((p) => matchAny(tests, p)) && !touched(c).some((p) => matchAny(sensitive, p));
   // heavy
   const sensitivePaths = changes.flatMap(touched).filter((p) => matchAny(sensitive, p));
-  const total = changes.reduce((n, c) => n + c.added + c.removed, 0);
+  const counted = changes.filter((c) => !isTest(c));
+  const total = counted.reduce((n, c) => n + c.added + c.removed, 0);
   const heavy = [];
   const heavyPaths = [];
   if (sensitivePaths.length > 0) { heavy.push('sensitive path'); heavyPaths.push(...sensitivePaths); }
   if (total > HEAVY_LINE_LIMIT) {
     heavy.push(`${total} changed lines (over ${HEAVY_LINE_LIMIT})`);
-    heavyPaths.push(...changes.filter((c) => c.added + c.removed > 0).map((c) => c.path));
+    heavyPaths.push(...counted.filter((c) => c.added + c.removed > 0).map((c) => c.path));
   }
   const uncountable = changes.filter((c) => c.uncountable);
   if (uncountable.length > 0) { heavy.push('uncountable binary diff'); heavyPaths.push(...uncountable.map((c) => c.path)); }
@@ -321,6 +330,7 @@ function decide({ floor, fixRound, changes, sensitive, excluded, versionOnly }) 
     if (c.binary) { flag('binary change', [c.path]); continue; }
     if (paths.every(isMarkdown)) continue; // a light class
     if (versionOnly(c)) continue; // a light class
+    if (isTest(c)) continue; // tests are not counted: neither lines, nor a create, nor a fix round's added code
     code.push(c);
   }
   if (fixRound && code.length > 0) {

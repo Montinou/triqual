@@ -153,15 +153,19 @@ test('a Markdown file renamed into an excluded class raises', () => {
   });
 });
 
-test('a 15-line .mjs fix plus its cases in an existing test file stays light; 25 lines raises', () => {
+test('a small .mjs fix plus its cases in an existing test file stays light; its test lines never count', () => {
   const base = { 'src/a.mjs': lines(30), 'test/a.test.mjs': lines(30) };
   scenario(base, { 'src/a.mjs': lines(30) + lines(10, 'fix'), 'test/a.test.mjs': lines(30) + lines(5, 'case') }, [], (repo, head) => {
     assert.equal(run(repo, 1, head).out, 'ok light');
   });
-  scenario(base, { 'src/a.mjs': lines(30) + lines(15, 'fix'), 'test/a.test.mjs': lines(30) + lines(10, 'case') }, [], (repo, head) => {
+  // 100 src lines use the whole allowance; 60 more lines of test cases do not push it over
+  scenario(base, { 'src/a.mjs': lines(30) + lines(100, 'fix'), 'test/a.test.mjs': lines(30) + lines(60, 'case') }, [], (repo, head) => {
+    assert.equal(run(repo, 1, head).out, 'ok light');
+  });
+  scenario(base, { 'src/a.mjs': lines(30) + lines(101, 'fix'), 'test/a.test.mjs': lines(30) + lines(10, 'case') }, [], (repo, head) => {
     const r = run(repo, 1, head);
     assert.match(r.out, RAISE('light', 'standard', 'src/a.mjs'));
-    assert.match(r.out, /25/);
+    assert.match(r.out, /101 code lines \(over 100\)/);
   });
 });
 
@@ -191,28 +195,28 @@ test('--fix-round leaves other floors and heavy triggers alone, and rides along 
   });
 });
 
-test('the light code allowance counts added plus removed lines, up to 20 inclusive', () => {
+test('the light code allowance counts added plus removed lines, up to 100 inclusive', () => {
   scenario({ 'src/a.mjs': lines(30) }, { 'src/a.mjs': lines(30).replace(/^line 1\n/, '').replace(/^line 2\n/m, '') + lines(8, 'new') }, [], (repo, head) => {
     // 2 removed + 8 added = 10
     assert.equal(run(repo, 1, head).out, 'ok light');
   });
-  scenario({ 'src/a.mjs': lines(30) }, { 'src/a.mjs': lines(30) + lines(20, 'new') }, [], (repo, head) => {
+  scenario({ 'src/a.mjs': lines(30) }, { 'src/a.mjs': lines(30) + lines(100, 'new') }, [], (repo, head) => {
     assert.equal(run(repo, 1, head).out, 'ok light');
   });
-  scenario({ 'src/a.mjs': lines(30) }, { 'src/a.mjs': lines(30) + lines(21, 'new') }, [], (repo, head) => {
+  scenario({ 'src/a.mjs': lines(30) }, { 'src/a.mjs': lines(30) + lines(101, 'new') }, [], (repo, head) => {
     assert.match(run(repo, 1, head).out, RAISE('light', 'standard', 'src/a.mjs'));
   });
-  scenario({ 'src/a.mjs': lines(30) }, { 'src/a.mjs': lines(30).split('\n').slice(10).join('\n') + lines(11, 'new') }, [], (repo, head) => {
-    // 10 removed + 11 added = 21
+  scenario({ 'src/a.mjs': lines(30) }, { 'src/a.mjs': lines(30).split('\n').slice(10).join('\n') + lines(91, 'new') }, [], (repo, head) => {
+    // 10 removed + 91 added = 101
     assert.match(run(repo, 1, head).out, RAISE('light', 'standard', 'src/a.mjs'));
   });
 });
 
-test('a new test file raises even when tiny', () => {
-  scenario({ 'src/a.mjs': lines(3) }, { 'test/new.test.mjs': 'x\n' }, [], (repo, head) => {
+test('a new src file raises light to standard, even when tiny', () => {
+  scenario({ 'src/a.mjs': lines(3) }, { 'src/new.mjs': 'x\n' }, [], (repo, head) => {
     const r = run(repo, 1, head);
-    assert.match(r.out, RAISE('light', 'standard', 'test/new.test.mjs'));
-    assert.match(r.out, /creat/);
+    assert.match(r.out, RAISE('light', 'standard', 'src/new.mjs'));
+    assert.match(r.out, /creates a file/);
   });
 });
 
@@ -228,10 +232,10 @@ test('a pure rename of a .mjs stays light; a rename with edits counts its lines'
   scenario({ 'src/a.mjs': lines(40) }, {}, [['src/a.mjs', 'src/b.mjs']], (repo, head) => {
     assert.equal(run(repo, 1, head).out, 'ok light');
   });
-  scenario({ 'src/a.mjs': lines(40) }, { 'src/b.mjs': lines(40) + lines(25, 'new') }, [['src/a.mjs', 'src/b.mjs']], (repo, head) => {
+  scenario({ 'src/a.mjs': lines(200) }, { 'src/b.mjs': lines(200) + lines(125, 'new') }, [['src/a.mjs', 'src/b.mjs']], (repo, head) => {
     const r = run(repo, 1, head);
     assert.match(r.out, RAISE('light', 'standard', 'src/b.mjs'));
-    assert.match(r.out, /25 code lines/); // the edits are counted, not the rename
+    assert.match(r.out, /125 code lines/); // the edits are counted, not the rename
   });
 });
 
@@ -326,15 +330,15 @@ test('output never names a tier below the declared tier or the floor', () => {
 
 test('a version-only JSON change is a light class; any other key makes it code', () => {
   const pkg = (version, extra = {}) => JSON.stringify({ name: 'x', version, dependencies: { a: '1' }, ...extra }, null, 2) + '\n';
-  // 20 code lines already use the whole allowance; the version bump must not count against it.
-  scenario({ 'package.json': pkg('1.0.0'), 'src/a.mjs': lines(30) }, { 'package.json': pkg('1.0.1'), 'src/a.mjs': lines(30) + lines(20, 'new') }, [], (repo, head) => {
+  // 100 code lines already use the whole allowance; the version bump must not count against it.
+  scenario({ 'package.json': pkg('1.0.0'), 'src/a.mjs': lines(30) }, { 'package.json': pkg('1.0.1'), 'src/a.mjs': lines(30) + lines(100, 'new') }, [], (repo, head) => {
     assert.equal(run(repo, 1, head).out, 'ok light');
   });
   scenario({ 'package.json': pkg('1.0.0') }, { 'package.json': pkg('1.0.1') }, [], (repo, head) => {
     assert.equal(run(repo, 1, head).out, 'ok light');
   });
-  // version plus another key changed: it is code, counted by lines (2 + 4 here), so with 20 more code lines it raises
-  scenario({ 'package.json': pkg('1.0.0'), 'src/a.mjs': lines(30) }, { 'package.json': pkg('1.0.1', { dependencies: { a: '2', b: '3' } }), 'src/a.mjs': lines(30) + lines(20, 'new') }, [], (repo, head) => {
+  // version plus another key changed: it is code, counted by lines (2 + 4 here), so with 100 more code lines it raises
+  scenario({ 'package.json': pkg('1.0.0'), 'src/a.mjs': lines(30) }, { 'package.json': pkg('1.0.1', { dependencies: { a: '2', b: '3' } }), 'src/a.mjs': lines(30) + lines(100, 'new') }, [], (repo, head) => {
     assert.match(run(repo, 1, head).out, RAISE('light', 'standard', 'src/a.mjs'));
   });
 });
@@ -347,7 +351,7 @@ test('a binary change raises to standard', () => {
 });
 
 test('a deleted file counts its removed lines', () => {
-  scenario({ 'src/a.mjs': lines(25) }, { 'src/a.mjs': null }, [], (repo, head) => {
+  scenario({ 'src/a.mjs': lines(125) }, { 'src/a.mjs': null }, [], (repo, head) => {
     assert.match(run(repo, 1, head).out, RAISE('light', 'standard', 'src/a.mjs'));
   });
   scenario({ 'src/a.mjs': lines(5) }, { 'src/a.mjs': null }, [], (repo, head) => {
@@ -419,12 +423,12 @@ test('a JSON key reorder is code, even with a version bump; a reformat without a
   const exportsA = { '.': { import: './a.mjs', require: './a.cjs' } };
   const exportsB = { '.': { require: './a.cjs', import: './a.mjs' } };
   const pkg = (version, exports) => JSON.stringify({ name: 'x', version, exports }, null, 2) + '\n';
-  // the reorder is 2 + 2 lines of code; with 20 more code lines it is over the allowance
-  scenario({ 'package.json': pkg('1.0.0', exportsA), 'src/a.mjs': lines(30) }, { 'package.json': pkg('1.0.1', exportsB), 'src/a.mjs': lines(30) + lines(20, 'new') }, [], (repo, head) => {
+  // the reorder is 2 + 2 lines of code; with 100 more code lines it is over the allowance
+  scenario({ 'package.json': pkg('1.0.0', exportsA), 'src/a.mjs': lines(30) }, { 'package.json': pkg('1.0.1', exportsB), 'src/a.mjs': lines(30) + lines(100, 'new') }, [], (repo, head) => {
     assert.match(run(repo, 1, head).out, RAISE('light', 'standard', 'src/a.mjs'));
   });
-  // a whitespace-only reformat (no version change) over 20 lines is code, not a version bump
-  const wide = { name: 'x', version: '1.0.0', list: Array.from({ length: 12 }, (_, i) => `v${i}`) };
+  // a whitespace-only reformat (no version change) over 100 lines is code, not a version bump
+  const wide = { name: 'x', version: '1.0.0', list: Array.from({ length: 60 }, (_, i) => `v${i}`) };
   scenario({ 'package.json': JSON.stringify(wide, null, 2) + '\n' }, { 'package.json': JSON.stringify(wide, null, 4) + '\n' }, [], (repo, head) => {
     assert.match(run(repo, 1, head).out, RAISE('light', 'standard', 'package.json'));
   });
@@ -494,4 +498,87 @@ test('a created or deleted binary file is countable: the missing side is empty, 
   scenario({ 'img/a.png': bin }, { 'img/a.png': null }, [], (repo, head) => {
     assert.match(run(repo, 1, head).out, /^raise light standard: binary change: img\/a\.png$/);
   });
+});
+
+// ---- non-test lines (plan roles-calibration-and-lean-review, T2) ----
+
+test('test lines do not count toward the heavy limit', () => {
+  scenario({ 'src/a.mjs': lines(5), 'test/a.test.mjs': '' }, { 'src/a.mjs': lines(15), 'test/a.test.mjs': lines(400) }, [], (repo, head) => {
+    assert.equal(run(repo, 4, head).out, 'ok standard');
+  });
+});
+
+test('non-test lines over 300 still raise to heavy', () => {
+  scenario({ 'src/a.mjs': '' }, { 'src/a.mjs': lines(310) }, [], (repo, head) => {
+    assert.match(run(repo, 4, head).out, RAISE('standard', 'heavy', 'src/a.mjs'));
+  });
+});
+
+test('a new test file alone keeps a light task light', () => {
+  scenario({ 'src/a.mjs': lines(3) }, { 'src/b.test.mjs': lines(30) }, [], (repo, head) => {
+    assert.equal(run(repo, 1, head).out, 'ok light');
+  });
+});
+
+test('a new src file raises light to standard', () => {
+  scenario({ 'keep.txt': 'k\n' }, { 'src/new.mjs': lines(30) }, [], (repo, head) => {
+    const r = run(repo, 1, head);
+    assert.match(r.out, RAISE('light', 'standard', 'src/new.mjs'));
+    assert.match(r.out, /creates a file/);
+  });
+});
+
+test('light allows 100 src lines, raises at 101', () => {
+  scenario({ 'src/a.mjs': lines(30) }, { 'src/a.mjs': lines(30) + lines(60, 'new') }, [], (repo, head) => {
+    assert.equal(run(repo, 1, head).out, 'ok light');
+  });
+  scenario({ 'src/a.mjs': lines(30) }, { 'src/a.mjs': lines(30) + lines(120, 'new') }, [], (repo, head) => {
+    const r = run(repo, 1, head);
+    assert.match(r.out, RAISE('light', 'standard', 'src/a.mjs'));
+    assert.match(r.out, /over 100/);
+  });
+});
+
+test('a test file under a sensitive path raises to heavy', () => {
+  const path = 'plugins/x/hooks/a.test.mjs';
+  scenario({ 'keep.txt': 'k\n' }, { [path]: lines(5) }, [], (repo, head) => {
+    assert.match(run(repo, 1, head).out, RAISE('light', 'heavy', path));
+  });
+});
+
+test('a test-only fix round stays light', () => {
+  const base = { 'src/a.mjs': lines(30), 'test/a.test.mjs': lines(10) };
+  scenario(base, { 'test/a.test.mjs': lines(10) + lines(8, 'case') }, [], (repo, head) => {
+    assert.equal(run(repo, 1, head, '--fix-round').out, 'ok light');
+  });
+  scenario(base, { 'test/a.test.mjs': lines(10) + lines(8, 'case'), 'src/a.mjs': lines(30) + lines(2, 'fn') }, [], (repo, head) => {
+    assert.match(run(repo, 1, head, '--fix-round').out, RAISE('light', 'standard', 'src/a.mjs'));
+  });
+});
+
+test("the plan's **Test paths:** line adds test globs", () => {
+  const repo = makeRepo({ 'spec/a.js': '', 'src/a.mjs': lines(3) });
+  try {
+    writeFileSync(repo.plan, PLAN.replace('**Sensitive paths:**', '**Test paths:** `spec/**`\n\n**Sensitive paths:**'));
+    const head = repo.change({ 'spec/a.js': lines(400) });
+    assert.equal(run(repo, 4, head).out, 'ok standard');
+    // the same diff is heavy without the plan's line
+    writeFileSync(repo.plan, PLAN);
+    assert.match(run(repo, 4, head).out, RAISE('standard', 'heavy', 'spec/a.js'));
+  } finally {
+    repo.cleanup();
+  }
+});
+
+test('the default test globs cover test dirs and .test./.spec. files, and no other path', () => {
+  for (const path of ['test/a.mjs', 'pkg/tests/a.py', 'src/__tests__/a.js', 'src/a.test.ts', 'src/a.spec.js']) {
+    scenario({ 'keep.txt': 'k\n' }, { [path]: lines(400) }, [], (repo, head) => {
+      assert.equal(run(repo, 4, head).out, 'ok standard', path);
+    });
+  }
+  for (const path of ['src/contest/a.mjs', 'src/a.tests.mjs', 'src/latest.mjs']) {
+    scenario({ 'keep.txt': 'k\n' }, { [path]: lines(400) }, [], (repo, head) => {
+      assert.match(run(repo, 4, head).out, RAISE('standard', 'heavy', path), path);
+    });
+  }
 });
