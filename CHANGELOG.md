@@ -3,6 +3,11 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## progress-tracking 0.7.1
+
+- The run board opens on a project board when two or more repos are registered: a summary bar with four count chips and four urgency lanes (Needs you, Running, Up next, Done & quiet), one row per project; click a row to open its plan.
+- Update with `triqual sync --yes`, then `/reload-plugins`.
+
 ## methodology 1.4.2
 
 ### Changed
