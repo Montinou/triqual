@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 
 import { parsePlan } from '../../progress-tracking/lib/ledger.mjs';
 import { validateRecord } from '../cli/lib/role-eval.mjs';
+import { readSkillText } from './skill-text.mjs';
 
 const PLUGIN = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SKILLS = join(PLUGIN, 'skills');
@@ -36,10 +37,27 @@ const TASK_ROLE_TEMPLATES = new Set([`${EP}/implementer-prompt.md`]);
 
 const read = (path) => readFileSync(join(SKILLS, path), 'utf8');
 const flat = (text) => text.replace(/\s*\n\s*/g, ' ');
-const skill = () => read(`${EP}/SKILL.md`);
+const skill = () => readSkillText(join(SKILLS, EP));
 const ROLE_AGENTS = new Set(
   readdirSync(AGENTS).filter((n) => n.endsWith('.md')).map((n) => `roles:${n.slice(0, -3)}`),
 );
+
+test('skill() includes the references directory', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'skill-text-'));
+  try {
+    mkdirSync(join(dir, 'references'));
+    writeFileSync(join(dir, 'SKILL.md'), '# Skill\n\nmain text\n');
+    writeFileSync(join(dir, 'references', 'x.md'), '## Moved heading\n\nreference text\n');
+    writeFileSync(join(dir, 'references', 'ignored.txt'), 'not markdown\n');
+    const text = readSkillText(dir);
+    assert.ok(text.startsWith('# Skill'), 'SKILL.md comes first');
+    assert.ok(section(text, '## Moved heading').includes('reference text'), 'the reference heading is found');
+    assert.ok(!text.includes('not markdown'), 'only *.md files are read');
+    assert.ok(readSkillText(join(SKILLS, EP)).includes('## '), 'the real skill still reads');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 // The text of the section that starts at the heading line `heading` and runs to the next heading of the same or a
 // higher level.

@@ -5,12 +5,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readSkillText } from './skill-text.mjs';
 import { readPhases, readTasks } from '../skills/executing-plans/scripts/lib/plan.mjs';
 
 const TEST = dirname(fileURLToPath(import.meta.url));
 const SKILLS = join(TEST, '..', 'skills');
 
 const read = (path) => readFileSync(join(SKILLS, path), 'utf8');
+const executingPlans = () => readSkillText(join(SKILLS, 'executing-plans'));
 
 // The trimmed lines of a file from one heading (included) to the next heading of the same or a higher level.
 // Fence-aware: a heading-looking line inside a code fence neither starts nor ends a section.
@@ -381,14 +383,14 @@ test('## Task Tiers: heavy is security, live state, a parsed contract or complex
   for (const phrase of RUBRIC_PHRASES) assert.ok(tiers.includes(phrase), `## Task Tiers lacks "${phrase}"`);
   assert.ok(!tiers.includes('changes spanning more than one plugin or system'), '## Task Tiers still makes a multi-plugin change heavy');
   assert.ok(!tiers.includes('a public interface others depend on'), '## Task Tiers still makes any public interface heavy');
-  const rubric = readFileSync(join(SKILLS, 'executing-plans/SKILL.md'), 'utf8').split('\n').find((line) => line.startsWith('- **The tier rubric**'));
+  const rubric = executingPlans().split('\n').find((line) => line.startsWith('- **The tier rubric**'));
   assert.ok(rubric, 'executing-plans has no tier rubric line');
   for (const phrase of [...RUBRIC_PHRASES, 'gate/enforcement hooks']) assert.ok(rubric.includes(phrase), `the executing-plans rubric lacks "${phrase}"`);
   assert.ok(!rubric.includes('changes spanning more than one plugin or system'), 'the executing-plans rubric still makes a multi-plugin change heavy');
 });
 
 // Light by default (spec: lean tiers): both rubrics say it in the same words, with the T2 numbers and test-path rules.
-const executingRubric = () => readFileSync(join(SKILLS, 'executing-plans/SKILL.md'), 'utf8').split('\n').find((line) => line.startsWith('- **The tier rubric**')) ?? '';
+const executingRubric = () => executingPlans().split('\n').find((line) => line.startsWith('- **The tier rubric**')) ?? '';
 test('both rubrics name light as the default and complex-implementer as heavy', () => {
   const texts = { 'writing-plans': section(PLANS, '## Task Tiers').join('\n'), 'executing-plans': executingRubric() };
   for (const [name, text] of Object.entries(texts)) {
@@ -401,7 +403,7 @@ test('both rubrics name light as the default and complex-implementer as heavy', 
 });
 
 test('the tier-check rules paragraph states the non-test numbers and the test-path rules', () => {
-  const para = read('executing-plans/SKILL.md').split('\n').find((line) => line.startsWith('- **`tier-check`**')) ?? '';
+  const para = executingPlans().split('\n').find((line) => line.startsWith('- **`tier-check`**')) ?? '';
   for (const phrase of ['300 non-test lines', 'at most 100 non-test lines', '`**/test/**`', '`**/*.spec.*`', '`**Test paths:**`', 'a sensitive path always wins over a test path', 'a new test file alone stays light', '`--fix-round`']) {
     assert.ok(para.includes(phrase), `the tier-check paragraph lacks "${phrase}"`);
   }
