@@ -633,7 +633,7 @@ test('countCandidates counts the distinct ids of one category', async () => {
 
 test('codexRoleModel names the Codex routing model of a role, else null', () => {
   assert.equal(codexRoleModel('hunter'), 'gpt-6-luna');
-  assert.equal(codexRoleModel('spec-reviewer'), 'gpt-6.1-sol');
+  assert.equal(codexRoleModel('spec-reviewer'), 'gpt-6.1-terra');
   assert.equal(codexRoleModel('nobody'), null);
   assert.equal(codexRoleModel('constructor'), null);
 });

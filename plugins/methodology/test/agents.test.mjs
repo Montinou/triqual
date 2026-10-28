@@ -88,7 +88,7 @@ test('parses the nine shipped roles', () => {
   const roles = shippedRoles();
   assert.deepEqual(roles.map((role) => role.name), ROLE_NAMES);
   const byName = Object.fromEntries(roles.map((role) => [role.name, role]));
-  assert.equal(byName['final-adversarial-reviewer'].effort, 'high');
+  assert.equal(byName['final-adversarial-reviewer'].effort, 'low');
   assert.equal(byName['brief-writer'].effort, 'medium');
   assert.deepEqual(byName['safety-reviewer'].disallowedTools, ['Agent', 'Edit', 'Write', 'NotebookEdit']);
   assert.deepEqual(byName['tdd-implementer'].disallowedTools, ['Agent']);
@@ -146,12 +146,12 @@ test('codexAgentToml assigns a model and effort by task difficulty for each ship
     'brief-writer': { model: 'gpt-6-luna', effort: 'medium' },
     'safety-reviewer': { model: 'gpt-6-luna', effort: 'medium' },
     hunter: { model: 'gpt-6-luna', effort: 'medium' },
-    'tdd-implementer': { model: 'gpt-6.1-sol', effort: 'low' },
-    'review-fixer': { model: 'gpt-6.1-sol', effort: 'low' },
-    'spec-reviewer': { model: 'gpt-6.1-sol', effort: 'high' },
-    'complex-implementer': { model: 'gpt-6.1-sol', effort: 'high' },
-    'final-adversarial-reviewer': { model: 'gpt-6-astra', effort: 'medium' },
-    'phase-orchestrator': { model: 'gpt-6.1-sol', effort: 'medium' },
+    'tdd-implementer': { model: 'gpt-6.1-terra', effort: 'low' },
+    'review-fixer': { model: 'gpt-6.1-terra', effort: 'low' },
+    'spec-reviewer': { model: 'gpt-6.1-terra', effort: 'high' },
+    'complex-implementer': { model: 'gpt-6.1-terra', effort: 'high' },
+    'final-adversarial-reviewer': { model: 'gpt-6-astra', effort: 'low' },
+    'phase-orchestrator': { model: 'gpt-6.1-terra', effort: 'medium' },
   };
   assert.deepEqual(shippedRoles().map((role) => role.name).sort(), Object.keys(expected).sort());
   for (const role of shippedRoles()) {
@@ -188,9 +188,9 @@ test('Codex routing stays independent of Claude model and effort changes', () =>
   }
   // Claude's frontmatter says xhigh here, so a Codex effort of low or high can only come from the routing table.
   for (const [name, model, effort] of [
-    ['tdd-implementer', 'gpt-6.1-sol', 'low'],
-    ['review-fixer', 'gpt-6.1-sol', 'low'],
-    ['complex-implementer', 'gpt-6.1-sol', 'high'],
+    ['tdd-implementer', 'gpt-6.1-terra', 'low'],
+    ['review-fixer', 'gpt-6.1-terra', 'low'],
+    ['complex-implementer', 'gpt-6.1-terra', 'high'],
   ]) {
     const role = parseRole(ROLE_TEXT(`name: ${name}\ndescription: d\nmodel: haiku\neffort: xhigh`));
     const keys = readToml(codexAgentToml(role, { rolesVersion: '1', xhigh: true, readOnly: false }));
@@ -218,8 +218,8 @@ test('codexAgentToml: effort is the role\'s, and xhigh becomes high when xhigh i
   const effortOf = (role, xhigh) =>
     readToml(codexAgentToml(role, { rolesVersion: '1', xhigh, readOnly: false })).model_reasoning_effort;
   const byName = Object.fromEntries(shippedRoles().map((role) => [role.name, role]));
-  assert.equal(effortOf(byName['final-adversarial-reviewer'], true), 'medium');
-  assert.equal(effortOf(byName['final-adversarial-reviewer'], false), 'medium');
+  assert.equal(effortOf(byName['final-adversarial-reviewer'], true), 'low');
+  assert.equal(effortOf(byName['final-adversarial-reviewer'], false), 'low');
   // No shipped role routes to xhigh now; a role outside the routing table keeps its frontmatter effort, so the
   // downgrade is pinned on one.
   const unrouted = parseRole(ROLE_TEXT('name: unrouted-role\ndescription: d\neffort: xhigh'));
