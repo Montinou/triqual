@@ -3,6 +3,14 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## methodology 1.5.0
+
+- New skill `auditing-performance`: audits the cost, speed and review yield of the plugins and roles from the machine's own records, with a collector script, and feeds the gaps back into the skill.
+- Light is the default tier. `tier-check` ignores test lines when it counts a task's changed lines, and the light allowance is 100 lines.
+- `tier-check` reads an optional `**Test paths:**` line in the plan header, so a repository's own test locations count as tests.
+- `executing-plans` moves its reference sections (setup, records, ledger vocabulary, parallel tasks, worktrees, final review, example) from `SKILL.md` to `references/*.md`, and gains controller guidance, "Running the session cheaply".
+- Update the plugin and run `triqual sync --yes`, then reload plugins or start a new session.
+
 ## roles 0.4.2 / methodology 1.4.3
 
 - Lower the final adversarial review to Opus at low effort, with Astra at low effort in Codex.
