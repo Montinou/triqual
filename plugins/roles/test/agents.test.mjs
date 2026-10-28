@@ -14,7 +14,7 @@ const ROLES = {
   'safety-reviewer': { model: 'sonnet', effort: 'medium', disallowedTools: 'Agent, Edit, Write, NotebookEdit' },
   'spec-reviewer': { model: 'sonnet', effort: 'medium', disallowedTools: 'Agent, Edit, Write, NotebookEdit' },
   'review-fixer': { model: 'sonnet', effort: 'high', disallowedTools: 'Agent' },
-  'final-adversarial-reviewer': { model: 'opus', effort: 'high', disallowedTools: 'Agent, Edit, Write, NotebookEdit' },
+  'final-adversarial-reviewer': { model: 'opus', effort: 'low', disallowedTools: 'Agent, Edit, Write, NotebookEdit' },
   hunter: { model: 'claude-haiku-5-5', effort: 'medium', disallowedTools: 'Agent, Edit, NotebookEdit' },
   'phase-orchestrator': { model: 'sonnet', effort: 'medium', disallowedTools: 'Edit, NotebookEdit' },
 };

@@ -991,7 +991,7 @@ test('the harness references name the one orchestrator and keep their routing st
   assert.ok(codex.includes('that `executing-plans` uses.'), 'codex-tools.md does not name executing-plans for multi-agent support');
   assert.doesNotMatch(codex, /dispatching-parallel-agents/, 'codex-tools.md still names the removed dispatching-parallel-agents');
   assert.doesNotMatch(codex, /Model Selection/, 'codex-tools.md still points at Model Selection');
-  assert.ok(codex.includes('the phase orchestrator uses `gpt-6.1-sol` / `medium`'), 'codex-tools.md lost the phase orchestrator model group');
+  assert.ok(codex.includes('the phase orchestrator uses `gpt-6.1-terra` / `medium`'), 'codex-tools.md lost the phase orchestrator model group');
   assert.match(codex, /`\[agents\] max_depth` of 2 or more[^]*`triqual sync` raises it[^]*`triqual doctor` fails/, 'codex-tools.md lost the max_depth requirement');
   // Codex: a role dispatch is spawn_agent with agent_type, and a methodology skill name drops its prefix.
   assert.match(codex, /a role dispatch `roles:<name>` is `spawn_agent` with `agent_type: "<name>"`/);
@@ -2235,7 +2235,7 @@ test('the 1.4.0 CHANGELOG entry and the orchestrator prompt carry the parallel r
   for (const line of ['Parallel tasks', 'At most 3 implementers', '`task-open --worktree`', 'plan order', 'landing conflict', 'TRIQUAL_LANDING_TEST_TIMEOUT_MS']) {
     assert.ok(entry.includes(line), `the 1.4.0 CHANGELOG entry lacks: ${line}`);
   }
-  assert.equal(JSON.parse(readFileSync(join(PLUGIN, '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.4.2');
+  assert.equal(JSON.parse(readFileSync(join(PLUGIN, '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.4.3');
   assert.ok(PROMPT().includes('## Parallel Tasks'), 'the orchestrator prompt has no Parallel Tasks section');
 });
 

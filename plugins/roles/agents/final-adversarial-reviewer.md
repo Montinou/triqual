@@ -2,7 +2,7 @@
 name: final-adversarial-reviewer
 description: "Single high-value adversarial review of a whole branch before merge: tries to break the implementation against the spec, hunts correctness and security defects across task boundaries, triages deferred and parked findings, and states what must be fixed before merge. Use once per branch, after all tasks are complete."
 model: opus
-effort: high
+effort: low
 disallowedTools: Agent, Edit, Write, NotebookEdit
 ---
 

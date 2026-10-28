@@ -68,10 +68,10 @@ Skills name roles and skills in their Claude Code form. In Codex:
   role's description and instructions, plus Codex-specific model and
   reasoning effort. Hunters, briefs and the safety gate use
   `gpt-6-luna` / `medium`; implementation and review fixes use
-  `gpt-6.1-sol` / `low`; spec review and the
-  complex implementer use `gpt-6.1-sol` / `high`; the phase orchestrator
-  uses `gpt-6.1-sol` / `medium`; the final adversarial
-  review uses `gpt-6-astra` / `medium`. These settings are independent of Claude's
+  `gpt-6.1-terra` / `low`; spec review and the
+  complex implementer use `gpt-6.1-terra` / `high`; the phase orchestrator
+  uses `gpt-6.1-terra` / `medium`; the final adversarial
+  review uses `gpt-6-astra` / `low`. These settings are independent of Claude's
   role models and efforts. The spawn sets neither `model` nor
   `reasoning_effort`: the custom agent file selects both.
 - **Nested dispatch:** the phase orchestrator spawns the task roles one level

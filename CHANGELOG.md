@@ -3,6 +3,12 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## roles 0.4.2 / methodology 1.4.3
+
+- Lower the final adversarial review to Opus at low effort, with Astra at low effort in Codex.
+- Prefer Terra 6.1 for Codex implementation, review fixes, spec review, complex implementation and phase orchestration; preserve each role's existing effort level.
+- Update the plugins and run `triqual sync --yes`, then reload plugins or start a new session to load the new role defaults.
+
 ## progress-tracking 0.7.1
 
 - The run board opens on a project board when two or more repos are registered: a summary bar with four count chips and four urgency lanes (Needs you, Running, Up next, Done & quiet), one row per project; click a row to open its plan.

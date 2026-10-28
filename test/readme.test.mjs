@@ -40,10 +40,10 @@ test('the Codex routing table names every role once, with its model and effort',
   const routing = README.split('\n').map((line) => line.trim()).filter((line) => /^\| `[a-z-]+`.*\| `gpt-/.test(line));
   assert.deepEqual(routing, [
     '| `hunter`, `brief-writer`, `safety-reviewer` | `gpt-6-luna` | `medium` |',
-    '| `tdd-implementer`, `review-fixer` | `gpt-6.1-sol` | `low` |',
-    '| `spec-reviewer`, `complex-implementer` | `gpt-6.1-sol` | `high` |',
-    '| `final-adversarial-reviewer` | `gpt-6-astra` | `medium` |',
-    '| `phase-orchestrator` | `gpt-6.1-sol` | `medium` |',
+    '| `tdd-implementer`, `review-fixer` | `gpt-6.1-terra` | `low` |',
+    '| `spec-reviewer`, `complex-implementer` | `gpt-6.1-terra` | `high` |',
+    '| `final-adversarial-reviewer` | `gpt-6-astra` | `low` |',
+    '| `phase-orchestrator` | `gpt-6.1-terra` | `medium` |',
   ]);
   const named = routing.flatMap((line) => [...line.split('|')[1].matchAll(/`([a-z-]+)`/g)].map((m) => m[1])).sort();
   assert.deepEqual(named, AGENTS);
