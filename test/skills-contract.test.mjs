@@ -121,7 +121,10 @@ const linkProblems = ({ skills }) => {
       const entry = `${path}:${lineNo}: ${target}`;
       if (examples.includes(target)) return;
       const resolved = posix.normalize(posix.join(base, decodeURI(target)));
-      if (!existsSync(join(skills, resolved)) && !bad.includes(entry)) bad.push(entry);
+      // A file under `<skill>/references/` carries section text that was written for SKILL.md, so a target in it also
+      // resolves against its skill's root, like a backticked path (see backtickPathProblems).
+      const fromRoot = /^[^/]+\/references\//.test(path) ? posix.normalize(posix.join(path.split('/')[0], decodeURI(target))) : null;
+      if (!existsSync(join(skills, resolved)) && !(fromRoot && existsSync(join(skills, fromRoot))) && !bad.includes(entry)) bad.push(entry);
     };
     // Relative script paths and `../` paths, in any file, in or out of backticks.
     text.split('\n').forEach((line, i) => {
