@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readTasks } from '../skills/executing-plans/scripts/lib/plan.mjs';
+import { readPhases, readTasks } from '../skills/executing-plans/scripts/lib/plan.mjs';
 
 const TEST = dirname(fileURLToPath(import.meta.url));
 const SKILLS = join(TEST, '..', 'skills');
@@ -428,4 +428,14 @@ test('the plan audit flags over-tiering and unjustified complex-implementer', ()
   assert.ok(audit.includes('tiered higher than'), 'the Plan Audit does not flag a task tiered higher than its content justifies');
   assert.match(audit, /complex-implementer[^.]*reason/, 'the Plan Audit does not flag a complex-implementer task without a matching reason');
   assert.match(audit, /both tier checks[^.]*dispatch[^.]*auditor/, 'the Plan Audit does not say the dispatch to the auditor states both tier checks');
+});
+
+test('reads the Test paths header line', () => {
+  const plan = '# X Implementation Plan\n\n**Branch prefix:** x\n**Test paths:** spec/**, e2e/**\n\n## Phase 1: A\n\n**PR title:** t\n**Branch:** x/01-a\n\n### Task 1: A\n';
+  assert.deepEqual(readPhases(plan, 'x').testPaths, ['spec/**', 'e2e/**']);
+});
+
+test('testPaths is empty without the line', () => {
+  const plan = '# X Implementation Plan\n\n**Branch prefix:** x\n\n## Phase 1: A\n\n**PR title:** t\n**Branch:** x/01-a\n\n### Task 1: A\n';
+  assert.deepEqual(readPhases(plan, 'x').testPaths, []);
 });
