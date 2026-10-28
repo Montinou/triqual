@@ -498,7 +498,7 @@ test('the final review is a seams review with no hunters', () => {
   // the same two-round fix rule as the phase review, then submit --open
   const fix = final.slice(final.indexOf('**Fix rounds.**'), final.indexOf('**Submit.**'));
   assert.ok(fix.length > 0, 'the seams review has no Fix rounds step before Submit');
-  for (const line of ['at most two rounds of `roles:review-fixer`', 'a plain commit', '`fix: address final review findings`', 'never a `--fixup`', 'a scoped re-review', '[re-review-prompt.md](re-review-prompt.md)', '`roles:spec-reviewer`', '`roles:final-adversarial-reviewer` when a finding was Critical']) {
+  for (const line of ['at most two rounds of `roles:review-fixer`', 'a plain commit', '`fix: address final review findings`', 'never a `--fixup`', 'a scoped re-review', '[re-review-prompt.md](../re-review-prompt.md)', '`roles:spec-reviewer`', '`roles:final-adversarial-reviewer` when a finding was Critical']) {
     assert.ok(fix.includes(line), `the seams fix rule lacks: ${line}`);
   }
   assert.doesNotMatch(fix, /no second fix wave|exactly one scoped re-review/, 'the seams review kept the one-wave fix rule');

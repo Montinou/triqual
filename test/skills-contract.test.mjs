@@ -117,19 +117,20 @@ const linkProblems = ({ skills }) => {
     const text = read(skills, path);
     const base = posix.dirname(path);
     const examples = EXAMPLE_PATHS[path] ?? [];
-    const check = (lineNo, target) => {
+    const check = (lineNo, target, rooted = false) => {
       const entry = `${path}:${lineNo}: ${target}`;
       if (examples.includes(target)) return;
       const resolved = posix.normalize(posix.join(base, decodeURI(target)));
-      // A file under `<skill>/references/` carries section text that was written for SKILL.md, so a target in it also
-      // resolves against its skill's root, like a backticked path (see backtickPathProblems).
-      const fromRoot = /^[^/]+\/references\//.test(path) ? posix.normalize(posix.join(path.split('/')[0], decodeURI(target))) : null;
+      // A file under `<skill>/references/` carries section text that was written for SKILL.md, so a script path in it
+      // also resolves against its skill's root, like a backticked path (see backtickPathProblems). A markdown link is
+      // read relative to the file, so it never takes this fallback.
+      const fromRoot = rooted && /^[^/]+\/references\//.test(path) ? posix.normalize(posix.join(path.split('/')[0], decodeURI(target))) : null;
       if (!existsSync(join(skills, resolved)) && !(fromRoot && existsSync(join(skills, fromRoot))) && !bad.includes(entry)) bad.push(entry);
     };
     // Relative script paths and `../` paths, in any file, in or out of backticks.
     text.split('\n').forEach((line, i) => {
       for (const m of line.matchAll(/(?<![\w./-])(?:\.\.\/[\w./-]*|(?:[\w-]+\/)*scripts\/[\w.-]+)/g)) {
-        check(i + 1, m[0].replace(/(?<!\.)\.$/, ''));
+        check(i + 1, m[0].replace(/(?<!\.)\.$/, ''), true);
       }
     });
     if (!path.endsWith('.md')) continue;

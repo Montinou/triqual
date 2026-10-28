@@ -13,7 +13,9 @@ const SKILL = join(EP, 'SKILL.md');
 const MAX_BYTES = 87040;
 
 // name, the heading the section began with in SKILL.md, sha256 of the section text (heading to the line before the
-// next heading of the same or a higher level, trailing blank lines dropped, one final newline).
+// next heading of the same or a higher level, trailing blank lines dropped, one final newline). The only edits since
+// the move are link targets rewritten from the skill's root to the reference's own directory (`](../x.md)`,
+// `](../SKILL.md#a)`), which `original` reverses before hashing.
 const REFERENCES = [
   ['setup', '## Setup', '1b99234fecba023f0dd0da96d207e8cf8d946f47b37107a33b879cc2194ce7bb'],
   ['records', '## Records', '27382c704d733ccd824c080e81e2ace5ea4f9c701c250a2b4f03914f670ef785'],
@@ -25,6 +27,7 @@ const REFERENCES = [
 ];
 
 const sha = (text) => createHash('sha256').update(text).digest('hex');
+const original = (text) => text.replace(/\]\(\.\.\/SKILL\.md#/g, '](#').replace(/\]\(\.\.\//g, '](');
 const skill = () => readFileSync(SKILL, 'utf8');
 const ref = (name) => readFileSync(join(EP, 'references', `${name}.md`), 'utf8');
 
@@ -48,7 +51,7 @@ for (const [name, heading, hash] of REFERENCES) {
   test(`references/${name}.md is exactly the original section`, () => {
     const text = ref(name);
     assert.ok(text.startsWith(`${heading}\n`), `${name}.md starts with ${heading}`);
-    assert.equal(sha(text), hash);
+    assert.equal(sha(original(text)), hash);
   });
 
   test(`SKILL.md no longer holds the ${name} section and points at its reference`, () => {
@@ -72,4 +75,26 @@ test('the final-review pointer triggers on the last phase being submitted, not o
   assert.ok(m, 'no Read pointer for final-review');
   assert.doesNotMatch(m[1], /seams/i, `the trigger makes the seams review a precondition: ${m[1]}`);
   assert.match(m[1], /last phase is submitted/);
+});
+
+// The rules a controller needs after a compaction live in references/setup.md, so the pointers that fire on a resume
+// and at the Build step name it.
+test('the resume pointers name references/setup.md', () => {
+  const text = skill();
+  assert.match(text, /Read references\/setup\.md when a plan's execution starts[^.\n]*resumes/, 'the Setup pointer does not cover a resume');
+  assert.match(text, /references\/setup\.md \(Workspace and ledger\) when you resume a plan from its ledger/, 'the ledger pointer does not name setup.md');
+});
+
+test('the Build step names references/setup.md for the fence form of the Task Skills section', () => {
+  assert.match(skill(), /the Task Skills section in its fence form when fence is detected \(after the printout in Fence, `references\/setup\.md`\)/);
+});
+
+test('SKILL.md has no pointer to a section it no longer holds', () => {
+  assert.doesNotMatch(skill(), /\(see Records\)/);
+});
+
+test('the references link the prompt templates relative to references/', () => {
+  for (const name of ['setup', 'final-review']) {
+    assert.doesNotMatch(ref(name), /\]\((?!\.\.\/|#|https?:)[\w-]+-prompt\.md\)/, `${name}.md links a prompt template without ../`);
+  }
 });

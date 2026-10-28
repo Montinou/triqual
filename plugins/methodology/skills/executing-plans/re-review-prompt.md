@@ -18,8 +18,8 @@ findings. When `tier-check` raised the task in this fix round, the re-review
 is the raised tier's full review instead (see SKILL.md, The fix loop). The
 phase review's fix rounds (8. Review the phase) and the final review's
 fix rounds use the same prompt, dispatched to `roles:spec-reviewer`, or to
-`roles:final-adversarial-reviewer` when a finding was Critical (see SKILL.md,
-Final Review). Pass no model: each role's definition pins it.
+`roles:final-adversarial-reviewer` when a finding was Critical (see
+`references/final-review.md`). Pass no model: each role's definition pins it.
 
 ```
 Subagent (roles:spec-reviewer):
