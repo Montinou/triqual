@@ -878,3 +878,123 @@ test('store done --repo is anchored to the main worktree root: a linked worktree
     assert.deepEqual(ledgerOf(s).tasks[0].commits, [`ext:../other@${other.sha}`]);
   });
 });
+
+// ---- reconcile on the store ----
+
+const RECONCILE_PLAN = `# Example plan
+
+### Task 1: Alpha
+**Files:**
+- Create: \`src/alpha.txt\`
+- [ ] **Step 3: Commit** \`feat: alpha\`
+
+### Task 2: Beta
+**Files:**
+- Modify: \`README.md\`
+
+### Task 3: Gamma
+**Depends on:** T1
+`;
+
+// A store repo with the reconcile plan registered; `commits` makes the T1 commit in git. Returns its full sha.
+function reconcileStore(s) {
+  s.plan(RECONCILE_PLAN);
+  ok(s.run(['init', join(s.plansDir, `${NAME}.md`)]));
+  mkdirSync(join(s.repo, 'src'));
+  writeFileSync(join(s.repo, 'src', 'alpha.txt'), 'alpha\n');
+  s.git('add', 'src/alpha.txt');
+  s.git('commit', '-qm', 'feat: alpha');
+  return s.git('rev-parse', 'HEAD');
+}
+
+// A committed progress entry for `stage` stamped with `commit`, written straight into the store.
+function addCommittedEntry(s, stage, commit) {
+  s.inStore((store) => {
+    const repoId = store.get('SELECT id FROM repos').id;
+    store.addEntry({ repoId, gitDir: join(s.repo, '.git'), branch: 'main' },
+      { title: 't', stage_task: stage, done: 'd', files: 'f', verification: 'v', next: 'n' }, { state: 'committed', commit });
+  });
+}
+
+test('store reconcile report mode leaves the database bytes, its WAL, the backups and git untouched', () => {
+  withRepo('store', (s) => {
+    const sha = reconcileStore(s);
+    const db = join(s.dataDir, 'tracking.db');
+    // A connection held open keeps the WAL file alive, so a write by the report would show in tracking.db-wal.
+    const holder = new DatabaseSync(db);
+    holder.exec('PRAGMA busy_timeout = 5000');
+    holder.prepare('SELECT count(*) FROM plans').get();
+    try {
+      const bytes = () => [db, `${db}-wal`].map((f) => (existsSync(f) ? readFileSync(f) : null));
+      const backups = () => readdirSync(join(s.dataDir, 'backups')).sort();
+      const before = [bytes(), backups(), s.gitListing()];
+      assert.notEqual(before[0][1], null, 'the held connection keeps a WAL file');
+      const r = ok(s.run(['reconcile']));
+      assert.match(r.stdout, new RegExp(`^T1\\s+pending\\s+done\\s+high\\s+${sha.slice(0, 7)}\\s`, 'm'));
+      assert.match(r.stdout, /3 tasks: 1 high, 1 medium, 1 low\n/);
+      const json = JSON.parse(ok(s.run(['reconcile', '--json'])).stdout);
+      assert.deepEqual(json.map((x) => [x.id, x.confidence]), [['T1', 'high'], ['T2', 'medium'], ['T3', 'low']]);
+      const after = [bytes(), backups(), s.gitListing()];
+      assert.ok(after[0][0].equals(before[0][0]), 'the database is byte-identical');
+      assert.ok(after[0][1].equals(before[0][1]), 'the WAL is byte-identical');
+      assert.deepEqual(after.slice(1), before.slice(1));
+      // The check can fail: --apply moves the database or its WAL.
+      ok(s.run(['reconcile', '--apply']));
+      assert.ok(!bytes()[0].equals(before[0][0]) || !bytes()[1].equals(before[0][1]), 'a write is visible in tracking.db or its WAL');
+    } finally {
+      holder.close();
+    }
+  });
+});
+
+test('store reconcile --apply marks the high task done with its sha, leaves the rest, and a rerun applies nothing', () => {
+  withRepo('store', (s) => {
+    const sha = reconcileStore(s);
+    const head = s.git('rev-parse', 'HEAD');
+    const r = ok(s.run(['reconcile', '--apply']));
+    assert.match(r.stdout, new RegExp(`applied T1 -> done \\(${sha.slice(0, 7)}\\)\\n`));
+    assert.match(r.stdout, /applied 1, skipped 0, left 2\n/);
+    const t = Object.fromEntries(ledgerOf(s).tasks.map((x) => [x.id, x]));
+    assert.deepEqual([t.T1.status, t.T1.commits], ['done', [sha]]);
+    assert.deepEqual([t.T2.status, t.T3.status], ['pending', 'pending']);
+    assert.equal(s.git('rev-parse', 'HEAD'), head);
+    const again = ok(s.run(['reconcile', '--apply']));
+    assert.match(again.stdout, /applied 0, skipped 0, left 2\n/);
+    assert.deepEqual(ledgerOf(s).tasks.map((x) => x.status), ['done', 'pending', 'pending']);
+  });
+});
+
+test('store reconcile uses a progress entry with a resolvable commit as high evidence and ignores one whose commit does not resolve', () => {
+  withRepo('store', (s) => {
+    reconcileStore(s);
+    const head = s.git('rev-parse', 'HEAD');
+    addCommittedEntry(s, 'Plan example · T2', head);
+    addCommittedEntry(s, 'Plan example · T3', '0'.repeat(40));
+    const t = Object.fromEntries(JSON.parse(ok(s.run(['reconcile', '--json'])).stdout).map((x) => [x.id, x]));
+    assert.deepEqual([t.T2.confidence, t.T2.commit], ['high', head]);
+    assert.match(t.T2.why, /progress entry/);
+    assert.equal(t.T3.confidence, 'low', 'an unresolvable entry commit is no evidence');
+    ok(s.run(['reconcile', '--apply']));
+    assert.deepEqual(ledgerOf(s).tasks.map((x) => [x.id, x.status]), [['T1', 'done'], ['T2', 'done'], ['T3', 'pending']]);
+  });
+});
+
+test('store reconcile --apply reports a failing transition and applies the rest', () => {
+  withRepo('store', (s) => {
+    reconcileStore(s);
+    addCommittedEntry(s, 'Plan example · T2', s.git('rev-parse', 'HEAD'));
+    ok(s.run(['block', 'T1', 'waiting']));
+    const r = ok(s.run(['reconcile', '--apply']));
+    assert.match(r.stdout, /skipped T1: T1 is blocked; cannot done\n/);
+    assert.match(r.stdout, /applied T2 -> done /);
+    assert.deepEqual(ledgerOf(s).tasks.map((x) => x.status), ['blocked', 'done', 'pending']);
+  });
+});
+
+test('store reconcile takes the plan from --plan and refuses an unknown one', () => {
+  withRepo('store', (s) => {
+    reconcileStore(s);
+    ok(s.run(['reconcile', '--plan', `${NAME}.md`]));
+    refused(s.run(['reconcile', '--plan', 'nope']), /no ledger for nope in the store/);
+  });
+});

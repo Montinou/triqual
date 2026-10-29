@@ -1336,3 +1336,207 @@ test('done --repo from a deeper linked worktree records the same string as from 
   assert.equal(ok(run(['done', 'T1', '--commit', other.sha, '--repo', other.path])).stdout, 'T1: already done\n');
   assert.deepEqual(readFileSync(join(repo, LEDGER_REL)), before);
 }));
+
+// ---- reconcile: proposals from git evidence, and --apply for the high ones ----
+
+// T1 and T2 carry high evidence once their commits exist; T3 has no Files and depends on T1; T4 has a Modify path git
+// cannot resolve (a probe failure); T5 is Modify-only on a file git touched (medium).
+const RECONCILE_PLAN = `# Reconcile plan
+
+### Task 1: Alpha
+**Files:**
+- Create: \`src/alpha.txt\`
+- [ ] **Step 3: Commit** \`feat: alpha\`
+
+### Task 2: Beta
+**Files:**
+- Create: \`src/beta.txt\`
+- [ ] **Step 3: Commit** \`feat: beta\`
+
+### Task 3: Gamma
+**Depends on:** T1
+
+### Task 4: Delta
+**Files:**
+- Modify: \`:(bogus)x\`
+
+### Task 5: Epsilon
+**Files:**
+- Modify: \`README.md\`
+`;
+
+// A committed-mode repo with the reconcile plan registered and the commits of T1 (and T2 when `both`) in git.
+function reconcileRepo({ repo, git, run }, { both = false } = {}) {
+  committed(repo, RECONCILE_PLAN);
+  ok(run(['init', PLAN_REL]));
+  const commit = (file, subject) => {
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', file), `${file}\n`);
+    git('add', `src/${file}`);
+    git(...ID, 'commit', '-qm', subject);
+    return git('rev-parse', 'HEAD');
+  };
+  const shas = { T1: commit('alpha.txt', 'feat: alpha') };
+  if (both) shas.T2 = commit('beta.txt', 'feat: beta');
+  return shas;
+}
+
+const byId = (list) => Object.fromEntries(list.map((x) => [x.id, x]));
+
+test('reconcile without --apply prints the table and changes neither the ledger, status.md nor git', () => withRepo((ctx) => {
+  const { repo, git, run } = ctx;
+  const shas = reconcileRepo(ctx);
+  const before = [read(join(repo, LEDGER_REL)), read(join(repo, 'status.md')), git('rev-parse', 'HEAD')];
+  const r = ok(run(['reconcile']));
+  const lines = r.stdout.split('\n');
+  assert.match(lines[0], /^task\s+status\s+proposal\s+confidence\s+sha\s+why$/);
+  assert.match(lines.find((l) => l.startsWith('T1 ')), new RegExp(`^T1\\s+pending\\s+done\\s+high\\s+${shas.T1.slice(0, 7)}\\s+planned commit "feat: alpha"`));
+  assert.match(lines.find((l) => l.startsWith('T5 ')), /^T5\s+pending\s+keep\s+medium\s+[0-9a-f]{7}\s/);
+  assert.match(lines.find((l) => l.startsWith('T3 ')), /^T3\s+pending\s+keep\s+low\s+-\s+no evidence: the task lists no Files/);
+  assert.match(r.stdout, /5 tasks: 1 high, 1 medium, 3 low\n/);
+  assert.match(r.stdout, /report only: nothing was changed; pass --apply to mark the high ones done/);
+  assert.deepEqual([read(join(repo, LEDGER_REL)), read(join(repo, 'status.md')), git('rev-parse', 'HEAD')], before);
+}));
+
+test('reconcile --json prints one object per non-done task and a git failure for one task is low, not a crash', () => withRepo((ctx) => {
+  const shas = reconcileRepo(ctx);
+  const list = JSON.parse(ok(ctx.run(['reconcile', '--json'])).stdout);
+  assert.deepEqual(list.map((x) => x.id), ['T1', 'T2', 'T3', 'T4', 'T5']);
+  for (const x of list) assert.deepEqual(Object.keys(x), ['id', 'status', 'to', 'confidence', 'commit', 'why']);
+  const t = byId(list);
+  assert.deepEqual([t.T1.status, t.T1.to, t.T1.confidence, t.T1.commit], ['pending', 'done', 'high', shas.T1]);
+  assert.deepEqual([t.T2.to, t.T2.confidence, t.T2.commit], ['keep', 'low', null]);
+  assert.deepEqual([t.T3.to, t.T3.confidence, t.T3.commit], ['keep', 'low', null]);
+  assert.deepEqual([t.T4.to, t.T4.confidence, t.T4.commit], ['keep', 'low', null]);
+  assert.match(t.T4.why, /^probe failed: /);
+  assert.deepEqual([t.T5.to, t.T5.confidence], ['keep', 'medium']);
+  assert.match(t.T5.commit, /^[0-9a-f]{40}$/);
+}));
+
+test('reconcile --apply marks the high task done with its sha, leaves medium and low pending, and a rerun applies nothing', () => withRepo((ctx) => {
+  const { repo, git, run } = ctx;
+  const shas = reconcileRepo(ctx);
+  const head = git('rev-parse', 'HEAD');
+  const r = ok(run(['reconcile', '--apply']));
+  assert.match(r.stdout, new RegExp(`applied T1 -> done \\(${shas.T1.slice(0, 7)}\\)\\n`));
+  assert.match(r.stdout, /applied 1, skipped 0, left 4\n/);
+  const ledger = readJson(join(repo, LEDGER_REL));
+  const t = byId(ledger.tasks);
+  assert.deepEqual([t.T1.status, t.T1.commits], ['done', [shas.T1]]);
+  assert.deepEqual(t.T1.history.map((h) => [h.from, h.to]).slice(-2), [['pending', 'in_progress'], ['in_progress', 'done']]);
+  for (const id of ['T2', 'T3', 'T4', 'T5']) assert.equal(t[id].status, 'pending', id);
+  assert.equal(git('rev-parse', 'HEAD'), head, 'no commit was made');
+  assert.match(read(join(repo, 'status.md')), /1\/5 done/);
+
+  const after = [read(join(repo, LEDGER_REL)), read(join(repo, 'status.md'))];
+  const again = ok(run(['reconcile', '--apply']));
+  assert.match(again.stdout, /applied 0, skipped 0, left 4\n/);
+  assert.doesNotMatch(again.stdout, /applied T/);
+  assert.deepEqual([read(join(repo, LEDGER_REL)), read(join(repo, 'status.md'))], after);
+}));
+
+test('reconcile --apply starts only a pending task: an in_progress one goes straight to done', () => withRepo((ctx) => {
+  const { repo, run } = ctx;
+  const shas = reconcileRepo(ctx);
+  ok(run(['start', 'T1']));
+  ok(run(['reconcile', '--apply']));
+  const t1 = byId(readJson(join(repo, LEDGER_REL)).tasks).T1;
+  assert.deepEqual([t1.status, t1.commits], ['done', [shas.T1]]);
+  assert.deepEqual(t1.history.map((h) => h.to).slice(-2), ['in_progress', 'done']);
+  assert.equal(t1.history.filter((h) => h.to === 'in_progress').length, 1, 'no second start');
+}));
+
+test('reconcile --apply reports a transition that throws and still applies the rest', () => withRepo((ctx) => {
+  const { repo, run } = ctx;
+  const shas = reconcileRepo(ctx, { both: true });
+  ok(run(['block', 'T1', 'waiting']));
+  const r = ok(run(['reconcile', '--apply']));
+  assert.match(r.stdout, /skipped T1: T1 is blocked; cannot done\n/);
+  assert.match(r.stdout, new RegExp(`applied T2 -> done \\(${shas.T2.slice(0, 7)}\\)\\n`));
+  assert.match(r.stdout, /applied 1, skipped 1, left 3\n/);
+  const t = byId(readJson(join(repo, LEDGER_REL)).tasks);
+  assert.equal(t.T1.status, 'blocked');
+  assert.deepEqual([t.T2.status, t.T2.commits], ['done', [shas.T2]]);
+}));
+
+test('reconcile --apply --json marks each proposal with applied and skipped', () => withRepo((ctx) => {
+  const shas = reconcileRepo(ctx, { both: true });
+  ok(ctx.run(['block', 'T1', 'waiting']));
+  const t = byId(JSON.parse(ok(ctx.run(['reconcile', '--apply', '--json'])).stdout));
+  assert.deepEqual([t.T1.applied, t.T1.skipped], [false, 'T1 is blocked; cannot done']);
+  assert.deepEqual([t.T2.applied, t.T2.skipped, t.T2.commit], [true, null, shas.T2]);
+  assert.deepEqual([t.T3.applied, t.T3.skipped], [false, null]);
+}));
+
+// A date-only `git log --since=YYYY-MM-DD` applies that date at the current time of day, which would hide every commit
+// made earlier on the plan's own date; the probe must pass midnight.
+test('reconcile finds a commit made earlier on the plan\'s own date (rules b and c)', (t) => withRepo(({ repo, home, git, run }) => {
+  const pad = (n) => String(n).padStart(2, '0');
+  const now = new Date();
+  const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  if (now.getHours() === 0 && now.getMinutes() < 31) return t.skip('the clock is before 00:31, so no commit can be dated earlier today');
+  const name = `${today}-today`;
+  const planRel = `docs/plans/${name}.md`;
+  committed(repo, RECONCILE_PLAN, name);
+  ok(run(['init', planRel]));
+  mkdirSync(join(repo, 'src'), { recursive: true });
+  writeFileSync(join(repo, 'src', 'alpha.txt'), 'alpha\n');
+  git('add', 'src/alpha.txt');
+  const when = `${today}T00:30:00`;
+  execFileSync('git', [...ID, 'commit', '-qm', 'feat: alpha'], {
+    cwd: repo, encoding: 'utf8', env: cleanEnv(home, { GIT_AUTHOR_DATE: when, GIT_COMMITTER_DATE: when }),
+  });
+  const sha = git('rev-parse', 'HEAD');
+  const list = JSON.parse(ok(run(['reconcile', '--plan', planRel, '--json'])).stdout);
+  const t1 = list.find((x) => x.id === 'T1');
+  assert.equal(t1.confidence, 'high', JSON.stringify(t1)); // rule (b): the planned subject
+  assert.equal(t1.commit, sha);
+  const t5 = list.find((x) => x.id === 'T5');
+  assert.equal(t5.confidence, 'medium', JSON.stringify(t5)); // rule (c): README.md is touched by the repo's initial commit, made earlier today than this run
+}));
+
+test('reconcile --plan picks a ledger, and a missing plan or bad flag exits 2', () => withRepo((ctx) => {
+  reconcileRepo(ctx);
+  ok(ctx.run(['reconcile', '--plan', PLAN_REL]));
+  const missing = ctx.run(['reconcile', '--plan', 'docs/plans/nope.md']);
+  assert.equal(missing.status, 2);
+  assert.match(missing.stderr, /no ledger at /);
+  const bad = ctx.run(['reconcile', 'T1']);
+  assert.equal(bad.status, 2);
+  assert.match(bad.stderr, /usage: triqual tasks/);
+}));
+
+test('reconcile is listed in the usage', () => withRepo(({ repo, run }) => {
+  committed(repo);
+  assert.match(ok(run(['--help'])).stdout, /reconcile \[--plan <plan\.md\|ledger>\] \[--apply\] \[--json\]/);
+}));
+
+test('reconcile --apply skips a task whose dependency did not end up done, even when it is already in progress', () => withRepo(({ repo, git, run }) => {
+  committed(repo, `# Chain plan
+
+### Task 1: Alpha
+**Files:**
+- Create: \`src/alpha.txt\`
+
+### Task 2: Beta
+**Depends on:** T1
+**Files:**
+- Create: \`src/beta.txt\`
+`);
+  ok(run(['init', PLAN_REL]));
+  mkdirSync(join(repo, 'src'));
+  for (const f of ['alpha.txt', 'beta.txt']) writeFileSync(join(repo, 'src', f), `${f}\n`);
+  git('add', 'src');
+  git(...ID, 'commit', '-qm', 'add both');
+  // T2 in progress while T1 is blocked again: done, start T2, then reopen and block T1.
+  ok(run(['start', 'T1']));
+  ok(run(['done', 'T1', '--commit', git('rev-parse', 'HEAD')]));
+  ok(run(['start', 'T2']));
+  ok(run(['reopen', 'T1', 'redo']));
+  ok(run(['block', 'T1', 'waiting']));
+  const r = ok(run(['reconcile', '--apply']));
+  assert.match(r.stdout, /skipped T1: T1 is blocked; cannot done\n/);
+  assert.match(r.stdout, /skipped T2: T2 depends on T1 \(blocked\)\n/);
+  assert.match(r.stdout, /applied 0, skipped 2, left 0\n/);
+  assert.deepEqual(readJson(join(repo, LEDGER_REL)).tasks.map((t) => t.status), ['blocked', 'in_progress']);
+}));
