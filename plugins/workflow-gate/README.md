@@ -97,8 +97,8 @@ test (`test/roles-consistency.test.mjs` at the repository root) keeps it equal t
 | Role | Model family |
 |---|---|
 | `hunter` | haiku |
-| `brief-writer`, `tdd-implementer`, `safety-reviewer`, `spec-reviewer`, `review-fixer`, `phase-orchestrator` | sonnet |
-| `complex-implementer`, `final-adversarial-reviewer` | opus |
+| `brief-writer`, `tdd-implementer`, `safety-reviewer`, `review-fixer`, `phase-orchestrator` | sonnet |
+| `complex-implementer`, `spec-reviewer`, `final-adversarial-reviewer` | opus |
 
 ## The `Agent` burst cap
 

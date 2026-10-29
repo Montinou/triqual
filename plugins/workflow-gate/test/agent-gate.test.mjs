@@ -375,6 +375,21 @@ test('the hook maps roles through the real ROLE_MODELS and lets Haiku through', 
   }
 });
 
+test('the hook counts roles:spec-reviewer as an opus start through the real ROLE_MODELS', () => {
+  const home = tempDir();
+  try {
+    const reviewer = { ...fixture('agent-pretooluse.json'), tool_input: { subagent_type: 'roles:spec-reviewer' } };
+    for (let i = 0; i < 8; i++) assert.equal(runHook(reviewer, home), null);
+    const out = runHook(reviewer, home);
+    assert.equal(out.permissionDecision, 'deny');
+    assert.match(out.permissionDecisionReason, /opus/);
+    const state = JSON.parse(readFileSync(join(home, 'triqual', 'workflow-gate', `${reviewer.session_id}.json`), 'utf8'));
+    assert.ok(state.starts.every((s) => s.model === 'opus'), JSON.stringify(state.starts));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('the hook counts roles:phase-orchestrator as a sonnet start through the real ROLE_MODELS', () => {
   const home = tempDir();
   try {

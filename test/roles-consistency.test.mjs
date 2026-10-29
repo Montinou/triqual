@@ -141,6 +141,12 @@ for (const copy of Object.keys(READERS)) {
   });
 }
 
+// Plan roles-calibration-and-lean-review T18 (owner ruling "calibration spec-reviewer", 2026-10-29): sonnet -> opus.
+test('spec-reviewer is an Opus role in its agent file and in ROLE_MODELS', () => {
+  assert.equal(agentFiles()['spec-reviewer'], 'opus');
+  assert.equal(READERS['workflow-gate ROLE_MODELS'](DEFAULT_PATHS).models['spec-reviewer'], 'opus');
+});
+
 test('the roles plugin.json description carries the count word for the agent files', () => {
   const problem = countWordProblem();
   assert.equal(problem, null, problem ?? undefined);

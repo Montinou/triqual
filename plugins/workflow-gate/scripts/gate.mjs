@@ -49,7 +49,7 @@ const ROLE_MODELS = {
   "tdd-implementer": "sonnet",
   "complex-implementer": "opus",
   "safety-reviewer": "sonnet",
-  "spec-reviewer": "sonnet",
+  "spec-reviewer": "opus",
   "review-fixer": "sonnet",
   "final-adversarial-reviewer": "opus",
   "hunter": "haiku",
