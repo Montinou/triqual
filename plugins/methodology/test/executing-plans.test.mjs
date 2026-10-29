@@ -88,8 +88,8 @@ const U4_HEADER = ['Effective tier', 'Round 1 (together)', 'Round 2', 'Fix-round
 const U4_ROWS = [
   [
     'heavy',
-    '2 hunters: `correctness` + `security` or `state`, picked from the task\'s heavy reason line + safety gate',
-    '`roles:spec-reviewer` on every candidate and spec fit',
+    'safety gate + `roles:spec-reviewer`, in parallel; no task hunters',
+    'none: the spec review ran with the gate',
     'scoped re-review by the raising role(s), always',
   ],
   [
@@ -120,23 +120,26 @@ test('the tier matrix in the skill equals spec U4', () => {
 
 // ---- per-task review sizes (design: Review structure, "Per task") ----
 
-test('per-task hunters: heavy 2 picked from the reason, standard 0, light 0', () => {
+test('per-task review has no hunters at any tier: heavy and standard run the gate and the spec review, light the gate', () => {
   const lines = skill().split('\n');
   const at = lines.findIndex((l) => l.startsWith('|') && cells(l).join('|') === U4_HEADER.join('|'));
   const rows = Object.fromEntries(lines.slice(at + 2, at + 5).map((l) => [cells(l)[0], cells(l)[1]]));
-  assert.ok(rows.heavy.startsWith('2 hunters:'), 'the heavy row does not send 2 hunters');
-  for (const category of ['`correctness`', '`security`', '`state`']) assert.ok(rows.heavy.includes(category), `the heavy row lacks ${category}`);
-  assert.ok(rows.heavy.includes("heavy reason line"), 'the heavy row does not pick the category from the reason line');
-  assert.doesNotMatch(rows.heavy, /spec-drift/, 'the heavy row still names spec-drift');
-  assert.ok(rows.standard.includes('no hunters'), 'the standard row sends hunters');
+  assert.doesNotMatch(skill(), /2 hunters:/, 'a Tiers row still sends 2 hunters');
+  assert.ok(rows.heavy.includes('safety gate + `roles:spec-reviewer`') && rows.heavy.includes('no task hunters'), 'the heavy row is not the gate + the spec review with no task hunters');
+  assert.ok(rows.standard.includes('safety gate + `roles:spec-reviewer`') && rows.standard.includes('no hunters'), 'the standard row sends hunters');
   assert.doesNotMatch(rows.light, /hunter/, 'the light row names hunters');
-  const pick = flat(section(skill(), '## Tiers'));
-  assert.ok(pick.includes('`security` when the reason line names security code'), 'Tiers does not map security code to the security hunter');
-  assert.ok(pick.includes('`state` when it names live state or a parsed contract'), 'Tiers does not map live state or a parsed contract to the state hunter');
-  assert.ok(pick.includes("never send fewer than the tier's count"), 'the Budget rule does not forbid fewer than the tier count');
-  assert.doesNotMatch(pick, /a standard task sends exactly two|heavy four/, 'the old hunter counts remain');
+  const tiers = flat(section(skill(), '## Tiers'));
+  assert.ok(tiers.includes('**Hunters run at the phase review only:**'), 'Tiers does not say hunters run at the phase review only');
+  assert.doesNotMatch(tiers, /Hunters belong to the heavy tier only|a heavy task sends exactly two/, 'Tiers still sends hunters with a heavy task');
+  assert.ok(
+    tiers.includes('`heavy` still picks the role (`roles:complex-implementer`) and is still recorded and raised by `tier-check`, but its per-task review is capped at `standard`'),
+    'Tiers does not cap the heavy per-task review at standard',
+  );
   const round1 = flat(section(skill(), '#### Round 1'));
   assert.doesNotMatch(round1, /Review Focus names for the task/, 'Round 1 still picks a standard hunter from the Review Focus');
+  const heavy = round1.slice(round1.indexOf('**Heavy:**'), round1.indexOf('**Standard:**'));
+  assert.ok(heavy.includes('no hunters') && heavy.includes('`roles:safety-reviewer`') && heavy.includes('`roles:spec-reviewer`'), 'the heavy Round 1 dispatch is not the gate and the spec review with no hunters');
+  assert.doesNotMatch(heavy, /2 hunters/, 'the heavy Round 1 dispatch still sends 2 hunters');
 });
 
 test('standard dispatches the gate and the spec review in parallel', () => {
@@ -145,11 +148,35 @@ test('standard dispatches the gate and the spec review in parallel', () => {
   assert.ok(standard.includes('**Standard:**') && standard.includes('`roles:safety-reviewer`') && standard.includes('`roles:spec-reviewer`'), 'Round 1 does not dispatch the gate and the spec reviewer for standard');
   assert.ok(standard.includes('together') && standard.includes('in one message'), 'the standard dispatch is not one message');
   assert.ok(standard.includes('no hunters'), 'the standard dispatch does not say there are no hunters');
-  const heavy = round1.slice(round1.indexOf('**Heavy:**'), round1.indexOf('**Standard:**'));
-  assert.ok(heavy.includes('`roles:hunter`') && heavy.includes('`roles:safety-reviewer`'), 'the heavy dispatch lost its hunters or gate');
   const round2 = flat(section(skill(), '#### Round 2'));
-  assert.ok(round2.includes('**Heavy:**'), 'Round 2 does not scope the candidate verdicts to heavy');
+  const heavy2 = round2.slice(round2.indexOf('**Heavy:**'), round2.indexOf('**Standard:**'));
+  assert.ok(heavy2.includes('already ran') && heavy2.includes('verdicts 0/0'), 'Round 2 does not treat heavy like standard, the spec review already ran');
   assert.ok(round2.includes('**Standard:**') && round2.includes('already ran'), 'Round 2 does not say the standard spec review already ran');
+});
+
+test('the phase review still sends 3 hunters while the task review sends none', () => {
+  const round1 = flat(section(skill(), '### 8. Review the phase')).split('- **Round 1, the hunters.**')[1].split('- **Round 2')[0];
+  assert.ok(round1.includes('3 hunters') && round1.includes('`correctness`, `security` and `spec-drift`'), 'the phase review does not name the 3 hunters');
+});
+
+test('the default Phase check is the union of the phase\'s Test: paths, run focused', () => {
+  const check = flat(section(skill(), '### 7. End the phase')).split('- **Phase check.**')[1].split('- **A submitted phase')[0];
+  assert.ok(check.includes('the union of the phase\'s `Test:` paths'), 'the Phase check default does not name the union of the phase\'s Test: paths');
+  assert.ok(check.includes('Run the phase\'s `**Phase check:**` command at the tip of the phase branch'), 'the Phase check lost its explicit command');
+  assert.doesNotMatch(check, /is one phase whose check is the repository's full test command/, 'the Phase check default is still the full test command');
+});
+
+test('the orchestrator prompt states the per-task review: light the gate, standard and heavy the gate and the spec review, no task hunters', () => {
+  const text = flat(PROMPT());
+  assert.ok(text.includes('light task gets the safety gate alone'), 'the orchestrator prompt does not give a light task the gate alone');
+  assert.ok(text.includes('standard or heavy task gets the safety gate and `roles:spec-reviewer` in one round'), 'the orchestrator prompt does not give standard and heavy the gate and the spec review in one round');
+  assert.ok(text.includes('no task hunters: hunters run at the phase review only'), 'the orchestrator prompt does not say hunters run at the phase review only');
+});
+
+test('the hunter template is for the phase review only', () => {
+  const text = flat(read(`${EP}/hunter-prompt.md`));
+  assert.doesNotMatch(text, /round 1 of a heavy task's review|a heavy task's second hunter|a standard or light task sends none/, 'the hunter template still dispatches a task-mode hunter');
+  assert.ok(text.includes('only in a phase review'), 'the hunter template does not say hunters run only in a phase review');
 });
 
 test('Minor findings are deferred to the phase review', () => {
@@ -173,8 +200,8 @@ test('the spec reviewer prompt has no candidates section without hunters', () =>
 
 test('the Finish hunter reference uses the new counts', () => {
   const finish = flat(section(skill(), '## Finish'));
-  assert.ok(finish.includes('2 per heavy task, 0 per standard and light task, plus 3 per phase, 0 for the seams review'), 'Finish does not state the per-task and phase counts');
-  assert.doesNotMatch(finish, /4 per heavy task, 2 per standard/, 'Finish still states the old counts');
+  assert.ok(finish.includes('0 per task at every tier, plus 3 per phase, 0 for the seams review'), 'Finish does not state the per-task and phase counts');
+  assert.doesNotMatch(finish, /2 per heavy task|4 per heavy task, 2 per standard/, 'Finish still states the old counts');
   assert.doesNotMatch(finish, /plus 4 per phase/, 'Finish still states 4 hunters per phase');
   assert.ok(finish.includes('reference 4 before 2026-10-29, 3 after'), 'Finish does not note that the phase reference changed on 2026-10-29');
 });
@@ -191,8 +218,8 @@ test('the hunters rule no longer sends state in a phase review', () => {
   const finalPrompt = flat(read(`${EP}/final-review-prompt.md`));
   assert.doesNotMatch(finalPrompt, /four hunters|\(`correctness`, `security`, `spec-drift`, `state`\)/, 'final-review-prompt.md still names four hunters');
   assert.ok(finalPrompt.includes('three hunters (`correctness`, `security`, `spec-drift`)'), 'final-review-prompt.md does not name the three hunters');
-  // The task level is unchanged: a heavy task still picks `state` from its reason line.
-  assert.ok(flat(section(raw, '## Tiers')).includes('`state` when it names live state or a parsed contract'), 'the task-level state hunter was dropped');
+  // The task level sends no hunter: the phase review is the only place hunters run.
+  assert.doesNotMatch(flat(section(raw, '## Tiers')), /`state` when it names live state/, 'the task-level state hunter pick remains');
   const records = flat(read(`${EP}/references/records.md`));
   assert.ok(records.includes('(reference 4 before 2026-10-29, 3 after,'), 'records.md does not state the phase reference of 3');
   assert.doesNotMatch(records, /"category": "state"/, 'the phase hunters record example still has a state hunter');
@@ -397,7 +424,7 @@ test('the kept SDD behaviors are in their own sections', () => {
   const pins = {
     '### 1. Start the task': ['the `BASE: T<N> <sha>` ledger line (the last one counts)', 'BASE is never `HEAD~1`'],
     '### 4. Review the task': ['on one review package'],
-    '#### Round 2': ['`confirmed` (with a severity), `refuted`, `duplicate-candidate` and `duplicate-review`'],
+    '#### Round 2': ['**Heavy:** as Standard: the spec review already ran with the gate in round 1', '`Round 2: T<N> — light items <n>`'],
     '### 5. The fix loop': ['`Task <N>: minor (deferred): <one-liner>`', 'after round 5 the task is blocked'],
     '### 6. Complete the task': ['`git commit-tree`'],
     '### 7. End the phase': [
@@ -805,7 +832,7 @@ test('phase hunters write phase-<N>-candidates-<category>.md', () => {
   const mode = text.slice(text.indexOf('**Phase review:**'), text.indexOf('**Placeholders:**'));
   assert.ok(mode.includes('Spec: [SPEC_PATH]') && mode.includes('Plan: [PLAN_PATH]'), 'the phase mode does not give the spec and the plan');
   assert.ok(mode.includes('the `Task brief` line'), 'the phase mode does not drop the brief');
-  assert.ok(mode.includes('`state`'), 'the phase mode lacks the state category');
+  assert.doesNotMatch(mode, /heavy task's second hunter/, 'the phase mode still keeps a task-level state hunter');
 });
 
 test('worktrees only on request, as a section of the orchestrator', () => {
@@ -1643,12 +1670,6 @@ test('step 8: the phase ledger file, the fixer inputs and the phase re-review in
   }
   assert.ok(flat(read(`${EP}/re-review-prompt.md`)).includes('phase review\'s fix rounds (8. Review the phase) and the final review\'s fix rounds use the same prompt'), 're-review-prompt does not cover phase-review fix rounds');
   assert.ok(flat(read(`${EP}/re-review-prompt.md`)).includes('<workspace>/phase-<N>-report.md'), 're-review-prompt does not name the phase report file');
-});
-
-test('a task declared heavy with no reason line takes security by default', () => {
-  const tiers = flat(section(skill(), '## Tiers'));
-  assert.ok(tiers.includes('declared heavy with no reason line (a plan written before 1.0.2)'), 'Tiers does not cover a declared-heavy task with no reason line');
-  assert.ok(tiers.includes('`security` by default'), 'Tiers lost the security default');
 });
 
 test('no template or step still points at a whole-branch or final review after the tasks', () => {
