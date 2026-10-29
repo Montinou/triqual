@@ -35,7 +35,7 @@ A light task with a clean gate:
   "escapes": [ { "tier": "light", "severity": "important" }, { "tier": "standard", "severity": "minor" } ] }
 ```
 
-**The phase review** records `hunters` and `final-escapes` with `task: "P<n>"` (the seams review records only `final-escapes`, with `task: "final"`), with the phase review's budget (reference 4). The phase's fix commit lands with its own progress entry, Stage/task `Plan <name> · P<n> fix`. An escape counts only a finding no earlier review recorded: a deferred Minor confirmed again is not an escape. Phase-review escape counts will rise by design: they now hold what per-task hunters used to catch.
+**The phase review** records `hunters` and `final-escapes` with `task: "P<n>"` (the seams review records only `final-escapes`, with `task: "final"`), with the phase review's budget (reference 4 before 2026-10-29, 3 after, when the phase review dropped its `state` hunter). The phase's fix commit lands with its own progress entry, Stage/task `Plan <name> · P<n> fix`. An escape counts only a finding no earlier review recorded: a deferred Minor confirmed again is not an escape. Phase-review escape counts will rise by design: they now hold what per-task hunters used to catch.
 
 ```json
 { "v": 1, "at": "2026-10-20T16:20:11Z", "provider": "claude", "task": "P1", "kind": "hunters",
@@ -45,11 +45,9 @@ A light task with a clean gate:
     { "category": "security", "model": "claude-haiku-5-5", "failed": false, "candidates": 0,
       "confirmed": { "critical": 0, "important": 0, "minor": 0 }, "refuted": 0, "duplicateCandidate": 0, "duplicateReview": 0 },
     { "category": "spec-drift", "model": "claude-haiku-5-5", "failed": false, "candidates": 1,
-      "confirmed": { "critical": 0, "important": 0, "minor": 0 }, "refuted": 1, "duplicateCandidate": 0, "duplicateReview": 0 },
-    { "category": "state", "model": "claude-haiku-5-5", "failed": true, "candidates": 0,
-      "confirmed": { "critical": 0, "important": 0, "minor": 0 }, "refuted": 0, "duplicateCandidate": 0, "duplicateReview": 0 }
+      "confirmed": { "critical": 0, "important": 0, "minor": 0 }, "refuted": 1, "duplicateCandidate": 0, "duplicateReview": 0 }
   ],
-  "budget": { "reference": 4, "used": 4, "overrun": false } }
+  "budget": { "reference": 3, "used": 3, "overrun": false } }
 ```
 
 ```json

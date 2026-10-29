@@ -154,7 +154,7 @@ The [CHANGELOG](CHANGELOG.md) has the full list.
   changes none records the real output of its verification command instead.
 - **A stack.** Each phase is one branch (and in GitHub mode one draft PR), each task one commit. `stack.mjs` (see the
   [methodology page](plugins/methodology/README.md#stackmjs)) owns the git and `gh` work. Each phase gets a deep
-  review before it is submitted: 4 hunters and one `roles:final-adversarial-reviewer` over the phase diff, with at most
+  review before it is submitted: 3 hunters and one `roles:final-adversarial-reviewer` over the phase diff, with at most
   two fix rounds. The final review of the whole stack then runs for every plan: for a plan with several phases it is a
   seams review, one `roles:final-adversarial-reviewer` and no hunters, that looks only at what one phase exposes and a
   later one consumes (in a single-phase plan the phase review is the final review). A `/clear` break follows every phase

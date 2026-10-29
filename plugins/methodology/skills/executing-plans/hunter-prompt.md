@@ -3,7 +3,7 @@
 Use this template to dispatch a hunter, `roles:hunter`, in round 1 of a heavy
 task's review (the tier matrix in SKILL.md sets how many and which categories:
 2, `correctness` plus `security` or `state`; a standard or light task sends
-none), or for each of a phase review's 4 hunters (the seams
+none), or for each of a phase review's 3 hunters (the seams
 review at the end of a plan sends none). One hunter looks at one category of defect in one review package and
 writes its candidates to one file; `roles:spec-reviewer` (or, in a phase
 review, `roles:final-adversarial-reviewer`) verifies them in round 2. The
@@ -42,8 +42,8 @@ the hunter the spec and the plan instead, with the package of the phase's range
     Plan: [PLAN_PATH]
 ```
 
-A phase review sends four hunters, one per category: `correctness`, `security`,
-`spec-drift`, `state`.
+A phase review sends three hunters, one per category: `correctness`, `security`,
+`spec-drift`. The `state` category stays valid for a heavy task's second hunter.
 
 **Placeholders:**
 - `[CATEGORY]` — one of `correctness`, `security`, `spec-drift`, `state`

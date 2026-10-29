@@ -16,13 +16,15 @@ const MAX_BYTES = 87040;
 // next heading of the same or a higher level, trailing blank lines dropped, one final newline). The only edits since
 // the move are link targets rewritten from the skill's root to the reference's own directory (`](../x.md)`,
 // `](../SKILL.md#a)`), which `original` reverses before hashing.
+// `records` and `example` were also edited on 2026-10-29 (T19): a phase review sends 3 hunters, not 4, so their
+// hashes follow that text.
 const REFERENCES = [
   ['setup', '## Setup', '1b99234fecba023f0dd0da96d207e8cf8d946f47b37107a33b879cc2194ce7bb'],
-  ['records', '## Records', '27382c704d733ccd824c080e81e2ace5ea4f9c701c250a2b4f03914f670ef785'],
+  ['records', '## Records', '02778785c54d06f4a4e246c9cf50d7b2eac6daa9fa93ff4a174a5cc814545027'],
   ['ledger-vocabulary', '## Ledger vocabulary', 'd5538fe8ce8760ef93cd6fde96742e2cc5f8f1783ffc4214b14e7f23e4cff746'],
   ['worktrees', '## Worktrees', 'e45e1f51e4aafb1e43441712df14b8c4980a3382fae9c3b3ce201f4d1c416f05'],
   ['final-review', '## Final Review', 'caa9a5fc7b13fb478039fd0cc6b2eec8ce5082e76cca3168d77d0d29deb7dbcd'],
-  ['example', '## Example', '2e52d91e910461cc9d0b0af2605b5057fd7d7bed6bb131785b746b79ad031f98'],
+  ['example', '## Example', 'fa0bbdaaaf0db1d4528b02c97ab7c57a9193da58ac2adc71d806283c74412367'],
   ['parallel-tasks', '### Parallel tasks', '85e3b99c2fdc7d4f5f14e382dd61b35dc53a9304899a176872db4af7019f40f4'],
 ];
 

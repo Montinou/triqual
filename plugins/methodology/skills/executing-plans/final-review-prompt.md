@@ -80,8 +80,8 @@ Subagent (roles:final-adversarial-reviewer):
 
     This dispatch covers one phase's range only: [PHASE_RANGE] (phase base..phase
     top, the range of the package). Review nothing outside it, and ignore the
-    rest of the branch. Every candidate comes from four hunters
-    (`correctness`, `security`, `spec-drift`, `state`) who read this range.
+    rest of the branch. Every candidate comes from three hunters
+    (`correctness`, `security`, `spec-drift`) who read this range.
 
     The phase's tasks, from the plan: [PHASE_TASKS]
 
