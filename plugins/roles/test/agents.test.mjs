@@ -121,3 +121,36 @@ test('phase-orchestrator runs one phase through executing-plans and returns the 
   }
   assert.ok(body.includes('## Denied by Policy'), 'body carries the denial rule heading');
 });
+
+// Plan fast-execution T1: verification is focused; the full suite is never run locally (CI runs it).
+test('verification text never tells an agent to run the full suite, and the implementer side says focused', () => {
+  const PROMPT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'methodology', 'skills', 'executing-plans', 'implementer-prompt.md');
+  const files = {
+    'tdd-implementer.md': readFileSync(join(AGENTS, 'tdd-implementer.md'), 'utf8'),
+    'complex-implementer.md': readFileSync(join(AGENTS, 'complex-implementer.md'), 'utf8'),
+    'review-fixer.md': readFileSync(join(AGENTS, 'review-fixer.md'), 'utf8'),
+    'safety-reviewer.md': readFileSync(join(AGENTS, 'safety-reviewer.md'), 'utf8'),
+    'implementer-prompt.md': readFileSync(PROMPT, 'utf8'),
+  };
+  for (const [name, text] of Object.entries(files)) {
+    // Collapse whitespace so a phrase wrapped over two lines still matches.
+    const flat = text.replace(/\s+/g, ' ');
+    for (const m of flat.matchAll(/(?:full|whole)[\s-]+(?:test[\s-]+)?suite/gi)) {
+      // "never" must sit in the same clause (after the last "." or ";") as the mention.
+      const clause = flat.slice(0, m.index).split(/[.;]/).pop();
+      assert.match(clause, /\bnever\b/i, `${name}: "${m[0]}" without a "never" in its clause: ...${clause}${m[0]}`);
+    }
+  }
+  // Pin the new rule itself: each file carries a phrase that only the focused-verification text contains.
+  const pinned = {
+    'tdd-implementer.md': [/`Test:` paths/, /never the full suite/],
+    'complex-implementer.md': [/`Test:` paths/, /never the full suite/],
+    'implementer-prompt.md': [/`Test:` paths/, /never the full suite/],
+    'review-fixer.md': [/focused tests covering the amended code/, /never the full suite/],
+    'safety-reviewer.md': [/`Test:` paths/, /never flag a missing full suite run/i],
+  };
+  for (const [name, patterns] of Object.entries(pinned)) {
+    const flat = files[name].replace(/\s+/g, ' ');
+    for (const re of patterns) assert.match(flat, re, `${name}: missing the focused-verification phrase ${re}`);
+  }
+});
