@@ -173,6 +173,21 @@ test('the orchestrator prompt states the per-task review: light the gate, standa
   assert.ok(text.includes('no task hunters: hunters run at the phase review only'), 'the orchestrator prompt does not say hunters run at the phase review only');
 });
 
+test('a fix round that raises a task to heavy sends no task hunters', () => {
+  const loop = flat(section(skill(), '### 5. The fix loop'));
+  assert.doesNotMatch(loop, /hunters included/, 'the fix loop still sends hunters with a raised tier\'s full review');
+  assert.doesNotMatch(loop, /on the `hunters:` line/, 'the fix loop still reads the hunters: line of task-prep');
+  assert.ok(loop.includes('fix rounds and re-reviews never send task hunters'), 'the fix loop does not say a raised tier sends no task hunters');
+});
+
+test('the test-driven-development skill verifies focused, never the project\'s full suite', () => {
+  const tdd = flat(readSkillText(join(SKILLS, 'test-driven-development')));
+  assert.doesNotMatch(tdd, /run the project's test command \(bare `pytest`/, 'the skill still tells the implementer to run the full test command');
+  assert.doesNotMatch(tdd, /"Other tests" means the project's suite/, 'the skill still defines other tests as the project\'s suite');
+  assert.ok(tdd.includes('`Test:` paths') && tdd.includes('modules that import what changed') && tdd.includes('typecheck and lint scoped to the touched files'), 'the skill does not state the focused verification rule');
+  assert.ok(tdd.includes('CI runs the full suite'), 'the skill does not say CI runs the full suite');
+});
+
 test('the hunter template is for the phase review only', () => {
   const text = flat(read(`${EP}/hunter-prompt.md`));
   assert.doesNotMatch(text, /round 1 of a heavy task's review|a heavy task's second hunter|a standard or light task sends none/, 'the hunter template still dispatches a task-mode hunter');

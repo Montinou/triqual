@@ -5,7 +5,7 @@
 // Usage: task-prep PLAN_FILE N [--fix-round] [--head <sha>]
 // Prints, in this order:
 //   tier: <tier>                       the effective tier after the check
-//   hunters: <category,category|none>  heavy first round: `correctness` plus `security` or `state`; else none (and none after `Skipped: hunters`)
+//   hunters: none                      always: a task review sends no hunters at any tier (they run at the phase review only)
 //   package: <path|none>               the review package; none when the range holds no commit
 //   round: <R>                         the review round: 1, then the last `Prep:` round + 1 with --fix-round
 //   full-review: <yes|no>              yes only when this fix round raised the tier: the raised tier's full review is due
@@ -16,9 +16,8 @@
 // the tracking ledger's effective tier, else the last `Tier:` / `Tier raised:` line for the task, else none. A fix round
 // runs tier-check twice with that floor, on the round's range with --fix-round and on the cumulative BASE..<head> without
 // it, and the higher tier wins. A raise is recorded: the `Tier raised:` ledger line first, then `triqual tasks retier`
-// when opted in. A fix round that raises the tier prints `full-review: yes`, the cumulative BASE..<head> package and that
-// tier's hunters (its round 1 never ran on this task). The second hunter is picked from the plain line under the task's
-// `**Tier:**` line: `Security` -> security, `Live state` or `Contract` -> state, anything else (or no line) -> security.
+// when opted in. A fix round that raises the tier prints `full-review: yes` and the cumulative BASE..<head> package (the raised
+// tier's review never ran on this task); no hunters either.
 // Appends `Prep: T<N> r<R> <head sha>` last, and `Review: T<N> — no commits, nothing to review` for an empty first range.
 //
 // Only the `Prep:` lines after the task's last `BASE:` line count: the undo of a landing appends a fresh BASE, and the sequential
@@ -39,7 +38,7 @@
   const { basename, dirname, join } = await import('node:path');
   const { pathToFileURL } = await import('node:url');
   const common = await import(pathToFileURL(join(dirname(realpathSync(process.argv[1])), 'lib', 'task-common.mjs')).href);
-  const { ScriptError, EXIT_USAGE, EXIT_REFUSED, TIERS, reasonLine, hunterPick, ledgerTier, prepsOf } = common;
+  const { ScriptError, EXIT_USAGE, EXIT_REFUSED, TIERS, ledgerTier, prepsOf } = common;
 
   const STEP = 'task-prep';
   const USAGE = 'usage: task-prep PLAN_FILE N [--fix-round] [--head <sha>]';
@@ -69,7 +68,7 @@
 
     common.assertMainCheckout();
     workspace = common.workspaceOf(plan);
-    const planTask = common.readPlanTask(plan, n);
+    common.readPlanTask(plan, n); // refuses a task the plan does not have
     const planName = basename(plan);
 
     const ledger = common.ledgerLines(workspace);
@@ -152,8 +151,7 @@
     } else if (!rerun) {
       common.appendLedger(workspace, `Review: T${n} — no commits, nothing to review`);
     }
-    const skippedHunters = ledger.some((l) => /^Skipped: hunters\b/.test(l)); // plan-wide, as task-close reads it
-    const hunters = tier === 'heavy' && !skippedHunters && (!fixed || fullReview) && reviewed > 0 ? hunterPick(reasonLine(planTask)) : 'none';
+    const hunters = 'none'; // no task hunters at any tier; the phase review sends them
 
     if (!rerun) common.appendLedger(workspace, `Prep: T${n} r${round} ${head}`);
     process.stdout.write(`tier: ${tier}\nhunters: ${hunters}\npackage: ${pkg}\nround: ${round}\nfull-review: ${fullReview ? 'yes' : 'no'}\n`);

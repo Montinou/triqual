@@ -295,12 +295,12 @@ const firstRound = (r, n, extra = []) => {
 };
 
 test('task-prep: first round runs review move, tier-check and the package', () => withRig({}, (r) => {
-  const picks = { 1: 'none', 2: 'correctness,security', 3: 'correctness,state', 4: 'correctness,state', 5: 'correctness,security' };
-  for (const [n, hunters] of Object.entries(picks)) {
+  // No task hunters at any tier: the heavy tasks (2 to 5) print none too.
+  for (const n of ['1', '2', '3', '4', '5']) {
     const { o, head, res, out: o2 } = firstRound(r, n);
     assert.deepEqual(keys(res), ['tier', 'hunters', 'package', 'round', 'full-review'], `T${n}`);
     assert.equal(o2.tier, n === '1' ? 'standard' : 'heavy', `T${n} tier`);
-    assert.equal(o2.hunters, hunters, `T${n} hunters`);
+    assert.equal(o2.hunters, 'none', `T${n} hunters`);
     assert.equal(o2.round, '1', `T${n} round`);
     assert.equal(o2['full-review'], 'no', `T${n} full-review`);
     assert.equal(o2.package, join(r.workspace, `review-${o.base.slice(0, 7)}..${head.slice(0, 7)}.diff`), `T${n} package`);
@@ -317,7 +317,7 @@ test('task-prep: a raise retiers and writes the Tier raised line', () => withRig
   const res = ok(r.run('task-prep', r.plan, '1'));
   const got = out(res);
   assert.equal(got.tier, 'heavy');
-  assert.equal(got.hunters, 'correctness,security', 'a task raised to heavy has no reason line: security by default');
+  assert.equal(got.hunters, 'none', 'a task raised to heavy sends no task hunters');
   assert.equal(got.round, '1');
   assert.ok(existsSync(got.package));
   assert.equal(r.taskState(1).effectiveTier, 'heavy');
@@ -388,7 +388,7 @@ test('task-prep --fix-round: a fix that pushes the task past 300 lines raises it
   assert.equal(got.tier, 'heavy');
   assert.equal(got.round, '3');
   assert.equal(got['full-review'], 'yes');
-  assert.equal(got.hunters, 'correctness,security');
+  assert.equal(got.hunters, 'none', 'a fix round that raises the task to heavy sends no hunters either');
   assert.equal(got.package, join(r.workspace, `review-${o.base.slice(0, 7)}..${fix.slice(0, 7)}.diff`), 'the cumulative package');
   assert.match(readFileSync(got.package, 'utf8'), new RegExp(`^# Review package: ${o.base}\\.\\.${fix}`));
   assert.equal(r.taskState(1).effectiveTier, 'heavy');
@@ -415,7 +415,7 @@ test('task-prep --fix-round: a fix of over 300 lines raises the task and calls f
   const got = out(ok(r.run('task-prep', r.plan, '6', '--fix-round')));
   assert.equal(got.tier, 'heavy');
   assert.equal(got['full-review'], 'yes');
-  assert.equal(got.hunters, 'correctness,security');
+  assert.equal(got.hunters, 'none');
   assert.match(got.package, new RegExp(`\\.\\.${fix.slice(0, 7)}\\.diff$`));
 }));
 
@@ -662,7 +662,14 @@ const closeOf = (r, n, ...extra) => r.run('task-close', r.plan, String(n), ...ex
 const recordOf = (r, n) => JSON.parse(readFileSync(join(r.workspace, `task-${n}-record.json`), 'utf8'));
 const storedRecords = (r) => (existsSync(r.evalFile) ? readFileSync(r.evalFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
 const sha7 = (sha) => sha.slice(0, 7);
+// A heavy task's outputs: the gate and the spec reviewer, no task hunters (they run at the phase review only).
 const HEAVY_OUTPUTS = (r, n = 2) => {
+  save(r, n, 'safety-reviewer', 1, footerText('safety-reviewer', [0, 1, 1]));
+  save(r, n, 'spec-reviewer', 1, footerText('spec-reviewer', [0, 1, 2]));
+};
+// The same outputs plus two hunters the owner asked for with a `Budget:` line (the only way a task records hunters now).
+const HUNTER_OUTPUTS = (r, n = 2) => {
+  r.appendLedger(`Budget: hunters 0 → 2 for T${n} — owner request`);
   save(r, n, 'safety-reviewer', 1, footerText('safety-reviewer', [0, 1, 1]));
   save(r, n, 'spec-reviewer', 1, footerText('spec-reviewer', [0, 1, 2], [
     ['correctness-1', 'confirmed important'], ['correctness-2', 'refuted'],
@@ -720,10 +727,7 @@ test('task-close: builds the record, squashes, marks done, writes the complete l
   assert.deepEqual({ ...record, at: undefined }, {
     v: 2, at: undefined, provider: 'claude', task: 'T2', kind: 'task-review', attempt: 2,
     tier: 'heavy', declaredTier: 'heavy', raised: false,
-    hunters: [
-      { category: 'correctness', model: 'claude-haiku-4-9', failed: false, candidates: 2, confirmed: { ...zero, important: 1 }, refuted: 1, duplicateCandidate: 0, duplicateReview: 0 },
-      { category: 'security', model: 'claude-haiku-4-9', failed: false, candidates: 3, confirmed: { ...zero, minor: 1 }, refuted: 0, duplicateCandidate: 1, duplicateReview: 1 },
-    ],
+    hunters: [], // a heavy task sends no task hunters: none recorded, none failed
     gate: { findings: 2 },
     spec: { ran: true, confirmed: { critical: 0, important: 1, minor: 2 } },
     fixRounds: 2, blocked: false, coordinator: false,
@@ -742,49 +746,51 @@ test('task-close: builds the record, squashes, marks done, writes the complete l
   assert.ok(JSON.stringify(entry).includes(sha7(got.sha)), 'the entry does not name the sha');
 }));
 
-test('task-close: a missing hunter file is recorded failed with zero counts', () => withRig({}, (r) => {
+test('task-close: a heavy task needs no candidates file and records no hunter, failed or not', () => withRig({}, (r) => {
   prepared(r, 2);
   HEAVY_OUTPUTS(r);
-  // Only correctness answered: the security hunter wrote nothing, so the spec reviewer had no security candidates.
-  rmSync(candidatesPath(r, 2, 'security'));
-  save(r, 2, 'spec-reviewer', 1, footerText('spec-reviewer', [0, 1, 2], [['correctness-1', 'confirmed important'], ['correctness-2', 'refuted']]));
+  assert.equal(existsSync(candidatesPath(r, 2, 'correctness')) || existsSync(candidatesPath(r, 2, 'security')), false);
+  ok(r.run('task-close', r.plan, '2'));
+  const record = recordOf(r, 2);
+  assert.deepEqual(validateRecord(record), { ok: true });
+  assert.equal(record.tier, 'heavy');
+  assert.deepEqual(record.hunters, []);
+}));
+
+test('task-close: a hunter the owner budgeted is recorded with its counts', () => withRig({}, (r) => {
+  prepared(r, 2);
+  HUNTER_OUTPUTS(r);
+  ok(r.run('task-close', r.plan, '2'));
+  const record = recordOf(r, 2);
+  assert.deepEqual(validateRecord(record), { ok: true });
+  const zero = { critical: 0, important: 0, minor: 0 };
+  assert.deepEqual(record.hunters, [
+    { category: 'correctness', model: 'claude-haiku-4-9', failed: false, candidates: 2, confirmed: { ...zero, important: 1 }, refuted: 1, duplicateCandidate: 0, duplicateReview: 0 },
+    { category: 'security', model: 'claude-haiku-4-9', failed: false, candidates: 3, confirmed: { ...zero, minor: 1 }, refuted: 0, duplicateCandidate: 1, duplicateReview: 1 },
+  ]);
+}));
+
+test('task-close: a budgeted hunter file with no usable content is recorded failed with zero counts', () => withRig({}, (r) => {
+  prepared(r, 2);
+  HUNTER_OUTPUTS(r);
+  writeFileSync(candidatesPath(r, 2, 'security'), '  \n');
+  save(r, 2, 'spec-reviewer', 1, footerText('spec-reviewer', [0, 0, 0], [['correctness-1', 'refuted'], ['correctness-2', 'refuted']]));
   ok(r.run('task-close', r.plan, '2'));
   const record = recordOf(r, 2);
   assert.deepEqual(validateRecord(record), { ok: true });
   assert.deepEqual(record.hunters.map((h) => [h.category, h.failed, h.candidates]), [['correctness', false, 2], ['security', true, 0]]);
   assert.deepEqual(record.hunters[1].confirmed, { critical: 0, important: 0, minor: 0 });
-  assert.equal(record.hunters[1].refuted + record.hunters[1].duplicateCandidate + record.hunters[1].duplicateReview, 0);
-  assert.equal(record.hunters[1].model, 'claude-haiku-4-9');
 }));
 
-test('task-close: a hunter file with no usable content is recorded failed', () => withRig({}, (r) => {
+test('task-close: a budgeted valid empty hunter file counts as done with zero candidates', () => withRig({}, (r) => {
   prepared(r, 2);
-  HEAVY_OUTPUTS(r);
-  writeFileSync(candidatesPath(r, 2, 'security'), '  \n');
-  save(r, 2, 'spec-reviewer', 1, footerText('spec-reviewer', [0, 0, 0], [['correctness-1', 'refuted'], ['correctness-2', 'refuted']]));
-  ok(r.run('task-close', r.plan, '2'));
-  assert.deepEqual(recordOf(r, 2).hunters.map((h) => [h.category, h.failed]), [['correctness', false], ['security', true]]);
-}));
-
-test('task-close: a valid empty hunter file counts as done with zero candidates', () => withRig({}, (r) => {
-  prepared(r, 2);
-  HEAVY_OUTPUTS(r);
+  HUNTER_OUTPUTS(r);
   candidatesFile(r, 2, 'security', []);
   save(r, 2, 'spec-reviewer', 1, footerText('spec-reviewer', [0, 0, 0], [['correctness-1', 'refuted'], ['correctness-2', 'refuted']]));
   ok(r.run('task-close', r.plan, '2'));
   const record = recordOf(r, 2);
   assert.deepEqual(validateRecord(record), { ok: true });
   assert.deepEqual(record.hunters.map((h) => [h.category, h.failed, h.candidates]), [['correctness', false, 2], ['security', false, 0]]);
-}));
-
-test('task-close: the second hunter category follows the task (state for a Live state reason)', () => withRig({}, (r) => {
-  prepared(r, 3);
-  save(r, 3, 'safety-reviewer', 1, footerText('safety-reviewer'));
-  save(r, 3, 'spec-reviewer', 1, footerText('spec-reviewer', [0, 0, 0], [['state-1', 'refuted']]));
-  candidatesFile(r, 3, 'correctness', []);
-  candidatesFile(r, 3, 'state', ['state-1']);
-  ok(r.run('task-close', r.plan, '3'));
-  assert.deepEqual(recordOf(r, 3).hunters.map((h) => h.category), ['correctness', 'state']);
 }));
 
 test('task-close: required outputs follow the tier and the ledger', () => {
@@ -908,7 +914,10 @@ test('task-close: a footer that is missing, malformed or names an unknown candid
     'a candidate no hunter file has': (r) => save(r, 2, 'spec-reviewer', 1, footerText('spec-reviewer', [0, 0, 0], [
       ['correctness-1', 'refuted'], ['correctness-2', 'refuted'], ['security-9', 'refuted'],
     ])),
-    'a candidate without a verdict': (r) => save(r, 2, 'spec-reviewer', 1, footerText('spec-reviewer', [0, 0, 0], [['correctness-1', 'refuted']])),
+    'a candidate without a verdict': (r) => {
+      HUNTER_OUTPUTS(r);
+      save(r, 2, 'spec-reviewer', 1, footerText('spec-reviewer', [0, 0, 0], [['correctness-1', 'refuted']]));
+    },
     'a gate footer that is bad': (r) => save(r, 2, 'safety-reviewer', 1, `${footerText('safety-reviewer')}trailing\n`),
   };
   for (const [what, spoil] of Object.entries(cases)) {
@@ -1023,7 +1032,7 @@ test('task-close: a reopened task needs outputs saved after the previous attempt
   markClosed(r, 2, 1, 600);
   prepared(r, 2);
   HEAVY_OUTPUTS(r);
-  ageOutputs(r, 2, 3600); // attempt 1's gate, spec and hunter outputs
+  ageOutputs(r, 2, 3600); // attempt 1's gate and spec outputs
   const stale = r.run('task-close', r.plan, '2');
   assert.equal(stale.status, 1, stale.stderr);
   assert.match(stale.stderr, /attempt 2/);
@@ -1031,14 +1040,6 @@ test('task-close: a reopened task needs outputs saved after the previous attempt
   assert.match(r.ledger().at(-1), /^Error: task-close T2 — exit 1 — .*attempt 2/);
   nothingWritten(r, 'a stale gate output');
   assert.equal(storedRecords(r).length, 0);
-
-  // Fresh gate and spec outputs but the hunters' files are still attempt 1's.
-  for (const role of ['safety-reviewer', 'spec-reviewer']) ageFile(join(r.workspace, `task-2-${role}-r1.md`), 0);
-  const hunters = r.run('task-close', r.plan, '2');
-  assert.equal(hunters.status, 1, hunters.stderr);
-  assert.ok(hunters.stderr.includes(basename(candidatesPath(r, 2, 'correctness'))), hunters.stderr);
-  assert.match(hunters.stderr, /attempt 2/);
-  nothingWritten(r, 'a stale hunter file');
 
   ageOutputs(r, 2, 0);
   const done = ok(r.run('task-close', r.plan, '2'));
@@ -1171,7 +1172,7 @@ test('task-close: parked findings and a tripped breaker show in the line and the
 
 test('task-close --provider codex sets provider and the Codex hunter model', () => withRig({}, (r) => {
   prepared(r, 2);
-  HEAVY_OUTPUTS(r);
+  HUNTER_OUTPUTS(r);
   rmSync(r.installed); // the Codex model comes from the routing table, not from a Claude install
   ok(r.run('task-close', r.plan, '2', '--provider', 'codex'));
   const record = recordOf(r, 2);
@@ -1182,7 +1183,7 @@ test('task-close --provider codex sets provider and the Codex hunter model', () 
 
 test('task-close: the default provider reads the hunter model from the roles install; a missing file is an Error', () => withRig({}, (r) => {
   prepared(r, 2);
-  HEAVY_OUTPUTS(r);
+  HUNTER_OUTPUTS(r);
   rmSync(r.installed);
   const head = r.head();
   const res = r.run('task-close', r.plan, '2');
@@ -1196,7 +1197,7 @@ test('task-close: the default provider reads the hunter model from the roles ins
 
 test('task-close: a roles install without the hunter agent file or its model is an Error', () => withRig({}, (r) => {
   prepared(r, 2);
-  HEAVY_OUTPUTS(r);
+  HUNTER_OUTPUTS(r);
   const hunter = join(r.root, 'home', '.claude', 'plugins', 'cache', 'triqual', 'roles', '9.9.9', 'agents', 'hunter.md');
   writeFileSync(hunter, '---\nname: hunter\ndescription: "Hunts."\n---\n');
   const res = r.run('task-close', r.plan, '2');

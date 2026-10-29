@@ -352,11 +352,11 @@
     const specs = needSpec ? required('spec-reviewer') : [];
     const spec = specs[0] ?? null;
 
-    // The hunters sent: the heavy tier's pick, unless the ledger skipped them or the task has no commits, and then the task's last
-    // `Budget: hunters <tier count> → <used> for T<N>` line of this attempt: more than the tier's count adds the categories whose
-    // candidates files exist, fewer keeps the first <used>, those with a file first. Hunters the budget did not send are not
-    // recorded as failed.
-    const tierPick = tier === 'heavy' ? common.hunterPick(common.reasonLine(planTask)).split(',') : [];
+    // The hunters sent: a task review sends none at any tier (they run at the phase review only), so the tier's pick is empty;
+    // the only hunters a task records are the ones the task's last `Budget: hunters <tier count> → <used> for T<N>` line of this
+    // attempt names: the categories whose candidates files exist, the first <used> of them. Hunters the budget did not send are
+    // not recorded as failed.
+    const tierPick = [];
     const budget = window.map((l) => new RegExp(`^Budget: hunters (\\d+) → (\\d+) for T${n}\\b`).exec(l)).filter(Boolean).at(-1);
     let categories = skippedHunters || noCommits ? [] : tierPick;
     if (budget && !skippedHunters && !noCommits) {
