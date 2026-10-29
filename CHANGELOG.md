@@ -3,6 +3,11 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## progress-tracking 0.7.2
+
+- The plan reader reads the optional `**Test paths:**` header line; lines in those paths never count toward the 300-line heavy limit or the light allowance. This is the same change as methodology 1.5.0's copy of the reader, and the copies test pins the two byte-identical. No other behavior changes.
+- Update with `triqual sync --yes`, then `/reload-plugins`.
+
 ## roles 0.5.0 / methodology 1.5.1 / workflow-gate 0.3.3
 
 - roles: `spec-reviewer` now runs on Opus (it was Sonnet), effort medium unchanged. Evidence: a replay of 8 tasks gave Opus recall 0.67 and precision 0.65 against Sonnet recall 0.26 and precision 0.64, at about twice the spec-review spend per task at list prices. The Codex routing for `spec-reviewer` is unchanged (already Terra at high effort).
