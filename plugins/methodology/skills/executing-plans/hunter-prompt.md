@@ -1,8 +1,9 @@
 # Hunter Prompt Template
 
 Use this template to dispatch a hunter, `roles:hunter`, only in a phase review,
-for each of its 3 hunters (a task's review sends none at any tier, and the seams
-review at the end of a plan sends none). One hunter looks at one category of defect in one review package and
+for each hunter it sends (a task's review sends none at any tier, and the seams
+review at the end of a plan sends none). One hunter looks at one category of defect, except the phase
+`correctness` hunter, which spans correctness, state and spec drift, in one review package and
 writes its candidates to one file; `roles:final-adversarial-reviewer` verifies
 them in round 2 of the phase review. The
 hunter's agent definition carries its standing instructions: this template is
@@ -10,6 +11,12 @@ only the dispatch. Pass no model: the role's definition pins it.
 
 **Purpose:** A cheap, wide first pass over the diff. The hunter reports
 candidates; it never fixes and never grades severity.
+
+**Candidate rule** (the agent definition carries it; every dispatch gets it):
+each candidate gives a `file:line`, the concrete trigger input or state, the
+traced path to the wrong result, and expected against actual. No suspicion, no
+"could": a candidate without a trigger the hunter can name is not reported. A
+hunter reports at most 3 candidates.
 
 ```
 Subagent (roles:hunter):
@@ -38,11 +45,14 @@ the hunter the spec and the plan instead, with the package of the phase's range
 ```
     Spec: [SPEC_PATH]
     Plan: [PLAN_PATH]
+    Scope: correctness, state and spec drift together (one candidates file; correctness hunter only, the security hunter's dispatch has no Scope line)
 ```
 
-A phase review sends three hunters, one per category: `correctness`, `security`,
-`spec-drift`. A task's review never sends a hunter: this template is dispatched only in a
-phase review.
+A phase review sends a `correctness` hunter, which covers correctness, state and
+spec drift together, and a `security` hunter only when the phase range touches a
+sensitive path (the same sensitive paths as `tier-check`: its defaults plus the plan's
+`**Sensitive paths:**`). A task's review never sends a hunter: this template is
+dispatched only in a phase review.
 
 **Placeholders:**
 - `[CATEGORY]` — one of `correctness`, `security`, `spec-drift`, `state`

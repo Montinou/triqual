@@ -229,7 +229,7 @@ test('the hunters rule no longer sends state in a phase review', () => {
   assert.doesNotMatch(flat(raw), /\b(4|four) hunters/, 'SKILL.md still says a phase review sends four hunters');
   const prompt = flat(read(`${EP}/hunter-prompt.md`));
   assert.doesNotMatch(prompt, /\b(4|four) hunters/, 'hunter-prompt.md still says four hunters');
-  assert.ok(prompt.includes('A phase review sends three hunters, one per category: `correctness`, `security`, `spec-drift`.'), 'hunter-prompt.md does not name the three phase hunters');
+  assert.ok(prompt.includes('A phase review sends a `correctness` hunter, which covers correctness, state and spec drift together, and a `security` hunter only when the phase range touches a sensitive path'), 'hunter-prompt.md does not name the merged correctness hunter and the security condition');
   const finalPrompt = flat(read(`${EP}/final-review-prompt.md`));
   assert.doesNotMatch(finalPrompt, /four hunters|\(`correctness`, `security`, `spec-drift`, `state`\)/, 'final-review-prompt.md still names four hunters');
   assert.ok(finalPrompt.includes('three hunters (`correctness`, `security`, `spec-drift`)'), 'final-review-prompt.md does not name the three hunters');
@@ -604,13 +604,41 @@ test('the seams scope of the final review prompt reads only the cross-phase inte
   assert.doesNotMatch(flat(prompt), /final-candidates/, 'the prompt still names final candidates files');
 });
 
+test('the hunter template carries the evidence rule, the cap of 3 and the merged phase scope', () => {
+  const text = flat(read(`${EP}/hunter-prompt.md`));
+  assert.ok(text.includes('`file:line`') && text.includes('the concrete trigger input or state') && text.includes('the traced path to the wrong result') && text.includes('expected against actual'), 'the hunter template does not state the candidate evidence rule');
+  assert.ok(text.includes('No suspicion, no "could"'), 'the hunter template does not rule out suspicion');
+  assert.ok(text.includes('at most 3 candidates'), 'the hunter template does not cap candidates at 3');
+  assert.doesNotMatch(text, /about 5/, 'the hunter template still asks for about 5 candidates');
+  assert.doesNotMatch(text, /for each of its 3 hunters|sends three hunters, one per category/, 'the hunter template still sends three hunters');
+  const mode = text.slice(text.indexOf('**Phase review:**'), text.indexOf('**Placeholders:**'));
+  assert.ok(mode.includes('`correctness` hunter, which covers correctness, state and spec drift together'), 'the phase mode does not merge the correctness scope');
+  assert.ok(mode.includes('`security` hunter only when the phase range touches a sensitive path'), 'the phase mode does not condition security on a sensitive path');
+  assert.ok(mode.includes('same sensitive paths as `tier-check`'), 'the phase mode does not name the sensitive paths');
+});
+
+test('the dispatched phase-mode block tells the correctness hunter its merged scope', () => {
+  const raw = read(`${EP}/hunter-prompt.md`);
+  const afterPhase = raw.slice(raw.indexOf('**Phase review:**'));
+  const block = afterPhase.slice(afterPhase.indexOf('```') + 3, afterPhase.indexOf('```', afterPhase.indexOf('```') + 3));
+  assert.ok(/^\s*Spec: \[SPEC_PATH\]$/m.test(block), 'the phase-mode dispatch block lost its Spec line');
+  assert.ok(block.includes('Scope: correctness, state and spec drift together (one candidates file;'), 'the dispatched phase-mode block does not carry the merged Scope line');
+  assert.ok(flat(raw).includes('one category of defect, except the phase `correctness` hunter, which spans correctness, state and spec drift'), 'the template intro still says one category with no exception for the merged hunter');
+  const scopeLine = block.split('\n').find((l) => l.trim().startsWith('Scope:'));
+  assert.ok(/correctness hunter only/.test(scopeLine) && /security hunter/.test(scopeLine), 'the Scope line in the dispatched block does not limit itself to the correctness hunter (the security hunter must get none)');
+  const agent = flat(readFileSync(join(PLUGIN, '..', 'roles', 'agents', 'hunter.md'), 'utf8'));
+  assert.ok(agent.includes('a `Scope:` line') && agent.includes('covers everything it names'), 'the hunter role does not honor a Scope line');
+  assert.ok(agent.includes('only with the `correctness` category') && agent.includes('any other category ignores it'), 'the hunter role lets a Scope line widen a non-correctness hunter');
+  assert.ok(agent.includes('<path>: 3 candidates') && !agent.includes('<path>: 4 candidates'), 'the hunter example count exceeds the cap of 3');
+});
+
 test('the hunter template has no final mode', () => {
   const raw = read(`${EP}/hunter-prompt.md`);
   const text = flat(raw);
   assert.doesNotMatch(text, /\*\*Final review:\*\*/, 'the hunter template still has a final mode');
   assert.doesNotMatch(text, /final review's 3 hunters|final-candidates|in the final review|final review only|final or phase review/, 'the hunter template still mentions the final review');
   assert.ok(text.includes('**Phase review:**'), 'the hunter template lost its phase mode');
-  assert.ok(text.includes('a phase review sends three hunters') || text.includes('A phase review sends three hunters'), 'the hunter template lost the phase hunter count');
+  assert.ok(text.includes('A phase review sends a `correctness` hunter'), 'the hunter template lost its phase hunter rule');
   // The role agent names the same candidates files as the template, and no final-review file.
   const agent = flat(readFileSync(join(PLUGIN, '..', 'roles', 'agents', 'hunter.md'), 'utf8'));
   assert.doesNotMatch(agent, /final-candidates|in the final review/, 'the hunter role still names a final-review candidates file');
