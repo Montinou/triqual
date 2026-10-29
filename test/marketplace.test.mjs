@@ -154,9 +154,9 @@ test('plugin versions are the ones this release ships', () => {
     .filter((p) => !isExternal(p)).map((p) => [p.name, p.version]));
   assert.deepEqual(versions, {
     'progress-tracking': '0.7.1',
-    'workflow-gate': '0.3.2',
-    roles: '0.4.2',
-    methodology: '1.5.0',
+    'workflow-gate': '0.3.3',
+    roles: '0.5.0',
+    methodology: '1.5.1',
     'memory-report': '0.5.0',
   });
   assert.equal(readJson('plugins/methodology-codex/.codex-plugin/plugin.json').version, '0.2.0');
