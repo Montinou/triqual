@@ -157,6 +157,17 @@ empty row for it that relocate refuses to replace.
   root `<old-root>`, the new checkout already has a row, several rows share `<old-root>`, or the documents directory
   `repos/<new-key>` already exists. Exit 2: no argument, or not inside a git checkout.
 
+## Reconcile after a migration
+
+Run `triqual tasks reconcile [--plan <plan.md|ledger>]` after a migration (a legacy mode moved into the store, a
+checkout relocated) or after a plan whose tasks were done without a ledger move: the ledger then says `todo` for work
+git already holds. It proposes a state for every task that is not done, from git (and, in store mode, from the entries),
+each with a confidence of `high`, `medium` or `low`. Run the report before `--apply` and read it: without the flag it
+writes nothing and takes no lock. Then `triqual tasks reconcile --apply` walks only the `high` proposals, in task order, as
+`start` followed by `done --commit <sha>`: only `high` confidence is applied, a task without a resolvable commit sha is
+never marked done, and a transition that fails is skipped and reported. It never edits git. Settle the `medium` and
+`low` rows by hand with `triqual tasks`. `--json` prints the rows.
+
 ## Recovery, export and the daily snapshot
 
 - **Snapshots.** The first store write of each day saves `backups/tracking-YYYY-MM-DD.db` beside the database and keeps

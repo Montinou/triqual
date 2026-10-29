@@ -83,6 +83,20 @@ test('hunter can write only its candidates file', () => {
   assert.ok(!listTools(meta.disallowedTools).includes('Write'), 'hunter must keep Write');
 });
 
+test('hunter reports only evidence-bound candidates, at most 3, in the four categories', () => {
+  const { body } = parseAgent('hunter.md');
+  const flatBody = body.replace(/\s+/g, ' ');
+  assert.ok(flatBody.includes('(correctness, security, spec-drift or state)'), 'hunter lost one of the four categories');
+  assert.ok(flatBody.includes('`file:line`'), 'hunter does not require a file:line');
+  assert.match(flatBody, /concrete trigger input or state/, 'hunter does not require a concrete trigger');
+  assert.match(flatBody, /traced path/, 'hunter does not require the traced path to the wrong result');
+  assert.match(flatBody, /expected .* against .* actual/i, 'hunter does not require expected against actual');
+  assert.match(flatBody, /no suspicion/i, 'hunter does not rule out suspicion');
+  assert.ok(flatBody.includes('"could"'), 'hunter does not rule out "could"');
+  assert.match(flatBody, /at most 3 candidates/, 'hunter does not cap candidates at 3');
+  assert.doesNotMatch(flatBody, /about 5/, 'hunter still aims for about 5 candidates');
+});
+
 // Plan Store-2 T3 (Review Focus 5): in store mode an added root progress.md is a defect, not an expected tracking file.
 test('safety-reviewer rule 7 splits by mode: store mode flags an added tracking path, not a deletion or templates/', () => {
   const { body } = parseAgent('safety-reviewer.md');

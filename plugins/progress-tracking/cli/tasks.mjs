@@ -13,7 +13,9 @@
 // The plan documents live in the repository's documents directory under the data directory (`paths --json` names it);
 // a transition is one database transaction, and the writes also hold the lock in that directory. `render` prints the
 // section instead of writing it; `check` compares each plan whose document exists against the store; `line` and the
-// views open the database read-only.
+// views open the database read-only. `reconcile` proposes the state of every non-done task from git (and, in store mode,
+// progress entries) and writes only with --apply, only the high-confidence proposals, through the `start` and `done`
+// transitions; without --apply it opens the store read-only and takes no lock.
 import { execFileSync } from 'node:child_process';
 import { existsSync, linkSync, mkdirSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -27,6 +29,7 @@ import { resolveTracking, storeTracking } from '../lib/tracking.mjs';
 import { docsDirs, loadSqlite, maybeDailySnapshot, repoKey, storePaths } from '../lib/store.mjs';
 import { writeAtomic } from '../lib/fsx.mjs';
 import { PlanError, validatePlanForRegistration } from '../lib/plan.mjs';
+import { classifyTasks } from '../lib/reconcile-evidence.mjs';
 import { withLock, tasksLockPath } from '../lib/lock.mjs';
 import { buildSnapshot, byNameDesc, planName } from '../lib/snapshot.mjs';
 import { readRegistry, listResolved } from '../lib/registry.mjs';
@@ -54,6 +57,7 @@ const USAGE = `usage: triqual tasks <subcommand> [args]
   retitle T<N> "<title>" [--plan <plan.md|ledger>]
   retier T<N> <tier> --reason "<text>" [--plan <plan.md|ledger>]
   close [--plan <plan.md|ledger>]
+  reconcile [--plan <plan.md|ledger>] [--apply] [--json]
   status [--json]
   next [--plan <plan.md|ledger>] [--json]
   check [--staged]
@@ -569,9 +573,10 @@ function snapshotAfterWrite(st) {
 // synchronous body, the writing ones under the lock in the documents directory, then closes the store.
 async function runStore(def, t, values, positionals) {
   await loadSqlite();
-  const st = storeTracking(t, { home: homedir(), env: process.env, access: def.access });
+  const access = typeof def.access === 'function' ? def.access(values) : def.access;
+  const st = storeTracking(t, { home: homedir(), env: process.env, access });
   try {
-    if (def.access === 'read') return def.store(st, values, positionals);
+    if (access === 'read') return def.store(st, values, positionals);
     const code = withLock(tasksLockPath(st), () => def.store(st, values, positionals));
     snapshotAfterWrite(st);
     return code;
@@ -638,6 +643,181 @@ function cmdRetier(t, values, [id, tier]) {
   if (result.changed) save(t, selected.path, result.ledger);
   else writeStatus(t, renderedStatus(t, loadLedgers(t)));
   out(retierMessage(id, tier, before, result.changed));
+  return 0;
+}
+
+// ---- reconcile ----
+
+const PLAN_FILE = /^(\d{4}-\d{2}-\d{2})-(.+)$/;
+const ENTRY_STAGE = /^Plan .+? · T(\d+)/;
+const SHORT_SHA = 7;
+
+// The commits of `git log` as { sha, subject }, newest first. `args` are options only; `paths` follow `--`. A git failure
+// throws: the classifier turns it into a low proposal for that task. `since` is a plan date: a date-only --since would
+// apply it at the current time of day and hide commits made earlier that day, so it is passed as midnight.
+function commitLog(repoRoot, args, paths, since) {
+  const argv = ['log', '--format=%H%x09%s', ...(since ? [`--since=${since} 00:00:00`] : []), ...args];
+  if (paths) argv.push('--', ...paths);
+  return git(repoRoot, argv).split('\n').filter(Boolean).map((line) => {
+    const tab = line.indexOf('\t');
+    return { sha: line.slice(0, tab), subject: line.slice(tab + 1) };
+  });
+}
+
+// The probe `classifyTasks` reads git through: every method is read-only.
+function gitProbe(repoRoot) {
+  return {
+    fileExists: (path) => {
+      const abs = resolve(repoRoot, path);
+      return !relative(repoRoot, abs).startsWith('..') && existsSync(abs);
+    },
+    commitsAdding: (paths, since) => commitLog(repoRoot, ['--diff-filter=A'], paths, since),
+    commitsBySubject: (subject, since) => commitLog(repoRoot, ['--all', '--fixed-strings', `--grep=${subject}`], null, since),
+    commitsTouching: (paths, since) => commitLog(repoRoot, [], paths, since),
+  };
+}
+
+// The progress entries the store holds for the plan's open tasks, as { stage, commit } with the commit resolved to its
+// full sha: an entry whose commit does not resolve in this repository is left out, so it is never evidence.
+function storeEntries(st, tasks) {
+  if (st.repoId === null) return [];
+  const open = new Set(tasks.filter((x) => x.status !== 'done').map((x) => x.id));
+  const resolved = new Map();
+  const resolves = (sha) => {
+    if (!resolved.has(sha)) resolved.set(sha, resolveCommit(st.repoRoot, sha));
+    return resolved.get(sha);
+  };
+  const entries = [];
+  for (const row of st.store.entries(st.repoId)) {
+    const m = ENTRY_STAGE.exec(row.stage_task ?? '');
+    if (!m || !row.commit_sha || !open.has(`T${Number(m[1])}`)) continue;
+    const commit = resolves(row.commit_sha);
+    if (commit !== null) entries.push({ stage: row.stage_task, commit });
+  }
+  return entries;
+}
+
+// The proposals for a ledger's non-done tasks: { id, status, to, confidence, commit, why }, in task order.
+function reconcileRows(repoRoot, ledger, planFile, planText, entries) {
+  const m = PLAN_FILE.exec(planFile.replace(/(\.tasks\.json|\.md)$/, ''));
+  const proposals = classifyTasks({
+    tasks: ledger.tasks, planText, planDate: m?.[1], planStem: m?.[2] ?? planFile.replace(/\.md$/, ''), entries, probe: gitProbe(repoRoot),
+  });
+  const byId = new Map(ledger.tasks.map((x) => [x.id, x]));
+  return proposals.map((p) => ({ id: p.id, status: byId.get(p.id)?.status ?? null, to: p.to, confidence: p.confidence, commit: p.commit, why: p.why }));
+}
+
+// Walks the high `done` proposals in task order over `ledger`: `start` when the task is pending, then `done` with the
+// commit's full sha. A move that throws, a task that is no longer open or a commit that does not resolve is skipped with
+// its reason and the walk goes on; nothing but the ledger is touched. Returns { ledger, results: Map<id, { applied,
+// skipped }> }.
+function applyProposals(ledger, rows, at, resolveSha) {
+  let current = ledger;
+  const results = new Map();
+  for (const row of rows) {
+    if (row.confidence !== 'high' || row.to !== 'done') continue;
+    const sha = resolveSha(row.commit);
+    const task = current.tasks.find((x) => x.id === row.id);
+    let skipped = null;
+    if (sha === null) skipped = `commit ${row.commit} does not resolve`;
+    else if (!task) skipped = `unknown task ${row.id}`;
+    else if (task.status === 'done') skipped = `${row.id} is already done`;
+    else {
+      // `start` checks dependencies itself, but a task already in progress goes straight to done: every dependency must
+      // have ended up done, whether it was done before or by this walk.
+      const unmet = (task.deps ?? []).map((d) => [d, current.tasks.find((x) => x.id === d)?.status ?? 'unknown']).find(([, status]) => status !== 'done');
+      if (unmet) skipped = `${row.id} depends on ${unmet[0]} (${unmet[1]})`;
+    }
+    if (skipped === null) {
+      try {
+        let next = current;
+        if (task.status === 'pending') next = transition(next, 'start', row.id, undefined, at).ledger;
+        current = transition(next, 'done', row.id, sha, at).ledger;
+        results.set(row.id, { applied: true, skipped: null, commit: sha });
+        continue;
+      } catch (err) {
+        skipped = err.message;
+      }
+    }
+    results.set(row.id, { applied: false, skipped });
+  }
+  return { ledger: current, results };
+}
+
+function reconcileTable(rows) {
+  const head = ['task', 'status', 'proposal', 'confidence', 'sha', 'why'];
+  const body = rows.map((r) => [r.id, r.status ?? '-', r.to, r.confidence, r.commit ? r.commit.slice(0, SHORT_SHA) : '-', r.why]);
+  const widths = head.slice(0, -1).map((_, i) => Math.max(...[head, ...body].map((row) => row[i].length)));
+  return [head, ...body].map((row) => row.map((cell, i) => (i < widths.length ? cell.padEnd(widths[i]) : cell)).join('  '));
+}
+
+// Prints the proposals (a table, or JSON) and, after --apply, what was applied and skipped; `results` is null in report mode.
+function printReconcile(rows, results, { json }) {
+  if (json) {
+    out(JSON.stringify(rows.map((r) => (results ? { ...r, applied: results.get(r.id)?.applied ?? false, skipped: results.get(r.id)?.skipped ?? null } : r)), null, 2));
+    return;
+  }
+  const n = (c) => rows.filter((r) => r.confidence === c).length;
+  for (const line of reconcileTable(rows)) out(line);
+  out(`${rows.length} task${rows.length === 1 ? '' : 's'}: ${n('high')} high, ${n('medium')} medium, ${n('low')} low`);
+  if (!results) {
+    out('report only: nothing was changed; pass --apply to mark the high ones done');
+    return;
+  }
+  let applied = 0;
+  let skipped = 0;
+  for (const r of rows) {
+    const res = results.get(r.id);
+    if (res?.applied) {
+      applied += 1;
+      out(`applied ${r.id} -> done (${res.commit.slice(0, SHORT_SHA)})`);
+    } else if (res) {
+      skipped += 1;
+      out(`skipped ${r.id}: ${res.skipped}`);
+    }
+  }
+  out(`applied ${applied}, skipped ${skipped}, left ${rows.length - applied - skipped}`);
+}
+
+// The text of the plan document next to the ledger; a plan that is gone cannot be reconciled.
+function planTextOf(plansDir, planPath) {
+  const file = join(plansDir, basename(String(planPath)));
+  const text = readIfExists(file);
+  if (text === null) throw new LedgerError(`plan ${file} not found`);
+  return { file: basename(file), text };
+}
+
+// `reconcile` on committed and local mode: file and commit evidence only (progress.md carries no commit field).
+function cmdReconcile(t, values) {
+  const selected = selectLedger(t, values.plan, { skip: !values.apply });
+  const { file, text } = planTextOf(t.plansDir, selected.ledger.plan);
+  const rows = reconcileRows(t.repoRoot, selected.ledger, file, text, []);
+  let results = null;
+  if (values.apply) {
+    const applied = applyProposals(selected.ledger, rows, now(), (sha) => resolveCommit(t.repoRoot, sha));
+    if (serialize(applied.ledger) !== serialize(selected.ledger)) save(t, selected.path, applied.ledger);
+    ({ results } = applied);
+  }
+  printReconcile(rows, results, values);
+  return 0;
+}
+
+// `reconcile` on the store: opened read-only without --apply (no lock, no snapshot); with it, the ledger is read again
+// inside the transaction, so a concurrent writer's change is never overwritten.
+function storeReconcile(st, values) {
+  const selected = selectStoreLedger(st, values.plan);
+  const { file, text } = planTextOf(st.plansDir, selected.path);
+  const rows = reconcileRows(st.repoRoot, selected.ledger, file, text, storeEntries(st, selected.ledger.tasks));
+  let results = null;
+  if (values.apply) {
+    results = st.store.tx(() => {
+      const fresh = st.store.ledgerOf(selected.planId);
+      const applied = applyProposals(fresh, rows, now(), (sha) => resolveCommit(st.repoRoot, sha));
+      if (serialize(applied.ledger) !== serialize(fresh)) st.store.saveLedger(selected.planId, applied.ledger);
+      return applied.results;
+    });
+  }
+  printReconcile(rows, results, values);
   return 0;
 }
 
@@ -867,6 +1047,7 @@ async function runLine(argv) {
 // untracked(values): true when the call needs no opted-in repo in the cwd; writes: true when it may write the ledger or
 // status.md (it then runs under the tracking root's lock). In store mode `store(st, values, positionals)` replaces `run`
 // (a command without one runs `run` as it is) and `access` is how it opens the store: 'read', 'write' or 'create'.
+// `writes` and `access` may be functions of the parsed values, for a command that writes only with a flag (reconcile).
 const PLAN = { plan: { type: 'string' } };
 const move = (cmd, max = 1) => ({
   positionals: [1, max], options: PLAN, writes: true, run: cmdTransition(cmd), access: 'write', store: storeTransition(cmd),
@@ -897,6 +1078,14 @@ const COMMANDS = {
   },
   close: {
     positionals: [0, 0], options: PLAN, writes: true, run: cmdTransition('close'), access: 'write', store: storeTransition('close'),
+  },
+  reconcile: {
+    positionals: [0, 0],
+    options: { ...PLAN, apply: { type: 'boolean' }, json: { type: 'boolean' } },
+    writes: (values) => values.apply === true,
+    run: cmdReconcile,
+    access: (values) => (values.apply === true ? 'write' : 'read'),
+    store: storeReconcile,
   },
   status: { positionals: [0, 0], options: { json: { type: 'boolean' } }, run: cmdStatus, access: 'read', store: storeStatus },
   next: { positionals: [0, 0], options: { ...PLAN, json: { type: 'boolean' } }, run: cmdNext, access: 'read', store: storeNext },
@@ -937,7 +1126,7 @@ async function main(argv) {
     return 2;
   }
   if (t?.mode === 'store' && def.store) return runStore(def, t, values, positionals);
-  if (def.writes) return withLock(tasksLockPath(t), () => def.run(t, values, positionals));
+  if (typeof def.writes === 'function' ? def.writes(values) : def.writes) return withLock(tasksLockPath(t), () => def.run(t, values, positionals));
   return def.run(t, values, positionals);
 }
 

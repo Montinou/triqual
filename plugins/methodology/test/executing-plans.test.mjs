@@ -154,9 +154,14 @@ test('standard dispatches the gate and the spec review in parallel', () => {
   assert.ok(round2.includes('**Standard:**') && round2.includes('already ran'), 'Round 2 does not say the standard spec review already ran');
 });
 
-test('the phase review still sends 3 hunters while the task review sends none', () => {
+test('the phase review sends one correctness hunter and a security hunter only on a sensitive path, the task review none', () => {
   const round1 = flat(section(skill(), '### 8. Review the phase')).split('- **Round 1, the hunters.**')[1].split('- **Round 2')[0];
-  assert.ok(round1.includes('3 hunters') && round1.includes('`correctness`, `security` and `spec-drift`'), 'the phase review does not name the 3 hunters');
+  assert.ok(round1.includes('one `correctness` hunter') && round1.includes('covers correctness, state and spec drift together'), 'the phase review does not name the one correctness hunter');
+  assert.ok(round1.includes('a `security` hunter only when the phase range touches a sensitive path'), 'the phase review does not condition the security hunter on a sensitive path');
+  assert.ok(round1.includes('`tier-check`\'s default sensitive paths plus the plan\'s `**Sensitive paths:**`'), 'the sensitive-path condition leaves out the plan\'s Sensitive paths');
+  assert.doesNotMatch(round1, /3 hunters|three hunters|`spec-drift`/, 'the phase review still sends 3 hunters or a spec-drift hunter');
+  const round2 = flat(section(skill(), '### 8. Review the phase')).split('- **Round 2, the reviewer.**')[1].split('- **Findings.**')[0];
+  assert.ok(round2.includes('running or tracing its trigger'), 'Round 2 does not check each candidate by running or tracing its trigger');
 });
 
 test('the default Phase check is the union of the phase\'s Test: paths, run focused', () => {
@@ -215,31 +220,34 @@ test('the spec reviewer prompt has no candidates section without hunters', () =>
 
 test('the Finish hunter reference uses the new counts', () => {
   const finish = flat(section(skill(), '## Finish'));
-  assert.ok(finish.includes('0 per task at every tier, plus 3 per phase, 0 for the seams review'), 'Finish does not state the per-task and phase counts');
+  assert.ok(finish.includes('0 per task at every tier, plus 2 per phase, 0 for the seams review'), 'Finish does not state the per-task and phase counts');
   assert.doesNotMatch(finish, /2 per heavy task|4 per heavy task, 2 per standard/, 'Finish still states the old counts');
-  assert.doesNotMatch(finish, /plus 4 per phase/, 'Finish still states 4 hunters per phase');
-  assert.ok(finish.includes('reference 4 before 2026-10-29, 3 after'), 'Finish does not note that the phase reference changed on 2026-10-29');
+  assert.doesNotMatch(finish, /plus (3|4) per phase/, 'Finish still states 3 or 4 hunters per phase');
+  assert.ok(finish.includes('reference 4 before 2026-10-29, 3 until the correctness hunter absorbed spec-drift, 2 after'), 'Finish does not note how the phase reference changed');
 });
 
-test('the hunters rule no longer sends state in a phase review', () => {
+test('the hunters rule sends one correctness hunter, no state or spec-drift hunter, in a phase review', () => {
   const raw = skill();
   const round1 = flat(section(raw, '### 8. Review the phase')).split('- **Round 1, the hunters.**')[1].split('- **Round 2')[0];
-  assert.ok(round1.includes('3 hunters') && round1.includes('`correctness`, `security` and `spec-drift`'), 'the phase review does not send the three calibrated hunters');
+  assert.ok(round1.includes('one `correctness` hunter') && round1.includes('a `security` hunter only when the phase range touches a sensitive path'), 'the phase review does not send one correctness hunter and a conditional security hunter');
+  assert.doesNotMatch(flat(raw), /\b(3|three) hunters/, 'SKILL.md still says a phase review sends three hunters');
   assert.doesNotMatch(round1, /`state`/, 'the phase review still sends a state hunter');
   assert.doesNotMatch(flat(raw), /\b(4|four) hunters/, 'SKILL.md still says a phase review sends four hunters');
   const prompt = flat(read(`${EP}/hunter-prompt.md`));
   assert.doesNotMatch(prompt, /\b(4|four) hunters/, 'hunter-prompt.md still says four hunters');
-  assert.ok(prompt.includes('A phase review sends three hunters, one per category: `correctness`, `security`, `spec-drift`.'), 'hunter-prompt.md does not name the three phase hunters');
+  assert.ok(prompt.includes('A phase review sends a `correctness` hunter, which covers correctness, state and spec drift together, and a `security` hunter only when the phase range touches a sensitive path'), 'hunter-prompt.md does not name the merged correctness hunter and the security condition');
   const finalPrompt = flat(read(`${EP}/final-review-prompt.md`));
   assert.doesNotMatch(finalPrompt, /four hunters|\(`correctness`, `security`, `spec-drift`, `state`\)/, 'final-review-prompt.md still names four hunters');
-  assert.ok(finalPrompt.includes('three hunters (`correctness`, `security`, `spec-drift`)'), 'final-review-prompt.md does not name the three hunters');
+  assert.doesNotMatch(finalPrompt, /three hunters|`spec-drift`/, 'final-review-prompt.md still names three hunters or a spec-drift hunter');
+  assert.ok(finalPrompt.includes('the phase\'s `correctness` hunter (correctness, state and spec drift together) and, when the range touches a sensitive path, its `security` hunter'), 'final-review-prompt.md does not name the correctness and the conditional security hunter');
+  assert.ok(finalPrompt.includes('running or tracing its trigger'), 'final-review-prompt.md does not ask for each candidate to be run or traced');
   // The task level sends no hunter: the phase review is the only place hunters run.
   assert.doesNotMatch(flat(section(raw, '## Tiers')), /`state` when it names live state/, 'the task-level state hunter pick remains');
   const records = flat(read(`${EP}/references/records.md`));
-  assert.ok(records.includes('(reference 4 before 2026-10-29, 3 after,'), 'records.md does not state the phase reference of 3');
-  assert.doesNotMatch(records, /"category": "state"/, 'the phase hunters record example still has a state hunter');
-  assert.ok(records.includes('"budget": { "reference": 3, "used": 3, "overrun": false }'), 'the phase hunters record example does not budget 3');
-  assert.doesNotMatch(flat(read(`${EP}/references/example.md`)), /4 hunters/, 'example.md still shows 4 hunters');
+  assert.ok(records.includes('(reference 4 before 2026-10-29, 3 until the correctness hunter absorbed spec-drift, 2 after,'), 'records.md does not state the phase reference of 2');
+  assert.doesNotMatch(records, /"category": "(state|spec-drift)"/, 'the phase hunters record example still has a state or spec-drift hunter');
+  assert.ok(records.includes('"budget": { "reference": 2, "used": 2, "overrun": false }'), 'the phase hunters record example does not budget 2');
+  assert.doesNotMatch(flat(read(`${EP}/references/example.md`)), /\b[34] hunters/, 'example.md still shows 3 or 4 hunters');
 });
 
 test('the invariants are stated in the skill', () => {
@@ -604,13 +612,41 @@ test('the seams scope of the final review prompt reads only the cross-phase inte
   assert.doesNotMatch(flat(prompt), /final-candidates/, 'the prompt still names final candidates files');
 });
 
+test('the hunter template carries the evidence rule, the cap of 3 and the merged phase scope', () => {
+  const text = flat(read(`${EP}/hunter-prompt.md`));
+  assert.ok(text.includes('`file:line`') && text.includes('the concrete trigger input or state') && text.includes('the traced path to the wrong result') && text.includes('expected against actual'), 'the hunter template does not state the candidate evidence rule');
+  assert.ok(text.includes('No suspicion, no "could"'), 'the hunter template does not rule out suspicion');
+  assert.ok(text.includes('at most 3 candidates'), 'the hunter template does not cap candidates at 3');
+  assert.doesNotMatch(text, /about 5/, 'the hunter template still asks for about 5 candidates');
+  assert.doesNotMatch(text, /for each of its 3 hunters|sends three hunters, one per category/, 'the hunter template still sends three hunters');
+  const mode = text.slice(text.indexOf('**Phase review:**'), text.indexOf('**Placeholders:**'));
+  assert.ok(mode.includes('`correctness` hunter, which covers correctness, state and spec drift together'), 'the phase mode does not merge the correctness scope');
+  assert.ok(mode.includes('`security` hunter only when the phase range touches a sensitive path'), 'the phase mode does not condition security on a sensitive path');
+  assert.ok(mode.includes('same sensitive paths as `tier-check`'), 'the phase mode does not name the sensitive paths');
+});
+
+test('the dispatched phase-mode block tells the correctness hunter its merged scope', () => {
+  const raw = read(`${EP}/hunter-prompt.md`);
+  const afterPhase = raw.slice(raw.indexOf('**Phase review:**'));
+  const block = afterPhase.slice(afterPhase.indexOf('```') + 3, afterPhase.indexOf('```', afterPhase.indexOf('```') + 3));
+  assert.ok(/^\s*Spec: \[SPEC_PATH\]$/m.test(block), 'the phase-mode dispatch block lost its Spec line');
+  assert.ok(block.includes('Scope: correctness, state and spec drift together (one candidates file;'), 'the dispatched phase-mode block does not carry the merged Scope line');
+  assert.ok(flat(raw).includes('one category of defect, except the phase `correctness` hunter, which spans correctness, state and spec drift'), 'the template intro still says one category with no exception for the merged hunter');
+  const scopeLine = block.split('\n').find((l) => l.trim().startsWith('Scope:'));
+  assert.ok(/correctness hunter only/.test(scopeLine) && /security hunter/.test(scopeLine), 'the Scope line in the dispatched block does not limit itself to the correctness hunter (the security hunter must get none)');
+  const agent = flat(readFileSync(join(PLUGIN, '..', 'roles', 'agents', 'hunter.md'), 'utf8'));
+  assert.ok(agent.includes('a `Scope:` line') && agent.includes('covers everything it names'), 'the hunter role does not honor a Scope line');
+  assert.ok(agent.includes('only with the `correctness` category') && agent.includes('any other category ignores it'), 'the hunter role lets a Scope line widen a non-correctness hunter');
+  assert.ok(agent.includes('<path>: 3 candidates') && !agent.includes('<path>: 4 candidates'), 'the hunter example count exceeds the cap of 3');
+});
+
 test('the hunter template has no final mode', () => {
   const raw = read(`${EP}/hunter-prompt.md`);
   const text = flat(raw);
   assert.doesNotMatch(text, /\*\*Final review:\*\*/, 'the hunter template still has a final mode');
   assert.doesNotMatch(text, /final review's 3 hunters|final-candidates|in the final review|final review only|final or phase review/, 'the hunter template still mentions the final review');
   assert.ok(text.includes('**Phase review:**'), 'the hunter template lost its phase mode');
-  assert.ok(text.includes('a phase review sends three hunters') || text.includes('A phase review sends three hunters'), 'the hunter template lost the phase hunter count');
+  assert.ok(text.includes('A phase review sends a `correctness` hunter'), 'the hunter template lost its phase hunter rule');
   // The role agent names the same candidates files as the template, and no final-review file.
   const agent = flat(readFileSync(join(PLUGIN, '..', 'roles', 'agents', 'hunter.md'), 'utf8'));
   assert.doesNotMatch(agent, /final-candidates|in the final review/, 'the hunter role still names a final-review candidates file');
@@ -650,7 +686,8 @@ test('the phase review runs between the Phase check and done/submit', () => {
   assert.ok(review >= 0 && done > review && submit > done, 'the order is not phase review → done → submit');
   const seven = flat(section(raw, '### 7. End the phase'));
   assert.doesNotMatch(seven, /stack\.mjs (done|submit)/, 'done and submit stayed in step 7');
-  for (const category of ['`correctness`', '`security`', '`spec-drift`']) assert.ok(body.includes(category), `no hunter category ${category}`);
+  for (const category of ['`correctness`', '`security`']) assert.ok(body.includes(category), `no hunter category ${category}`);
+  assert.doesNotMatch(body, /`spec-drift`/, 'the phase review still names a spec-drift hunter');
   assert.ok(body.includes('`roles:final-adversarial-reviewer`'), 'the phase reviewer is not named');
   assert.ok(body.includes('Phase check'), 'the phase review does not name the Phase check');
   const process = flat(section(raw, '## The Process'));
@@ -1660,7 +1697,7 @@ test('the implementer prompt names both the phase-review and final fix rounds as
 
 test('the worked example is a single-phase plan: a phase review, then no seams review', () => {
   const example = flat(section(skill(), '## Example'));
-  assert.ok(example.includes('[Phase check passes; phase review: 3 hunters + roles:final-adversarial-reviewer → clean; Phase review: P1 clean; hunters and final-escapes records (P1); done; submit]'), 'the example skips the phase review');
+  assert.ok(example.includes('[Phase check passes; phase review: 1 correctness hunter (no sensitive path, no security hunter) + roles:final-adversarial-reviewer → clean; Phase review: P1 clean; hunters and final-escapes records (P1); done; submit]'), 'the example skips the phase review');
   assert.ok(example.includes('[single-phase plan: the phase review was the final review; no seams review]'), 'the example does not say the phase review was the final review');
   assert.doesNotMatch(example, /Seams review:/, 'the single-phase example still runs a seams review');
   assert.ok(example.indexOf('Phase review: P1 clean') < example.indexOf('submit <plansDir>/billing.md 1 --open'), 'the example opens before the phase review');
@@ -2312,7 +2349,7 @@ test('the 1.4.0 CHANGELOG entry and the orchestrator prompt carry the parallel r
   for (const line of ['Parallel tasks', 'At most 3 implementers', '`task-open --worktree`', 'plan order', 'landing conflict', 'TRIQUAL_LANDING_TEST_TIMEOUT_MS']) {
     assert.ok(entry.includes(line), `the 1.4.0 CHANGELOG entry lacks: ${line}`);
   }
-  assert.equal(JSON.parse(readFileSync(join(PLUGIN, '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.6.0');
+  assert.equal(JSON.parse(readFileSync(join(PLUGIN, '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.7.0');
   assert.ok(PROMPT().includes('## Parallel Tasks'), 'the orchestrator prompt has no Parallel Tasks section');
 });
 

@@ -65,7 +65,8 @@ In a plan with tiers a `roles:complex-implementer` task is `heavy` and a `coordi
 | standard | none | yes, in parallel with the spec reviewer | yes, in parallel with the gate |
 | light | none | yes | only on a finding or `Cannot verify` from the gate |
 
-Each phase of a plan also gets a deep review before it is submitted: 3 hunters (correctness, security, spec-drift)
+Each phase of a plan also gets a deep review before it is submitted: one or two hunters (`correctness`, which covers
+correctness, state and spec drift together, always, and `security` only when the phase touches a sensitive path)
 and the `final-adversarial-reviewer` over the phase diff. The final review of a plan with several phases is a
 seams review by the `final-adversarial-reviewer` alone, with no hunters; in a single-phase plan the phase review is the
 final review.

@@ -167,17 +167,17 @@ test('README Tiers section documents the heavy-tier warning at registration', ()
     'README #### Tiers: the warning, its threshold, stderr, and that nothing else changes');
 });
 
-test('plugin.json, marketplace.json and the README table agree on 0.7.2', () => {
+test('plugin.json, marketplace.json and the README table agree on 0.8.0', () => {
   const root = join(PLUGIN, '..', '..');
   const plugin = JSON.parse(readFileSync(join(PLUGIN, '.claude-plugin', 'plugin.json'), 'utf8'));
   const market = JSON.parse(readFileSync(join(root, '.claude-plugin', 'marketplace.json'), 'utf8'));
-  assert.equal(plugin.version, '0.7.2');
-  assert.equal(market.plugins.find(p => p.name === 'progress-tracking').version, '0.7.2');
-  assert.match(readFileSync(join(root, 'README.md'), 'utf8'), /\| `progress-tracking` \| 0\.7\.2 \|/);
+  assert.equal(plugin.version, '0.8.0');
+  assert.equal(market.plugins.find(p => p.name === 'progress-tracking').version, '0.8.0');
+  assert.match(readFileSync(join(root, 'README.md'), 'utf8'), /\| `progress-tracking` \| 0\.8\.0 \|/);
 });
 
-test('the CHANGELOG has a 0.7.2 section', () => {
-  assert.match(readFileSync(join(PLUGIN, '..', '..', 'CHANGELOG.md'), 'utf8'), /^## progress-tracking 0\.7\.2$/m);
+test('the CHANGELOG has a 0.8.0 section', () => {
+  assert.match(readFileSync(join(PLUGIN, '..', '..', 'CHANGELOG.md'), 'utf8'), /^## progress-tracking 0\.8\.0( \/ .*)?$/m);
 });
 
 test('both READMEs document recording, compatibility cost and rollout', () => {
@@ -186,4 +186,16 @@ test('both READMEs document recording, compatibility cost and rollout', () => {
   for (const text of [row, readFileSync(join(PLUGIN, 'README.md'), 'utf8')]) {
     for (const value of ['SessionStart', 'SubagentStart', 'SubagentStop', 'PostToolUse', 'PostToolUseFailure', 'SessionEnd', 'sessions.db', 'TRIQUAL_SESSIONS=0', '47800', '120 ms', 'Grok', 'triqual sync --yes', 'triqual doctor', '/reload-plugins']) assert.ok(text.includes(value), value);
   }
+});
+
+test('references/store-mode.md documents reconcile after a migration', () => {
+  const text = readFileSync(STORE_REF, 'utf8');
+  const reconcile = section(text, 'Reconcile after a migration');
+  assert.notEqual(reconcile, '', 'store-mode.md has a `## Reconcile after a migration` section');
+  assert.doesNotMatch(reconcile, SPANISH);
+  assert.ok(reconcile.includes('triqual tasks reconcile'), 'names triqual tasks reconcile');
+  assert.ok(reconcile.includes('--apply'), 'names --apply');
+  assert.match(reconcile, /after a migration[\s\S]{0,300}without (a )?ledger move/i, 'when to run it: after a migration or tasks done without ledger moves');
+  assert.match(reconcile, /report[^.]*before[^.]*`--apply`/i, 'run the report before --apply');
+  assert.match(reconcile, /only[^.]*`high`[^.]*(applied|confidence)|`high`[^.]*only[^.]*appl/i, 'only high confidence is applied');
 });

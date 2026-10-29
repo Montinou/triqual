@@ -53,11 +53,12 @@ Subagent (roles:final-adversarial-reviewer):
 
     Candidates files from the hunters: [CANDIDATES_PATHS]
 
-    The hunters (a cheaper model) of a phase review read the phase's range,
-    one category each. Each candidate in their files
+    The hunters (a cheaper model) of a phase review read the phase's range:
+    the correctness hunter covers three categories together, the security
+    hunter one. Each candidate in their files
     is an unverified claim of a defect, with an id (`<category>-<k>`), a
     `file:line`, a one-sentence claim and how to reproduce or refute it.
-    Verify each one yourself against the package and the code: a candidate is
+    Verify each one yourself against the package and the code, by running or tracing its trigger: a candidate is
     neither true nor false because it was written. The controller never tells
     you how to rule on a candidate.
 
@@ -80,8 +81,7 @@ Subagent (roles:final-adversarial-reviewer):
 
     This dispatch covers one phase's range only: [PHASE_RANGE] (phase base..phase
     top, the range of the package). Review nothing outside it, and ignore the
-    rest of the branch. Every candidate comes from three hunters
-    (`correctness`, `security`, `spec-drift`) who read this range.
+    rest of the branch. Every candidate comes from the phase's `correctness` hunter (correctness, state and spec drift together) and, when the range touches a sensitive path, its `security` hunter, who read this range.
 
     The phase's tasks, from the plan: [PHASE_TASKS]
 

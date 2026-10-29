@@ -28,7 +28,7 @@ Task 3 (light) — resumed, not re-dispatched
 
 [orchestrator summary: Phase: P1 done; Tasks: T1 d4e5f6a, T2 e0f1a2b, T3 f3a4b5c; no rulings, no open minors, Errors and fallbacks: none; main session writes Orchestrator: P1 — Phase: P1 done]
 
-[Phase check passes; phase review: 3 hunters + roles:final-adversarial-reviewer → clean; Phase review: P1 clean; hunters and final-escapes records (P1); done; submit]
+[Phase check passes; phase review: 1 correctness hunter (no sensitive path, no security hunter) + roles:final-adversarial-reviewer → clean; Phase review: P1 clean; hunters and final-escapes records (P1); done; submit]
 [single-phase plan: the phase review was the final review; no seams review]
 [node scripts/stack.mjs submit <plansDir>/billing.md 1 --open; final message with Rulings and After Merge; methodology:finishing-branch]
 ```
