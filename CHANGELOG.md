@@ -3,6 +3,13 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## roles 0.6.0 / methodology 1.6.0
+
+- roles: verification is focused. `tdd-implementer`, `complex-implementer` and `review-fixer` run the task's `Test:` paths plus the tests of the modules that import what changed, with typecheck and lint scoped to the touched files, and never the full suite (CI runs it). `safety-reviewer` accepts that focused evidence and never flags a missing full-suite run.
+- methodology: a task's review is light, and the heavy review happens at the phase end. A light task gets the safety gate alone, a standard or heavy task gets the gate and `roles:spec-reviewer` in one round (`heavy` still picks the role and is still raised by `tier-check`, but its per-task review is capped at standard), and no task sends hunters: the 3 hunters run only at the phase review. The default phase check, when a phase declares none, is the union of its tasks' `Test:` paths run focused.
+- methodology: `writing-plans` plans every phase in parallel lanes first. A task carries a `**Lane:**` letter, lanes have disjoint `Files` and no `Depends on` across lanes, and a closing task depends on every lane and runs the phase check. A phase that is not laned writes `**Sequential because:**` with a real reason; the plan review checks both.
+- Update the plugins and run `triqual sync --yes`, then reload plugins or start a new session.
+
 ## progress-tracking 0.7.2
 
 - The plan reader reads the optional `**Test paths:**` header line; lines in those paths never count toward the 300-line heavy limit or the light allowance. This is the same change as methodology 1.5.0's copy of the reader, and the copies test pins the two byte-identical. No other behavior changes.

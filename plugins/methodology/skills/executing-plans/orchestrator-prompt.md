@@ -26,6 +26,11 @@ Subagent (roles:phase-orchestrator):
     Where The Phase Stands) or a `Task <N>: reopened —` line follows its complete line. Do not run the Phase check,
     the phase review, `stack.mjs done` or `stack.mjs submit`, and do not start another phase: the main session does.
 
+    A task's review is sized by its tier: a light task gets the safety gate alone, a standard or heavy task gets the
+    safety gate and `roles:spec-reviewer` in one round (`heavy` still picks the role and is still raised by
+    `tier-check`, but its per-task review is capped at standard), and no task hunters: hunters run at the phase review
+    only, which the main session runs.
+
     You dispatch the role agents, you read their results, and you never edit product code: every change to the
     repository is a role agent's commit. You write only workspace files, such as the ledger and the saved reviewer
     outputs. Pass no model in any dispatch.

@@ -471,3 +471,66 @@ test('testPaths is empty without the line', () => {
   const plan = '# X Implementation Plan\n\n**Branch prefix:** x\n\n## Phase 1: A\n\n**PR title:** t\n**Branch:** x/01-a\n\n### Task 1: A\n';
   assert.deepEqual(readPhases(plan, 'x').testPaths, []);
 });
+
+test('writing-plans plans in lanes: the Lane line, the Lanes rule, Sequential because, a Lanes self-review item and the review split', () => {
+  const text = readFileSync(join(SKILLS, PLANS), 'utf8').replace(/\s*\n\s*/g, ' ');
+  assert.ok(text.includes('**Lane:**'), 'writing-plans does not carry the **Lane:** line');
+  assert.ok(section(PLANS, '## Task Structure').join('\n').includes('**Lane:** A'), 'the Task Structure template has no **Lane:** line');
+  const phases = section(PLANS, '## Phases').join(' ').replace(/\s+/g, ' ');
+  assert.ok(phases.includes('Sequential because:'), 'the Phases section does not name Sequential because:');
+  for (const phrase of [
+    'disjoint `Files`',
+    'no `Depends on` across lanes',
+    'chain inside a lane',
+    'one exact node `Test:` file',
+    'closing task',
+    'milestone',
+  ]) {
+    assert.ok(phases.includes(phrase), `the Phases section does not state "${phrase}" in the Lanes rule`);
+  }
+  const item = section(PLANS, '## Self-Review').find((line) => line.startsWith('**8. Lanes:**'));
+  assert.ok(item, 'the plan Self-Review has no **8. Lanes:** item');
+  assert.match(item, /disjoint/);
+  assert.match(item, /Sequential because/);
+  const tiers = section(PLANS, '## Task Tiers').join(' ').replace(/\s+/g, ' ');
+  assert.match(tiers, /review is light per task and heavy at the phase end/i, 'Task Tiers does not say review is light per task and heavy at the phase end');
+});
+
+test('a **Lane:** line leaves task ids and dependencies unchanged in the plan parser', () => {
+  const plan = (lanes) => [
+    '# X Implementation Plan',
+    '',
+    '**Branch prefix:** x',
+    '',
+    '## Phase 1: A',
+    '',
+    '**PR title:** t',
+    '**Branch:** x/01-a',
+    '',
+    '### Task 1: First',
+    '',
+    '**Tier:** light',
+    ...(lanes ? ['**Lane:** A'] : []),
+    '**Role:** roles:tdd-implementer',
+    '',
+    '### Task 2: Second',
+    '',
+    '**Tier:** light',
+    ...(lanes ? ['**Lane:** B'] : []),
+    '**Role:** roles:tdd-implementer',
+    '',
+    '### Task 3: Closing',
+    '',
+    '**Tier:** light',
+    ...(lanes ? ['**Lane:** C'] : []),
+    '**Depends on:** T1, T2',
+    '**Role:** roles:tdd-implementer',
+    '',
+  ].join('\n');
+  const strip = ({ start, end, ...rest }) => rest;
+  const withLanes = readTasks(plan(true));
+  assert.deepEqual(withLanes.map((t) => t.id), readTasks(plan(false)).map((t) => t.id));
+  assert.deepEqual(withLanes.map(strip), readTasks(plan(false)).map(strip));
+  assert.equal(withLanes.length, 3);
+  assert.deepEqual(withLanes[2].deps, ['T1', 'T2']);
+});

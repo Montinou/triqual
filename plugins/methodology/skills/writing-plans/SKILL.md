@@ -56,6 +56,13 @@ Its `### Task <M>: …` blocks follow, and no other `###` heading appears inside
 
 - **Numbering and order:** task numbers are global across phases (T1…Tn). Each task belongs to exactly one phase, and its `**Depends on:**` names only tasks in the same or an earlier phase.
 - **One commit per task:** a task's work is exactly one commit on the phase branch, and its single Commit step gives the conventional message.
+- **Lanes:** plan every phase in parallel lanes first. A lane is a chain of tasks, named by a letter on each task's `**Lane:** <letter>` line, that one agent runs start to finish while the other lanes run beside it. The rule:
+  - Lanes have disjoint `Files`: no path appears in two lanes.
+  - There is no `Depends on` across lanes: a task depends only on tasks of its own lane or of an earlier phase, the closing task below being the one exception.
+  - Tasks chain inside a lane: each later task of a lane depends on the one before it.
+  - A task meant to run beside others in another lane has one exact node `Test:` file (see Task Structure), since only such a task runs in parallel.
+  - The phase ends with a closing task that depends on every lane. It is the milestone: it runs the phase check once the lanes have landed.
+- **Sequential because:** a phase planned without lanes writes `**Sequential because:** <reason>` under its Phase check, the reason being a fact about the work (one shared file, one task's output feeding every other). It is the only way to a sequential phase: a phase with neither lanes nor that line is a defect, and "simpler" or "safer" is not a reason.
 - **Size:** about 6 tasks per phase. Going over means splitting the phase, and noting that the spec's slice should have been split.
 - **Coordinator tasks:** a `coordinator` task that makes no commit (a probe, a checkpoint) lives in the phase whose PR it accompanies. Every phase has at least one task that commits.
 - **`## After Merge`:** optional, after the last phase. A checklist of the operations that need the merged trunk (deploy, production migration, publish), each with its command and expected result. No `### Task` headings: these never reach the task ledger.
@@ -143,6 +150,8 @@ Every task gets a `**Tier:**` line, `heavy`, `standard` or `light`, set by what 
 
 A task that touches a sensitive path is `heavy`, as is a task whose diff will have more than 300 changed lines, test lines not counted. The default sensitive paths are `**/hooks/**`, `**/setup/**`, `**/*schema*`, `**/migrations/**`, `**/drizzle/**`, `.github/**` and `plugins/workflow-gate/**`; the plan header's `**Sensitive paths:** <glob>, <glob>` adds its globs to that set. Test lines are those of paths matching the default test paths `**/test/**`, `**/tests/**`, `**/__tests__/**`, `**/*.test.*` and `**/*.spec.*`, plus the globs of the plan header's optional `**Test paths:**` line; a sensitive path always wins over a test path.
 
+Review is light per task and heavy at the phase end: a task's tier sets the review that task gets while its lane runs, and the phase-end review covers the whole phase diff once the lanes have converged, so tier a task for what it needs on its own, not for what the phase as a whole carries.
+
 Tiers are all-or-none per plan: every task carries one, or none does. `coordinator` tasks must be `light` and `roles:complex-implementer` tasks `heavy`. The orchestrator may raise a tier at run time, never lower it.
 
 ## Task Structure
@@ -152,6 +161,7 @@ Tiers are all-or-none per plan: every task carries one, or none does. `coordinat
 
 **Tier:** heavy
 Security: parses untrusted hook input.
+**Lane:** A
 **Depends on:** T1, T3
 **Skills:** slug-a, slug-b
 **Role:** roles:tdd-implementer
@@ -201,6 +211,7 @@ git commit -m "feat: add specific feature"
 
 The lines under the heading follow the task ledger's plan format:
 - `**Tier:**` names the task's tier (see Task Tiers); it is the first line. A `heavy` task puts its one-line reason on the plain-text line directly under it.
+- `**Lane:**` names the task's lane as one letter (see Phases, Lanes). Tasks of one lane share the letter and chain through `**Depends on:**`; the closing task takes a lane of its own and depends on every lane. A phase with `**Sequential because:**` writes no `**Lane:**` lines. The plan parser ignores the line, so task ids and dependencies read as they do without it.
 - `**Depends on:**` lists the tasks that must be done first, as `T1, T3`; omit the line when a task has none.
 - `**Skills:**` lists the vault skills the task needs. When headjack is installed, run `triqual suggest "<the task's text>" --json` per task and keep the fitting `suggestions[].slug` values. On a non-zero exit from `triqual suggest` (exit 3: headjack is not installed), on empty output, or when `triqual` is not on `PATH` (`command -v triqual` fails, or exit 127), omit the line silently.
 - `**Role:**` names the task's role (see Task Roles). A `roles:complex-implementer` task puts its reason, the live-state migration or the change across systems that one brief cannot describe, on the plain-text line directly under it. Reason lines never start with `**`.
@@ -248,6 +259,8 @@ After writing the complete plan, look at the spec with fresh eyes and check the 
 **6. Phases:** Does each phase map to a slice of the spec? Does any task depend on a later phase? Does every phase have a branch, a PR title, a Phase check and a task that commits? Is anything that needs the merged trunk a task instead of an `## After Merge` item?
 
 **7. Tiers:** Does every task carry a `**Tier:**` (all or none)? Is each tier the one the rubric gives for what the task touches, with no task tiered lower than its content justifies? Is every `coordinator` task `light` and every `roles:complex-implementer` task `heavy`? Does every `heavy` task have its reason line under `**Tier:**`, and every `roles:complex-implementer` task its reason line under `**Role:**`, each naming a criterion the rubric gives? Is every task that touches a sensitive path (the default set plus the header's `**Sensitive paths:**`) or whose diff will have more than 300 non-test changed lines `heavy`? Is any task left at the default light that matches a heavy trigger, and does every `standard` task have its one-line reason under `**Tier:**`? When more than 80% of the plan's tasks are `heavy` in a plan of at least 5 tasks, re-check each tier, since heavy review costs the most and registering the plan prints a warning.
+
+**8. Lanes:** Does every phase either split into lanes or carry `**Sequential because:**` with a real reason? In a laned phase, are the lanes' `Files` disjoint, is there no `Depends on` across lanes, do the tasks of each lane chain, does every task meant to run beside others have one exact node `Test:` file, and does a closing task depend on every lane as the milestone? Is any phase marked sequential that two lanes could carry?
 
 If you find issues, fix them inline. No need to re-review — just fix and move on. If you find a spec requirement with no task, add the task.
 
