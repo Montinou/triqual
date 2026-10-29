@@ -167,17 +167,17 @@ test('README Tiers section documents the heavy-tier warning at registration', ()
     'README #### Tiers: the warning, its threshold, stderr, and that nothing else changes');
 });
 
-test('plugin.json, marketplace.json and the README table agree on 0.7.2', () => {
+test('plugin.json, marketplace.json and the README table agree on 0.8.0', () => {
   const root = join(PLUGIN, '..', '..');
   const plugin = JSON.parse(readFileSync(join(PLUGIN, '.claude-plugin', 'plugin.json'), 'utf8'));
   const market = JSON.parse(readFileSync(join(root, '.claude-plugin', 'marketplace.json'), 'utf8'));
-  assert.equal(plugin.version, '0.7.2');
-  assert.equal(market.plugins.find(p => p.name === 'progress-tracking').version, '0.7.2');
-  assert.match(readFileSync(join(root, 'README.md'), 'utf8'), /\| `progress-tracking` \| 0\.7\.2 \|/);
+  assert.equal(plugin.version, '0.8.0');
+  assert.equal(market.plugins.find(p => p.name === 'progress-tracking').version, '0.8.0');
+  assert.match(readFileSync(join(root, 'README.md'), 'utf8'), /\| `progress-tracking` \| 0\.8\.0 \|/);
 });
 
-test('the CHANGELOG has a 0.7.2 section', () => {
-  assert.match(readFileSync(join(PLUGIN, '..', '..', 'CHANGELOG.md'), 'utf8'), /^## progress-tracking 0\.7\.2$/m);
+test('the CHANGELOG has a 0.8.0 section', () => {
+  assert.match(readFileSync(join(PLUGIN, '..', '..', 'CHANGELOG.md'), 'utf8'), /^## progress-tracking 0\.8\.0( \/ .*)?$/m);
 });
 
 test('both READMEs document recording, compatibility cost and rollout', () => {

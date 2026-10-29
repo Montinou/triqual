@@ -106,9 +106,9 @@ Keep this short and dated; it is the baseline the next run compares against.
 - 2026-10-29 (roles calibration, `references/calibration.md`; 365 task reviews at or after 2026-10-20 and a replay
   of 8 commits): on the replay, the Opus spec-reviewer reached recall 0.67 at precision 0.65 against 0.26 and 0.64
   for Sonnet, so the spec-reviewer moved to Opus; the Haiku hunter reached recall 0.41 (precision 0.35) and 0.47
-  (precision 0.75) in its two prompt variants and stays, with 3 hunters at the phase review. The final adversarial
-  reviewer at effort low reached recall 0.70 against 0.80 at medium on 10 real defects, so it stays at low. The
-  implementer passed 7 of 10 and 6 of 8 tests at effort high, so it stays at high. Review tiers: heavy 0.46 fix rounds
+  (precision 0.75) in its two prompt variants and stays, with one `correctness` hunter at the phase review and a
+  `security` hunter only when the phase diff touches a sensitive path. The final adversarial reviewer at effort low
+  reached recall 0.70 against 0.80 at medium on 10 real defects, so it stays at low. The implementer passed 7 of 10 and 6 of 8 tests at effort high, so it stays at high. Review tiers: heavy 0.46 fix rounds
   per task, standard 0.08, light 0.02, no task hit the 5-round breaker. Baseline for the next run.
 
 ## Red flags
