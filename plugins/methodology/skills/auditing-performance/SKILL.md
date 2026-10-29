@@ -48,6 +48,14 @@ listed as unverified.
    what is new. Do not leave a gap only in the report.
 7. **Record.** In a repository with strict tracking, add the progress entry for the run (`triqual tracking add`).
 
+## Role calibration
+
+To check which model and effort each role runs at, use the replay instead of the stored records alone: sample
+commits, give each setting's reviewer the diff only, and have one judge score the pooled findings. The method, the
+results tables, the decisions and how to repeat it are in `references/calibration.md`; the two prompts are
+`references/replay-review-prompt.md` and `references/replay-judge-prompt.md`, and the script is `scripts/replay.mjs`.
+Compare any new run with the numbers in `references/calibration.md`, per run and per task.
+
 ## Report sections
 
 1. Executive summary: at most five findings, each with its number.
@@ -67,14 +75,24 @@ figure that is not marked to a dataset. Say at the end that the report is privat
 
 ## Standing gaps (update on every run)
 
-- Quality of the Sonnet roles against Opus: role-eval cannot separate model from tier mix. Needs a record field for
-  the reviewer model, or a sampled re-review by Opus.
 - Why a task was raised: the reasons live only in workspace ledgers that are deleted at finish. Needs the reason in
   the `task-review` record.
 - Cost per task and per tier: cost is by role, review yield is by task, and nothing joins them.
 - Phase-level hunter yield: `role-eval summary` reports the task-level records only.
 - Prices: `cli/lib/prices.json` carries a "cached" date; re-check it against the list before quoting dollars.
 - Wall-clock: latency is the sum of agent durations, and parallel agents overlap.
+
+The roles calibration of 2026-10-29 (`references/calibration.md`) replaced the model-quality gap with what the replay
+could not answer:
+
+- Fixer: no replay; no per-run cost or turn data to size a budget.
+- Safety gate model and effort: not replayed.
+- Implementer effort: one run per cell, one cell blocked.
+- Planted-defect recall (judge recall on seeded defects): not run; the seeder exists.
+- Light-tier escape severity: 0.81 findings per task reach the phase review; their severity split is not in the store.
+- The judge is Opus: it may favour Opus findings; no second judge model was used.
+- Reviewers saw the diff only, not the plan or the code around it.
+- Sample size: 8 commits from a few repositories; 2 phase diffs.
 
 ## What the audit has found so far
 
@@ -85,6 +103,13 @@ Keep this short and dated; it is the baseline the next run compares against.
   yielded little at the task level; tasks declared light rose sharply from 10-27 with fix rounds per task falling.
   the generic-agent runs were deliberate one-off background jobs started from the main session, not part of the plan
   loop.
+- 2026-10-29 (roles calibration, `references/calibration.md`; 365 task reviews at or after 2026-10-20 and a replay
+  of 8 commits): on the replay, the Opus spec-reviewer reached recall 0.67 at precision 0.65 against 0.26 and 0.64
+  for Sonnet, so the spec-reviewer moved to Opus; the Haiku hunter reached recall 0.41 (precision 0.35) and 0.47
+  (precision 0.75) in its two prompt variants and stays, with 3 hunters at the phase review. The final adversarial
+  reviewer at effort low reached recall 0.70 against 0.80 at medium on 10 real defects, so it stays at low. The
+  implementer passed 7 of 10 and 6 of 8 tests at effort high, so it stays at high. Review tiers: heavy 0.46 fix rounds
+  per task, standard 0.08, light 0.02, no task hit the 5-round breaker. Baseline for the next run.
 
 ## Red flags
 
