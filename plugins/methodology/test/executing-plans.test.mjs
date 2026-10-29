@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 
 import { parsePlan } from '../../progress-tracking/lib/ledger.mjs';
 import { validateRecord } from '../cli/lib/role-eval.mjs';
+import { readSkillText } from './skill-text.mjs';
 
 const PLUGIN = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SKILLS = join(PLUGIN, 'skills');
@@ -36,10 +37,27 @@ const TASK_ROLE_TEMPLATES = new Set([`${EP}/implementer-prompt.md`]);
 
 const read = (path) => readFileSync(join(SKILLS, path), 'utf8');
 const flat = (text) => text.replace(/\s*\n\s*/g, ' ');
-const skill = () => read(`${EP}/SKILL.md`);
+const skill = () => readSkillText(join(SKILLS, EP));
 const ROLE_AGENTS = new Set(
   readdirSync(AGENTS).filter((n) => n.endsWith('.md')).map((n) => `roles:${n.slice(0, -3)}`),
 );
+
+test('skill() includes the references directory', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'skill-text-'));
+  try {
+    mkdirSync(join(dir, 'references'));
+    writeFileSync(join(dir, 'SKILL.md'), '# Skill\n\nmain text\n');
+    writeFileSync(join(dir, 'references', 'x.md'), '## Moved heading\n\nreference text\n');
+    writeFileSync(join(dir, 'references', 'ignored.txt'), 'not markdown\n');
+    const text = readSkillText(dir);
+    assert.ok(text.startsWith('# Skill'), 'SKILL.md comes first');
+    assert.ok(section(text, '## Moved heading').includes('reference text'), 'the reference heading is found');
+    assert.ok(!text.includes('not markdown'), 'only *.md files are read');
+    assert.ok(readSkillText(join(SKILLS, EP)).includes('## '), 'the real skill still reads');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 // The text of the section that starts at the heading line `heading` and runs to the next heading of the same or a
 // higher level.
@@ -155,8 +173,31 @@ test('the spec reviewer prompt has no candidates section without hunters', () =>
 
 test('the Finish hunter reference uses the new counts', () => {
   const finish = flat(section(skill(), '## Finish'));
-  assert.ok(finish.includes('2 per heavy task, 0 per standard and light task, plus 4 per phase, 0 for the seams review'), 'Finish does not state the per-task and phase counts');
+  assert.ok(finish.includes('2 per heavy task, 0 per standard and light task, plus 3 per phase, 0 for the seams review'), 'Finish does not state the per-task and phase counts');
   assert.doesNotMatch(finish, /4 per heavy task, 2 per standard/, 'Finish still states the old counts');
+  assert.doesNotMatch(finish, /plus 4 per phase/, 'Finish still states 4 hunters per phase');
+  assert.ok(finish.includes('reference 4 before 2026-10-29, 3 after'), 'Finish does not note that the phase reference changed on 2026-10-29');
+});
+
+test('the hunters rule no longer sends state in a phase review', () => {
+  const raw = skill();
+  const round1 = flat(section(raw, '### 8. Review the phase')).split('- **Round 1, the hunters.**')[1].split('- **Round 2')[0];
+  assert.ok(round1.includes('3 hunters') && round1.includes('`correctness`, `security` and `spec-drift`'), 'the phase review does not send the three calibrated hunters');
+  assert.doesNotMatch(round1, /`state`/, 'the phase review still sends a state hunter');
+  assert.doesNotMatch(flat(raw), /\b(4|four) hunters/, 'SKILL.md still says a phase review sends four hunters');
+  const prompt = flat(read(`${EP}/hunter-prompt.md`));
+  assert.doesNotMatch(prompt, /\b(4|four) hunters/, 'hunter-prompt.md still says four hunters');
+  assert.ok(prompt.includes('A phase review sends three hunters, one per category: `correctness`, `security`, `spec-drift`.'), 'hunter-prompt.md does not name the three phase hunters');
+  const finalPrompt = flat(read(`${EP}/final-review-prompt.md`));
+  assert.doesNotMatch(finalPrompt, /four hunters|\(`correctness`, `security`, `spec-drift`, `state`\)/, 'final-review-prompt.md still names four hunters');
+  assert.ok(finalPrompt.includes('three hunters (`correctness`, `security`, `spec-drift`)'), 'final-review-prompt.md does not name the three hunters');
+  // The task level is unchanged: a heavy task still picks `state` from its reason line.
+  assert.ok(flat(section(raw, '## Tiers')).includes('`state` when it names live state or a parsed contract'), 'the task-level state hunter was dropped');
+  const records = flat(read(`${EP}/references/records.md`));
+  assert.ok(records.includes('(reference 4 before 2026-10-29, 3 after,'), 'records.md does not state the phase reference of 3');
+  assert.doesNotMatch(records, /"category": "state"/, 'the phase hunters record example still has a state hunter');
+  assert.ok(records.includes('"budget": { "reference": 3, "used": 3, "overrun": false }'), 'the phase hunters record example does not budget 3');
+  assert.doesNotMatch(flat(read(`${EP}/references/example.md`)), /4 hunters/, 'example.md still shows 4 hunters');
 });
 
 test('the invariants are stated in the skill', () => {
@@ -480,7 +521,7 @@ test('the final review is a seams review with no hunters', () => {
   // the same two-round fix rule as the phase review, then submit --open
   const fix = final.slice(final.indexOf('**Fix rounds.**'), final.indexOf('**Submit.**'));
   assert.ok(fix.length > 0, 'the seams review has no Fix rounds step before Submit');
-  for (const line of ['at most two rounds of `roles:review-fixer`', 'a plain commit', '`fix: address final review findings`', 'never a `--fixup`', 'a scoped re-review', '[re-review-prompt.md](re-review-prompt.md)', '`roles:spec-reviewer`', '`roles:final-adversarial-reviewer` when a finding was Critical']) {
+  for (const line of ['at most two rounds of `roles:review-fixer`', 'a plain commit', '`fix: address final review findings`', 'never a `--fixup`', 'a scoped re-review', '[re-review-prompt.md](../re-review-prompt.md)', '`roles:spec-reviewer`', '`roles:final-adversarial-reviewer` when a finding was Critical']) {
     assert.ok(fix.includes(line), `the seams fix rule lacks: ${line}`);
   }
   assert.doesNotMatch(fix, /no second fix wave|exactly one scoped re-review/, 'the seams review kept the one-wave fix rule');
@@ -496,7 +537,7 @@ test('the final review is a seams review with no hunters', () => {
   // the process, the ledger vocabulary and the worked example agree
   const process = flat(section(raw, '## The Process'));
   assert.ok(process.includes('the seams review of `trunk..top`'), 'The Process step 4 does not name the seams review');
-  assert.doesNotMatch(process, /3 hunters/, 'The Process still sends 3 final hunters');
+  assert.doesNotMatch(process, /3 final hunters|seams review[^.;]*\b3 hunters/, 'The Process still sends 3 final hunters');
   assert.doesNotMatch(flat(section(raw, '## Ledger vocabulary')), /and the same with `final`/, 'the ledger vocabulary still has Round 1/2 lines for final');
   assert.doesNotMatch(flat(raw), /Final review: 3 hunters/, 'the worked example still has 3 final hunters');
 });
@@ -527,7 +568,7 @@ test('the hunter template has no final mode', () => {
   assert.doesNotMatch(text, /\*\*Final review:\*\*/, 'the hunter template still has a final mode');
   assert.doesNotMatch(text, /final review's 3 hunters|final-candidates|in the final review|final review only|final or phase review/, 'the hunter template still mentions the final review');
   assert.ok(text.includes('**Phase review:**'), 'the hunter template lost its phase mode');
-  assert.ok(text.includes('a phase review sends four hunters') || text.includes('A phase review sends four hunters'), 'the hunter template lost the phase hunter count');
+  assert.ok(text.includes('a phase review sends three hunters') || text.includes('A phase review sends three hunters'), 'the hunter template lost the phase hunter count');
   // The role agent names the same candidates files as the template, and no final-review file.
   const agent = flat(readFileSync(join(PLUGIN, '..', 'roles', 'agents', 'hunter.md'), 'utf8'));
   assert.doesNotMatch(agent, /final-candidates|in the final review/, 'the hunter role still names a final-review candidates file');
@@ -567,7 +608,7 @@ test('the phase review runs between the Phase check and done/submit', () => {
   assert.ok(review >= 0 && done > review && submit > done, 'the order is not phase review → done → submit');
   const seven = flat(section(raw, '### 7. End the phase'));
   assert.doesNotMatch(seven, /stack\.mjs (done|submit)/, 'done and submit stayed in step 7');
-  for (const category of ['`correctness`', '`security`', '`spec-drift`', '`state`']) assert.ok(body.includes(category), `no hunter category ${category}`);
+  for (const category of ['`correctness`', '`security`', '`spec-drift`']) assert.ok(body.includes(category), `no hunter category ${category}`);
   assert.ok(body.includes('`roles:final-adversarial-reviewer`'), 'the phase reviewer is not named');
   assert.ok(body.includes('Phase check'), 'the phase review does not name the Phase check');
   const process = flat(section(raw, '## The Process'));
@@ -1577,7 +1618,7 @@ test('the implementer prompt names both the phase-review and final fix rounds as
 
 test('the worked example is a single-phase plan: a phase review, then no seams review', () => {
   const example = flat(section(skill(), '## Example'));
-  assert.ok(example.includes('[Phase check passes; phase review: 4 hunters + roles:final-adversarial-reviewer → clean; Phase review: P1 clean; hunters and final-escapes records (P1); done; submit]'), 'the example skips the phase review');
+  assert.ok(example.includes('[Phase check passes; phase review: 3 hunters + roles:final-adversarial-reviewer → clean; Phase review: P1 clean; hunters and final-escapes records (P1); done; submit]'), 'the example skips the phase review');
   assert.ok(example.includes('[single-phase plan: the phase review was the final review; no seams review]'), 'the example does not say the phase review was the final review');
   assert.doesNotMatch(example, /Seams review:/, 'the single-phase example still runs a seams review');
   assert.ok(example.indexOf('Phase review: P1 clean') < example.indexOf('submit <plansDir>/billing.md 1 --open'), 'the example opens before the phase review');
@@ -2235,7 +2276,7 @@ test('the 1.4.0 CHANGELOG entry and the orchestrator prompt carry the parallel r
   for (const line of ['Parallel tasks', 'At most 3 implementers', '`task-open --worktree`', 'plan order', 'landing conflict', 'TRIQUAL_LANDING_TEST_TIMEOUT_MS']) {
     assert.ok(entry.includes(line), `the 1.4.0 CHANGELOG entry lacks: ${line}`);
   }
-  assert.equal(JSON.parse(readFileSync(join(PLUGIN, '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.4.3');
+  assert.equal(JSON.parse(readFileSync(join(PLUGIN, '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.5.1');
   assert.ok(PROMPT().includes('## Parallel Tasks'), 'the orchestrator prompt has no Parallel Tasks section');
 });
 

@@ -28,6 +28,7 @@ const ROLE = /^\*\*Role:\*\*(.*)$/;
 const TIER = /^\*\*Tier:\*\*(.*)$/;
 const PREFIX = /^\*\*Branch prefix:\*\*\s*(.+)$/;
 const SENSITIVE = /^\*\*Sensitive paths:\*\*\s*(.*)$/;
+const TEST_PATHS = /^\*\*Test paths:\*\*\s*(.*)$/;
 const PHASE_FIELD = /^\*\*(Slice|Branch|PR title|Stands alone because|Phase check):\*\*\s*(.*)$/;
 const FIELD_KEYS = {
   Slice: 'slice',
@@ -128,8 +129,8 @@ function branchOf(value) {
   return ticked ? ticked[1].trim() : (value.trim().split(/\s+/)[0] ?? '');
 }
 
-// Phases of a plan: { branchPrefix, sensitivePaths, phases: [{ n, title, slice, branch, prTitle, standsAlone,
-// phaseCheck, tasks }] }, `tasks` being task ids. Heading and field lines inside fenced code blocks are not read. A
+// Phases of a plan: { branchPrefix, sensitivePaths, testPaths, phases: [{ n, title, slice, branch, prTitle,
+// standsAlone, phaseCheck, tasks }] }, `tasks` being task ids. Heading and field lines inside fenced code blocks are not read. A
 // plan with no `**Branch prefix:**` line was written before phases existed (or has no `## Phase` heading): it is one
 // implicit phase `<planStem>/01-plan` holding every task, and any `## Phase` heading in it is ignored.
 export function readPhases(text, planStem) {
@@ -137,6 +138,7 @@ export function readPhases(text, planStem) {
   let h1 = null;
   let prefix = null;
   let sensitive = null;
+  let testPaths = null;
   let current = null;
   const phases = [];
   const early = []; // tasks met before any phase
@@ -150,6 +152,8 @@ export function readPhases(text, planStem) {
       prefix ??= unquote(m[1]);
     } else if ((m = SENSITIVE.exec(line))) {
       sensitive ??= list(m[1]).map(unquote).filter(Boolean);
+    } else if ((m = TEST_PATHS.exec(line))) {
+      testPaths ??= list(m[1]).map(unquote).filter(Boolean);
     } else if ((m = PHASE_HEADING.exec(line))) {
       current = {
         n: Number(m[1]), title: m[2].trim(), slice: null, branch: null, prTitle: null, standsAlone: null,
@@ -172,12 +176,14 @@ export function readPhases(text, planStem) {
     }
   }
   const sensitivePaths = sensitive ?? [];
+  const tests = testPaths ?? [];
 
   if (phases.length === 0 || !prefix) {
     const title = (h1 ?? planStem).replace(PLAN_SUFFIX, '');
     return {
       branchPrefix: planStem,
       sensitivePaths,
+      testPaths: tests,
       phases: [{
         n: 1, title, slice: null, branch: `${planStem}/01-plan`, prTitle: title, standsAlone: null,
         phaseCheck: UNPHASED_CHECK, tasks: all,
@@ -201,7 +207,7 @@ export function readPhases(text, planStem) {
     }
     delete phase.sawTask;
   }
-  return { branchPrefix: prefix, sensitivePaths, phases };
+  return { branchPrefix: prefix, sensitivePaths, testPaths: tests, phases };
 }
 
 // The registration rules of a new ledger (design U1): a plan that declares a tier on any task declares it on every

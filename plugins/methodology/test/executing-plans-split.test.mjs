@@ -1,0 +1,102 @@
+// The executing-plans skill keeps its core in SKILL.md and holds seven sections as references/<name>.md. Each
+// reference is exactly the original section text, heading included; the sha256 constants below were computed from
+// SKILL.md as it was before the move. SKILL.md stays under its byte budget and names every reference.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readFileSync, statSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const EP = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'executing-plans');
+const SKILL = join(EP, 'SKILL.md');
+const MAX_BYTES = 87040;
+
+// name, the heading the section began with in SKILL.md, sha256 of the section text (heading to the line before the
+// next heading of the same or a higher level, trailing blank lines dropped, one final newline). The only edits since
+// the move are link targets rewritten from the skill's root to the reference's own directory (`](../x.md)`,
+// `](../SKILL.md#a)`), which `original` reverses before hashing.
+// `records` and `example` were also edited on 2026-10-29 (T19): a phase review sends 3 hunters, not 4, so their
+// hashes follow that text.
+const REFERENCES = [
+  ['setup', '## Setup', '1b99234fecba023f0dd0da96d207e8cf8d946f47b37107a33b879cc2194ce7bb'],
+  ['records', '## Records', '02778785c54d06f4a4e246c9cf50d7b2eac6daa9fa93ff4a174a5cc814545027'],
+  ['ledger-vocabulary', '## Ledger vocabulary', 'd5538fe8ce8760ef93cd6fde96742e2cc5f8f1783ffc4214b14e7f23e4cff746'],
+  ['worktrees', '## Worktrees', 'e45e1f51e4aafb1e43441712df14b8c4980a3382fae9c3b3ce201f4d1c416f05'],
+  ['final-review', '## Final Review', 'caa9a5fc7b13fb478039fd0cc6b2eec8ce5082e76cca3168d77d0d29deb7dbcd'],
+  ['example', '## Example', 'fa0bbdaaaf0db1d4528b02c97ab7c57a9193da58ac2adc71d806283c74412367'],
+  ['parallel-tasks', '### Parallel tasks', '85e3b99c2fdc7d4f5f14e382dd61b35dc53a9304899a176872db4af7019f40f4'],
+];
+
+const sha = (text) => createHash('sha256').update(text).digest('hex');
+const original = (text) => text.replace(/\]\(\.\.\/SKILL\.md#/g, '](#').replace(/\]\(\.\.\//g, '](');
+const skill = () => readFileSync(SKILL, 'utf8');
+const ref = (name) => readFileSync(join(EP, 'references', `${name}.md`), 'utf8');
+
+// Every heading line of a text, ignoring heading-looking lines inside a code fence.
+function headings(text) {
+  let fence = false;
+  const out = [];
+  for (const line of text.split('\n')) {
+    if (/^```/.test(line)) fence = !fence;
+    else if (!fence && /^#{1,6} /.test(line)) out.push(line);
+  }
+  return out;
+}
+
+test('SKILL.md is under the byte budget', () => {
+  const size = statSync(SKILL).size;
+  assert.ok(size < MAX_BYTES, `SKILL.md is ${size} bytes, the budget is under ${MAX_BYTES}`);
+});
+
+for (const [name, heading, hash] of REFERENCES) {
+  test(`references/${name}.md is exactly the original section`, () => {
+    const text = ref(name);
+    assert.ok(text.startsWith(`${heading}\n`), `${name}.md starts with ${heading}`);
+    assert.equal(sha(original(text)), hash);
+  });
+
+  test(`SKILL.md no longer holds the ${name} section and points at its reference`, () => {
+    const lines = skill().split('\n');
+    for (const h of headings(ref(name))) assert.ok(!lines.includes(h), `SKILL.md still has the heading ${h}`);
+    assert.ok(skill().includes(`references/${name}.md`), `SKILL.md does not name references/${name}.md`);
+  });
+}
+
+test('every pointer reads as `Read references/<name>.md when <clause>.`', () => {
+  const text = skill();
+  for (const [name] of REFERENCES) {
+    assert.match(text, new RegExp(`Read references/${name}\\.md when [^.\\n]+\\.`), `no Read pointer for ${name}`);
+  }
+});
+
+// A single-phase plan never starts a seams review, yet final-review.md also carries the Submit step, so the pointer's
+// trigger must not make the seams review a precondition.
+test('the final-review pointer triggers on the last phase being submitted, not on a seams review', () => {
+  const m = skill().match(/Read references\/final-review\.md when ([^.\n]+)\./);
+  assert.ok(m, 'no Read pointer for final-review');
+  assert.doesNotMatch(m[1], /seams/i, `the trigger makes the seams review a precondition: ${m[1]}`);
+  assert.match(m[1], /last phase is submitted/);
+});
+
+// The rules a controller needs after a compaction live in references/setup.md, so the pointers that fire on a resume
+// and at the Build step name it.
+test('the resume pointers name references/setup.md', () => {
+  const text = skill();
+  assert.match(text, /Read references\/setup\.md when a plan's execution starts[^.\n]*resumes/, 'the Setup pointer does not cover a resume');
+  assert.match(text, /references\/setup\.md \(Workspace and ledger\) when you resume a plan from its ledger/, 'the ledger pointer does not name setup.md');
+});
+
+test('the Build step names references/setup.md for the fence form of the Task Skills section', () => {
+  assert.match(skill(), /the Task Skills section in its fence form when fence is detected \(after the printout in Fence, `references\/setup\.md`\)/);
+});
+
+test('SKILL.md has no pointer to a section it no longer holds', () => {
+  assert.doesNotMatch(skill(), /\(see Records\)/);
+});
+
+test('the references link the prompt templates relative to references/', () => {
+  for (const name of ['setup', 'final-review']) {
+    assert.doesNotMatch(ref(name), /\]\((?!\.\.\/|#|https?:)[\w-]+-prompt\.md\)/, `${name}.md links a prompt template without ../`);
+  }
+});

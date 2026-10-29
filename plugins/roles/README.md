@@ -20,7 +20,7 @@ Only `phase-orchestrator` can dispatch subagents; `Agent` is in every other role
 | `roles:tdd-implementer` | `sonnet` | high | Agent | Implements one plan task from a brief with strict TDD: failing test, run it, implement, run it green. Runs the project's typecheck, lint and tests, commits, self-reviews and writes a report. |
 | `roles:complex-implementer` | `opus` | medium | Agent | Same method as `tdd-implementer`, for a task the plan marks `**Role:** roles:complex-implementer`: multi-system changes, migrations of live state, or work where a mistake is costly. |
 | `roles:safety-reviewer` | `sonnet` | medium | Agent, Edit, Write, NotebookEdit | Mechanical checklist review of one task diff: commit subject and trailers, secrets in the diff, forbidden paths, file placement, lint and typecheck evidence, canary rules. No design judgment. |
-| `roles:spec-reviewer` | `sonnet` | medium | Agent, Edit, Write, NotebookEdit | Judgment review of one task diff against its brief and spec: missing, extra or misunderstood requirements, and test honesty (real assertions, genuine RED/GREEN evidence, edge cases). Traces code paths and branches. |
+| `roles:spec-reviewer` | `opus` | medium | Agent, Edit, Write, NotebookEdit | Judgment review of one task diff against its brief and spec: missing, extra or misunderstood requirements, and test honesty (real assertions, genuine RED/GREEN evidence, edge cases). Traces code paths and branches. |
 | `roles:review-fixer` | `sonnet` | high | Agent | Resolves review findings on a task branch. Fixes what is real with the smallest change; refutes with evidence what is wrong instead of implementing it. Re-runs the covering tests, commits and appends a fix report. |
 | `roles:final-adversarial-reviewer` | `opus` | low | Agent, Edit, Write, NotebookEdit | One adversarial review of a whole branch before merge. Hunts correctness and security defects across task boundaries, triages deferred and parked findings, and gives a merge verdict. |
 | `roles:hunter` | `claude-haiku-5-5` | medium | Agent, Edit, NotebookEdit | Hunts for defects in one diff package for one category (correctness, security, spec-drift or state) and writes its candidates to a single file. Finds and reports; never fixes and never grades severity. |
@@ -65,8 +65,8 @@ In a plan with tiers a `roles:complex-implementer` task is `heavy` and a `coordi
 | standard | none | yes, in parallel with the spec reviewer | yes, in parallel with the gate |
 | light | none | yes | only on a finding or `Cannot verify` from the gate |
 
-Each phase of a plan also gets a deep review before it is submitted: 4 hunters (correctness, security, spec-drift,
-state) and the `final-adversarial-reviewer` over the phase diff. The final review of a plan with several phases is a
+Each phase of a plan also gets a deep review before it is submitted: 3 hunters (correctness, security, spec-drift)
+and the `final-adversarial-reviewer` over the phase diff. The final review of a plan with several phases is a
 seams review by the `final-adversarial-reviewer` alone, with no hunters; in a single-phase plan the phase review is the
 final review.
 

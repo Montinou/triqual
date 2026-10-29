@@ -1,0 +1,10 @@
+## Worktrees
+
+A worktree for the plan's run as a whole is created only when your human partner explicitly asks for one, in this conversation or in their instruction files; the task worktrees of Parallel tasks are not that request and need none (`task-open --worktree` makes them). Without that request you work in place and do not stop to ask; at most mention once that one is available.
+
+1. **Detect existing isolation first:** `git rev-parse --path-format=absolute --git-dir --git-common-dir`. Two different paths (and `git rev-parse --show-superproject-working-tree` printing nothing, so it is not a submodule) mean you are already in a linked worktree: use it, and create no other.
+2. **Native tool first:** if your harness has a native worktree tool (a tool such as `EnterWorktree`, a `/worktree` command, a `--worktree` flag), use it: it owns placement, branching and cleanup.
+3. **Git fallback**, only without a native tool: use the directory your instructions name, else an existing `.worktrees/` (or `worktrees/`), else `.worktrees/` at the project root; verify the chosen location is ignored (`git check-ignore -q <location>`, exit 0) and add it to `.gitignore` with a commit when it is not; then run `git worktree add <location>/<branch-name> -b <branch-name>` and move the session into it with your harness's directory tool, as a step of its own. A sandbox denial means you work in place and say so.
+4. **Branch name:** never exactly the plan's `**Branch prefix:**` (use `wt/<prefix>`, or a detached HEAD): `node scripts/stack.mjs init PLAN_FILE` exits 3 on a branch with the prefix's own name.
+5. **Clean baseline:** in a fresh worktree, install dependencies the way the project does (its manifest or lockfile says how), each command plain and on its own, then run the project's check before Task 1. Failures are reported to your human partner, who decides whether to proceed; later failures are then ambiguous otherwise.
+6. **Cleanup:** whoever creates a worktree removes it when the work lands or is dropped (methodology:finishing-branch, Step 7).

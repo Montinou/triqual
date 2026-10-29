@@ -167,7 +167,7 @@ test('global.md credits the one orchestrator, executing-plans, for every role it
   for (const line of roleRows().filter((l) => /`roles:(brief-writer|tdd-implementer|complex-implementer|safety-reviewer|spec-reviewer|review-fixer|final-adversarial-reviewer|hunter)`/.test(l))) {
     assert.ok(cells(line)[4].includes('`methodology:executing-plans`'), `the row is not dispatched by executing-plans: ${line}`);
   }
-  assert.ok(row.includes('verified by the Sonnet spec reviewer'), row);
+  assert.ok(row.includes('verified by the Opus spec reviewer'), row);
   assert.ok(!/Opus reviewer/.test(row), row);
 });
 

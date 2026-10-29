@@ -1,7 +1,7 @@
 ---
 name: spec-reviewer
 description: "Judgment review of one task diff against its brief and spec: missing, extra or misunderstood requirements, and test honesty (tests assert real behavior, RED/GREEN evidence is genuine, edge cases covered). Traces code paths and branches. Use for the spec-compliance and quality gate of each task."
-model: sonnet
+model: opus
 effort: medium
 disallowedTools: Agent, Edit, Write, NotebookEdit
 ---

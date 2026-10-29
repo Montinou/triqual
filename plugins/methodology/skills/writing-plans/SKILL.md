@@ -101,6 +101,8 @@ argues from the spec, so the spec travels with it; executors read both]
 
 **Sensitive paths:** [optional: `<glob>, <glob>`, paths whose change makes a task `heavy`, added to the default set (see Task Tiers); omit the line when none]
 
+**Test paths:** [optional: `<glob>, <glob>`, paths whose lines never count toward the 300-line heavy limit or the light allowance, added to the default test paths (see Task Tiers); omit the line when none]
+
 ## Global Constraints
 
 [The spec's project-wide requirements — version floors, dependency limits,
@@ -136,10 +138,10 @@ Live-state work and migrations are never coordinator work: they are `heavy`, and
 
 Every task gets a `**Tier:**` line, `heavy`, `standard` or `light`, set by what the task's work touches:
 - **heavy** — any of: security-relevant code (auth, permissions, secrets, sandboxing, policy engines, parsing untrusted input, gate/enforcement hooks), live state or migrations (stores, schemas, installed setup), a contract other code parses (hook I/O, file formats, the plan format, machine-read CLI output), `roles:complex-implementer`. A change that only spans more than one plugin, or only touches a public interface, is not heavy by that alone. Every heavy task carries a one-line reason as plain text on the line under `**Tier:**`, naming which criterion applies; the plan parser reads only the tier word on the `**Tier:**` line, so the reason is not a new field.
-- **light** — only: docs, comments, config values, version bumps, renames with no behavior change, and small code fixes within the light code allowance (at most 20 added+removed lines in total, test lines included, no new file, no prompt-like Markdown, no sensitive path).
-- **standard** — everything else.
+- **light** — the default: light is the default for every task that no heavy criterion matches and that does not need the full review, namely docs, comments, config values, version bumps, renames with no behavior change, and small code fixes within the light code allowance (at most 100 non-test added+removed lines in total, no new non-test file, no prompt-like Markdown, no sensitive path). Test lines never count toward the allowance, and a new test file alone stays light.
+- **standard** — only with a one-line reason as plain text on the line under `**Tier:**`, naming what needs the full review (a new non-test file, prompt-like Markdown, more than 100 non-test code lines, or another cost a bug there would carry).
 
-A task that touches a sensitive path is `heavy`, as is a task whose diff will have more than 300 changed lines. The default sensitive paths are `**/hooks/**`, `**/setup/**`, `**/*schema*`, `**/migrations/**`, `**/drizzle/**`, `.github/**` and `plugins/workflow-gate/**`; the plan header's `**Sensitive paths:** <glob>, <glob>` adds its globs to that set.
+A task that touches a sensitive path is `heavy`, as is a task whose diff will have more than 300 changed lines, test lines not counted. The default sensitive paths are `**/hooks/**`, `**/setup/**`, `**/*schema*`, `**/migrations/**`, `**/drizzle/**`, `.github/**` and `plugins/workflow-gate/**`; the plan header's `**Sensitive paths:** <glob>, <glob>` adds its globs to that set. Test lines are those of paths matching the default test paths `**/test/**`, `**/tests/**`, `**/__tests__/**`, `**/*.test.*` and `**/*.spec.*`, plus the globs of the plan header's optional `**Test paths:**` line; a sensitive path always wins over a test path.
 
 Tiers are all-or-none per plan: every task carries one, or none does. `coordinator` tasks must be `light` and `roles:complex-implementer` tasks `heavy`. The orchestrator may raise a tier at run time, never lower it.
 
@@ -245,7 +247,7 @@ After writing the complete plan, look at the spec with fresh eyes and check the 
 
 **6. Phases:** Does each phase map to a slice of the spec? Does any task depend on a later phase? Does every phase have a branch, a PR title, a Phase check and a task that commits? Is anything that needs the merged trunk a task instead of an `## After Merge` item?
 
-**7. Tiers:** Does every task carry a `**Tier:**` (all or none)? Is each tier the one the rubric gives for what the task touches, with no task tiered lower than its content justifies? Is every `coordinator` task `light` and every `roles:complex-implementer` task `heavy`? Does every `heavy` task have its reason line under `**Tier:**`, and every `roles:complex-implementer` task its reason line under `**Role:**`, each naming a criterion the rubric gives? Is every task that touches a sensitive path (the default set plus the header's `**Sensitive paths:**`) or whose diff will have more than 300 changed lines `heavy`? When more than 80% of the plan's tasks are `heavy` in a plan of at least 5 tasks, re-check each tier, since heavy review costs the most and registering the plan prints a warning.
+**7. Tiers:** Does every task carry a `**Tier:**` (all or none)? Is each tier the one the rubric gives for what the task touches, with no task tiered lower than its content justifies? Is every `coordinator` task `light` and every `roles:complex-implementer` task `heavy`? Does every `heavy` task have its reason line under `**Tier:**`, and every `roles:complex-implementer` task its reason line under `**Role:**`, each naming a criterion the rubric gives? Is every task that touches a sensitive path (the default set plus the header's `**Sensitive paths:**`) or whose diff will have more than 300 non-test changed lines `heavy`? Is any task left at the default light that matches a heavy trigger, and does every `standard` task have its one-line reason under `**Tier:**`? When more than 80% of the plan's tasks are `heavy` in a plan of at least 5 tasks, re-check each tier, since heavy review costs the most and registering the plan prints a warning.
 
 If you find issues, fix them inline. No need to re-review — just fix and move on. If you find a spec requirement with no task, add the task.
 

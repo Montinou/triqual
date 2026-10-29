@@ -3,6 +3,27 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## progress-tracking 0.7.2
+
+- The plan reader reads the optional `**Test paths:**` header line; lines in those paths never count toward the 300-line heavy limit or the light allowance. This is the same change as methodology 1.5.0's copy of the reader, and the copies test pins the two byte-identical. No other behavior changes.
+- Update with `triqual sync --yes`, then `/reload-plugins`.
+
+## roles 0.5.0 / methodology 1.5.1 / workflow-gate 0.3.3
+
+- roles: `spec-reviewer` now runs on Opus (it was Sonnet), effort medium unchanged. Evidence: a replay of 8 tasks gave Opus recall 0.67 and precision 0.65 against Sonnet recall 0.26 and precision 0.64, at about twice the spec-review spend per task at list prices. The Codex routing for `spec-reviewer` is unchanged (already Terra at high effort).
+- methodology: a phase review sends 3 hunters (correctness, security, spec-drift) and drops `state` from phase reviews; the task-level hunters are unchanged. The phase reference budget is 3 (it was 4 before 2026-10-29). The global rules' role table follows the new `spec-reviewer` model.
+- workflow-gate: `ROLE_MODELS` counts `roles:spec-reviewer` as an Opus agent against the per-model caps.
+- Not changed, because the calibration found no data or no gain: `hunter` (Haiku, medium), the `final-adversarial-reviewer` effort (low), the `tdd-implementer` effort (high), `review-fixer` (no turn or time budget, no `BLOCKED: budget`), `safety-reviewer` and `complex-implementer`, and the reviewer model per tier otherwise. The role-eval code and records are untouched.
+- Update the plugins and run `triqual sync --yes`, then reload plugins or start a new session.
+
+## methodology 1.5.0
+
+- New skill `auditing-performance`: audits the cost, speed and review yield of the plugins and roles from the machine's own records, with a collector script, and feeds the gaps back into the skill.
+- Light is the default tier. `tier-check` ignores test lines when it counts a task's changed lines, and the light allowance is 100 lines.
+- `tier-check` reads an optional `**Test paths:**` line in the plan header, so a repository's own test locations count as tests.
+- `executing-plans` moves its reference sections (setup, records, ledger vocabulary, parallel tasks, worktrees, final review, example) from `SKILL.md` to `references/*.md`, and gains controller guidance, "Running the session cheaply".
+- Update the plugin and run `triqual sync --yes`, then reload plugins or start a new session.
+
 ## roles 0.4.2 / methodology 1.4.3
 
 - Lower the final adversarial review to Opus at low effort, with Astra at low effort in Codex.

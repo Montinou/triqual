@@ -365,12 +365,18 @@ Plans run only through subagents. For each plan phase the main session dispatche
 runs the phase's task loop: it dispatches a role agent for each task, sizes the task's review by its tier (`heavy`,
 `standard` or `light`, declared by `writing-plans` and raised, never lowered, by `tier-check`) and follows TDD on every
 task. The main session reads only the orchestrator's summary of at most 20 lines, then runs the Phase check, the phase
-review (four hunters and one `roles:final-adversarial-reviewer`), `stack.mjs done` and `submit`. The next phase starts at
+review (three hunters and one `roles:final-adversarial-reviewer`), `stack.mjs done` and `submit`. The next phase starts at
 once, with no pause; a compacted or new session resumes from the ledger. Independent
 tasks of one phase run at the same time, at most 3 implementers, one in the main checkout and the others in task
 worktrees that land on the phase branch in plan order (parallel runs need store or local tracking mode). When the
 orchestrator cannot be dispatched, or cannot dispatch (for example Codex at depth 1), the main session announces it and
 runs the phase loop itself with the same scripts.
+
+`executing-plans` keeps its core in `SKILL.md` and holds the long procedures it rarely needs in
+`skills/executing-plans/references/` (`setup`, `records`, `ledger-vocabulary`, `worktrees`, `final-review`, `example`,
+`parallel-tasks`), read when the step they serve comes up. A session can run the execution on a cheaper model: its
+judgment stops escalate to the session's stronger model, it compacts at about 250K tokens of context and it dispatches
+every phase to its orchestrator. The quality of a cheaper controller is unverified.
 
 When fence is installed, `executing-plans` detects it once (`command -v fence`, then `fence version` exits 0) and writes a
 `Fence: <version>` or `Fence: none` ledger line. Installing a skill is then the human's step, never an implementer's, and
@@ -389,6 +395,7 @@ The [root README](../../README.md#skills) has the review matrix.
 | `verification-before-completion` | Run the verification commands and read the output before claiming work is done, fixed or passing. |
 | `finishing-branch` | When implementation is complete and tests pass: close the plan and decide how to integrate the work. |
 | `diagnosing-methodology` | Find why a session that ran these skills went wrong, or build a bug report for this system's repository, on any harness. |
+| `auditing-performance` | Audit cost, latency, review yield and hook overhead of the plugins from transcripts and the role-eval store (`scripts/collect.mjs`), publish the report, and record what could not be measured. |
 
 Removed in 1.0: the old orchestrator skill (now `executing-plans`), the old inline `executing-plans`,
 `requesting-code-review` and `receiving-code-review` (merged into `reviewing-code`), `using-git-worktrees` (a section of
