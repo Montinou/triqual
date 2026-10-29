@@ -187,3 +187,15 @@ test('both READMEs document recording, compatibility cost and rollout', () => {
     for (const value of ['SessionStart', 'SubagentStart', 'SubagentStop', 'PostToolUse', 'PostToolUseFailure', 'SessionEnd', 'sessions.db', 'TRIQUAL_SESSIONS=0', '47800', '120 ms', 'Grok', 'triqual sync --yes', 'triqual doctor', '/reload-plugins']) assert.ok(text.includes(value), value);
   }
 });
+
+test('references/store-mode.md documents reconcile after a migration', () => {
+  const text = readFileSync(STORE_REF, 'utf8');
+  const reconcile = section(text, 'Reconcile after a migration');
+  assert.notEqual(reconcile, '', 'store-mode.md has a `## Reconcile after a migration` section');
+  assert.doesNotMatch(reconcile, SPANISH);
+  assert.ok(reconcile.includes('triqual tasks reconcile'), 'names triqual tasks reconcile');
+  assert.ok(reconcile.includes('--apply'), 'names --apply');
+  assert.match(reconcile, /after a migration[\s\S]{0,300}without (a )?ledger move/i, 'when to run it: after a migration or tasks done without ledger moves');
+  assert.match(reconcile, /report[^.]*before[^.]*`--apply`/i, 'run the report before --apply');
+  assert.match(reconcile, /only[^.]*`high`[^.]*(applied|confidence)|`high`[^.]*only[^.]*appl/i, 'only high confidence is applied');
+});
