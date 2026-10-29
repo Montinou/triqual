@@ -3,7 +3,8 @@
 // never diff, finding or commit text.
 //
 // A run is { task, setting, findings: [{ id }], verdicts: [{ id, group, verdict }] | null, usd, seconds }.
-//   - A run whose `verdicts` is not an array (null, undefined, unparsable judge output) is `failed`: it counts in
+//   - A run whose `verdicts` is not an array (null, undefined, unparsable judge output), or that holds a `confirmed`
+//     verdict for one of its findings without a non-empty string `group`, is `failed`: it counts in
 //     `tasks`, `usd` and `seconds`, but is excluded from recall and precision, and contributes nothing to the pool.
 //   - A finding is confirmed when a verdict with its id says `confirmed`. A finding with no verdict, and a verdict
 //     whose id is not one of the run's findings, count as not confirmed / are ignored.
@@ -18,13 +19,15 @@ const CONFIRMED = 'confirmed';
 const isObject = (v) => v !== null && typeof v === 'object';
 const num = (v) => (Number.isFinite(v) ? v : 0);
 
-// Distinct confirmed groups and confirmed-finding count of one scored run.
+// Distinct confirmed groups and confirmed-finding count of one scored run, or null when a confirmed verdict for one of
+// the run's findings has no non-empty string `group` (the run is then failed, like unparsable judge output).
 function confirmedOf(run) {
   const ids = new Set((Array.isArray(run.findings) ? run.findings : []).map((f) => f?.id));
   const confirmedIds = new Set();
   const groups = new Set();
   for (const verdict of run.verdicts) {
     if (!isObject(verdict) || verdict.verdict !== CONFIRMED || !ids.has(verdict.id)) continue;
+    if (typeof verdict.group !== 'string' || verdict.group === '') return null;
     confirmedIds.add(verdict.id);
     groups.add(verdict.group);
   }
@@ -44,6 +47,7 @@ export function summarize(results) {
   for (const run of results) {
     if (!Array.isArray(run.verdicts)) continue;
     const c = confirmedOf(run);
+    if (!c) continue;
     scored.set(run, c);
     const key = String(run.task);
     if (!pool.has(key)) pool.set(key, new Set());

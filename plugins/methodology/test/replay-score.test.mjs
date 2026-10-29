@@ -73,6 +73,19 @@ test('unparsable verdicts of a non-array shape are failed too', () => {
   assert.equal(s.recall, null);
 });
 
+test('a confirmed verdict without a non-empty string group makes the run failed', () => {
+  for (const bad of [undefined, null, '', 7]) {
+    const [s] = summarize([row('t1', 'full', ['a', 'b'], [v('a', bad, 'confirmed'), v('b', 'g1', 'confirmed')])]);
+    assert.equal(s.failed, 1, `group ${String(bad)}`);
+    assert.equal(s.recall, null);
+    assert.equal(s.precision, null);
+  }
+  // A refuted verdict needs no group, and a verdict for an unknown id is ignored before the check.
+  const [ok] = summarize([row('t1', 'full', ['a', 'b'], [{ id: 'a', verdict: 'refuted' }, { id: 'ghost', verdict: 'confirmed' }, v('b', 'g1', 'confirmed')])]);
+  assert.equal(ok.failed, 0);
+  assert.equal(ok.found, 1);
+});
+
 test('an empty pool gives recall 0, never NaN', () => {
   const [s] = summarize([row('t1', 'full', ['a'], [v('a', 'g1', 'refuted')])]);
   assert.equal(s.recall, 0);
