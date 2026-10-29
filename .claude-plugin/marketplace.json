@@ -7,7 +7,7 @@
       "name": "progress-tracking",
       "source": "./plugins/progress-tracking",
       "description": "Strict progress tracking: one entry per task, the overall status and per-plan task ledgers driven by triqual tasks, kept up to date by gates that enforce them and a hook that injects the state at every session start. Committed mode (progress.md and status.md in the repo), local mode (under .git) or store mode (a local database, nothing in the repo or its history).",
-      "version": "0.7.2"
+      "version": "0.8.0"
     },
     {
       "name": "workflow-gate",
@@ -19,13 +19,13 @@
       "name": "roles",
       "source": "./plugins/roles",
       "description": "Nine role agents for plan execution, from brief writing and candidate hunting to the final adversarial review and the phase orchestrator",
-      "version": "0.6.0"
+      "version": "0.7.0"
     },
     {
       "name": "methodology",
       "source": "./plugins/methodology",
       "description": "Methodology core: triqual's own orchestrator, workflow skills that dispatch the roles agents and drive progress tracking (task ledger), global rules, triqual sync and doctor, drift notices; installs the other plugins",
-      "version": "1.6.0"
+      "version": "1.7.0"
     },
     {
       "name": "memory-report",

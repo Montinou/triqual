@@ -3,6 +3,13 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## progress-tracking 0.8.0 / methodology 1.7.0 / roles 0.7.0
+
+- progress-tracking: `triqual tasks reconcile [--plan <plan.md|ledger>] [--apply] [--json]` proposes the state of every non-done task from git evidence (the commits that touch a task's `Create:`, `Modify:` and `Test:` files and match its planned commit line) and, in store mode, from the task's progress entries. It is for a ledger that is out of step with its commits, such as after a migration. Without `--apply` it opens the store read-only, takes no lock and writes nothing; with `--apply` it writes only the high-confidence proposals, through the ordinary `start` and `done` transitions. The classifier is `lib/reconcile-evidence.mjs`; the docs say how to reconcile after a migration.
+- roles: the `hunter` is evidence-bound. A candidate carries the concrete trigger input or state, the traced path to the wrong result and the expected result against the actual one; a candidate whose trigger cannot be named is not reported, and a hunter reports at most 3 candidates, the strongest first (it aimed for about 5 before). A `correctness` hunter given a `Scope:` line covers everything the line names (correctness, state and spec drift) in its one candidates file.
+- methodology: the phase review sends one or two hunters instead of 3. A `correctness` hunter always, which absorbs spec-drift and state, and a `security` hunter only when the phase range touches a sensitive path (`tier-check`'s default sensitive paths plus the plan's `**Sensitive paths:**`). The reference is 2 per phase (3 before this release, 4 before 2026-10-29), 1 sent when the phase touches no sensitive path; the closing hunter total in `executing-plans` follows. The phase reviewer checks every candidate by running or tracing its trigger. Task-level reviews still send no hunters.
+- Update the plugins and run `triqual sync --yes`, then reload plugins or start a new session.
+
 ## roles 0.6.0 / methodology 1.6.0
 
 - roles: verification is focused. `tdd-implementer`, `complex-implementer` and `review-fixer` run the task's `Test:` paths plus the tests of the modules that import what changed, with typecheck and lint scoped to the touched files, and never the full suite (CI runs it). `safety-reviewer` accepts that focused evidence and never flags a missing full-suite run.
