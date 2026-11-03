@@ -1,0 +1,168 @@
+#!/usr/bin/env node
+// Rebuild the brief of a phase from the workspace ledger, so a new session or a fresh orchestrator can pick the phase up where it
+// stopped. Read-only: it reads the plan, the ledger and the stack state and writes nothing.
+//
+// Usage: phase-resume PLAN_FILE N
+// Prints Markdown, in this order:
+//   # Resume P<n> <branch> (<state>)     the phase's branch and its state in the stack state (`no stack state` without one)
+//   | Task | State | Evidence |           one row per task of the phase: complete, running (BASE <sha7>), awaiting landing,
+//                                         landed, not closed, undone — re-run sequential, not started
+//   ## Validations                        the phase's `Validation:` and `Validation fix:` ledger lines as they are (`(none)`)
+//   ## Next                               the first applicable action
+//
+// The state of a task comes from its ledger lines after its last `BASE:` line (a landing, awaiting-landing or undo line also only after its last `Task <N>: reopened` line): a `Task <N>: complete` line, else a live `Landed:`
+// line, else `Task <N>: awaiting landing`, else the undo line of a landing, else the BASE alone (running, with its last `Prep:` and fix round as evidence); no BASE, not started.
+//
+// Exit codes: 0 printed, 2 usage / no such plan file / malformed plan / no such phase, 3 refused (the plan has no ledger), 1 any
+// other failure. Nothing is written to the ledger.
+//
+// Dynamic imports only: the file has no extension, so Node may load it as CommonJS or as an ES module depending on the
+// nearest package.json.
+(async () => {
+  const { existsSync, readFileSync, realpathSync } = await import('node:fs');
+  const { basename, dirname, join } = await import('node:path');
+  const { pathToFileURL } = await import('node:url');
+  const here = dirname(realpathSync(process.argv[1]));
+  const load = (...parts) => import(pathToFileURL(join(here, ...parts)).href);
+  const common = await load('lib', 'task-common.mjs');
+  const { PlanError, readPhases } = await load('lib', 'plan.mjs');
+  const stack = await load('stack.mjs');
+  const { ScriptError, EXIT_USAGE, EXIT_REFUSED, EXIT_OTHER } = common;
+
+  const USAGE = 'usage: phase-resume PLAN_FILE N';
+  const NONE = '—';
+  const sha7 = (sha) => sha.slice(0, 7);
+
+  // { state, evidence } of task `n` from the ledger `lines`.
+  function taskRow(lines, n) {
+    const base = common.lastBaseIndex(lines, n);
+    if (base === -1) return { state: 'not started', evidence: NONE };
+    const after = (re) => lines.findLastIndex((l) => re.test(l));
+    const reopened = after(new RegExp(`^Task ${n}: reopened`));
+    const completeAt = after(new RegExp(`^Task ${n}: complete \\(`));
+    if (completeAt > Math.max(base, reopened)) {
+      return { state: 'complete', evidence: /\((.*)\)\s*$/.exec(lines[completeAt])[1] };
+    }
+    // A landing counts only after the last BASE and the last reopen: a reopened worktree task writes no new BASE.
+    const since = Math.max(base, reopened);
+    const landedAt = lines.findLastIndex((l) => new RegExp(`^Landed: T${n} (\\S+)\\s*$`).test(l));
+    const landed = landedAt > since ? lines[landedAt].split(' ')[2].trim() : null;
+    if (landed !== null) {
+      return { state: 'landed, not closed', evidence: `Landed ${sha7(landed)}${common.isTested(lines, n, landed) ? ', tested' : ''}` };
+    }
+    if (after(new RegExp(`^Task ${n}: awaiting landing\\s*$`)) > since) return { state: 'awaiting landing', evidence: NONE };
+    if (common.lastUndoIndex(lines, n) > since) return { state: 'undone — re-run sequential', evidence: 'landing conflict' };
+    const prep = common.prepsOf(lines, n).at(-1);
+    const fixAt = after(new RegExp(`^Task ${n}: fix round \\d+/\\d+ `));
+    const evidence = [
+      prep && prep.index > base ? `Prep r${prep.round} ${sha7(prep.head)}` : null,
+      fixAt > base ? /fix round (\d+\/\d+)/.exec(lines[fixAt])[0] : null,
+    ].filter(Boolean);
+    return { state: `running (BASE ${sha7(common.lastBase(lines, n))})`, evidence: evidence.join(', ') || NONE };
+  }
+
+  try {
+    const [plan, arg, ...extra] = process.argv.slice(2);
+    if (!plan || !/^\d+$/.test(arg ?? '') || extra.length > 0) throw new ScriptError(EXIT_USAGE, USAGE);
+    const n = Number(arg);
+
+    let text;
+    try {
+      text = readFileSync(plan, 'utf8');
+    } catch {
+      throw new ScriptError(EXIT_USAGE, `no such plan file: ${plan}`);
+    }
+    let phases;
+    try {
+      ({ phases } = readPhases(text, basename(plan, '.md')));
+    } catch (e) {
+      if (e instanceof PlanError) throw new ScriptError(EXIT_USAGE, `${plan}: ${e.message}`);
+      throw e;
+    }
+    const phase = phases.find((p) => p.n === n);
+    if (!phase) throw new ScriptError(EXIT_USAGE, `no phase ${n}: the plan has phases 1-${phases.length}`);
+
+    const workspace = common.workspaceOf(plan);
+    if (!existsSync(join(workspace, 'sdd-ledger.md'))) throw new ScriptError(EXIT_REFUSED, `no ledger at ${join(workspace, 'sdd-ledger.md')}: nothing to resume`);
+    const lines = common.ledgerLines(workspace);
+
+    let recorded;
+    let stackState;
+    try {
+      stackState = stack.readState(stack.statePath(common.git(['rev-parse', '--show-toplevel']), plan));
+      recorded = stackState?.phases?.find((p) => p.n === n);
+    } catch (e) {
+      if (e.name === 'StackError') throw new ScriptError(e.code, e.message);
+      throw e;
+    }
+    const state = recorded?.state ?? null;
+    // Local mode has no submit (`stack.mjs submit` prints "nothing to submit" and leaves the state done): a done phase of a local stack,
+    // or one with its `Phase <N>: complete (` line ledgered, is as submitted as it gets, and has no CI to validate against.
+    const localDone = state === 'done' && (stackState?.mode === 'local' || lines.some((l) => l.startsWith(`Phase ${n}: complete (`)));
+
+    const rows = phase.tasks.map((id) => ({ id, number: Number(id.slice(1)), ...taskRow(lines, Number(id.slice(1))) }));
+    const validations = lines.filter((l) => new RegExp(`^Validation( fix)?: P${n} `).test(l));
+    const reviews = lines.filter((l) => new RegExp(`^Phase review: P${n} (clean|fixed|blocked)\\s*$`).test(l));
+    const review = reviews.length ? reviews.at(-1).split(' ').at(-1) : null;
+    const run = (name, ...words) => `node scripts/${name} ${words.join(' ')}`.trimEnd();
+    const script = (name, ...args) => run(name, plan, ...args);
+    const stackCmd = (command, ...args) => run('stack.mjs', command, plan, ...args);
+
+    const next = (() => {
+      const open = rows.find((r) => r.state !== 'complete');
+      if (open) {
+        const t = `T${open.number}`;
+        if (open.state === 'not started') return `Open ${t}: ${script('task-open', open.number)}.`;
+        if (open.state.startsWith('running')) return `Continue ${t} (${open.state.slice('running ('.length, -1)}): finish its build and review, then ${script('task-close', open.number)}.`;
+        if (open.state === 'awaiting landing') return `Land ${t}: once every earlier task has landed, ${script('task-close', open.number)}.`;
+        if (open.state === 'landed, not closed') return `Close ${t}: ${script('task-close', open.number)}.`;
+        return `Re-run ${t} sequentially: ${script('task-open', open.number)}.`;
+      }
+      if (state === 'merged') return `P${n} is merged: nothing to resume.`;
+      const started = ['submitted', 'ready'].includes(state) || localDone;
+      if (!started && state !== 'done') {
+        if (review === 'blocked') return `Phase review P${n} is blocked: ask your human partner for the decision.`;
+        if (review === null) return `Run the Phase check and the phase review of P${n} (SKILL.md, step 8).`;
+        return `Mark P${n} done and submit it: ${stackCmd('done', n)}, then ${stackCmd('submit', n)}.`;
+      }
+      if (state === 'done' && !localDone) return `Submit P${n}: ${stackCmd('submit', n)}.`;
+      if (phase.validate && !localDone) {
+        const last = validations.at(-1);
+        if (last === undefined) return `Validate P${n} against CI: ${script('validate', n)}.`;
+        if (last.startsWith('Validation fix:')) return `Wait for the new CI run of P${n}, then ${script('validate', n)}.`;
+        if (/ verdict failed /.test(last)) {
+          return `Fix the failure in <workspace>/phase-${n}-report.md on ${phase.branch} with a plain commit, ${stackCmd('push', n)}, then ledger "Validation fix: P${n} <sha> — <finding>".`;
+        }
+      }
+      if (phases.some((p) => p.n === n + 1)) {
+        return phase.validate && !localDone ? `P${n} is validated: start the next phase with ${stackCmd('phase', n + 1)}.` : `P${n} is submitted: start the next phase with ${stackCmd('phase', n + 1)}.`;
+      }
+      return `P${n} is the last phase and is submitted: run the seams review of the plan, then ${stackCmd('submit', n, '--open')}.`;
+    })();
+
+    const out = [
+      `# Resume P${n} ${recorded?.branch ?? phase.branch} (${state ?? 'no stack state'})`,
+      '',
+      '| Task | State | Evidence |',
+      '| --- | --- | --- |',
+      ...rows.map((r) => `| ${r.id} | ${r.state} | ${r.evidence} |`),
+      '',
+      '## Validations',
+      '',
+      ...(validations.length ? validations : ['(none)']),
+      '',
+      '## Next',
+      '',
+      next,
+      '',
+    ];
+    process.stdout.write(out.join('\n'));
+  } catch (e) {
+    const err = e instanceof ScriptError ? e : new ScriptError(EXIT_OTHER, `phase-resume: ${e.message}`);
+    process.stderr.write(`${err.message}\n`);
+    process.exitCode = err.code;
+  }
+})().catch((e) => {
+  process.stderr.write(`phase-resume: ${e.stack ?? e}\n`);
+  process.exit(1);
+});
