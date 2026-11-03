@@ -1078,7 +1078,7 @@ test('the per-task scripts are deleted, nothing live calls them, and the scripts
     assert.equal(existsSync(join(SCRIPTS, name)), false, `${name} is still there`);
     assert.deepEqual(mentions(name), [], `a live file names ${name}`);
   }
-  assert.deepEqual(readdirSync(SCRIPTS).sort(), ['lib', 'review-package', 'sdd-workspace', 'stack.mjs', 'task-brief', 'task-close', 'task-open', 'task-prep', 'tier-check', 'validate']);
+  assert.deepEqual(readdirSync(SCRIPTS).sort(), ['lib', 'phase-resume', 'review-package', 'sdd-workspace', 'stack.mjs', 'task-brief', 'task-close', 'task-open', 'task-prep', 'tier-check', 'validate']);
 });
 
 // ---- the harness references -----------------------------------------------------------------------------------------------
