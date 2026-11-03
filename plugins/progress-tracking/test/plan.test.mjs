@@ -101,8 +101,8 @@ test('readPhases matches the phases stack.test.mjs asserts for phased-plan.md', 
   assert.equal(first.slice, 'S1');
   assert.equal(first.standsAlone, 'core only');
   assert.equal(first.phaseCheck, '`true` → exit 0');
-  // Fields added later (parent, parentDeclared ...) are pinned in plan-fields.test.mjs; this pins the original ones.
-  const added = new Set(['parent', 'parentDeclared']);
+  // Fields added later (parent, parentDeclared, validate ...) are pinned in plan-fields.test.mjs; this pins the original ones.
+  const added = new Set(['parent', 'parentDeclared', 'validate']);
   assert.deepEqual(Object.keys(first).filter((k) => !added.has(k)), ['n', 'title', 'slice', 'branch', 'prTitle', 'standsAlone', 'phaseCheck', 'tasks']);
 });
 
