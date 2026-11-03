@@ -84,7 +84,8 @@ const rig = ({ withGh = true, plan = PHASED } = {}) => {
   const statePath = join(dir, '.methodology', 'stack', 'phased-plan.json');
   return {
     dir, git, statePath, plan: PLAN_REL,
-    run: (args) => spawnSync(process.execPath, [STACK, ...args], { cwd: dir, env, encoding: 'utf8' }),
+    origin,
+    run: (args, extra = {}) => spawnSync(process.execPath, [STACK, ...args], { cwd: dir, env: { ...env, ...extra }, encoding: 'utf8' }),
     json: (res) => {
       assert.equal(res.status, 0, res.stderr);
       return JSON.parse(res.stdout);
@@ -318,5 +319,206 @@ test('squash folds only a sibling\'s own commits', () => {
     assert.equal(folded.status, 0, folded.stderr);
     assert.equal(r.git('rev-parse', 'HEAD^').trim(), trunk);
     assert.ok(!tree(r).includes('core.txt'));
+  });
+});
+
+// --- submit and push: plain draft PRs, one per phase, each against its parent ----------------------------------------
+
+// Phase 1 from the trunk; phases 2 and 3 both from phase 1.
+const SIBLINGS = FOREST.replace('**Parent:** trunk\n**Branch:** demo/02-edge', '**Parent:** P1\n**Branch:** demo/02-edge');
+
+// GitHub mode against a bare repository: the remote's URL is a GitHub one, pushes go to the bare repository.
+const githubRig = (r) => {
+  r.git('remote', 'set-url', 'origin', 'https://github.com/acme/demo.git');
+  r.git('config', 'remote.origin.pushurl', r.origin);
+  return r.json(r.run(['init', r.plan, '--mode', 'github']));
+};
+
+// Starts phase n, commits one file on it, marks it done.
+const finish = (r, n, name) => {
+  assert.equal(r.run(['phase', r.plan, String(n)]).status, 0);
+  r.commit(`${name}.txt`, `${name}\n`, `feat: ${name}`);
+  assert.equal(r.run(['done', r.plan, String(n)]).status, 0);
+};
+
+const created = (r) => r.ghLog().filter((argv) => argv[0] === 'pr' && argv[1] === 'create');
+const arg = (argv, flag) => argv[argv.indexOf(flag) + 1];
+// The bare remote's tip of a branch, '' when it has none.
+const remoteTip = (r, branch) => r.git('--git-dir', r.origin, 'for-each-ref', '--format=%(objectname)', `refs/heads/${branch}`).trim();
+
+test('three siblings submit with base P1', () => {
+  withRig({ plan: SIBLINGS }, (r) => {
+    githubRig(r);
+    finish(r, 1, 'core');
+    const one = r.run(['submit', r.plan, '1']);
+    assert.equal(one.status, 0, one.stderr);
+    assert.equal(one.stdout.trim(), 'Phase 1: submitted (demo/01-core, PR #7 draft, base main)');
+    finish(r, 2, 'edge');
+    finish(r, 3, 'extra');
+    assert.equal(r.run(['submit', r.plan, '2']).stdout.trim(), 'Phase 2: submitted (demo/02-edge, PR #8 draft, base demo/01-core)');
+    assert.equal(r.run(['submit', r.plan, '3']).stdout.trim(), 'Phase 3: submitted (demo/03-extra, PR #9 draft, base demo/01-core)');
+    const calls = created(r);
+    assert.deepEqual(calls.map((argv) => [arg(argv, '--head'), arg(argv, '--base')]), [
+      ['demo/01-core', 'main'],
+      ['demo/02-edge', 'demo/01-core'],
+      ['demo/03-extra', 'demo/01-core'],
+    ]);
+    for (const argv of calls) {
+      assert.ok(argv.includes('--draft'));
+      assert.equal(arg(argv, '--repo'), 'acme/demo');
+    }
+    assert.equal(arg(calls[1], '--title'), 'feat: edge');
+    assert.deepEqual(r.ghLog().filter((argv) => argv[0] === 'stack'), []);
+    for (const branch of ['demo/01-core', 'demo/02-edge', 'demo/03-extra']) {
+      assert.equal(remoteTip(r, branch), r.git('rev-parse', branch).trim());
+    }
+    const state = JSON.parse(readFileSync(r.statePath, 'utf8'));
+    assert.deepEqual(state.phases.map((p) => [p.state, p.pr]), [['submitted', 7], ['submitted', 8], ['submitted', 9]]);
+  });
+});
+
+test('a child is not submitted before its parent', () => {
+  withRig({ plan: SIBLINGS }, (r) => {
+    // Both branches already exist, chained: init adopts them as done.
+    r.git('switch', '-q', '-c', 'demo/01-core');
+    r.commit('core.txt', 'core\n', 'feat: core');
+    r.git('switch', '-q', '-c', 'demo/02-edge');
+    r.commit('edge.txt', 'edge\n', 'feat: edge');
+    r.git('switch', '-q', 'main');
+    const state = githubRig(r);
+    assert.deepEqual(state.phases.map((p) => p.state), ['done', 'done', 'pending']);
+    const res = r.run(['submit', r.plan, '2']);
+    assert.equal(res.status, 3, res.stderr);
+    assert.match(res.stderr, /phase 1 is done: phase 2's parent must be submitted, ready or merged first/);
+    assert.deepEqual(created(r), []);
+    assert.equal(remoteTip(r, 'demo/02-edge'), '');
+  });
+});
+
+test('a named parent must be on the remote', () => {
+  withRig({ plan: NAMED }, (r) => {
+    r.git('switch', '-q', '-c', 'release/1.0');
+    r.commit('release.txt', 'release\n', 'feat: release');
+    r.git('switch', '-q', '-c', 'demo/02-edge');
+    r.commit('edge.txt', 'edge\n', 'feat: edge');
+    r.git('switch', '-q', 'main');
+    githubRig(r);
+    const res = r.run(['submit', r.plan, '2']);
+    assert.equal(res.status, 3, res.stderr);
+    assert.match(res.stderr, /phase 2's parent release\/1\.0 is not on origin/);
+    assert.deepEqual(created(r), []);
+    assert.equal(remoteTip(r, 'demo/02-edge'), '');
+    r.git('push', '-q', 'origin', 'release/1.0');
+    const ok = r.run(['submit', r.plan, '2']);
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.equal(ok.stdout.trim(), 'Phase 2: submitted (demo/02-edge, PR #7 draft, base release/1.0)');
+  });
+});
+
+test('submit adopts an open PR', () => {
+  withRig({ plan: SIBLINGS }, (r) => {
+    githubRig(r);
+    finish(r, 1, 'core');
+    const res = r.run(['submit', r.plan, '1'], { FAKE_GH_PR_HEADS: 'demo/01-core' });
+    assert.equal(res.status, 0, res.stderr);
+    assert.equal(res.stdout.trim(), 'Phase 1: submitted (demo/01-core, PR #7 draft, base main)');
+    assert.deepEqual(created(r), []);
+    const list = r.ghLog().find((argv) => argv[0] === 'pr' && argv[1] === 'list');
+    assert.deepEqual(list.slice(2), ['--repo', 'acme/demo', '--head', 'demo/01-core', '--state', 'open', '--json', 'number']);
+    assert.equal(JSON.parse(readFileSync(r.statePath, 'utf8')).phases[0].pr, 7);
+  });
+});
+
+test('--open readies every phase', () => {
+  withRig({ plan: SIBLINGS }, (r) => {
+    githubRig(r);
+    finish(r, 1, 'core');
+    r.run(['submit', r.plan, '1']);
+    finish(r, 2, 'edge');
+    r.run(['submit', r.plan, '2']);
+    // Phase 3 is not submitted yet: --open refuses.
+    finish(r, 3, 'extra');
+    const early = r.run(['submit', r.plan, '3', '--open']);
+    assert.equal(early.status, 3, early.stderr);
+    assert.match(early.stderr, /phase 3 is done: --open needs every phase submitted or ready/);
+    r.run(['submit', r.plan, '3']);
+    const res = r.run(['submit', r.plan, '3', '--open']);
+    assert.equal(res.status, 0, res.stderr);
+    assert.equal(
+      res.stdout.trim(),
+      'Phase 1: ready (demo/01-core, PR #7)\nPhase 2: ready (demo/02-edge, PR #8)\nPhase 3: ready (demo/03-extra, PR #9)',
+    );
+    const ready = r.ghLog().filter((argv) => argv[0] === 'pr' && argv[1] === 'ready');
+    assert.deepEqual(ready, [7, 8, 9].map((n) => ['pr', 'ready', String(n), '--repo', 'acme/demo']));
+    assert.deepEqual(JSON.parse(readFileSync(r.statePath, 'utf8')).phases.map((p) => p.state), ['ready', 'ready', 'ready']);
+  });
+});
+
+test('push is fast-forward only', () => {
+  withRig({ plan: SIBLINGS }, (r) => {
+    githubRig(r);
+    finish(r, 1, 'core');
+    r.run(['submit', r.plan, '1']);
+    // A fast-forward push lands and refreshes the PR body.
+    r.commit('more.txt', 'more\n', 'fix: more');
+    const ok = r.run(['push', r.plan, '1']);
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.equal(ok.stdout.trim(), 'Phase 1: pushed (demo/01-core, PR #7)');
+    assert.equal(remoteTip(r, 'demo/01-core'), r.git('rev-parse', 'demo/01-core').trim());
+    const edit = r.ghLog().filter((argv) => argv[0] === 'pr' && argv[1] === 'edit').at(-1);
+    assert.deepEqual(edit.slice(0, 3), ['pr', 'edit', '7']);
+    assert.ok(edit.includes('--body-file'));
+    // The remote moves on; a local branch that diverged from it is rejected, never forced.
+    r.git('switch', '-q', '-c', 'other');
+    r.commit('other.txt', 'other\n', 'feat: other');
+    r.git('push', '-q', 'origin', 'other:demo/01-core');
+    const theirs = remoteTip(r, 'demo/01-core');
+    r.git('switch', '-q', 'demo/01-core');
+    r.commit('mine.txt', 'mine\n', 'feat: mine');
+    const edits = r.ghLog().filter((argv) => argv[0] === 'pr' && argv[1] === 'edit').length;
+    const res = r.run(['push', r.plan, '1']);
+    assert.equal(res.status, 5, res.stderr);
+    assert.equal(remoteTip(r, 'demo/01-core'), theirs);
+    assert.equal(r.ghLog().filter((argv) => argv[0] === 'pr' && argv[1] === 'edit').length, edits);
+    assert.ok(r.ghLog().every((argv) => !argv.includes('--force')));
+  });
+});
+
+test('a sibling\'s PR body names its base', () => {
+  withRig({ plan: SIBLINGS }, (r) => {
+    githubRig(r);
+    finish(r, 1, 'core');
+    r.run(['submit', r.plan, '1']);
+    finish(r, 2, 'edge');
+    const res = r.run(['submit', r.plan, '2']);
+    assert.equal(res.status, 0, res.stderr);
+    const body = readFileSync(arg(created(r)[1], '--body-file'), 'utf8');
+    assert.match(body, /## Base\n\n.*`demo\/01-core`/);
+    assert.match(body, /## Commits\n\n- feat: edge\n$/);
+    assert.ok(!body.includes('feat: core'));
+    const first = readFileSync(arg(created(r)[0], '--body-file'), 'utf8');
+    assert.match(first, /## Base\n\n.*`main`/);
+  });
+});
+
+test('status --tree prints the phases as a tree', () => {
+  withRig({ withGh: false, plan: FOREST }, (r) => {
+    r.json(r.run(['init', r.plan, '--mode', 'local']));
+    const state = JSON.parse(readFileSync(r.statePath, 'utf8'));
+    Object.assign(state.phases[1], { state: 'submitted', pr: 7 });
+    writeFileSync(r.statePath, JSON.stringify(state));
+    const res = r.run(['status', r.plan, '--tree']);
+    assert.equal(res.status, 0, res.stderr);
+    assert.equal(
+      res.stdout,
+      'main\n  P1 demo/01-core [pending]\n    P3 demo/03-extra [pending]\n  P2 demo/02-edge [submitted #7]\n',
+    );
+  });
+  // A chain: each phase under the one before it.
+  withRig({ withGh: false }, (r) => {
+    r.json(r.run(['init', r.plan, '--mode', 'local']));
+    const res = r.run(['status', r.plan, '--tree']);
+    assert.equal(res.status, 0, res.stderr);
+    assert.equal(res.stdout, 'main\n  P1 demo/01-core [pending]\n    P2 demo/02-edge [pending]\n');
   });
 });

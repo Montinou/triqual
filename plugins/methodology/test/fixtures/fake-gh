@@ -15,6 +15,8 @@
 #   FAKE_GH_FAIL_<WORD1>_<WORD2>=1   exit 1 for that command, words upper-cased and stripped of dashes
 #                                    (FAKE_GH_FAIL_STACK_SUBMIT, FAKE_GH_FAIL_REPO_VIEW, FAKE_GH_FAIL_VERSION)
 #
+# `pr create` prints the new PR's URL, numbered from 7 (one line per PR in "$FAKE_GH_STACK.created"); `pr ready` succeeds.
+#
 # Like the real `gh stack` (v0.1.1): `stack init` on a member exits 5; `stack add <b>` adopts the branch, moves HEAD onto
 # it and only works from the stack's top (exit 5 otherwise); `stack submit` gives every member without a PR the next
 # number (7, 8, ...). `stack add` also appends `<branch> <branch it was run from>` to "$FAKE_GH_STACK.add-from".
@@ -62,6 +64,19 @@ case "${1:-} ${2:-}" in
       *",$head,"*) cat "$FIX/pr-list.json" ;;
       *) echo "[]" ;;
     esac
+    exit 0 ;;
+  "pr create")
+    # pr create ... --head <branch> ...: the next number (7, 8, ...), printed as the PR's URL like the real tool
+    head=""
+    prev=""
+    for a in "$@"; do [ "$prev" = "--head" ] && head="$a"; prev="$a"; done
+    created="${stack_file:-/dev/null}.created"
+    echo "$head" >> "$created" 2>/dev/null
+    n=$(grep -c . "$created" 2>/dev/null || true)
+    echo "https://github.com/acme/demo/pull/$((6 + ${n:-0}))"
+    exit 0 ;;
+  "pr ready")
+    echo "✓ Pull request #$3 is marked as ready for review" >&2
     exit 0 ;;
   "stack view")
     if [ -n "$stack_file" ] && [ -f "$stack_file" ] && { is_member "$current" || [ "$current" = "$(trunk_of)" ]; }; then
