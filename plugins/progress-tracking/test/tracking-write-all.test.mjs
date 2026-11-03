@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -57,7 +57,11 @@ function withRepo(t) {
       return key ? readdirSync(join(dataDir, 'repos', key, 'plans')).filter((f) => f.endsWith('.md')).sort() : [];
     } catch { return []; } finally { store.close(); }
   };
-  return { dir, repo, plans, run, put, registered, docsPlans };
+  const docsPlansDir = () => {
+    const store = openStore({ home, env: dbEnv });
+    try { return join(dataDir, 'repos', store.get('SELECT repo_key FROM repos').repo_key, 'plans'); } finally { store.close(); }
+  };
+  return { dir, repo, plans, run, put, registered, docsPlans, docsPlansDir };
 }
 
 test('two good plans register', (t) => {
@@ -147,4 +151,37 @@ test('generated lane plans register after the bad one is fixed', (t) => {
   const r = s.run(['write', 'plan', '--all', out]);
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(s.registered(), ['2026-11-03-x.md', '2026-11-03-y.md', '2026-11-03-z.md']);
+});
+
+test('an already registered plan refuses the whole run before anything is written', (t) => {
+  const s = withRepo(t);
+  s.put('2026-11-03-b.md', GOOD('b'));
+  assert.equal(s.run(['write', 'plan', join(s.plans, '2026-11-03-b.md')]).status, 0);
+  s.put('2026-11-03-a.md', GOOD('a'));
+  const r = s.run(['write', 'plan', '--all', s.plans]);
+  assert.equal(r.status, 1, r.stdout);
+  assert.equal(r.stderr, 'ERR 2026-11-03-b.md: plan 2026-11-03-b.md already exists\n');
+  assert.deepEqual(s.registered(), ['2026-11-03-b.md']);
+  assert.deepEqual(s.docsPlans(), ['2026-11-03-b.md']);
+  const replaced = s.run(['write', 'plan', '--all', s.plans, '--replace']);
+  assert.equal(replaced.status, 0, replaced.stderr);
+  assert.deepEqual(s.registered(), ['2026-11-03-a.md', '2026-11-03-b.md']);
+});
+
+test('a failure midway names the plans already registered and keeps the exit code', (t) => {
+  const s = withRepo(t);
+  s.put('2026-11-03-z.md', GOOD('z'));
+  assert.equal(s.run(['write', 'plan', join(s.plans, '2026-11-03-z.md')]).status, 0);
+  rmSync(join(s.plans, '2026-11-03-z.md'));
+  s.put('2026-11-03-a.md', GOOD('a'));
+  s.put('2026-11-03-b.md', GOOD('b'));
+  // A dangling link takes the name of b in the documents directory: it passes the checks and fails when b is copied.
+  symlinkSync(join(s.dir, 'nowhere'), join(s.docsPlansDir(), '2026-11-03-b.md'));
+  const r = s.run(['write', 'plan', '--all', s.plans]);
+  assert.equal(r.status, 2, r.stdout);
+  const lines = r.stderr.split('\n');
+  assert.equal(lines[0], 'registered before the failure:');
+  assert.match(lines[1], /2026-11-03-a\.md$/);
+  assert.equal(lines[2], 'plan 2026-11-03-b.md already exists');
+  assert.deepEqual(s.registered(), ['2026-11-03-a.md', '2026-11-03-z.md']);
 });

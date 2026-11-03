@@ -14,8 +14,9 @@
 // mutating `triqual tasks` subcommand; store-mode writes rely on the database's own BEGIN IMMEDIATE transactions (a
 // plan, which is also a file, additionally holds the lock in the repository's documents directory).
 //   plan --all <dir>   every `*.md` of the directory in name order, all checked as registration reads them (tasks, phases,
-//           registration rules, dependencies on tasks of the plan) before any is written: an `ERR <file>: <message>` line on
-//           stderr per bad file and exit 1 with nothing registered; otherwise each is registered as `write plan <file>`.
+//           registration rules, dependencies on tasks of the plan, and no adopted plan of that name unless --replace) before any is
+//           written: an `ERR <file>: <message>` line on stderr per bad file and exit 1 with nothing registered; otherwise each is
+//           registered as `write plan <file>`, and a failure midway names the plans already registered on stderr.
 // Prints the written absolute path (plan: then the init message). Exit codes: 0 ok (and --help/-h); 2 bad arguments, a draft that cannot be read or is refused, not opted in, a lock timeout or any other failure.
 //
 // Store mode (`git config --local triqual.tracking store`, spec §4) keeps entries and status in the local database and
@@ -58,7 +59,7 @@
 //   hook post-commit   stamps the handshake's entries with HEAD when `git commit` made it with the recorded tree;
 //           always exits 0
 import {
-  chmodSync, closeSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, unlinkSync,
+  chmodSync, closeSync, existsSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
@@ -88,7 +89,7 @@ import { ledgerPaths, readEntry } from '../lib/ledger-files.mjs';
 import { EXTERNAL_PREFIX, renderSection, upsertStatusSection } from '../lib/ledger.mjs';
 import { entryText, planView, readStoreEntries, readStoreViews, statusFileText } from '../lib/snapshot.mjs';
 import { adoptPlan, openStoreTracking } from './tasks.mjs';
-import { readPhases, readTasks, validatePlanForRegistration } from '../lib/plan.mjs';
+import { check as checkPlan } from './plan.mjs';
 
 const USAGE = `usage: triqual tracking write <entry|status|spec|plan> <draft> [--replace]
        triqual tracking write plan --all <dir> [--replace]
@@ -225,19 +226,13 @@ function writePlan(t, abs, replace) {
   return [plan, message];
 }
 
-// What registration reads of the plan at `abs`, as `triqual plan generate` checks a written plan: the message of the
-// first thing it would refuse, or null.
-function planProblem(abs) {
+// What registration refuses of the plan at `abs`, as `triqual plan generate` checks a written plan: the message of the
+// first thing it would refuse (an adopted plan of that name without --replace, as `adopt` refuses it, or a plan that
+// does not read), or null.
+function planProblem(t, abs, replace) {
+  if (!replace && existsSync(join(t.plansDir, basename(abs)))) return `plan ${basename(abs)} already exists`;
   try {
-    const text = readFileSync(abs, 'utf8');
-    const tasks = readTasks(text);
-    readPhases(text, basename(abs).replace(/\.md$/, ''));
-    validatePlanForRegistration(tasks);
-    const ids = new Set(tasks.map((task) => task.id));
-    for (const task of tasks) {
-      const dep = task.deps.find((d) => !ids.has(d));
-      if (dep !== undefined) return `${task.id} depends on ${dep}, which is not a task of the plan`;
-    }
+    checkPlan(readFileSync(abs, 'utf8'), basename(abs));
     return null;
   } catch (err) {
     return err.message;
@@ -245,14 +240,27 @@ function planProblem(abs) {
 }
 
 // `write plan --all`: every plan of `files` is checked first; one problem registers none (the ERR lines go to stderr
-// and the result is null). `register(file)` registers one, as `write plan <file>`.
-function writeAllPlans(files, register) {
-  const problems = files.map((file) => [file, planProblem(file)]).filter(([, message]) => message !== null);
+// and the result is null). Then each is registered as `write plan <file>`; when one fails, the plans already registered
+// are named on stderr and the failure is rethrown.
+function writeAllPlans(t, files, replace) {
+  const problems = files.map((file) => [file, planProblem(t, file, replace)]).filter(([, message]) => message !== null);
   if (problems.length > 0) {
     for (const [file, message] of problems) process.stderr.write(`ERR ${basename(file)}: ${message}\n`);
     return null;
   }
-  return files.flatMap(register);
+  const lines = [];
+  const registered = [];
+  try {
+    for (const file of files) {
+      const [plan, message] = writePlan(t, file, replace);
+      registered.push(plan);
+      lines.push(plan, message);
+    }
+  } catch (err) {
+    if (registered.length > 0) process.stderr.write(`registered before the failure:\n${registered.join('\n')}\n`);
+    throw err;
+  }
+  return lines;
 }
 
 // ---- Store mode ----
@@ -386,7 +394,7 @@ async function storePlan(t, abs, replace, files = null) {
   const st = await openStoreTracking(t);
   try {
     const lines = withLock(tasksLockPath(st), () => (files
-      ? writeAllPlans(files, (file) => writePlan(st, file, replace))
+      ? writeAllPlans(st, files, replace)
       : writePlan(st, abs, replace)));
     snapshotAfterWrite(st.store, st.dataDir);
     return lines;
@@ -828,7 +836,7 @@ async function main(argv) {
   }
   const { kind, abs, replace } = p;
   if (p.files) {
-    const lines = withLock(tasksLockPath(t), () => writeAllPlans(p.files, (file) => writePlan(t, file, replace)));
+    const lines = withLock(tasksLockPath(t), () => writeAllPlans(t, p.files, replace));
     if (lines === null) return 1;
     for (const line of lines) out(line);
     return 0;

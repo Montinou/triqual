@@ -49,7 +49,7 @@ function readData(path) {
 const plainName = (file) => typeof file === 'string' && file.endsWith('.md') && file.length > '.md'.length && basename(file) === file;
 
 // What registration reads of a written plan: its counts, or the first thing it would refuse.
-function check(text, file) {
+export function check(text, file) {
   const tasks = readTasks(text);
   const phases = readPhases(text, file.replace(/\.md$/, ''));
   validatePlanForRegistration(tasks);
