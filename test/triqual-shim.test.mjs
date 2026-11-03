@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, syml
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { COMMANDS, DESCRIPTIONS, HELP_BUDGET_MS, resolveInstallPath, resolveCommand, helpText } from '../plugins/methodology/setup/triqual-shim.mjs';
+import { COMMANDS, DESCRIPTIONS, HELP_BUDGET_MS, resolveInstallPath, resolveCommand, helpText, acceptsHelp } from '../plugins/methodology/setup/triqual-shim.mjs';
 import { BRAND } from '../plugins/methodology/cli/lib/brand.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -87,7 +87,21 @@ test('COMMANDS maps every triqual command to its plugin and cli file', () => {
     'role-eval': ['methodology', 'cli/role-eval.mjs'],
     migrate: ['methodology', 'cli/migrate.mjs'],
     cost: ['methodology', 'cli/cost.mjs'],
+    plan: ['progress-tracking', 'cli/plan.mjs'],
   });
+});
+
+test('plan resolves to progress-tracking cli/plan.mjs and gets --help from the version that shipped it', () => {
+  const home = fixtureHome({ 'progress-tracking': { 'cli/plan.mjs': '// plan\n' } });
+  try {
+    const plan = resolveCommand({ home, cwd: home, cmd: 'plan' });
+    assert.ok(plan.file?.endsWith(join('progress-tracking', '0.1.0', 'cli', 'plan.mjs')), JSON.stringify(plan));
+    const shipped = JSON.parse(readFileSync(join(ROOT, 'plugins', 'progress-tracking', '.claude-plugin', 'plugin.json'), 'utf8')).version;
+    assert.equal(acceptsHelp('plan', join(ROOT, 'plugins', 'progress-tracking')), true, `plugin.json says ${shipped}`);
+    assert.equal(acceptsHelp('plan', plan.installPath), false, 'a progress-tracking without a readable version gets no --help');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test('resolveCommand runs cli/ and falls back to bin/ for a plugin installed before the move', () => {
@@ -353,6 +367,7 @@ test('DESCRIPTIONS gives every command its one-line description', () => {
     'role-eval': 'record hunter results and summarize the store',
     migrate: `move this machine from ${BRAND.legacy.marketplace} to ${BRAND.marketplace}`,
     cost: 'estimated token spend per model from the Claude Code transcripts, controller vs subagents',
+    plan: 'write plan files from one shared layout and a data file, each checked as registration reads it',
   });
 });
 

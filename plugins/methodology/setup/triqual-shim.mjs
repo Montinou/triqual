@@ -37,6 +37,7 @@ export const COMMANDS = {
   'role-eval': ['methodology', 'cli/role-eval.mjs'],
   migrate: ['methodology', 'cli/migrate.mjs'],
   cost: ['methodology', 'cli/cost.mjs'],
+  plan: ['progress-tracking', 'cli/plan.mjs'],
 };
 
 // One line per command for the help; kept apart from COMMANDS, whose shape tests pin.
@@ -53,13 +54,14 @@ export const DESCRIPTIONS = {
   'role-eval': 'record hunter results and summarize the store',
   migrate: 'move this machine from claude-methodology to triqual',
   cost: 'estimated token spend per model from the Claude Code transcripts, controller vs subagents',
+  plan: 'write plan files from one shared layout and a data file, each checked as registration reads it',
 };
 
 const HELP_FLAGS = new Set(['help', '--help', '-h']);
 // Per command: the first version of its plugin whose command accepts --help. Older installs ignore it (sync 0.1.1 ran
 // and wrote ~/.claude/CLAUDE.md), so the shim passes --help only to a command listed here whose plugin is at that
 // version or later: an unlisted command or an unreadable version gets none. `tracking` shipped in progress-tracking
-// 0.2.2; `hook` in methodology 0.3.0; `migrate` in methodology 0.4.0; `suggest` in methodology 1.0.0; `cost` in methodology 1.0.1.
+// 0.2.2; `hook` in methodology 0.3.0; `migrate` in methodology 0.4.0; `suggest` in methodology 1.0.0; `cost` in methodology 1.0.1; `plan` in progress-tracking 0.8.0.
 const HELP_SINCE = {
   tasks: '0.2.1',
   'progress-init': '0.2.1',
@@ -73,6 +75,7 @@ const HELP_SINCE = {
   migrate: '0.4.0',
   suggest: '1.0.0',
   cost: '1.0.1',
+  plan: '0.8.0',
 };
 const HELP_TIMEOUT_MS = 5000;
 export const HELP_BUDGET_MS = 8000; // the whole aggregated help; commands left after it show their description only
