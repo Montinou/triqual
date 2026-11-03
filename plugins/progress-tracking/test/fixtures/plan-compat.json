@@ -1,0 +1,288 @@
+{
+  "plugins/methodology/test/fixtures/codex-agents-layout.md": {
+    "tasks": [],
+    "phases": {
+      "branchPrefix": "codex-agents-layout",
+      "sensitivePaths": [],
+      "testPaths": [],
+      "phases": [
+        {
+          "n": 1,
+          "title": "Flue",
+          "slice": null,
+          "branch": "codex-agents-layout/01-plan",
+          "prTitle": "Flue",
+          "standsAlone": null,
+          "phaseCheck": "the repository's full test command",
+          "tasks": []
+        }
+      ]
+    }
+  },
+  "plugins/methodology/test/fixtures/fences-plan.md": {
+    "tasks": [
+      {
+        "id": "T1",
+        "title": "Backtick fence",
+        "deps": [],
+        "skills": [],
+        "role": "coordinator",
+        "tier": null,
+        "start": 6,
+        "end": 14
+      },
+      {
+        "id": "T2",
+        "title": "Tilde fence closed by a longer run",
+        "deps": [
+          "T1"
+        ],
+        "skills": [],
+        "role": null,
+        "tier": null,
+        "start": 15,
+        "end": 22
+      },
+      {
+        "id": "T3",
+        "title": "A four-space-indented fence line is plain text",
+        "deps": [],
+        "skills": [],
+        "role": null,
+        "tier": null,
+        "start": 23,
+        "end": 27
+      },
+      {
+        "id": "T4",
+        "title": "After a four-space-indented fence line",
+        "deps": [
+          "T3"
+        ],
+        "skills": [],
+        "role": null,
+        "tier": null,
+        "start": 28,
+        "end": 34
+      },
+      {
+        "id": "T5",
+        "title": "After a tab-indented fence line",
+        "deps": [],
+        "skills": [],
+        "role": null,
+        "tier": null,
+        "start": 35,
+        "end": 48
+      },
+      {
+        "id": "T6",
+        "title": "Last",
+        "deps": [
+          "T2",
+          "T5"
+        ],
+        "skills": [],
+        "role": null,
+        "tier": null,
+        "start": 49,
+        "end": 55
+      }
+    ],
+    "phases": {
+      "branchPrefix": "fences-plan",
+      "sensitivePaths": [],
+      "testPaths": [],
+      "phases": [
+        {
+          "n": 1,
+          "title": "Fences plan",
+          "slice": null,
+          "branch": "fences-plan/01-plan",
+          "prTitle": "Fences plan",
+          "standsAlone": null,
+          "phaseCheck": "the repository's full test command",
+          "tasks": [
+            "T1",
+            "T2",
+            "T3",
+            "T4",
+            "T5",
+            "T6"
+          ]
+        }
+      ]
+    }
+  },
+  "plugins/methodology/test/fixtures/gh-stack/README.md": {
+    "tasks": [],
+    "phases": {
+      "branchPrefix": "README",
+      "sensitivePaths": [],
+      "testPaths": [],
+      "phases": [
+        {
+          "n": 1,
+          "title": "gh stack fixtures",
+          "slice": null,
+          "branch": "README/01-plan",
+          "prTitle": "gh stack fixtures",
+          "standsAlone": null,
+          "phaseCheck": "the repository's full test command",
+          "tasks": []
+        }
+      ]
+    }
+  },
+  "plugins/methodology/test/fixtures/legacy/claude-md.md": {
+    "tasks": [],
+    "phases": {
+      "branchPrefix": "claude-md",
+      "sensitivePaths": [],
+      "testPaths": [],
+      "phases": [
+        {
+          "n": 1,
+          "title": "Mine",
+          "slice": null,
+          "branch": "claude-md/01-plan",
+          "prTitle": "Mine",
+          "standsAlone": null,
+          "phaseCheck": "the repository's full test command",
+          "tasks": []
+        }
+      ]
+    }
+  },
+  "plugins/methodology/test/fixtures/phased-plan.md": {
+    "tasks": [
+      {
+        "id": "T1",
+        "title": "One",
+        "deps": [],
+        "skills": [],
+        "role": "roles:tdd-implementer",
+        "tier": null,
+        "start": 13,
+        "end": 18
+      },
+      {
+        "id": "T2",
+        "title": "Two",
+        "deps": [],
+        "skills": [],
+        "role": "roles:tdd-implementer",
+        "tier": null,
+        "start": 19,
+        "end": 32
+      },
+      {
+        "id": "T3",
+        "title": "Three",
+        "deps": [
+          "T2"
+        ],
+        "skills": [],
+        "role": "roles:tdd-implementer",
+        "tier": null,
+        "start": 41,
+        "end": 47
+      }
+    ],
+    "phases": {
+      "branchPrefix": "demo",
+      "sensitivePaths": [],
+      "testPaths": [],
+      "phases": [
+        {
+          "n": 1,
+          "title": "Core",
+          "slice": "S1",
+          "branch": "demo/01-core",
+          "prTitle": "feat: core",
+          "standsAlone": "core only",
+          "phaseCheck": "`true` → exit 0",
+          "tasks": [
+            "T1",
+            "T2"
+          ]
+        },
+        {
+          "n": 2,
+          "title": "Edge",
+          "slice": "S2",
+          "branch": "demo/02-edge",
+          "prTitle": "feat: edge",
+          "standsAlone": "core only",
+          "phaseCheck": "`true` → exit 0",
+          "tasks": [
+            "T3"
+          ]
+        }
+      ]
+    }
+  },
+  "plugins/progress-tracking/test/fixtures/tiers-plan.md": {
+    "tasks": [
+      {
+        "id": "T1",
+        "title": "Heavy work",
+        "deps": [],
+        "skills": [
+          "s1",
+          "s2"
+        ],
+        "role": "roles:complex-implementer",
+        "tier": "heavy",
+        "start": 3,
+        "end": 10
+      },
+      {
+        "id": "T2",
+        "title": "Standard work",
+        "deps": [
+          "T1"
+        ],
+        "skills": [],
+        "role": "roles:tdd-implementer",
+        "tier": "standard",
+        "start": 11,
+        "end": 18
+      },
+      {
+        "id": "T3",
+        "title": "Light work",
+        "deps": [
+          "T1",
+          "T2"
+        ],
+        "skills": [],
+        "role": "coordinator",
+        "tier": "light",
+        "start": 19,
+        "end": 26
+      }
+    ],
+    "phases": {
+      "branchPrefix": "tiers-plan",
+      "sensitivePaths": [],
+      "testPaths": [],
+      "phases": [
+        {
+          "n": 1,
+          "title": "Tiers",
+          "slice": null,
+          "branch": "tiers-plan/01-plan",
+          "prTitle": "Tiers",
+          "standsAlone": null,
+          "phaseCheck": "the repository's full test command",
+          "tasks": [
+            "T1",
+            "T2",
+            "T3"
+          ]
+        }
+      ]
+    }
+  }
+}
