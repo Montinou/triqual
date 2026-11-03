@@ -509,7 +509,7 @@ test('doctor names every command a shim without a command map lacks', async () =
   await withHome(async ({ home }) => {
     const r = await diagnose({ home, cwd: home, run: fakeRun().run });
     assert.equal(r.failures.length, 1, r.failures.join('\n'));
-    const lacking = ['tasks', 'progress-init', 'ui', 'tracking'].map((c) => `${BRAND.cli} ${c}`).join(', ');
+    const lacking = ['tasks', 'progress-init', 'ui', 'tracking', 'plan'].map((c) => `${BRAND.cli} ${c}`).join(', ');
     assert.ok(r.failures[0].includes(`lacks ${lacking}, which the installed progress-tracking ships`), r.failures[0]);
   }, (p) => { p.shimText = '#!/usr/bin/env node\n'; p.ships = { 'progress-tracking': SHIPPED['progress-tracking'] }; });
 });

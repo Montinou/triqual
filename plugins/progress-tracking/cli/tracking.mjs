@@ -13,6 +13,10 @@
 // In committed and local mode every write is atomic and runs under the tracking root's lock (tasksLockPath), like every
 // mutating `triqual tasks` subcommand; store-mode writes rely on the database's own BEGIN IMMEDIATE transactions (a
 // plan, which is also a file, additionally holds the lock in the repository's documents directory).
+//   plan --all <dir>   every `*.md` of the directory in name order, all checked as registration reads them (tasks, phases,
+//           registration rules, dependencies on tasks of the plan, and no adopted plan of that name unless --replace) before any is
+//           written: an `ERR <file>: <message>` line on stderr per bad file and exit 1 with nothing registered; otherwise each is
+//           registered as `write plan <file>`, and a failure midway names the plans already registered on stderr.
 // Prints the written absolute path (plan: then the init message). Exit codes: 0 ok (and --help/-h); 2 bad arguments, a draft that cannot be read or is refused, not opted in, a lock timeout or any other failure.
 //
 // Store mode (`git config --local triqual.tracking store`, spec §4) keeps entries and status in the local database and
@@ -55,7 +59,8 @@
 //   hook post-commit   stamps the handshake's entries with HEAD when `git commit` made it with the recorded tree;
 //           always exits 0
 import {
-  chmodSync, closeSync, linkSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync,
+  chmodSync, closeSync, existsSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, unlinkSync,
+  writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -84,12 +89,16 @@ import { ledgerPaths, readEntry } from '../lib/ledger-files.mjs';
 import { EXTERNAL_PREFIX, renderSection, upsertStatusSection } from '../lib/ledger.mjs';
 import { entryText, planView, readStoreEntries, readStoreViews, statusFileText } from '../lib/snapshot.mjs';
 import { adoptPlan, openStoreTracking } from './tasks.mjs';
+import { check as checkPlan } from './plan.mjs';
 
 const USAGE = `usage: triqual tracking write <entry|status|spec|plan> <draft> [--replace]
+       triqual tracking write plan --all <dir> [--replace]
   entry   add one progress.md entry (the draft starts with "## <YYYY-MM-DD> — <title>") above the newest
   status  replace status.md with the draft, keeping the managed tasks section (re-rendered from the ledgers)
   spec    copy the draft into the specs directory under its own name (--replace overwrites)
   plan    adopt the draft into the plans directory and init its ledger (--replace re-adopts and reconciles)
+  plan --all <dir>   every *.md of the directory, in name order, all checked first: any ERR <file>: <message> (exit 1)
+          registers none
 The draft may live anywhere (in local mode: the OS temp dir). Prints the written path.
 store mode only (triqual progress-init --store):
   triqual tracking add <draft> [--no-commit | --commit <rev>] [--corrects <id>]
@@ -217,6 +226,43 @@ function writePlan(t, abs, replace) {
   return [plan, message];
 }
 
+// What registration refuses of the plan at `abs`, as `triqual plan generate` checks a written plan: the message of the
+// first thing it would refuse (an adopted plan of that name without --replace, as `adopt` refuses it, or a plan that
+// does not read), or null.
+function planProblem(t, abs, replace) {
+  if (!replace && existsSync(join(t.plansDir, basename(abs)))) return `plan ${basename(abs)} already exists`;
+  try {
+    checkPlan(readFileSync(abs, 'utf8'), basename(abs));
+    return null;
+  } catch (err) {
+    return err.message;
+  }
+}
+
+// `write plan --all`: every plan of `files` is checked first; one problem registers none (the ERR lines go to stderr
+// and the result is null). Then each is registered as `write plan <file>`; when one fails, the plans already registered
+// are named on stderr and the failure is rethrown.
+function writeAllPlans(t, files, replace) {
+  const problems = files.map((file) => [file, planProblem(t, file, replace)]).filter(([, message]) => message !== null);
+  if (problems.length > 0) {
+    for (const [file, message] of problems) process.stderr.write(`ERR ${basename(file)}: ${message}\n`);
+    return null;
+  }
+  const lines = [];
+  const registered = [];
+  try {
+    for (const file of files) {
+      const [plan, message] = writePlan(t, file, replace);
+      registered.push(plan);
+      lines.push(plan, message);
+    }
+  } catch (err) {
+    if (registered.length > 0) process.stderr.write(`registered before the failure:\n${registered.join('\n')}\n`);
+    throw err;
+  }
+  return lines;
+}
+
 // ---- Store mode ----
 
 // The full sha that `rev` (a commit-ish) names, as `git rev-parse` resolves it, run with the hook-exported repo
@@ -335,19 +381,21 @@ async function storeSpec(t, draft, abs, replace) {
 
 // `write entry|status|spec|plan` and `add` / `status set` on a store-mode repository.
 async function storeCommand(t, p) {
-  const draft = readDraft(p.abs);
+  const draft = p.files ? null : readDraft(p.abs);
   if (p.verb === 'add' || p.kind === 'entry') return storeAdd(t, draft, p);
   if (p.verb === 'status' || p.kind === 'status') return storeStatusSet(t, draft, p.section ?? null);
   if (p.kind === 'spec') return storeSpec(t, draft, p.abs, p.replace);
-  return storePlan(t, p.abs, p.replace);
+  return storePlan(t, p.abs, p.replace, p.files);
 }
 
 // `write plan`: copies the draft into the documents directory and inits its stored ledger (`tasks init --adopt`), under
 // the lock in that directory; the working tree is not touched.
-async function storePlan(t, abs, replace) {
+async function storePlan(t, abs, replace, files = null) {
   const st = await openStoreTracking(t);
   try {
-    const lines = withLock(tasksLockPath(st), () => writePlan(st, abs, replace));
+    const lines = withLock(tasksLockPath(st), () => (files
+      ? writeAllPlans(st, files, replace)
+      : writePlan(st, abs, replace)));
     snapshotAfterWrite(st.store, st.dataDir);
     return lines;
   } finally {
@@ -595,6 +643,7 @@ async function relocateCommand(p) {
 
 const OPTIONS = {
   replace: { type: 'boolean' },
+  all: { type: 'boolean' },
   'no-commit': { type: 'boolean' },
   commit: { type: 'string' },
   corrects: { type: 'string' },
@@ -613,14 +662,14 @@ const OPTIONS = {
 
 // The commands that take each flag, for the "applies to" refusal.
 const FLAG_TAKEN_BY = {
-  replace: 'write spec and write plan only, and to import', 'no-commit': 'add only', commit: 'add only',
+  replace: 'write spec and write plan only, and to import', all: 'write plan only', 'no-commit': 'add only', commit: 'add only',
   corrects: 'add only', section: 'status set only', ref: 'import only', 'accept-unparsed': 'import only',
   from: 'import only', out: 'export only', yes: 'restore only', json: 'status and log only', last: 'log only',
   plan: 'log only', since: 'log only', grep: 'log only',
 };
 // The flags each command takes; any other command is checked as `write`.
 const TAKES = {
-  add: ['no-commit', 'commit', 'corrects'], status: ['section', 'json'], log: ['last', 'plan', 'since', 'grep', 'json'], write: ['replace'],
+  add: ['no-commit', 'commit', 'corrects'], status: ['section', 'json'], log: ['last', 'plan', 'since', 'grep', 'json'], write: ['replace', 'all'],
   import: ['ref', 'accept-unparsed', 'replace', 'from'], export: ['out'], restore: ['yes'], relocate: [], hook: [],
 };
 
@@ -644,6 +693,21 @@ function isDate(text) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
   const d = new Date(`${text}T00:00:00Z`);
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === text;
+}
+
+// The `*.md` files of the directory `dir`, in name order, for `write plan --all`.
+function planFiles(dir) {
+  let entries;
+  try {
+    if (!statSync(dir).isDirectory()) throw new UsageError(`write plan: --all takes a directory, not a file: ${dir}`);
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    if (err instanceof UsageError) throw err;
+    throw new UsageError(`write plan: cannot read the directory ${dir}: ${err.message}`);
+  }
+  const files = entries.filter((e) => e.isFile() && e.name.endsWith('.md')).map((e) => e.name).sort().map((name) => join(dir, name));
+  if (files.length === 0) throw new UsageError(`write plan: no .md file in ${dir}`);
+  return files;
 }
 
 function parse(argv) {
@@ -726,7 +790,12 @@ function parse(argv) {
   if (draft === undefined) throw new UsageError('write: the draft path is missing');
   if (extra.length) throw new UsageError(`write: unexpected argument ${extra[0]}`);
   if (values.replace && !REPLACEABLE.has(kind)) throw new UsageError(`write ${kind}: --replace applies to write spec and write plan only`);
-  return { verb, kind, abs: resolve(process.cwd(), draft), replace: values.replace === true };
+  const abs = resolve(process.cwd(), draft);
+  if (values.all) {
+    if (kind !== 'plan') throw new UsageError(`write ${kind}: --all applies to write plan only`);
+    return { verb, kind, abs, replace: values.replace === true, files: planFiles(abs) };
+  }
+  return { verb, kind, abs, replace: values.replace === true, files: null };
 }
 
 // `hook pre-commit|post-commit`, run by git from the top of the working tree. Outside store mode the pre-commit
@@ -760,10 +829,18 @@ async function main(argv) {
   if (storeMode) {
     if (p.verb === 'log') return logView(t, p);
     if (p.verb === 'status' && p.view) return statusView(t, p);
-    for (const line of await storeCommand(t, p)) out(line);
+    const lines = await storeCommand(t, p);
+    if (lines === null) return 1;
+    for (const line of lines) out(line);
     return 0;
   }
   const { kind, abs, replace } = p;
+  if (p.files) {
+    const lines = withLock(tasksLockPath(t), () => writeAllPlans(t, p.files, replace));
+    if (lines === null) return 1;
+    for (const line of lines) out(line);
+    return 0;
+  }
   const draft = readDraft(abs);
   const lines = withLock(tasksLockPath(t), () => {
     if (kind === 'entry') return writeEntry(t, draft);
