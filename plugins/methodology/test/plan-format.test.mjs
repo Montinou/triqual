@@ -2,7 +2,7 @@
 // phases of one-commit tasks. Texts of the skills are checked, not behavior; later tasks extend this file.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readSkillText } from './skill-text.mjs';
@@ -533,4 +533,28 @@ test('a **Lane:** line leaves task ids and dependencies unchanged in the plan pa
   assert.deepEqual(withLanes.map(strip), readTasks(plan(false)).map(strip));
   assert.equal(withLanes.length, 3);
   assert.deepEqual(withLanes[2].deps, ['T1', 'T2']);
+});
+
+test('writing-plans documents the forest fields, links both references and accepts Depends on: none', () => {
+  const text = read(PLANS);
+  const phase = section(PLANS, '## Phases').join('\n');
+  for (const field of ['**Parent:**', '**Validate:**']) assert.ok(phase.includes(field), `the phase template has no ${field}`);
+  assert.ok(section(PLANS, '## Plan Document Header').join('\n').includes('**Landing test:**'), 'the plan header has no **Landing test:**');
+  assert.ok(text.includes('`Depends on: none`') || text.includes('**Depends on:** none'), 'writing-plans does not accept Depends on: none');
+  for (const ref of ['references/plan-generate.md', 'references/collisions.md']) {
+    assert.ok(text.includes(`(${ref})`), `writing-plans does not link ${ref}`);
+    assert.ok(existsSync(join(SKILLS, 'writing-plans', ref)), `${ref} does not exist`);
+  }
+});
+
+test('Self-Review checks the forest and simplicity, and the Plan Audit flags unrequested complexity', () => {
+  const review = section(PLANS, '## Self-Review').join(' ').replace(/\s+/g, ' ');
+  assert.match(review, /\*\*\d+\. Forest:\*\*[^*]*disjoint[^*]*`triqual plan check-collisions /, 'Self-Review has no forest check');
+  const simple = /\*\*\d+\. Simplicity:\*\*(.*)$/.exec(review)?.[1] ?? '';
+  assert.match(simple, /fewest tasks/, 'Simplicity check does not ask for the fewest tasks');
+  assert.match(simple, /light is the default tier/i, 'Simplicity check does not name light as the default');
+  assert.match(simple, /spec requirement/, 'Simplicity check does not trace to the spec');
+  assert.match(simple, /else it is cut/, 'Simplicity check does not cut what has no trace');
+  const audit = section(PLANS, '## Plan Audit').join(' ').replace(/\s+/g, ' ');
+  assert.match(audit, /unrequested complexity[^.]*over-tiering[^.]*finding/, 'the Plan Audit does not tell the auditor to flag unrequested complexity and over-tiering');
 });

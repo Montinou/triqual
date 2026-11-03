@@ -199,3 +199,14 @@ test('references/store-mode.md documents reconcile after a migration', () => {
   assert.match(reconcile, /report[^.]*before[^.]*`--apply`/i, 'run the report before --apply');
   assert.match(reconcile, /only[^.]*`high`[^.]*(applied|confidence)|`high`[^.]*only[^.]*appl/i, 'only high confidence is applied');
 });
+
+test('skill and store-mode.md describe TRIQUAL_TRACKING_ROOT, external commits and tracking write plan --all', () => {
+  const skill = readFileSync(SKILL, 'utf8');
+  const store = readFileSync(join(PLUGIN, 'skills', 'progress-tracking', 'references', 'store-mode.md'), 'utf8');
+  for (const [name, text] of [['SKILL.md', skill], ['store-mode.md', store]]) {
+    assert.ok(text.includes('TRIQUAL_TRACKING_ROOT'), `${name} names TRIQUAL_TRACKING_ROOT`);
+    assert.ok(text.includes('tracking write plan --all'), `${name} names tracking write plan --all`);
+    assert.match(text, /external commit|`ext:/, `${name} describes external commits`);
+  }
+  assert.ok(skill.length <= 10000, `SKILL.md is ${skill.length} characters, must be at most 10,000`);
+});

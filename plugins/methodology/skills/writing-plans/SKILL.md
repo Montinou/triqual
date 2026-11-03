@@ -45,22 +45,25 @@ A plan is a sequence of phases. Each phase is one pull request, built from atomi
 ## Phase <N>: <name>
 **Slice:** S<n>
 **Branch:** <prefix>/<NN>-<phase-slug>
+**Parent:** <P<k> | trunk | branch>
 **PR title:** <conventional title>
 **Stands alone because:** <the slice's reason, refined with real files>
 **Phase check:** `<command>` → <expected>
+**Validate:** <workflow [compare=`<cmd>`] | none>
 
 ### Task <M>: ...
 ````
 
 Its `### Task <M>: …` blocks follow, and no other `###` heading appears inside a phase.
 
+- **Parent and Validate:** both lines are optional. Without `**Parent:**` a phase branches from the previous phase (the first from the trunk); `**Parent:**` names an earlier phase `P<k>`, `trunk` or a branch, and phases that are not ancestor and descendant form a forest, so their `Files` must be disjoint (see Self-Review). `**Validate:**` names the workflow that validates the phase, with an optional `compare=` command, or `none`. To write many near-identical plans from one template, see [references/plan-generate.md](references/plan-generate.md); to check a forest for file collisions, see [references/collisions.md](references/collisions.md).
 - **Numbering and order:** task numbers are global across phases (T1…Tn). Each task belongs to exactly one phase, and its `**Depends on:**` names only tasks in the same or an earlier phase.
 - **One commit per task:** a task's work is exactly one commit on the phase branch, and its single Commit step gives the conventional message.
 - **Lanes:** plan every phase in parallel lanes first. A lane is a chain of tasks, named by a letter on each task's `**Lane:** <letter>` line, that one agent runs start to finish while the other lanes run beside it. The rule:
   - Lanes have disjoint `Files`: no path appears in two lanes.
   - There is no `Depends on` across lanes: a task depends only on tasks of its own lane or of an earlier phase, the closing task below being the one exception.
   - Tasks chain inside a lane: each later task of a lane depends on the one before it.
-  - A task meant to run beside others in another lane has one exact node `Test:` file (see Task Structure), since only such a task runs in parallel.
+  - A task meant to run beside others in another lane has one exact node `Test:` file (see Task Structure), since only such a task runs in parallel, unless the plan header has a `**Landing test:**` line (see methodology:executing-plans, references/landing-test.md).
   - The phase ends with a closing task that depends on every lane. It is the milestone: it runs the phase check once the lanes have landed.
 - **Sequential because:** a phase planned without lanes writes `**Sequential because:** <reason>` under its Phase check, the reason being a fact about the work (one shared file, one task's output feeding every other). It is the only way to a sequential phase: a phase with neither lanes nor that line is a defect, and "simpler" or "safer" is not a reason.
 - **Size:** about 6 tasks per phase. Going over means splitting the phase, and noting that the spec's slice should have been split.
@@ -109,6 +112,8 @@ argues from the spec, so the spec travels with it; executors read both]
 **Sensitive paths:** [optional: `<glob>, <glob>`, paths whose change makes a task `heavy`, added to the default set (see Task Tiers); omit the line when none]
 
 **Test paths:** [optional: `<glob>, <glob>`, paths whose lines never count toward the 300-line heavy limit or the light allowance, added to the default test paths (see Task Tiers); omit the line when none]
+
+**Landing test:** [optional: `<command with {files} once>`, run on each worktree task's own `Test:` files when that task lands; omit the line when none]
 
 ## Global Constraints
 
@@ -212,10 +217,10 @@ git commit -m "feat: add specific feature"
 The lines under the heading follow the task ledger's plan format:
 - `**Tier:**` names the task's tier (see Task Tiers); it is the first line. A `heavy` task puts its one-line reason on the plain-text line directly under it.
 - `**Lane:**` names the task's lane as one letter (see Phases, Lanes). Tasks of one lane share the letter and chain through `**Depends on:**`; the closing task takes a lane of its own and depends on every lane. A phase with `**Sequential because:**` writes no `**Lane:**` lines. The plan parser ignores the line, so task ids and dependencies read as they do without it.
-- `**Depends on:**` lists the tasks that must be done first, as `T1, T3`; omit the line when a task has none.
+- `**Depends on:**` lists the tasks that must be done first, as `T1, T3`; omit the line when a task has none, or write `Depends on: none`, which reads the same.
 - `**Skills:**` lists the vault skills the task needs. When headjack is installed, run `triqual suggest "<the task's text>" --json` per task and keep the fitting `suggestions[].slug` values. On a non-zero exit from `triqual suggest` (exit 3: headjack is not installed), on empty output, or when `triqual` is not on `PATH` (`command -v triqual` fails, or exit 127), omit the line silently.
 - `**Role:**` names the task's role (see Task Roles). A `roles:complex-implementer` task puts its reason, the live-state migration or the change across systems that one brief cannot describe, on the plain-text line directly under it. Reason lines never start with `**`.
-- `**Files:**` also decides which tasks run side by side (see methodology:executing-plans, Parallel tasks): list every file the task creates, modifies or tests, because two tasks of a phase that share a path run one after the other, and a path left off is caught only at landing. A task runs in parallel only when it has a `Test:` path that is one exact file ending `.mjs`, `.js` or `.cjs` (no glob, inside the repository); with any other `Test:` path, or none, it runs sequentially.
+- `**Files:**` also decides which tasks run side by side (see methodology:executing-plans, Parallel tasks): list every file the task creates, modifies or tests, because two tasks of a phase that share a path run one after the other, and a path left off is caught only at landing. A task runs in parallel only when it has a `Test:` path that is one exact file ending `.mjs`, `.js` or `.cjs` (no glob, inside the repository); with any other `Test:` path, or none, it runs sequentially, unless the plan header has a `**Landing test:**` line (see methodology:executing-plans, references/landing-test.md), which lifts the `.mjs`, `.js` or `.cjs` rule.
 
 Test-first applies to every task that changes behavior, at any tier. A task with no behavior change (docs, config values, a rollout step) replaces the test steps with a verification step: the command to run and the output that means it passed.
 
@@ -260,13 +265,17 @@ After writing the complete plan, look at the spec with fresh eyes and check the 
 
 **7. Tiers:** Does every task carry a `**Tier:**` (all or none)? Is each tier the one the rubric gives for what the task touches, with no task tiered lower than its content justifies? Is every `coordinator` task `light` and every `roles:complex-implementer` task `heavy`? Does every `heavy` task have its reason line under `**Tier:**`, and every `roles:complex-implementer` task its reason line under `**Role:**`, each naming a criterion the rubric gives? Is every task that touches a sensitive path (the default set plus the header's `**Sensitive paths:**`) or whose diff will have more than 300 non-test changed lines `heavy`? Is any task left at the default light that matches a heavy trigger, and does every `standard` task have its one-line reason under `**Tier:**`? When more than 80% of the plan's tasks are `heavy` in a plan of at least 5 tasks, re-check each tier, since heavy review costs the most and registering the plan prints a warning.
 
-**8. Lanes:** Does every phase either split into lanes or carry `**Sequential because:**` with a real reason? In a laned phase, are the lanes' `Files` disjoint, is there no `Depends on` across lanes, do the tasks of each lane chain, does every task meant to run beside others have one exact node `Test:` file, and does a closing task depend on every lane as the milestone? Is any phase marked sequential that two lanes could carry?
+**8. Lanes:** Does every phase either split into lanes or carry `**Sequential because:**` with a real reason? In a laned phase, are the lanes' `Files` disjoint, is there no `Depends on` across lanes, do the tasks of each lane chain, does every task meant to run beside others have one exact node `Test:` file (unless the plan header has a `**Landing test:**` line), and does a closing task depend on every lane as the milestone? Is any phase marked sequential that two lanes could carry?
+
+**9. Forest:** In a plan whose phases are not all in one chain, are incomparable phases' `Files` disjoint? Run `triqual plan check-collisions <plan.md…>` ([references/collisions.md](references/collisions.md)) and fix every COLLISION.
+
+**10. Simplicity:** Is this the fewest tasks that keep one reviewable commit each? Light is the default tier and every standard or heavy tier names its reason. Every task, file, flag, option, field and verdict traces to a spec requirement or names the concrete failure it prevents, else it is cut.
 
 If you find issues, fix them inline. No need to re-review — just fix and move on. If you find a spec requirement with no task, add the task.
 
 ## Plan Audit
 
-After the self-review, dispatch `roles:final-adversarial-reviewer` with `../brainstorming/spec-document-reviewer-prompt.md` on the plan and its spec: the adversarial audit runs on every plan, and no other reviewer takes its place. The audit checks the tiers both ways: a task tiered lower than its content justifies by the Task Tiers rubric is a finding, and so is a task tiered higher than the rubric justifies. A `heavy` task, or a `roles:complex-implementer` task, whose reason line is missing or does not match the rubric's criteria for it is a finding too. The shared audit prompt stays as it is, so write both tier checks into your dispatch message to the auditor.
+After the self-review, dispatch `roles:final-adversarial-reviewer` with `../brainstorming/spec-document-reviewer-prompt.md` on the plan and its spec: the adversarial audit runs on every plan, and no other reviewer takes its place. The audit checks the tiers both ways: a task tiered lower than its content justifies by the Task Tiers rubric is a finding, and so is a task tiered higher than the rubric justifies. A `heavy` task, or a `roles:complex-implementer` task, whose reason line is missing or does not match the rubric's criteria for it is a finding too. The audit also flags unrequested complexity and over-tiering as findings. The shared audit prompt stays as it is, so write both tier checks and this instruction into your dispatch message to the auditor.
 
 Fix the findings in the plan. Name, in your message to your human partner, each finding you did not fix and why.
 

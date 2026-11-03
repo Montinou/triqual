@@ -27,6 +27,7 @@ Subagent (roles:final-adversarial-reviewer):
     | Clarity | Requirements ambiguous enough to cause someone to build the wrong thing |
     | Scope | Focused enough for a single plan — not covering multiple independent subsystems |
     | YAGNI | Unrequested features, over-engineering |
+    | Simplicity | Over-engineering, unrequested complexity (a unit, interface, flag, option or verdict the request does not need), over-tiering: name the simpler alternative |
     | Modularity | A unit with a missing interface or dependency line; a forward slice dependency (a slice that depends on a later slice); an uncovered unit (no slice delivers it); a slice that does not stand alone (trunk would break or carry half-built reachable code if it merged alone, in order); an oversized slice (more than about 6 atomic tasks); an operation that needs the merge listed as a slice instead of under the rollout |
 
     For a plan, also check:
@@ -50,7 +51,7 @@ Subagent (roles:final-adversarial-reviewer):
 
     **Only flag issues that would cause real problems during planning or implementation.**
     A missing section, a contradiction, a requirement so ambiguous it could be interpreted
-    two different ways, a spec requirement the plan drops — those are issues. Minor wording
+    two different ways, a spec requirement the plan drops, a needlessly complex design — those are issues. Minor wording
     improvements, stylistic preferences, and "sections less detailed than others" are not.
 
     Approve unless there are serious gaps that would lead to a flawed plan or flawed software.

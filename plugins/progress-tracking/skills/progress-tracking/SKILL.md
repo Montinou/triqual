@@ -16,13 +16,12 @@ session; whatever is not in them is lost.
 They live at the repo root (committed mode) or in `.git/methodology/` (local mode); in store mode they are rows in the local database, with no files. Never guess paths:
 `triqual tasks paths --json` prints `mode`, `progress`, `status`, `plansDir` and `specsDir`; outside an opted-in repo it
 prints `"optedIn": false` and exits 0. Both carry `notOptedInMessage` and `localHookLines`. Without `triqual` on PATH, run
-`node "${CLAUDE_PLUGIN_ROOT}/cli/tasks.mjs" <subcommand> …` instead.
+`node "${CLAUDE_PLUGIN_ROOT}/cli/tasks.mjs" <subcommand> …`.
 
 ## The rule
 
 **A task is not finished until its entry is in `progress.md` and `status.md` reflects the new state, in the same
-commit that closes it.** Local mode commits neither file: write both before that commit. No exceptions for size:
-a one-line fix is a task too.
+commit that closes it.** Local mode commits neither file: write both before that commit. A one-line fix is a task too.
 
 What counts as a task:
 - a plan task (each one, not the whole plan)
@@ -30,9 +29,8 @@ What counts as a task:
 - a rollout operation: migration, deploy, env var, secret rotation
 - any change the user asked for, code or not (config, docs, infrastructure)
 
-A task that does not end in a commit (a production operation, say) still gets its entry. In committed mode commit it
-on its own: the `pre-commit` lets through a commit of tracking files only, but a staged ledger must still pass
-`triqual tasks check --staged`.
+A task that does not end in a commit still gets its entry. In committed mode commit it on its own: the `pre-commit` lets
+through a commit of tracking files only, but a staged ledger must still pass `triqual tasks check --staged`.
 
 ## Entry format
 
@@ -46,15 +44,15 @@ on its own: the `pre-commit` lets through a commit of tracking files only, but a
 - **Next:** <next concrete step>
 ```
 
-- Insert it above the previous entry.
+- Put it above the previous entry.
 - **Honest verification:** write down a failed test, a skipped step or anything left untested.
-- **Immutable:** a committed entry is never edited. If it was wrong, add a new entry that corrects it.
+- **Immutable:** a committed entry is never edited; add a new entry that corrects it.
 - **Absolute dates** always.
 
 ## When `status.md` changes
 
-With each task (the same commit in committed mode), edit whatever changed among:
-- **Last updated** (date + what changed): always
+With each task (same commit in committed mode), edit what changed among:
+- **Last updated** (date, what changed): always
 - stage and status in the plan table; current task
 - production / environment (deploys, migrations, env vars)
 - repo health (tests, branch, sync)
@@ -94,12 +92,10 @@ only from the `triqual` shim (plugin not installed).
 **Bookkeeping:** `done --commit` records a sha that already exists, so a transition's ledger and
 `status.md` changes ride in the **next** commit (usually the next task's), or at the end of a plan in the **closing
 commit**, which carries its own closing entry. **Committed mode: the next commit stages every dirty
-`docs/plans/*.tasks.json` together with `status.md` (and `progress.md`).** Left dirty on their own, ledgers never
-trip the Stop hook or the `pre-commit`, so a turn may end between tasks. Local mode: `triqual tasks` writes both files in
+`docs/plans/*.tasks.json` together with `status.md` (and `progress.md`).** Dirty ledgers alone never trip the hooks. Local mode: `triqual tasks` writes both files in
 place and nothing is staged.
 
-If `triqual tasks check --staged` blocks a commit: for a stale section run `triqual tasks render`, then `git add status.md`;
-for `plan … is not in the index`, stage the plan with its ledger (the check reads both from the index).
+If `triqual tasks check --staged` blocks a commit: a stale section needs `triqual tasks render` then `git add status.md`; `plan … is not in the index` needs the plan staged with its ledger.
 
 ## Local mode
 
@@ -111,7 +107,7 @@ Code refuses agent file writes there: draft in the OS temp dir, land an entry wi
 [references/local-mode.md](references/local-mode.md). `triqual progress-init --local --remove` permanently deletes that
 directory (log, plans and specs, which no commit holds): always confirm with the user first.
 
-If `progress.md` exists in both roots, committed mode wins.
+If `progress.md` is in both roots, committed mode wins.
 
 ## Store mode
 
@@ -119,7 +115,8 @@ For a repository whose history must carry no tracking: `triqual progress-init --
 ledgers in a local database; no tracking file is created, staged or committed. Land an entry with
 `triqual tracking add <draft>` before its commit (`--no-commit` when the task ends without one), read the status with
 `triqual tracking status`, change a section with `triqual tracking status set --section <heading> <draft>`, read the
-history with `triqual tracking log`. All the rules: [references/store-mode.md](references/store-mode.md).
+history with `triqual tracking log`. `triqual tracking write plan --all <dir>` registers every plan of a directory. A plan run in a clone that is not opted in keeps
+its tracking here: export `TRIQUAL_TRACKING_ROOT=<root>`; the clone's commits are external commits (`ext:`). All the rules: [references/store-mode.md](references/store-mode.md).
 
 ## With subagents and plans
 
@@ -128,10 +125,10 @@ history with `triqual tracking log`. All the rules: [references/store-mode.md](r
   fixer's brief.
 - The coordinator owns the ledger: `start` before dispatching, `review` when the implementer reports, `rework` or
   `done --commit` after the review. Subagents do not run transitions.
-- Reviewers write no entries; the coordinator logs a review's findings, decisions and rulings as its own entry.
+- Reviewers write no entries; the coordinator logs a review's findings and rulings as its own entry.
 - Parallel subagents in one tree each add their entry on top; on a conflict keep both entries. Store mode: pending entries are
   per worktree, one commit stamps all of them.
-- Closing a stage or plan: the coordinator adds a closing entry, runs `triqual tasks close`, updates the stage table.
+- Closing a plan: the coordinator adds a closing entry, runs `triqual tasks close`, updates the stage table.
 
 ## What enforces it
 
@@ -148,4 +145,4 @@ history with `triqual tracking log`. All the rules: [references/store-mode.md](r
   database): the Stop hook only warns; update the plugin and `/reload-plugins`. Never restore a snapshot then.
 - **SessionStart hook:** injects `status.md`, the latest entry and one line per active plan.
 
-The hooks act only in opted-in repos: store mode (the `triqual.tracking=store` git config marker, which wins), or `progress.md` in either root.
+The hooks act only in opted-in repos: store mode (the `triqual.tracking=store` marker, which wins), or `progress.md` in either root.

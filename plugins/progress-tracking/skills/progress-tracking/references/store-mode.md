@@ -77,6 +77,10 @@ triqual tracking write plan <dir>/2026-10-11-topic.md       # adopts it and crea
 
 An existing document is refused; `--replace` overwrites it (and, for a plan, reconciles its ledger).
 
+`triqual tracking write plan --all <dir> [--replace]` registers every `*.md` of a directory, in name order. Every plan is
+checked first as registration reads it, so one problem (`ERR <file>: <message>`, exit 1) registers none; a plan that is
+already registered is refused up front (without `--replace`), and a failure part-way names the plans registered before it.
+
 **R2, an entry with a commit.** Write the entry as a draft (the same format as `progress.md`, five fields) and land it
 *before* the commit it describes:
 
@@ -133,6 +137,18 @@ no `*.tasks.json` to name or stage.
   `state` (`pending`, `committed`, `no_commit` or `unresolved`) and `commit_sha`; the text form does not.
 - Both are read-only. Outside store mode, `add`, `status` and `log` exit 2 with
   `not in store mode: run triqual progress-init --store`.
+
+## A plan run in a clone (`TRIQUAL_TRACKING_ROOT`)
+
+A plan can run in a plain clone that is not opted in, with the plan, its ledger and the entries kept in this repository (the
+coordination root). Export `TRIQUAL_TRACKING_ROOT=<path of the root>` in the shell that runs the plan: `triqual tasks …` and
+`triqual tracking …` then resolve the tracking from the root while the working directory is the clone. The root must be a
+git repository opted in to progress tracking, else exit 2 naming the variable. `triqual tracking hook …`, the git hooks and the plugin hooks
+never read it.
+
+The clone's commits are external commits: `triqual tasks done T<N> --commit <rev>` and `triqual tracking add <draft> --commit <rev>`
+run from the clone record `ext:<clone path relative to the root>@<full sha>`, never a bare sha. From a clone `add` needs
+`--commit` or `--no-commit`. Setup and the rest: `references/child-repo.md` of the `executing-plans` skill.
 
 ## Revising a plan imported from a legacy mode
 
