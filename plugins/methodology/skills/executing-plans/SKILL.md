@@ -24,7 +24,7 @@ The only exception to the push stop is a ledgered authorization, either `Authori
 ## The Process
 
 1. **Setup** (once): workspace and ledger, tracking paths, stack, push authorization, fence detection, read the plan and the spec's Units and current slice, tiers at setup, pre-flight scan. Read references/setup.md when a plan's execution starts, before Task 1, and again when it resumes (a new session or after compaction).
-2. **Per phase:** the main session runs `node scripts/stack.mjs phase PLAN_FILE N`, dispatches one `roles:phase-orchestrator` ([orchestrator-prompt.md](orchestrator-prompt.md)) that runs the phase's tasks in dependency order (independent tasks at the same time, see Parallel tasks), waits for it once and reads its summary (see The Thin Controller); then the Phase check at the phase tip, the phase review (the deep review: one or two hunters and `roles:final-adversarial-reviewer` over the phase's range, at most two fix rounds), `node scripts/stack.mjs done PLAN_FILE N`, `node scripts/stack.mjs submit PLAN_FILE N`, then the next phase at once.
+2. **Per phase:** the main session runs `node scripts/stack.mjs phase PLAN_FILE N`, dispatches one `roles:phase-orchestrator` ([orchestrator-prompt.md](orchestrator-prompt.md)) that runs the phase's tasks in dependency order (independent tasks at the same time, see Parallel tasks), waits for it once and reads its summary (see The Thin Controller); then the Phase check at the phase tip, the phase review (the deep review: one or two hunters and `roles:final-adversarial-reviewer` over the phase's range, at most two fix rounds), `node scripts/stack.mjs done PLAN_FILE N`, `node scripts/stack.mjs submit PLAN_FILE N`, then, when the phase declares `**Validate:**`, `node scripts/validate PLAN_FILE N` (see Initiatives), then the next phase at once.
 3. **Per task, three scripts do the bookkeeping** (run by the orchestrator, or by the main session in the fallback): (1) start: `task-open` (ledger move, brief, BASE); (2) build: dispatch the task's role (or run a coordinator task); (3) `task-prep` (ledger move, `tier-check`, the review package); (4) review at the effective tier, on that one review package, saving each reviewer's final message; (5) the fix loop when the review requires it, `task-prep --fix-round` before every re-review; (6) complete: `task-close` (squash, `triqual tasks done`, the complete line, the `task-review` record built from the saved reviewer outputs, the review progress entry).
 4. **End:** the seams review of `trunk..top` (`roles:final-adversarial-reviewer` alone, no hunters; in a single-phase plan the phase review is the final review and no second review runs), at most two fix rounds with a scoped re-review each, the `final-escapes` record (multi-phase plans only; a single-phase plan's `P1` record stands), `node scripts/stack.mjs submit PLAN_FILE <top N> --open`, then methodology:finishing-branch. Read references/final-review.md when the last phase is submitted.
 
@@ -261,6 +261,17 @@ When the Phase check passes, the phase gets one deep review before it closes. Th
 - **`submit` exits 5** when `gh` failed, and records nothing: ledger a `Ruling:` that names the `gh` message, retry once, and when it fails again run `node scripts/stack.mjs mode PLAN_FILE local`, ledger the `Ruling:`, and continue in local mode.
 
 **Parallel tasks.** Read references/parallel-tasks.md when a phase has independent tasks to build at the same time or a task is opened with `--worktree`.
+
+### Initiatives
+
+Several plans, plans whose phases do not form a chain, and plans run outside the coordination repository use these pieces. Read each reference when its case applies:
+
+- **Forest** (a phase with a `**Parent:**` that is not the phase before it): [forest.md](references/forest.md). `node scripts/stack.mjs status PLAN_FILE --tree` prints the phases as a tree.
+- **SSH remotes** (a remote that reaches GitHub through an SSH host alias): [ssh-remotes.md](references/ssh-remotes.md).
+- **Child repository** (a plan run in a clone that is not opted in, with `TRIQUAL_TRACKING_ROOT`): [child-repo.md](references/child-repo.md).
+- **Validation** (`**Validate:**`: after `submit`, `node scripts/validate PLAN_FILE N` records the CI verdict of the pushed head): [validation.md](references/validation.md).
+- **Landing test** (`**Landing test:**`: the command that lands worktree tasks when `node --test` does not fit the project): [landing-test.md](references/landing-test.md).
+- **Several plans, the loop after submit, resuming** (`node scripts/phase-resume PLAN_FILE N` rebuilds where a stopped phase is, and writes nothing): [initiatives.md](references/initiatives.md).
 
 ## Denied by Policy
 

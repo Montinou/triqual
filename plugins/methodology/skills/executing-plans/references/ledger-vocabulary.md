@@ -14,6 +14,11 @@ The workspace ledger, `sdd-ledger.md`, is append-only, one line per event, in th
 - `Tested: T<N> <sha>` (written by `task-close` once the plan's `Test:` files passed at the landed sha; a rerun without it runs them again)
 - `BASE: T<N> <previous tip>` followed by `Task <N>: landing conflict — re-run sequential` (written together, in one write, by the undo of a landing in `task-close`; the file `<workspace>/task-<N>-undone` beside them dates the undone attempt, and the sequential re-run's ledger starts after the undo line)
 - `Worktree removed: <path> — left behind at the close of P<n>` (written by the main session at phase close, one per leftover worktree removed; `<path>` absolute)
+- `Validation: P<n> run <id> verdict <clean|failed> — <url>` (written by `validate`)
+- `Validation fix: P<n> <sha> — <finding>` (written by the controller after the plain fix commit is pushed)
+- `Phase fix: P<n> round <k> <sha> — <findings>` (one per round of the phase fix loop, `<sha>` the round's commit)
+- `Ruling: candidate <id> confirmed without a reviewer round — <why>` (a hunter candidate the controller confirms itself, with the reason a reviewer round is not needed)
+- `<workspace>/phase-<n>-report.md` is the one report file of phase `<n>`: every fix round of the phase and every `validate` run appends a section to it. See `initiatives.md`.
 - `Tier: T<N> <tier>`
 - `Tier raised: T<N> <from> → <to> — <reason>`
 - `Budget: hunters <matrix> → <used> for T<N> — <reason tied to the diff>`
