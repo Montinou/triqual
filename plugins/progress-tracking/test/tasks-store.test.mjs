@@ -289,6 +289,7 @@ test('paths --json reports the store shape', () => withRepo('store', (s) => {
     optedIn: true,
     mode: 'store',
     root: s.repo,
+    workRepo: null,
     specsDir: join(docs, 'specs'),
     plansDir: join(docs, 'plans'),
     store: join(s.dataDir, 'tracking.db'),

@@ -66,7 +66,7 @@ import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { NOT_OPTED_IN } from '../scripts/init.mjs';
 import { BRAND } from '../lib/brand.mjs';
-import { gitFacts, mainWorktreeRoot, resolveTracking, storeContext } from '../lib/tracking.mjs';
+import { gitFacts, mainWorktreeRoot, resolveTracking, resolveTrackingFor, storeContext } from '../lib/tracking.mjs';
 import {
   docsDirs, loadSqlite, maybeDailySnapshot, openStore, RelocateRefused, storePaths, StoreError,
 } from '../lib/store.mjs';
@@ -734,8 +734,8 @@ async function main(argv) {
   const p = parse(argv);
   if (p.verb === 'restore') return restoreCommand(p);
   if (p.verb === 'relocate') return relocateCommand(p);
-  const t = resolveTracking(process.cwd());
-  if (p.verb === 'hook') return hookCommand(t, p);
+  if (p.verb === 'hook') return hookCommand(resolveTracking(process.cwd()), p);
+  const t = resolveTrackingFor(process.cwd(), process.env);
   const storeMode = t?.mode === 'store';
   if ((p.verb === 'add' || p.verb === 'status' || p.verb === 'log') && !storeMode) {
     process.stderr.write(`${NOT_IN_STORE}\n`);

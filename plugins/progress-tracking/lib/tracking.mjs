@@ -116,6 +116,23 @@ export function resolveTracking(cwd) {
   };
 }
 
+// The tracking a command resolves: with TRIQUAL_TRACKING_ROOT set, the one of that repository (the work happens in a
+// plain clone elsewhere), plus `workRepo`, the cwd's git toplevel when it is another repository than the root, else
+// null; without it, `resolveTracking(cwd)` with `workRepo` null. Throws when the named root is not a repository or is
+// not opted in. Only `tasks` and `tracking` call it; git hooks and `tracking hook` resolve from their cwd.
+export function resolveTrackingFor(cwd, env) {
+  const named = env.TRIQUAL_TRACKING_ROOT;
+  if (!named) {
+    const t = resolveTracking(cwd);
+    return t === null ? null : { ...t, workRepo: null };
+  }
+  if (gitPath(named, ['rev-parse', '--show-toplevel']) === null) throw new Error(`TRIQUAL_TRACKING_ROOT ${named}: not a git repository`);
+  const t = resolveTracking(named);
+  if (t === null) throw new Error(`TRIQUAL_TRACKING_ROOT ${named}: not opted in to progress tracking`);
+  const work = gitPath(cwd, ['rev-parse', '--show-toplevel']);
+  return { ...t, workRepo: work !== null && work !== t.repoRoot ? work : null };
+}
+
 // The local-mode gate state: the hash of the last commit that passed the gate, and the hash the local pre-commit let
 // through for a commit not yet landed (its post-commit promotes it). A missing or malformed state.json (or a tracking
 // without one) reads as nothing recorded, a field that is not a string as null, and unknown fields are ignored; any
