@@ -110,6 +110,7 @@ Bounded work needs only context, a few questions and a short chat design. Everyt
 
 - Offer 2-3 approaches with trade-offs, lead with your recommendation and say why.
 - Apply YAGNI to every approach and every design: cut what is not needed.
+- The simplest approach that meets the goal without real failures is the default; a more complex one must name the failure it prevents.
 
 **Presenting the design:**
 
@@ -169,6 +170,7 @@ Every architectural spec carries these two sections, with exactly these headings
 3. **Scope check:** is it focused enough for one implementation plan, or does it need decomposing?
 4. **Ambiguity check:** could a requirement be read two ways? Pick one and say it.
 5. **Modularity:** does every unit state its interface and what it depends on, does every slice depend only on earlier slices, do the slices cover every unit, does each slice say why it stands alone, and is any slice big enough (more than about 6 atomic tasks) to split?
+6. **Simplicity:** every unit, interface, flag, option and verdict traces to the request or names the failure it prevents, else it is cut.
 
 Fix what you find inline and move on; this pass needs no second review.
 

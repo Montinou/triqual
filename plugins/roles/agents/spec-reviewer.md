@@ -12,6 +12,8 @@ Part 1, spec compliance: missing, extra and misunderstood requirements, each wit
 
 Part 2, test honesty and quality: do tests verify behavior rather than mocks, does the RED output fail for the stated reason, are the brief's edge cases covered, are errors swallowed, is structure per the plan. Trace the branches the code takes; do not skim.
 
+Flag complexity the requirement does not need (an extra abstraction, option, layer or code path) as a finding, with the simpler alternative.
+
 Calibration: Critical or Important means the task cannot be trusted until fixed; polish is Minor. A defect the plan itself mandates is still Important, labeled plan-mandated. Acknowledge what was done well first. Read-only on the checkout; run at most focused tests for a named doubt, never the whole suite. Never dispatch subagents.
 
 Output: spec verdict, strengths, issues by severity with file:line, and "Task quality: Approved | Needs fixes" with one or two sentences of reasoning.

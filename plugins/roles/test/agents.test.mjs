@@ -168,3 +168,38 @@ test('verification text never tells an agent to run the full suite, and the impl
     for (const re of patterns) assert.match(flat, re, `${name}: missing the focused-verification phrase ${re}`);
   }
 });
+
+// Plan initiative-native-support T36: owner rule 2026-11-03, "always look for the simplest way that meets the goal
+// without introducing real failures". The auditors and brainstorming carry a Simplicity check.
+test('the two reviewers flag complexity the requirement does not need, with the simpler alternative', () => {
+  for (const file of ['final-adversarial-reviewer.md', 'spec-reviewer.md']) {
+    const flat = parseAgent(file).body.replace(/\s+/g, ' ');
+    assert.match(flat, /complexity the requirement does not need/i, `${file}: no simplicity rule`);
+    assert.match(flat, /extra abstraction, option, layer or code path/, `${file}: simplicity rule lacks its examples`);
+    assert.match(flat, /simpler alternative/, `${file}: simplicity rule does not name the simpler alternative`);
+  }
+});
+
+test('the spec audit prompt has a Simplicity row and counts needless complexity as a real problem', () => {
+  const PROMPT = join(AGENTS, '..', '..', 'methodology', 'skills', 'brainstorming', 'spec-document-reviewer-prompt.md');
+  const lines = readFileSync(PROMPT, 'utf8').split('\n');
+  const row = lines.find((l) => l.trimStart().startsWith('| Simplicity |'));
+  assert.ok(row, 'the audit prompt has no Simplicity row');
+  for (const needle of ['over-engineering', 'unrequested complexity', 'over-tiering', 'simpler alternative']) {
+    assert.ok(row.toLowerCase().includes(needle), `Simplicity row does not mention ${needle}`);
+  }
+  const calibration = readFileSync(PROMPT, 'utf8').split('## Calibration')[1].replace(/\s+/g, ' ');
+  assert.match(calibration, /needlessly complex design/, 'Calibration does not count a needlessly complex design');
+});
+
+test('brainstorming approaches and Spec Self-Review carry a Simplicity check', () => {
+  const SKILL = join(AGENTS, '..', '..', 'methodology', 'skills', 'brainstorming', 'SKILL.md');
+  const text = readFileSync(SKILL, 'utf8');
+  const approaches = text.split('**Exploring approaches:**')[1].split('**Presenting the design:**')[0].replace(/\s+/g, ' ');
+  assert.match(approaches, /simplest approach that meets the goal without real failures/, 'approaches lack the simplicity default');
+  const review = text.split('**Spec Self-Review:**')[1].split('**Spec Audit:**')[0];
+  const item = review.split('\n').find((l) => /^\d+\. \*\*Simplicity:\*\*/.test(l));
+  assert.ok(item, 'Spec Self-Review has no Simplicity item');
+  assert.match(item, /traces to the request or names the failure it prevents/);
+  assert.match(item, /cut/);
+});
