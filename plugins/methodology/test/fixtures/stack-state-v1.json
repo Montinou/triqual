@@ -1,0 +1,25 @@
+{
+  "v": 1,
+  "plan": "phased-plan.md",
+  "mode": "local",
+  "reason": "--mode local",
+  "ghStackVersion": null,
+  "trunk": "main",
+  "remote": "origin",
+  "phases": [
+    {
+      "n": 1,
+      "branch": "demo/01-core",
+      "title": "feat: core",
+      "pr": null,
+      "state": "pending"
+    },
+    {
+      "n": 2,
+      "branch": "demo/02-edge",
+      "title": "feat: edge",
+      "pr": null,
+      "state": "pending"
+    }
+  ]
+}
