@@ -819,6 +819,9 @@ function prepareGithub(ctx, state, phase) {
   // --repo on pr edit: with several remotes or a default repo set to an upstream, a bare number may name another repo's PR.
   const slug = githubSlug(state.remote, cwd);
   if (!slug) fail(EXIT_REFUSED, `remote "${state.remote}" is no longer a GitHub remote: switch with stack mode local`);
+  if (layoutOf(state) === 'stack' && githubRemote(state.remote, cwd)?.alias) {
+    fail(EXIT_REFUSED, `remote "${state.remote}" is an SSH alias gh stack cannot address: delete the state and run stack init again to use the prs layout`);
+  }
 
   const bodyFile = join(workspaceOf(ctx), `pr-body-${String(phase.n).padStart(2, '0')}.md`);
   writeFileSync(bodyFile, prBody(ctx, state, phase));

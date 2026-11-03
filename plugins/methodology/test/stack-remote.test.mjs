@@ -210,6 +210,34 @@ test('a stack state is not switched to github mode on an alias remote', () => {
   });
 });
 
+test('submit and push refuse a github v1 state once the remote is an alias, and run no gh stack', () => {
+  for (const verb of ['submit', 'push']) {
+    withRig((r) => {
+      r.git('remote', 'set-url', 'origin', 'https://github.com/acme/demo.git');
+      const state = r.json(r.run(['init', r.plan, '--mode', 'github']));
+      assert.equal(state.v, 1);
+      assert.equal(state.mode, 'github');
+      assert.equal(r.run(['phase', r.plan, '1']).status, 0);
+      writeFileSync(join(r.dir, 'core.txt'), 'core\n');
+      r.git('add', '-A');
+      r.git('commit', '-q', '-m', 'feat: core');
+      assert.equal(r.run(['done', r.plan, '1']).status, 0);
+      // push needs a submitted phase: submit it while the remote is still plain https.
+      if (verb === 'push') {
+        const sub = r.run(['submit', r.plan, '1']);
+        assert.equal(sub.status, 0, sub.stderr);
+      }
+      r.setUrl('git@github.com-work:acme/demo.git');
+      const stackCalls = () => r.ghLog().filter((argv) => argv[0] === 'stack').length;
+      const before = stackCalls();
+      const res = r.run([verb, r.plan, '1']);
+      assert.equal(res.status, 3, `${verb}: ${res.stderr}`);
+      assert.match(res.stderr, /SSH alias gh stack cannot address/, verb);
+      assert.equal(stackCalls(), before, verb);
+    });
+  }
+});
+
 test('init re-run on an existing v1 state prints it and changes nothing when the remote is an alias', () => {
   withRig((r) => {
     const first = r.json(r.run(['init', r.plan, '--mode', 'local']));
