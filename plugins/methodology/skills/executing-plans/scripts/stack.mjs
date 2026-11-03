@@ -40,6 +40,13 @@ const GITHUB_URL_FORMS = [
   /^git@github\.com:([^\/]+)\/([^\/]+?)(?:\.git)?\/?$/,
 ];
 
+// SSH aliases (an ~/.ssh/config `Host github.com-<x>`): same groups. Only a host that starts `github.com-` counts; the
+// push goes through the alias's key, which `gh stack` cannot use.
+const GITHUB_ALIAS_URL_FORMS = [
+  /^ssh:\/\/git@github\.com-[^\/:@]+(?::\d+)?\/([^\/]+)\/([^\/]+?)(?:\.git)?\/?$/,
+  /^git@github\.com-[^\/:@]+:([^\/]+)\/([^\/]+?)(?:\.git)?\/?$/,
+];
+
 class StackError extends Error {
   constructor(code, message) {
     super(message);
@@ -219,19 +226,24 @@ function remoteNames(cwd) {
   return out ? out.split('\n').sort() : [];
 }
 
-function githubSlug(remote, cwd) {
+// { slug: 'owner/repo', alias } for a GitHub remote (alias: its host is a `github.com-<x>` SSH alias), else null.
+export function githubRemote(remote, cwd) {
   let url;
   try {
     url = git(['remote', 'get-url', remote], { cwd });
   } catch {
     return null;
   }
-  for (const form of GITHUB_URL_FORMS) {
-    const m = form.exec(url);
-    if (m) return `${m[1]}/${m[2]}`;
+  for (const [forms, alias] of [[GITHUB_URL_FORMS, false], [GITHUB_ALIAS_URL_FORMS, true]]) {
+    for (const form of forms) {
+      const m = form.exec(url);
+      if (m) return { slug: `${m[1]}/${m[2]}`, alias };
+    }
   }
   return null;
 }
+
+const githubSlug = (remote, cwd) => githubRemote(remote, cwd)?.slug ?? null;
 
 // --remote, else origin when it is a GitHub remote, else the first GitHub remote by name.
 function pickGithubRemote(cwd, requested) {
@@ -274,7 +286,10 @@ function checkGithub(cwd, requestedRemote, layout) {
       : 'no GitHub remote (neither origin nor another remote has a GitHub URL)';
     return { ok: false, reason };
   }
-  const slug = githubSlug(remote, cwd);
+  const { slug, alias } = githubRemote(remote, cwd);
+  if (alias && layout === 'stack') {
+    return { ok: false, reason: `remote "${remote}" is an SSH alias: gh stack cannot use it (delete the stack state and run stack init again)` };
+  }
   let defaultBranch = null;
   try {
     const view = JSON.parse(gh(['repo', 'view', slug, '--json', 'nameWithOwner,defaultBranchRef'], { cwd }));
@@ -417,14 +432,21 @@ function cmdInit(args) {
   const ctx = context(rest[0]);
   refuseCommittedTracking(ctx.cwd);
   const { prefix, forest, phases } = parsePhases(readFileSync(ctx.planFile, 'utf8'), ctx.planFile);
-  const layout = chooseLayout({ forest, alias: false });
+  const aliasRemote = () => {
+    const githubName = pickGithubRemote(ctx.cwd, opts.remote);
+    return githubName ? githubRemote(githubName, ctx.cwd).alias : false;
+  };
   const existing = readState(ctx.path);
   if (existing) {
-    if (layoutOf(existing) !== layout) {
-      fail(EXIT_REFUSED, `state was written for the ${layoutOf(existing)} layout: delete ${ctx.path} and run stack init again`);
+    // An existing state keeps its layout: the alias only decides the layout of a new state, so a re-run on a v1 state
+    // prints it. Only the plan's shape can contradict the state (a forest needs prs).
+    const had = layoutOf(existing);
+    if (had !== chooseLayout({ forest, alias: false }) && !(had === 'prs' && !forest && aliasRemote())) {
+      fail(EXIT_REFUSED, `state was written for the ${had} layout: delete ${ctx.path} and run stack init again`);
     }
     return printState(existing);
   }
+  const layout = chooseLayout({ forest, alias: aliasRemote() });
   if (revParse(`refs/heads/${prefix}`, { cwd: ctx.cwd })) {
     fail(EXIT_REFUSED, `branch "${prefix}" exists: it blocks the phase branches ${prefix}/NN-*; rename or delete it`);
   }
@@ -797,6 +819,9 @@ function prepareGithub(ctx, state, phase) {
   // --repo on pr edit: with several remotes or a default repo set to an upstream, a bare number may name another repo's PR.
   const slug = githubSlug(state.remote, cwd);
   if (!slug) fail(EXIT_REFUSED, `remote "${state.remote}" is no longer a GitHub remote: switch with stack mode local`);
+  if (layoutOf(state) === 'stack' && githubRemote(state.remote, cwd)?.alias) {
+    fail(EXIT_REFUSED, `remote "${state.remote}" is an SSH alias gh stack cannot address: delete the state and run stack init again to use the prs layout`);
+  }
 
   const bodyFile = join(workspaceOf(ctx), `pr-body-${String(phase.n).padStart(2, '0')}.md`);
   writeFileSync(bodyFile, prBody(ctx, state, phase));
