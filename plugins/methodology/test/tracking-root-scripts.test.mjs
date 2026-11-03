@@ -122,7 +122,7 @@ test('a plan stored at the root drives a clone that is not opted in', () => with
   git('commit', '-q', '-m', 'fixup! feat: a');
   const prepped = out(ok(run('task-prep', plan, '1')));
   assert.equal(prepped.tier, 'standard');
-  writeFileSync(join(workspace, 'task-1-safety-reviewer-r1.md'), footerText('safety-reviewer'));
+  writeFileSync(join(workspace, `task-${1}-safety-reviewer-r1.md`), footerText('safety-reviewer'));
   writeFileSync(join(workspace, 'task-1-spec-reviewer-r1.md'), footerText('spec-reviewer'));
   const closed = out(ok(run('task-close', plan, '1')));
   assert.equal(closed.sha, git('rev-parse', 'HEAD'));
