@@ -12,6 +12,8 @@
 #   FAKE_GH_SUBMIT_OUT  a file `stack submit` prints (on stderr, as the real tool does) instead of the default captured output (gh-stack/submit-2prs.txt for
 #                       two or more members, gh-stack/submit-1pr.txt for fewer)
 #   FAKE_GH_SUBMIT_STDOUT=1   print that output on stdout instead of stderr
+#   FAKE_GH_RUNS        the JSON file `run list` prints (newest run first, as gh does): the runs of the workflow, whatever --commit says;
+#                       `[]` without it
 #   FAKE_GH_FAIL_<WORD1>_<WORD2>=1   exit 1 for that command, words upper-cased and stripped of dashes
 #                                    (FAKE_GH_FAIL_STACK_SUBMIT, FAKE_GH_FAIL_REPO_VIEW, FAKE_GH_FAIL_VERSION)
 #
@@ -64,6 +66,9 @@ case "${1:-} ${2:-}" in
       *",$head,"*) cat "$FIX/pr-list.json" ;;
       *) echo "[]" ;;
     esac
+    exit 0 ;;
+  "run list")
+    if [ -n "${FAKE_GH_RUNS:-}" ]; then cat "$FAKE_GH_RUNS"; else echo "[]"; fi
     exit 0 ;;
   "pr create")
     # pr create ... --head <branch> ...: the next number (7, 8, ...), printed as the PR's URL like the real tool
