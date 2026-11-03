@@ -57,7 +57,7 @@
 import {
   chmodSync, closeSync, linkSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync,
 } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -81,7 +81,7 @@ import { parseStatusSections, withoutActivePlan } from '../lib/status-sections.m
 import { writeAtomic } from '../lib/fsx.mjs';
 import { withLock, tasksLockPath } from '../lib/lock.mjs';
 import { ledgerPaths, readEntry } from '../lib/ledger-files.mjs';
-import { renderSection, upsertStatusSection } from '../lib/ledger.mjs';
+import { EXTERNAL_PREFIX, renderSection, upsertStatusSection } from '../lib/ledger.mjs';
 import { entryText, planView, readStoreEntries, readStoreViews, statusFileText } from '../lib/snapshot.mjs';
 import { adoptPlan, openStoreTracking } from './tasks.mjs';
 
@@ -256,12 +256,22 @@ async function withStore(t, fn) {
   }
 }
 
+// What `add --commit` records from a work repository (a clone other than the tracking root): `ext:<its path relative to
+// the root's main worktree>@<full sha>`, as `tasks done` records it, so no home-directory path enters the store.
+function externalCommit(t, rev) {
+  const sha = resolveCommit(t.workRepo, rev);
+  const anchor = mainWorktreeRoot(t.repoRoot, t.gitCommonDir) ?? t.repoRoot;
+  return `${EXTERNAL_PREFIX}${relative(anchor, t.workRepo).split(sep).join('/')}@${sha}`;
+}
+
 async function storeAdd(t, draft, { noCommit = false, commit = null, corrects = null }) {
   const entry = parseEntryDraft(draft, { strict: true });
   if (entry.error) throw new Refusal(entry.error);
+  if (t.workRepo && !noCommit && commit === null) throw new Refusal('add from a work repository needs --commit or --no-commit');
   const opts = noCommit
     ? { state: 'no_commit' }
-    : commit === null ? { state: 'pending' } : { state: 'committed', commit: resolveCommit(t.repoRoot, commit) };
+    : commit === null ? { state: 'pending' }
+      : { state: 'committed', commit: t.workRepo ? externalCommit(t, commit) : resolveCommit(t.repoRoot, commit) };
   const now = new Date();
   // created_at is the write time (it orders entries); the date the entry shows is the draft's own heading date.
   const dates = { createdAt: now.toISOString(), entryDate: entryDate(entry, now) };

@@ -160,3 +160,89 @@ test('a rev missing in the clone is refused', () => {
     assert.deepEqual(commits(), []);
   });
 });
+
+const DRAFT = [
+  '## 2026-11-03 — Alpha done', '- **Stage/task:** Plan example · T1', '- **Done:** did it', '- **Files:** a.txt',
+  '- **Verification:** ok', '- **Next:** none', '',
+].join('\n');
+const entryCommits = (dir) => {
+  const store = openStore({ home: join(dir, 'home'), env: { TRIQUAL_TRACKING_DB: join(dir, 'data', 'tracking.db') } });
+  try {
+    return store.all('SELECT state, commit_sha FROM entries ORDER BY id').map((r) => [r.state, r.commit_sha]);
+  } finally {
+    store.close();
+  }
+};
+
+test('add --commit from a clone stores ext:<path>@<sha>', () => {
+  withRootAndClone(({ dir, cloneGit, run, withVar }) => {
+    const draft = join(dir, 'draft.md');
+    writeFileSync(draft, DRAFT);
+    const sha = cloneGit('rev-parse', 'HEAD');
+    const r = run(TRACKING, ['add', draft, '--commit', 'HEAD'], { env: withVar });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(entryCommits(dir), [['committed', `ext:../clone@${sha}`]]);
+  });
+});
+
+test('add --no-commit from a clone is recorded without a commit', () => {
+  withRootAndClone(({ dir, run, withVar }) => {
+    const draft = join(dir, 'draft.md');
+    writeFileSync(draft, DRAFT);
+    const r = run(TRACKING, ['add', draft, '--no-commit'], { env: withVar });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(entryCommits(dir), [['no_commit', null]]);
+  });
+});
+
+test('add without --commit or --no-commit from a clone is exit 2', () => {
+  withRootAndClone(({ dir, run, withVar }) => {
+    const draft = join(dir, 'draft.md');
+    writeFileSync(draft, DRAFT);
+    const r = run(TRACKING, ['add', draft], { env: withVar });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /add from a work repository needs --commit or --no-commit/);
+    assert.deepEqual(entryCommits(dir), []);
+  });
+});
+
+test('add in the root with the variable unset is unchanged', () => {
+  withRootAndClone(({ dir, root, rootGit, run }) => {
+    const draft = join(dir, 'draft.md');
+    writeFileSync(draft, DRAFT);
+    const sha = rootGit('rev-parse', 'HEAD');
+    assert.equal(run(TRACKING, ['add', draft], { cwd: root }).status, 0);
+    assert.equal(run(TRACKING, ['add', draft, '--commit', 'HEAD'], { cwd: root }).status, 0);
+    assert.deepEqual(entryCommits(dir), [['pending', null], ['committed', sha]]);
+  });
+});
+
+test('log, log --json, status and reconcile over ext entries exit 0', () => {
+  withRootAndClone(({ dir, cloneGit, run, withVar }) => {
+    const draft = join(dir, 'draft.md');
+    writeFileSync(draft, DRAFT);
+    const sha = cloneGit('rev-parse', 'HEAD');
+    assert.equal(run(TRACKING, ['add', draft, '--commit', 'HEAD'], { env: withVar }).status, 0);
+    const before = run(TASKS, ['reconcile', '--json'], { env: withVar });
+    assert.equal(before.status, 0, before.stderr);
+    assert.equal(run(TASKS, ['reconcile'], { env: withVar }).status, 0);
+    const applied = run(TASKS, ['reconcile', '--apply', '--json'], { env: withVar });
+    assert.equal(applied.status, 0, applied.stderr);
+    assert.ok(Array.isArray(JSON.parse(applied.stdout)));
+    assert.equal(run(TASKS, ['done', 'T1', '--commit', 'HEAD'], { env: withVar }).status, 0);
+    const log = run(TRACKING, ['log'], { env: withVar });
+    assert.equal(log.status, 0, log.stderr);
+    assert.match(log.stdout, /Alpha done/);
+    const json = run(TRACKING, ['log', '--json'], { env: withVar });
+    assert.equal(json.status, 0, json.stderr);
+    assert.ok(JSON.parse(json.stdout), 'log --json parses');
+    assert.match(json.stdout, new RegExp(`ext:\\.\\./clone@${sha}`));
+    for (const args of [['status'], ['status', '--json']]) {
+      const s = run(TRACKING, args, { env: withVar });
+      assert.equal(s.status, 0, s.stderr);
+    }
+    const rec = run(TASKS, ['reconcile', '--json'], { env: withVar });
+    assert.equal(rec.status, 0, rec.stderr);
+    assert.doesNotMatch(rec.stderr, /does not resolve|not a commit/);
+  });
+});
