@@ -46,7 +46,9 @@
 //     ONE commit of the merged tree on the phase tip (`git commit-tree`, the task's first commit's message and author), moves the phase
 //     branch to it (`git reset --keep`), appends `Landed: T<N> <sha>` and, for the head check of a rerun after the close, `Prep: T<N> r<R>
 //     <sha>` (R: the round of the attempt's last `Prep:` line; none when the attempt has none), and runs the task's plan `Test:` files
-//     with `node --test` at that tip (a file that is not there fails, so zero files run is never a pass; the run is cut off after
+//     with `node --test` at that tip (a plan whose header has a `**Landing test:**` command runs `sh -c <command>` instead, {files} replaced by
+//     the Test paths each single-quoted, cwd the repository root; see references/landing-test.md)
+//     (a file that is not there fails, so zero files run is never a pass; the run is cut off after
 //     TRIQUAL_LANDING_TEST_TIMEOUT_MS, default 600000, and a timeout is a failure; the output goes to
 //     `<workspace>/task-<N>-landing-test.log`), then appends `Tested: T<N> <sha>`. A crash after the reset and before the `Landed:`
 //     line leaves the phase tip at a commit that is already the landing of the head: the rerun recognises it (same tree, message and
@@ -450,7 +452,7 @@
       const root = common.git(['rev-parse', '--show-toplevel']);
       const problem = tests.map((t) => common.testPathProblem(root, t)).find((why) => why !== null);
       if (problem) throw new ScriptError(EXIT_REFUSED, `T${n}: ${problem}`);
-      return { tip, tests, root, timeout: common.landingTestTimeoutMs() };
+      return { tip, tests, root, timeout: common.landingTestTimeoutMs(), landingTest: common.landingTestOf(plan) };
     };
     // The undo: the phase branch back to `before`, the fresh BASE and the undo line in ONE write, the marker that dates the undone
     // attempt's outputs, the task moved back, the worktree and its branch removed.
@@ -465,15 +467,20 @@
     };
     // The task's Test files at the landed tip (the phase tip). A file that is not there is a failure, never a pass with zero files
     // run; so are a non-zero exit and a run that outlives the timeout. A green run is ledgered: `Tested: T<N> <sha>`.
-    const runTests = ({ tests, root, timeout }, landedSha, before) => {
+    // With a `**Landing test:**` command in the plan, that command is the run: `sh -c <command>` with {files} replaced by the Test paths
+    // (each one single-quoted), at the repository root; else `node --test <the Test files>`.
+    const runTests = ({ tests, root, timeout, landingTest }, landedSha, before) => {
       const missing = tests.find((t) => !existsSync(resolve(root, t)));
       if (missing !== undefined) undo(`landing failed: the Test file ${missing} is not in the landed tree`, before);
       const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'NODE_TEST_CONTEXT'));
-      const ran = common.exec(process.execPath, ['--test', ...tests.map((t) => resolve(root, t))], { cwd: root, env, timeout });
+      const ran = landingTest === null
+        ? common.exec(process.execPath, ['--test', ...tests.map((t) => resolve(root, t))], { cwd: root, env, timeout })
+        : common.exec('sh', ['-c', common.landingCommand(landingTest, tests)], { cwd: root, env, timeout });
+      const what = landingTest === null ? 'node --test' : 'the Landing test';
       const log = join(workspace, `task-${n}-landing-test.log`);
       writeFileSync(log, `${ran.stdout}${ran.stderr}`);
-      if (ran.timedOut) undo(`landing failed: node --test did not finish in ${timeout} ms at the landed tip (output so far in ${log})`, before);
-      if (ran.status !== 0) undo(`landing failed: node --test exited ${ran.status} at the landed tip (output in ${log})`, before);
+      if (ran.timedOut) undo(`landing failed: ${what} did not finish in ${timeout} ms at the landed tip (output so far in ${log})`, before);
+      if (ran.status !== 0) undo(`landing failed: ${what} exited ${ran.status} at the landed tip (output in ${log})`, before);
       common.appendLedger(workspace, `Tested: T${n} ${landedSha}`);
     };
 

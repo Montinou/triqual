@@ -234,6 +234,29 @@ export function testPathProblem(root, path) {
   return null;
 }
 
+// The plan's `**Landing test:**` command (the header field of the plan, `{files}` once in it), or null when the plan has none: the
+// landing of a worktree task then runs it in place of `node --test`.
+export function landingTestOf(planFile) {
+  let text;
+  try {
+    text = readFileSync(planFile, 'utf8');
+  } catch {
+    throw new ScriptError(EXIT_USAGE, `no such plan file: ${planFile}`);
+  }
+  try {
+    return readPhases(text, basename(planFile).replace(/\.md$/, '')).landingTest;
+  } catch (e) {
+    if (e instanceof PlanError) throw new ScriptError(EXIT_USAGE, `${planFile}: ${e.message}`);
+    throw e;
+  }
+}
+
+// `text` as one shell word: in single quotes, each single quote inside it written '\''.
+export const shellQuote = (text) => `'${String(text).replaceAll("'", "'\\''")}'`;
+
+// The command line of a Landing test: its `{files}` replaced by the Test paths, each one shell word (`sh -c` runs the result).
+export const landingCommand = (landingTest, tests) => landingTest.replace('{files}', () => tests.map(shellQuote).join(' '));
+
 // The branch of the stack's active phase (the one `stack.mjs squash` closes on): a worktree task lands there and nowhere else.
 export function activePhaseBranch(plan) {
   const res = runScript('stack.mjs', ['path', plan]);
