@@ -7,12 +7,13 @@
 //   init PLAN_FILE [--trunk <b>] [--mode github|local] [--remote <r>]   print the state (JSON), writing it first time
 //   mode PLAN_FILE github|local                                         switch the mode (github re-runs the checks)
 //   path PLAN_FILE                                                      print the state file's path
-//   status PLAN_FILE                                                    print the state (JSON), PR states refreshed
+//   status PLAN_FILE [--tree]                                           print the state (JSON), PR states refreshed; --tree: the phases as a tree
 //   phase PLAN_FILE N                                                   check out phase N's branch, mark it active
 //   squash PLAN_FILE BASE                                               fold BASE..HEAD into one commit, print its sha
 //   done PLAN_FILE N                                                    mark phase N done
 //   submit PLAN_FILE N [--open]                                         reconcile gh stack, submit, fill phase N's PR
 //   push PLAN_FILE N                                                    push a submitted phase, refresh its PR body
+//                                                                       (a `prs` plan: plain git push and gh pr create, no gh stack)
 //
 // Exit codes: 0 ok, 2 usage or malformed plan, 3 refused precondition, 5 a gh command failed.
 // Node built-ins, git and gh only. Every gh call is non-interactive.
@@ -27,6 +28,8 @@ const EXIT_USAGE = 2;
 const EXIT_REFUSED = 3;
 const EXIT_GH = 5;
 const STATE_VERSION = 1;
+// A `prs` state: the v1 keys plus a parent per phase. The version tells the layout; the state has no layout key.
+const PRS_STATE_VERSION = 2;
 const COMMITTED_MODE_MESSAGE =
   'committed tracking mode cannot hold one commit per task: switch with triqual progress-init --store (or --local)';
 
@@ -139,7 +142,8 @@ function checkRef(name, what) {
   if (res.status !== 0) fail(EXIT_USAGE, `${what} "${name}" is not a valid git branch name`);
 }
 
-// Phases of a plan: { prefix, phases: [{ n, title, slice, branch, prTitle, standsAlone, check, tasks }] }, read with the
+// Phases of a plan: { prefix, forest, phases: [{ n, title, slice, branch, parent, prTitle, standsAlone, check, tasks }] },
+// `parent` and `forest` being the reader's, read with the
 // shared plan reader (lib/plan.mjs, a byte-identical copy of progress-tracking's), which skips heading and field lines
 // inside fenced code blocks and checks the phase order, fields, prefix and branch numbers. A plan with no
 // `**Branch prefix:**` line was written before phases existed (or has no `## Phase` heading): it is one phase, and any
@@ -159,7 +163,20 @@ export function parsePhases(text, planFile) {
     checkRef(phase.branch, 'branch');
     return { ...phase, check: phaseCheck, tasks: tasks.map((id) => Number(id.slice(1))) };
   });
-  return { prefix: read.branchPrefix, phases };
+  return { prefix: read.branchPrefix, forest: read.forest, phases };
+}
+
+// The layout a plan calls for: `prs` (one independent PR per phase, each against its parent) for a forest plan or a
+// remote `gh stack` cannot use through an SSH alias, else the linear `stack`.
+export const chooseLayout = ({ forest, alias }) => (forest || alias ? 'prs' : 'stack');
+
+const layoutOf = (state) => (state.v === PRS_STATE_VERSION ? 'prs' : 'stack');
+
+// The branch a phase starts from: the trunk, an earlier phase's branch, or a named branch.
+function parentBranch(phase, phases, trunk) {
+  const { kind, value } = phase.parent;
+  if (kind === 'trunk') return trunk;
+  return kind === 'phase' ? phases[Number(value.slice(1)) - 1].branch : value;
 }
 
 // --- state file -------------------------------------------------------------------------------------------------
@@ -234,19 +251,21 @@ function pickLocalRemote(cwd, requested) {
   return names.includes('origin') ? 'origin' : (names[0] ?? null);
 }
 
-// The four GitHub-mode checks, in order. { ok: true, remote, slug, ghStackVersion, defaultBranch } or
-// { ok: false, reason } naming the first check that failed.
-function checkGithub(cwd, requestedRemote) {
+// The four GitHub-mode checks, in order (the `prs` layout makes no gh stack call, so it skips the second).
+// { ok: true, remote, slug, ghStackVersion, defaultBranch } or { ok: false, reason } naming the first check that failed.
+function checkGithub(cwd, requestedRemote, layout) {
   try {
     gh(['--version'], { cwd });
   } catch (e) {
     return { ok: false, reason: `gh --version failed: ${oneLine(e.message)}` };
   }
-  let ghStackVersion;
-  try {
-    ghStackVersion = oneLine(gh(['stack', '--version'], { cwd }));
-  } catch (e) {
-    return { ok: false, reason: `gh stack --version failed: ${oneLine(e.message)}` };
+  let ghStackVersion = null;
+  if (layout === 'stack') {
+    try {
+      ghStackVersion = oneLine(gh(['stack', '--version'], { cwd }));
+    } catch (e) {
+      return { ok: false, reason: `gh stack --version failed: ${oneLine(e.message)}` };
+    }
   }
   const remote = pickGithubRemote(cwd, requestedRemote);
   if (!remote) {
@@ -351,18 +370,20 @@ function context(planFile) {
 const out = (text) => process.stdout.write(`${text}\n`);
 const printState = (state) => out(JSON.stringify(state, null, 2));
 
-// Phases whose branch already exists when the state is first written: `done` when chained on the previous phase (or
-// the trunk); in GitHub mode with the PR number, `submitted`, when gh finds one. An unchained branch exits 3.
-function adoptExisting(cwd, phases, trunk, trunkSha, github) {
-  let prevName = trunk;
-  let prevSha = trunkSha;
+// Phases whose branch already exists when the state is first written: `done` when chained on its parent (the previous
+// phase, an earlier one or the trunk); in GitHub mode with the PR number, `submitted`, when gh finds one. An unchained
+// branch exits 3. A `prs` state records each phase's parent branch.
+function adoptExisting(cwd, phases, trunk, trunkSha, github, layout) {
   return phases.map((phase) => {
     const sha = revParse(`refs/heads/${phase.branch}`, { cwd });
+    const parent = parentBranch(phase, phases, trunk);
+    const parentSha = parent === trunk ? trunkSha : revParse(`refs/heads/${parent}`, { cwd });
     const entry = { n: phase.n, branch: phase.branch, title: phase.prTitle, pr: null, state: 'pending' };
+    if (layout === 'prs') entry.parent = parent;
     if (sha) {
-      if (!prevSha) fail(EXIT_REFUSED, `branch ${phase.branch} exists but the previous phase's branch ${prevName} does not`);
-      if (!gitOk(['merge-base', '--is-ancestor', prevSha, sha], { cwd })) {
-        fail(EXIT_REFUSED, `branch ${phase.branch} is not chained on ${prevName}: its history lacks ${prevName}'s tip`);
+      if (!parentSha) fail(EXIT_REFUSED, `branch ${phase.branch} exists but its parent's branch ${parent} does not`);
+      if (!gitOk(['merge-base', '--is-ancestor', parentSha, sha], { cwd })) {
+        fail(EXIT_REFUSED, `branch ${phase.branch} is not chained on ${parent}: its history lacks ${parent}'s tip`);
       }
       entry.state = 'done';
       if (github) {
@@ -375,18 +396,16 @@ function adoptExisting(cwd, phases, trunk, trunkSha, github) {
         }
       }
     }
-    prevName = phase.branch;
-    prevSha = sha;
     return entry;
   });
 }
 
 // Mode and remote from the flags: local when asked or when a check fails (naming it); --mode github refuses (3).
-function chooseMode(cwd, requestedMode, requestedRemote) {
+function chooseMode(cwd, requestedMode, requestedRemote, layout) {
   if (requestedMode === 'local') {
     return { mode: 'local', reason: '--mode local', ghStackVersion: null, remote: pickLocalRemote(cwd, requestedRemote) };
   }
-  const found = checkGithub(cwd, requestedRemote);
+  const found = checkGithub(cwd, requestedRemote, layout);
   if (found.ok) return { mode: 'github', reason: null, ...found };
   if (requestedMode === 'github') fail(EXIT_REFUSED, `--mode github refused: ${found.reason}`);
   return { mode: 'local', reason: found.reason, ghStackVersion: null, remote: pickLocalRemote(cwd, requestedRemote) };
@@ -397,27 +416,32 @@ function cmdInit(args) {
   if (opts.mode && !['github', 'local'].includes(opts.mode)) fail(EXIT_USAGE, '--mode is github or local');
   const ctx = context(rest[0]);
   refuseCommittedTracking(ctx.cwd);
+  const { prefix, forest, phases } = parsePhases(readFileSync(ctx.planFile, 'utf8'), ctx.planFile);
+  const layout = chooseLayout({ forest, alias: false });
   const existing = readState(ctx.path);
-  if (existing) return printState(existing);
-
-  const { prefix, phases } = parsePhases(readFileSync(ctx.planFile, 'utf8'), ctx.planFile);
+  if (existing) {
+    if (layoutOf(existing) !== layout) {
+      fail(EXIT_REFUSED, `state was written for the ${layoutOf(existing)} layout: delete ${ctx.path} and run stack init again`);
+    }
+    return printState(existing);
+  }
   if (revParse(`refs/heads/${prefix}`, { cwd: ctx.cwd })) {
     fail(EXIT_REFUSED, `branch "${prefix}" exists: it blocks the phase branches ${prefix}/NN-*; rename or delete it`);
   }
-  const picked = chooseMode(ctx.cwd, opts.mode, opts.remote);
+  const picked = chooseMode(ctx.cwd, opts.mode, opts.remote, layout);
   const trunk = opts.trunk ?? picked.defaultBranch ?? localTrunk(ctx.cwd, picked.remote);
   const trunkSha = trunkTip(ctx.cwd, trunk, picked.remote);
   if (picked.mode === 'github') requireTrunkOnRemote(ctx.cwd, trunk, picked.remote);
 
   const state = {
-    v: STATE_VERSION,
+    v: layout === 'prs' ? PRS_STATE_VERSION : STATE_VERSION,
     plan: basename(ctx.planFile),
     mode: picked.mode,
     reason: picked.reason,
     ghStackVersion: picked.ghStackVersion,
     trunk,
     remote: picked.remote,
-    phases: adoptExisting(ctx.cwd, phases, trunk, trunkSha, picked.mode === 'github' ? picked : null),
+    phases: adoptExisting(ctx.cwd, phases, trunk, trunkSha, picked.mode === 'github' ? picked : null, layout),
   };
   writeState(ctx.path, state);
   return printState(state);
@@ -430,7 +454,7 @@ function cmdMode(args) {
   const state = readState(ctx.path);
   if (!state) fail(EXIT_REFUSED, `no stack state at ${ctx.path}: run stack init first`);
   if (mode === 'github') {
-    const found = checkGithub(ctx.cwd, undefined);
+    const found = checkGithub(ctx.cwd, undefined, layoutOf(state));
     if (!found.ok) fail(EXIT_REFUSED, `cannot switch to github mode: ${found.reason}`);
     requireTrunkOnRemote(ctx.cwd, state.trunk, found.remote);
     Object.assign(state, { mode, reason: null, ghStackVersion: found.ghStackVersion, remote: found.remote });
@@ -445,9 +469,26 @@ function cmdPath(args) {
   return out(context(args[0]).path);
 }
 
+// The phases as a tree under the trunk, two spaces per depth, a phase under the phase it starts from (its parent in a
+// `prs` state, the previous phase in a `stack` one; the trunk or a named branch is the root).
+function renderTree(state) {
+  const parentOf = (phase) =>
+    layoutOf(state) === 'prs' ? state.phases.find((p) => p.branch === phase.parent) : state.phases.find((p) => p.n === phase.n - 1);
+  const lines = [state.trunk];
+  const walk = (parent, depth) => {
+    for (const phase of state.phases.filter((p) => parentOf(p) === parent)) {
+      lines.push(`${'  '.repeat(depth)}P${phase.n} ${phase.branch} [${phase.state}${phase.pr === null ? '' : ` #${phase.pr}`}]`);
+      walk(phase, depth + 1);
+    }
+  };
+  walk(undefined, 1);
+  return lines.join('\n');
+}
+
 // GitHub mode: each recorded PR is read with gh pr view; a merged PR marks its phase merged.
 function cmdStatus(args) {
-  const ctx = context(args[0]);
+  const tree = args.includes('--tree');
+  const ctx = context(args.filter((a) => a !== '--tree')[0]);
   const state = readState(ctx.path);
   if (!state) fail(EXIT_REFUSED, `no stack state at ${ctx.path}: run stack init first`);
   if (state.mode === 'github') {
@@ -464,7 +505,7 @@ function cmdStatus(args) {
     }
     if (changed) writeState(ctx.path, state);
   }
-  return printState(state);
+  return tree ? out(renderTree(state)) : printState(state);
 }
 
 // --- phase, squash and done -------------------------------------------------------------------------------------
@@ -498,11 +539,27 @@ function branchOf(phase) {
   return phase.branch;
 }
 
-// The start of a new phase branch: the previous phase's tip (or the trunk's), local branch first, else the remote's.
+// A branch's tip: the local branch first, else the remote's; null when neither exists.
+function branchTip(cwd, state, branch) {
+  return revParse(`refs/heads/${branch}`, { cwd }) ?? (state.remote ? revParse(`refs/remotes/${state.remote}/${branch}`, { cwd }) : null);
+}
+
+// The tip a `prs` phase starts from: its parent's, the trunk, an earlier phase's branch or a named branch.
+function parentTip(cwd, state, phase) {
+  if (phase.parent === state.trunk) return trunkTip(cwd, state.trunk, state.remote);
+  return branchTip(cwd, state, phase.parent) ?? fail(EXIT_REFUSED, `phase ${phase.n}'s parent ${phase.parent} does not exist`);
+}
+
+// The phase of the plan a `prs` phase branches from; undefined when its parent is the trunk or a named branch.
+const parentPhase = (state, phase) => state.phases.find((p) => p.branch === phase.parent);
+
+// The start of a new phase branch: the previous phase's tip (or the trunk's), local branch first, else the remote's. A
+// `prs` phase starts at its parent's tip.
 function startPoint(cwd, state, n) {
+  if (layoutOf(state) === 'prs') return parentTip(cwd, state, state.phases.find((p) => p.n === n));
   if (n === 1) return trunkTip(cwd, state.trunk, state.remote);
   const prev = state.phases.find((p) => p.n === n - 1).branch;
-  const tip = revParse(`refs/heads/${prev}`, { cwd }) ?? (state.remote ? revParse(`refs/remotes/${state.remote}/${prev}`, { cwd }) : null);
+  const tip = branchTip(cwd, state, prev);
   return tip ?? fail(EXIT_REFUSED, `phase ${n - 1}'s branch ${prev} does not exist`);
 }
 
@@ -530,8 +587,9 @@ function cmdPhase(args) {
     fail(EXIT_REFUSED, `phase ${phase.n} is ${phase.state}: its commits are final, it is not entered again`);
   }
   requireCleanTree(ctx.cwd);
-  if (phase.n > 1) {
-    const prev = state.phases.find((p) => p.n === phase.n - 1);
+  const prs = layoutOf(state) === 'prs';
+  const prev = prs ? parentPhase(state, phase) : state.phases.find((p) => p.n === phase.n - 1);
+  if (prev) {
     const allowed = state.mode === 'local' ? STARTED_AFTER.local : STARTED_AFTER.github;
     if (!allowed.includes(prev.state)) {
       fail(EXIT_REFUSED, `phase ${prev.n} is ${prev.state}: phase ${phase.n} needs it ${allowed.join(' or ')} (${state.mode} mode)`);
@@ -545,7 +603,7 @@ function cmdPhase(args) {
     // Review Focus 3: a branch on the remote only (a resumed run elsewhere) is checked out tracking it.
     git(['switch', '--quiet', '-c', branch, '--track', remoteRef], { cwd: ctx.cwd });
   } else {
-    if (phase.n === 1) refuseStrandedHead(ctx.cwd, state);
+    if (prs ? phase.parent === state.trunk : phase.n === 1) refuseStrandedHead(ctx.cwd, state);
     git(['switch', '--quiet', '--no-track', '-c', branch, startPoint(ctx.cwd, state, phase.n)], { cwd: ctx.cwd });
   }
   phase.state = 'active';
@@ -582,11 +640,13 @@ function cmdSquash(args) {
   if (!gitOk(['merge-base', '--is-ancestor', base, 'HEAD'], { cwd })) {
     fail(EXIT_REFUSED, `BASE ${base} is not an ancestor of HEAD (${active.branch})`);
   }
-  // R1: the range stays inside the active phase. Its start is the previous phase's tip, or for phase 1 where HEAD
-  // forked from the trunk; a BASE under it would fold an earlier phase's (or the trunk's) commits into this one.
+  // R1: the range stays inside the active phase. Its start is the parent phase's tip, or where HEAD forked from the
+  // trunk (phase 1) or from a named branch; a BASE under it would fold an earlier phase's (or the trunk's) commits into
+  // this one.
+  const fromPhase = layoutOf(state) === 'prs' ? parentPhase(state, active) !== undefined : active.n > 1;
   let start;
   try {
-    start = active.n === 1 ? git(['merge-base', startPoint(cwd, state, 1), 'HEAD'], { cwd }) : startPoint(cwd, state, active.n);
+    start = fromPhase ? startPoint(cwd, state, active.n) : git(['merge-base', startPoint(cwd, state, active.n), 'HEAD'], { cwd });
   } catch (e) {
     if (e instanceof StackError) throw e;
     return fail(EXIT_REFUSED, `${active.branch} shares no history with the trunk ${state.trunk}`);
@@ -657,6 +717,10 @@ function workspaceOf(ctx) {
   return res.stdout.trim();
 }
 
+// What a `prs` PR body says about its base: the branch it is against, and that a phase's PR merges after its parent's.
+const baseText = (state, phase) =>
+  `\`${phase.parent}\`${parentPhase(state, phase) ? `, phase ${parentPhase(state, phase).n}'s branch: merge its PR first` : ''}`;
+
 // The PR body: the plan's phase block (Slice, Stands alone because, Phase check) and the subjects of the phase's
 // commits (the range from the previous phase's tip, or the trunk's, to this phase's branch).
 function prBody(ctx, state, phase) {
@@ -667,6 +731,7 @@ function prBody(ctx, state, phase) {
   });
   const sections = [
     ['Slice', block?.slice],
+    ['Base', layoutOf(state) === 'prs' ? baseText(state, phase) : null],
     ['Stands alone because', block?.standsAlone],
     ['Phase check', block?.check],
     ['Commits', subjects ? subjects.split('\n').map((subject) => `- ${subject}`).join('\n') : null],
@@ -753,6 +818,56 @@ function submitStack(ctx, state, phase, open) {
   return { submitted, prs, prOf };
 }
 
+// --- submit and push, `prs` layout: a plain push and a plain draft PR per phase, against its parent --------------------
+
+// A plain push (never --force: a rejected one exits 5). `upstream` also sets the branch's upstream.
+function pushBranch(cwd, state, phase, upstream) {
+  try {
+    git(['push', ...(upstream ? ['--set-upstream'] : []), state.remote, branchOf(phase)], { cwd });
+  } catch (e) {
+    fail(EXIT_GH, `git push ${state.remote} ${phase.branch} failed: ${oneLine(e.stderr ?? e.message)}`);
+  }
+}
+
+// A phase is submitted once its parent is: a parent phase submitted, ready or merged, a named branch on the remote.
+function requireParentSubmitted(cwd, state, phase) {
+  const parent = parentPhase(state, phase);
+  if (parent) {
+    if (!['submitted', 'ready', 'merged'].includes(parent.state)) {
+      fail(EXIT_REFUSED, `phase ${parent.n} is ${parent.state}: phase ${phase.n}'s parent must be submitted, ready or merged first`);
+    }
+  } else if (phase.parent !== state.trunk && !revParse(`refs/remotes/${state.remote}/${phase.parent}`, { cwd })) {
+    fail(EXIT_REFUSED, `phase ${phase.n}'s parent ${phase.parent} is not on ${state.remote}: push it and fetch first`);
+  }
+}
+
+// Pushes the phase, adopts its open PR or opens a draft one against its parent; with --open every phase's PR leaves draft.
+function submitPrs(ctx, state, phase, open, { slug, bodyFile }) {
+  const { cwd } = ctx;
+  if (open) {
+    for (const p of state.phases) {
+      gh(['pr', 'ready', String(p.pr), '--repo', slug], { cwd });
+      p.state = 'ready';
+    }
+    writeState(ctx.path, state);
+    return out(state.phases.map((p) => `Phase ${p.n}: ready (${p.branch}, PR #${p.pr})`).join('\n'));
+  }
+  pushBranch(cwd, state, phase, true);
+  const [found] = JSON.parse(gh(['pr', 'list', '--repo', slug, '--head', phase.branch, '--state', 'open', '--json', 'number'], { cwd }));
+  let number = found?.number;
+  if (number === undefined) {
+    const created = gh(
+      ['pr', 'create', '--repo', slug, '--draft', '--base', phase.parent, '--head', phase.branch, '--title', phase.title, '--body-file', bodyFile],
+      { cwd },
+    );
+    number = Number(/\/pull\/(\d+)\s*$/.exec(created)?.[1]);
+    if (!number) fail(EXIT_GH, `gh pr create printed no PR URL for ${phase.branch}`);
+  }
+  Object.assign(phase, { pr: number, state: 'submitted' });
+  writeState(ctx.path, state);
+  return out(`Phase ${phase.n}: submitted (${phase.branch}, PR #${number} draft, base ${phase.parent})`);
+}
+
 function cmdSubmit(args) {
   const usage = 'usage: stack.mjs submit PLAN_FILE N [--open]';
   const open = args.includes('--open');
@@ -772,7 +887,11 @@ function cmdSubmit(args) {
     fail(EXIT_REFUSED, `phase ${phase.n} is ${phase.state}: only a done phase is submitted`);
   }
   if (state.mode === 'local') return out('local mode: nothing to submit');
-  const { slug, bodyFile } = prepareGithub(ctx, state, phase);
+  const prs = layoutOf(state) === 'prs';
+  if (prs && !open) requireParentSubmitted(cwd, state, phase);
+  const github = prepareGithub(ctx, state, phase);
+  if (prs) return submitPrs(ctx, state, phase, open, github);
+  const { slug, bodyFile } = github;
 
   const startedOn = currentBranch(cwd);
   let lines;
@@ -812,6 +931,11 @@ function cmdPush(args) {
     fail(EXIT_REFUSED, `phase ${phase.n} is ${phase.state}: only a submitted or ready phase is pushed (submit it first)`);
   }
   const { slug, bodyFile } = prepareGithub(ctx, state, phase);
+  if (layoutOf(state) === 'prs') {
+    pushBranch(cwd, state, phase, false);
+    gh(['pr', 'edit', String(phase.pr), '--repo', slug, '--body-file', bodyFile], { cwd });
+    return out(`Phase ${phase.n}: pushed (${phase.branch}, PR #${phase.pr})`);
+  }
 
   const startedOn = currentBranch(cwd);
   try {

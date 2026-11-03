@@ -1,0 +1,15 @@
+## Forest plans
+
+A plan whose phases do not form one chain is a forest: some phase starts from the trunk, from a named branch, or from an earlier phase other than the one before it. `node scripts/stack.mjs` runs it in the `prs` layout: one independent draft PR per phase, each against its own parent. A linear plan keeps the `stack` layout (`gh stack`), unchanged.
+
+**The field.** A phase's `**Parent:**` line names where it starts: `trunk`, `P<n>` (an earlier phase), or a branch (a phase branch of the plan, or any other branch, such as `release/1.0`). Without the line a phase starts from the phase before it (phase 1 from the trunk). The plan is a forest when some `**Parent:**` differs from that default.
+
+**The layout.** `init` writes a v2 state (`"v": 2`) with a `parent` branch per phase; a v1 state never changes layout, so a plan that changes from linear to forest (or back) after `init` exits 3 until the state file is deleted and `init` runs again. `phase N` starts the branch at its parent's tip (the parent's local branch, else the remote's), and `squash` folds only the phase's own commits. `status PLAN --tree` prints the phases as a tree under the trunk, two spaces per depth: `P<n> <branch> [<state>[ #<pr>]]`.
+
+**Submit and push.** `submit N` needs phase N `done` and its parent submitted (`submitted`, `ready` or `merged`; a named branch must be on the remote, as `refs/remotes/<remote>/<branch>`), else exit 3. It runs `git push --set-upstream <remote> <branch>`, adopts the branch's open PR if there is one, else opens a draft PR against the parent branch. `submit N --open` marks every phase's PR ready. `push N` runs a plain `git push <remote> <branch>` and refreshes the PR body; it never forces, and a push the remote rejects (the branch is not a fast-forward) exits 5 and changes nothing: fetch and reconcile the branch, never force it. The PR body lists the commits from the parent's tip and a `## Base` section naming the branch to merge after.
+
+**Merge order.** Parents first. A child's PR is against its parent's branch, so merging the parent first leaves the child with the parent's commits already on the trunk; GitHub retargets the child's PR when the parent's branch is deleted on merge. Siblings merge in any order. After a parent merges, the controller fetches, and a child that needs the parent's merge commit on the trunk is brought up to date by your human partner, never by a force push.
+
+**The refusals.** `phase N` exits 3 while its parent phase is not `submitted`, `ready` or `merged` (in local mode `done` also counts); `submit N` exits 3 under the same rule and for a named parent that is not on the remote; `init` exits 3 for a branch not chained on its parent's tip; `squash` exits 3 for a BASE below the phase's start.
+
+**The join rule.** A phase has one parent, so a phase that needs the work of two branches is a join. If a phase's `**Depends on:**` names a phase outside its own ancestors, that other phase is merged on the trunk first, and the join phase takes `**Parent:** trunk`, branching from the trunk after the merge.
