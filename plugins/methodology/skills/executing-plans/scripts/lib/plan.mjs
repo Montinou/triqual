@@ -29,14 +29,17 @@ const TIER = /^\*\*Tier:\*\*(.*)$/;
 const PREFIX = /^\*\*Branch prefix:\*\*\s*(.+)$/;
 const SENSITIVE = /^\*\*Sensitive paths:\*\*\s*(.*)$/;
 const TEST_PATHS = /^\*\*Test paths:\*\*\s*(.*)$/;
-const PHASE_FIELD = /^\*\*(Slice|Branch|PR title|Stands alone because|Phase check):\*\*\s*(.*)$/;
+const PHASE_FIELD = /^\*\*(Slice|Branch|Parent|PR title|Stands alone because|Phase check):\*\*\s*(.*)$/;
 const FIELD_KEYS = {
   Slice: 'slice',
   Branch: 'branch',
+  Parent: 'parentRaw',
   'PR title': 'prTitle',
   'Stands alone because': 'standsAlone',
   'Phase check': 'phaseCheck',
 };
+const PHASE_REF = /^P(\d+)$/;
+const TRUNK = 'trunk';
 const BRANCH_NUMBER = /^(\d{2})-\S/;
 const PLAN_SUFFIX = / Implementation Plan$/;
 const UNPHASED_CHECK = "the repository's full test command";
@@ -106,7 +109,11 @@ export function readTasks(text) {
     }
     if (!current) continue;
     const d = DEPENDS.exec(line);
-    if (d) { current.deps = list(d[1]); continue; }
+    if (d) {
+      const deps = list(d[1]);
+      current.deps = deps.length === 1 && deps[0].toLowerCase() === 'none' ? [] : deps;
+      continue;
+    }
     const s = SKILLS.exec(line);
     if (s) { current.skills = list(s[1]); continue; }
     const r = ROLE.exec(line);
@@ -129,8 +136,28 @@ function branchOf(value) {
   return ticked ? ticked[1].trim() : (value.trim().split(/\s+/)[0] ?? '');
 }
 
-// Phases of a plan: { branchPrefix, sensitivePaths, testPaths, phases: [{ n, title, slice, branch, prTitle,
-// standsAlone, phaseCheck, tasks }] }, `tasks` being task ids. Heading and field lines inside fenced code blocks are not read. A
+// The parent of `phase` ({ kind, value }) from its `**Parent:**` value, or the linear default when it has none. A
+// branch naming a phase of the same plan is that phase; a phase reference must name an earlier phase.
+function resolveParent(phase, phases) {
+  const where = `phase ${phase.n}`;
+  const raw = phase.parentRaw;
+  if (raw === null) return phase.n === 1 ? { kind: 'trunk', value: null } : { kind: 'phase', value: `P${phase.n - 1}` };
+  if (raw === '') throw new PlanError(`${where} has an empty **Parent:**`);
+  if (raw === TRUNK) return { kind: 'trunk', value: null };
+  const ref = PHASE_REF.exec(raw);
+  const own = ref ? Number(ref[1]) : phases.find((p) => p.branch === raw)?.n;
+  if (own === undefined) return { kind: 'branch', value: raw };
+  if (own < 1 || own >= phase.n) {
+    throw new PlanError(`${where} **Parent:** "${raw}" must name an earlier phase (P1 to P${phase.n - 1}), "trunk" or a branch`);
+  }
+  return { kind: 'phase', value: `P${own}` };
+}
+
+// Phases of a plan: { branchPrefix, sensitivePaths, testPaths, forest, phases: [{ n, title, slice, branch, parent,
+// parentDeclared, prTitle, standsAlone, phaseCheck, tasks }] }, `tasks` being task ids. `parent` is where the phase
+// branches from: { kind: 'trunk', value: null }, { kind: 'phase', value: 'P<k>' } (k below the phase's own number) or
+// { kind: 'branch', value: <branch> }; without a `**Parent:**` line phase 1 is on the trunk and phase N on P<N-1>.
+// `parentDeclared` tells whether the line was there, and `forest` whether some parent differs from that default. Heading and field lines inside fenced code blocks are not read. A
 // plan with no `**Branch prefix:**` line was written before phases existed (or has no `## Phase` heading): it is one
 // implicit phase `<planStem>/01-plan` holding every task, and any `## Phase` heading in it is ignored.
 export function readPhases(text, planStem) {
@@ -156,8 +183,8 @@ export function readPhases(text, planStem) {
       testPaths ??= list(m[1]).map(unquote).filter(Boolean);
     } else if ((m = PHASE_HEADING.exec(line))) {
       current = {
-        n: Number(m[1]), title: m[2].trim(), slice: null, branch: null, prTitle: null, standsAlone: null,
-        phaseCheck: null, tasks: [], sawTask: false,
+        n: Number(m[1]), title: m[2].trim(), slice: null, branch: null, parentRaw: null, prTitle: null,
+        standsAlone: null, phaseCheck: null, tasks: [], sawTask: false,
       };
       phases.push(current);
     } else if (line.startsWith('## ')) {
@@ -172,7 +199,7 @@ export function readPhases(text, planStem) {
         current.sawTask = true;
       }
     } else if (current && !current.sawTask && (m = PHASE_FIELD.exec(line))) {
-      current[FIELD_KEYS[m[1]]] = m[1] === 'Branch' ? branchOf(m[2]) : m[2].trim();
+      current[FIELD_KEYS[m[1]]] = m[1] === 'Branch' || m[1] === 'Parent' ? branchOf(m[2]) : m[2].trim();
     }
   }
   const sensitivePaths = sensitive ?? [];
@@ -184,9 +211,10 @@ export function readPhases(text, planStem) {
       branchPrefix: planStem,
       sensitivePaths,
       testPaths: tests,
+      forest: false,
       phases: [{
-        n: 1, title, slice: null, branch: `${planStem}/01-plan`, prTitle: title, standsAlone: null,
-        phaseCheck: UNPHASED_CHECK, tasks: all,
+        n: 1, title, slice: null, branch: `${planStem}/01-plan`, parent: { kind: 'trunk', value: null },
+        parentDeclared: false, prTitle: title, standsAlone: null, phaseCheck: UNPHASED_CHECK, tasks: all,
       }],
     };
   }
@@ -207,7 +235,15 @@ export function readPhases(text, planStem) {
     }
     delete phase.sawTask;
   }
-  return { branchPrefix: prefix, sensitivePaths, testPaths: tests, phases };
+  let forest = false;
+  for (const phase of phases) {
+    phase.parent = resolveParent(phase, phases);
+    phase.parentDeclared = phase.parentRaw !== null;
+    delete phase.parentRaw;
+    const def = phase.n === 1 ? null : `P${phase.n - 1}`;
+    if (phase.parent.value !== def || phase.parent.kind !== (def ? 'phase' : 'trunk')) forest = true;
+  }
+  return { branchPrefix: prefix, sensitivePaths, testPaths: tests, forest, phases };
 }
 
 // The registration rules of a new ledger (design U1): a plan that declares a tier on any task declares it on every
