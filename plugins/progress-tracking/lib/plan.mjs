@@ -45,6 +45,11 @@ const TRUNK = 'trunk';
 const BRANCH_NUMBER = /^(\d{2})-\S/;
 const PLAN_SUFFIX = / Implementation Plan$/;
 const FILES_PLACEHOLDER = '{files}';
+// A task's `- Create:` / `- Modify:` / `- Test:` line, the backticked tokens of its value and a trailing line range; the
+// same rule as `pathsOf` in reconcile-evidence.mjs.
+const FILES_LINE = /^\s*-\s+(Create|Modify|Test):\s*(.*)$/;
+const TICKED = /`([^`]+)`/g;
+const RANGE_SUFFIX = /:\d+(?:-\d+)?$/;
 const VALIDATE_KEYS = Object.freeze(['compare']);
 const UNPHASED_CHECK = "the repository's full test command";
 
@@ -59,6 +64,14 @@ const TAB_COLUMNS = 4;
 
 const list = (s) => s.split(',').map((x) => x.trim()).filter(Boolean);
 const unquote = (s) => s.trim().replace(/^`([^`]*)`$/, '$1');
+
+// The paths of one `Create:`/`Modify:`/`Test:` value: every backticked token, else the bare trimmed value; a trailing
+// `:<n>` or `:<n>-<m>` is dropped.
+function pathsOf(value) {
+  const ticked = [...value.matchAll(TICKED)].map((m) => m[1]);
+  const raw = ticked.length > 0 ? ticked : [value.trim()];
+  return raw.map((p) => p.trim().replace(RANGE_SUFFIX, '')).filter(Boolean);
+}
 
 // The fence match of `line` ([, run, info]), or null when it is no fence line.
 function fenceOf(line) {
@@ -88,7 +101,8 @@ function scan(text) {
   return { lines, total: all.length };
 }
 
-// Tasks of a plan: [{ id, title, deps, skills, role, tier, start, end }]. `start` is the 1-based line of the
+// Tasks of a plan: [{ id, title, deps, skills, role, tier, files, start, end }]. `files` is { create, modify, test }, the
+// paths of the task's own `- Create:` / `- Modify:` / `- Test:` lines outside fences (three empty arrays without any). `start` is the 1-based line of the
 // `### Task N:` heading and `end` the last line of the task: the line before the next heading of level 1 to 3 outside
 // a fence (a `### ` heading that is no task, or a `## After Merge`), else the last line of the plan. `tier` is null when
 // the task declares none; a value outside TIERS throws.
@@ -107,11 +121,13 @@ export function readTasks(text) {
       const id = `T${Number(h[1])}`;
       if (seen.has(id)) throw new PlanError(`duplicate task ${id} in plan`);
       seen.add(id);
-      current = { id, title: h[2].trim(), deps: [], skills: [], role: null, tier: null, start: no, end: total };
+      current = { id, title: h[2].trim(), deps: [], skills: [], role: null, tier: null, files: { create: [], modify: [], test: [] }, start: no, end: total };
       tasks.push(current);
       continue;
     }
     if (!current) continue;
+    const f = FILES_LINE.exec(line);
+    if (f) { current.files[f[1].toLowerCase()].push(...pathsOf(f[2])); continue; }
     const d = DEPENDS.exec(line);
     if (d) {
       const deps = list(d[1]);

@@ -158,3 +158,39 @@ test('Landing test in an implicit one-phase plan is read', () => {
   assert.equal(r.landingTest, 'node --test {files}');
   throwsPlan(() => readPhases('# Solo\n\n**Landing test:** `node --test`\n\n### Task 1: A\n', 'solo'), /Landing test/);
 });
+
+const filesOf = (text) => readTasks(text).map((t) => t.files);
+
+test('files of a task', () => {
+  const text = [
+    '# Demo', '', '### Task 1: A', '',
+    '**Files:**',
+    '- Create: `src/new.mjs`',
+    '- Modify: `src/old.mjs:123-145`',
+    '- Modify: `src/a.mjs`, `src/b.mjs:7`',
+    '- Test: test/bare.test.mjs',
+    '',
+  ].join('\n');
+  assert.deepEqual(filesOf(text), [{
+    create: ['src/new.mjs'],
+    modify: ['src/old.mjs', 'src/a.mjs', 'src/b.mjs'],
+    test: ['test/bare.test.mjs'],
+  }]);
+});
+
+test('a Files line inside a fence is ignored', () => {
+  const text = '# Demo\n\n### Task 1: A\n\n```\n- Create: `src/x.mjs`\n```\n\n- Test: `t.test.mjs`\n';
+  assert.deepEqual(filesOf(text), [{ create: [], modify: [], test: ['t.test.mjs'] }]);
+});
+
+test("a Files line of the next task is not this task's", () => {
+  const text = '# Demo\n\n### Task 1: A\n\n- Create: `a.mjs`\n\n### Task 2: B\n\n- Modify: `b.mjs`\n';
+  assert.deepEqual(filesOf(text), [
+    { create: ['a.mjs'], modify: [], test: [] },
+    { create: [], modify: ['b.mjs'], test: [] },
+  ]);
+});
+
+test('a task without Files has three empty arrays', () => {
+  assert.deepEqual(filesOf('# Demo\n\n### Task 1: A\n\n**Depends on:** none\n'), [{ create: [], modify: [], test: [] }]);
+});
