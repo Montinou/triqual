@@ -181,3 +181,18 @@ test('bad arguments exit 2: no plan, unknown node, unreadable plan', (t) => {
   const missing = spawnSync(process.execPath, [CLI, 'check-collisions', join(s.dir, 'absent.md')], { encoding: 'utf8' });
   assert.equal(missing.status, 2);
 });
+
+test('--diff: a rename whose old path is not in the node Files is an OUTSIDE line for the old path', (t) => {
+  const s = setup(t, { 'solo.md': planText('solo', [{ files: [['src/new.mjs']] }]) });
+  git(s.dir, 'init', '-q', '-b', 'main');
+  mkdirSync(join(s.dir, 'src'));
+  writeFileSync(join(s.dir, 'src', 'old.mjs'), 'export const same = 1;\nexport const content = 2;\n');
+  git(s.dir, 'add', 'src');
+  git(s.dir, 'commit', '-q', '-m', 'base');
+  git(s.dir, 'checkout', '-q', '-b', 'work');
+  git(s.dir, 'mv', 'src/old.mjs', 'src/new.mjs');
+  git(s.dir, 'commit', '-q', '-m', 'rename');
+  const r = s.run('--diff', 'solo#P1', 'work');
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.deepEqual(r.stdout.trimEnd().split('\n'), ['nodes=1 incomparable pairs=0 collisions=0', 'OUTSIDE solo#P1 src/old.mjs']);
+});

@@ -113,7 +113,7 @@ function changedFiles(node, nodes, head) {
     if (!base) throw new UsageError('--diff needs the node\'s parent branch, main or master in the current repository');
   }
   try {
-    return gitLines(['diff', '--name-only', `${base}...${head}`]);
+    return gitLines(['diff', '--name-only', '--no-renames', `${base}...${head}`]);
   } catch (err) {
     throw new UsageError(`git diff ${base}...${head} failed: ${String(err.stderr || err.message).trim()}`);
   }
