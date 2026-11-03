@@ -206,3 +206,117 @@ test('adoption checks the parent, not the previous phase', () => {
     assert.equal(existsSync(r.statePath), false);
   });
 });
+
+// The phased fixture whose phase 2 starts from a named branch, not a phase of the plan.
+const NAMED = PHASED.replace('**Branch:** demo/02-edge\n', '**Parent:** release/1.0\n**Branch:** demo/02-edge\n');
+
+const tree = (r) => r.git('ls-tree', '-r', '--name-only', 'HEAD').split('\n');
+
+test('siblings start at P1\'s tip', () => {
+  withRig({ withGh: false, plan: FOREST }, (r) => {
+    r.json(r.run(['init', r.plan, '--mode', 'local']));
+    assert.equal(r.run(['phase', r.plan, '1']).status, 0);
+    r.commit('core.txt', 'core\n', 'feat: core');
+    assert.equal(r.run(['done', r.plan, '1']).status, 0);
+    r.git('switch', '-q', 'main');
+    assert.equal(r.run(['phase', r.plan, '2']).status, 0);
+    r.commit('edge.txt', 'edge\n', 'feat: edge');
+    assert.equal(r.run(['done', r.plan, '2']).status, 0);
+    // HEAD is on phase 2's branch, which has commits the trunk lacks: phase 3's parent is P1, not the trunk.
+    const res = r.run(['phase', r.plan, '3']);
+    assert.equal(res.status, 0, res.stderr);
+    assert.equal(r.git('rev-parse', 'HEAD').trim(), r.git('rev-parse', 'demo/01-core').trim());
+    assert.deepEqual(tree(r).filter((f) => f.endsWith('.txt')), ['core.txt']);
+  });
+});
+
+test('phase refuses while its parent phase is pending', () => {
+  withRig({ withGh: false, plan: FOREST }, (r) => {
+    r.json(r.run(['init', r.plan, '--mode', 'local']));
+    const res = r.run(['phase', r.plan, '3']);
+    assert.equal(res.status, 3, res.stderr);
+    assert.match(res.stderr, /phase 1 is pending: phase 3 needs it/);
+    assert.equal(r.git('branch', '--list', 'demo/03-extra').trim(), '');
+    // Phase 2's parent is the trunk: it starts whatever phase 1's state is.
+    assert.equal(r.run(['phase', r.plan, '2']).status, 0);
+  });
+});
+
+test('a named branch parent on the remote only', () => {
+  withRig({ withGh: false, plan: NAMED }, (r) => {
+    r.git('switch', '-q', '-c', 'release/1.0');
+    r.commit('release.txt', 'release\n', 'feat: release');
+    r.git('push', '-q', 'origin', 'release/1.0');
+    const tip = r.git('rev-parse', 'release/1.0').trim();
+    r.git('switch', '-q', 'main');
+    r.git('branch', '-q', '-D', 'release/1.0');
+    const state = r.json(r.run(['init', r.plan, '--mode', 'local']));
+    assert.equal(state.v, 2);
+    assert.equal(state.phases[1].parent, 'release/1.0');
+    const res = r.run(['phase', r.plan, '2']);
+    assert.equal(res.status, 0, res.stderr);
+    assert.equal(r.git('rev-parse', 'HEAD').trim(), tip);
+    assert.ok(tree(r).includes('release.txt'));
+  });
+  // A local branch wins over the remote's.
+  withRig({ withGh: false, plan: NAMED }, (r) => {
+    r.git('switch', '-q', '-c', 'release/1.0');
+    r.commit('release.txt', 'release\n', 'feat: release');
+    r.git('push', '-q', 'origin', 'release/1.0');
+    r.commit('local.txt', 'local\n', 'feat: local only');
+    const tip = r.git('rev-parse', 'release/1.0').trim();
+    r.git('switch', '-q', 'main');
+    r.json(r.run(['init', r.plan, '--mode', 'local']));
+    assert.equal(r.run(['phase', r.plan, '2']).status, 0);
+    assert.equal(r.git('rev-parse', 'HEAD').trim(), tip);
+  });
+});
+
+test('a missing named parent is refused', () => {
+  withRig({ withGh: false, plan: NAMED }, (r) => {
+    r.json(r.run(['init', r.plan, '--mode', 'local']));
+    const res = r.run(['phase', r.plan, '2']);
+    assert.equal(res.status, 3, res.stderr);
+    assert.match(res.stderr, /phase 2's parent release\/1\.0 does not exist/);
+    assert.equal(r.git('branch', '--list', 'demo/02-edge').trim(), '');
+  });
+});
+
+test('squash folds only a sibling\'s own commits', () => {
+  withRig({ withGh: false, plan: FOREST }, (r) => {
+    r.json(r.run(['init', r.plan, '--mode', 'local']));
+    r.run(['phase', r.plan, '1']);
+    r.commit('core.txt', 'core\n', 'feat: core');
+    r.run(['done', r.plan, '1']);
+    const p1 = r.git('rev-parse', 'HEAD').trim();
+    // Phase 3 forks from P1: its range starts at P1's tip.
+    assert.equal(r.run(['phase', r.plan, '3']).status, 0);
+    r.commit('a.txt', 'a\n', 'feat: a');
+    r.commit('b.txt', 'b\n', 'feat: b');
+    const folded = r.run(['squash', r.plan, p1]);
+    assert.equal(folded.status, 0, folded.stderr);
+    assert.equal(r.git('rev-list', '--count', `${p1}..HEAD`).trim(), '1');
+    assert.equal(r.git('rev-parse', 'HEAD^').trim(), p1);
+    assert.equal(r.git('rev-parse', 'HEAD').trim(), folded.stdout.trim());
+    // A BASE under the phase's start (P1's parent, the trunk) would fold P1's commit in: refused.
+    const below = r.run(['squash', r.plan, 'main']);
+    assert.equal(below.status, 3, below.stderr);
+    assert.match(below.stderr, /below the start of phase 3/);
+  });
+  // Phase 2's parent is the trunk: its range starts where it forked from the trunk, not at phase 1.
+  withRig({ withGh: false, plan: FOREST }, (r) => {
+    r.json(r.run(['init', r.plan, '--mode', 'local']));
+    r.run(['phase', r.plan, '1']);
+    r.commit('core.txt', 'core\n', 'feat: core');
+    r.run(['done', r.plan, '1']);
+    r.git('switch', '-q', 'main');
+    const trunk = r.git('rev-parse', 'HEAD').trim();
+    assert.equal(r.run(['phase', r.plan, '2']).status, 0);
+    r.commit('x.txt', 'x\n', 'feat: x');
+    r.commit('y.txt', 'y\n', 'feat: y');
+    const folded = r.run(['squash', r.plan, trunk]);
+    assert.equal(folded.status, 0, folded.stderr);
+    assert.equal(r.git('rev-parse', 'HEAD^').trim(), trunk);
+    assert.ok(!tree(r).includes('core.txt'));
+  });
+});

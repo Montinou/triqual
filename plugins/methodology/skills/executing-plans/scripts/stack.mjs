@@ -521,11 +521,27 @@ function branchOf(phase) {
   return phase.branch;
 }
 
-// The start of a new phase branch: the previous phase's tip (or the trunk's), local branch first, else the remote's.
+// A branch's tip: the local branch first, else the remote's; null when neither exists.
+function branchTip(cwd, state, branch) {
+  return revParse(`refs/heads/${branch}`, { cwd }) ?? (state.remote ? revParse(`refs/remotes/${state.remote}/${branch}`, { cwd }) : null);
+}
+
+// The tip a `prs` phase starts from: its parent's, the trunk, an earlier phase's branch or a named branch.
+function parentTip(cwd, state, phase) {
+  if (phase.parent === state.trunk) return trunkTip(cwd, state.trunk, state.remote);
+  return branchTip(cwd, state, phase.parent) ?? fail(EXIT_REFUSED, `phase ${phase.n}'s parent ${phase.parent} does not exist`);
+}
+
+// The phase of the plan a `prs` phase branches from; undefined when its parent is the trunk or a named branch.
+const parentPhase = (state, phase) => state.phases.find((p) => p.branch === phase.parent);
+
+// The start of a new phase branch: the previous phase's tip (or the trunk's), local branch first, else the remote's. A
+// `prs` phase starts at its parent's tip.
 function startPoint(cwd, state, n) {
+  if (layoutOf(state) === 'prs') return parentTip(cwd, state, state.phases.find((p) => p.n === n));
   if (n === 1) return trunkTip(cwd, state.trunk, state.remote);
   const prev = state.phases.find((p) => p.n === n - 1).branch;
-  const tip = revParse(`refs/heads/${prev}`, { cwd }) ?? (state.remote ? revParse(`refs/remotes/${state.remote}/${prev}`, { cwd }) : null);
+  const tip = branchTip(cwd, state, prev);
   return tip ?? fail(EXIT_REFUSED, `phase ${n - 1}'s branch ${prev} does not exist`);
 }
 
@@ -553,8 +569,9 @@ function cmdPhase(args) {
     fail(EXIT_REFUSED, `phase ${phase.n} is ${phase.state}: its commits are final, it is not entered again`);
   }
   requireCleanTree(ctx.cwd);
-  if (phase.n > 1) {
-    const prev = state.phases.find((p) => p.n === phase.n - 1);
+  const prs = layoutOf(state) === 'prs';
+  const prev = prs ? parentPhase(state, phase) : state.phases.find((p) => p.n === phase.n - 1);
+  if (prev) {
     const allowed = state.mode === 'local' ? STARTED_AFTER.local : STARTED_AFTER.github;
     if (!allowed.includes(prev.state)) {
       fail(EXIT_REFUSED, `phase ${prev.n} is ${prev.state}: phase ${phase.n} needs it ${allowed.join(' or ')} (${state.mode} mode)`);
@@ -568,7 +585,7 @@ function cmdPhase(args) {
     // Review Focus 3: a branch on the remote only (a resumed run elsewhere) is checked out tracking it.
     git(['switch', '--quiet', '-c', branch, '--track', remoteRef], { cwd: ctx.cwd });
   } else {
-    if (phase.n === 1) refuseStrandedHead(ctx.cwd, state);
+    if (prs ? phase.parent === state.trunk : phase.n === 1) refuseStrandedHead(ctx.cwd, state);
     git(['switch', '--quiet', '--no-track', '-c', branch, startPoint(ctx.cwd, state, phase.n)], { cwd: ctx.cwd });
   }
   phase.state = 'active';
@@ -605,11 +622,13 @@ function cmdSquash(args) {
   if (!gitOk(['merge-base', '--is-ancestor', base, 'HEAD'], { cwd })) {
     fail(EXIT_REFUSED, `BASE ${base} is not an ancestor of HEAD (${active.branch})`);
   }
-  // R1: the range stays inside the active phase. Its start is the previous phase's tip, or for phase 1 where HEAD
-  // forked from the trunk; a BASE under it would fold an earlier phase's (or the trunk's) commits into this one.
+  // R1: the range stays inside the active phase. Its start is the parent phase's tip, or where HEAD forked from the
+  // trunk (phase 1) or from a named branch; a BASE under it would fold an earlier phase's (or the trunk's) commits into
+  // this one.
+  const fromPhase = layoutOf(state) === 'prs' ? parentPhase(state, active) !== undefined : active.n > 1;
   let start;
   try {
-    start = active.n === 1 ? git(['merge-base', startPoint(cwd, state, 1), 'HEAD'], { cwd }) : startPoint(cwd, state, active.n);
+    start = fromPhase ? startPoint(cwd, state, active.n) : git(['merge-base', startPoint(cwd, state, active.n), 'HEAD'], { cwd });
   } catch (e) {
     if (e instanceof StackError) throw e;
     return fail(EXIT_REFUSED, `${active.branch} shares no history with the trunk ${state.trunk}`);
