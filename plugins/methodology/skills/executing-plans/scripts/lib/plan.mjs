@@ -29,16 +29,27 @@ const TIER = /^\*\*Tier:\*\*(.*)$/;
 const PREFIX = /^\*\*Branch prefix:\*\*\s*(.+)$/;
 const SENSITIVE = /^\*\*Sensitive paths:\*\*\s*(.*)$/;
 const TEST_PATHS = /^\*\*Test paths:\*\*\s*(.*)$/;
-const PHASE_FIELD = /^\*\*(Slice|Branch|PR title|Stands alone because|Phase check):\*\*\s*(.*)$/;
+const LANDING_TEST = /^\*\*Landing test:\*\*\s*(.*)$/;
+const PHASE_FIELD = /^\*\*(Slice|Branch|Parent|PR title|Stands alone because|Phase check|Validate):\*\*\s*(.*)$/;
 const FIELD_KEYS = {
   Slice: 'slice',
   Branch: 'branch',
+  Parent: 'parentRaw',
   'PR title': 'prTitle',
   'Stands alone because': 'standsAlone',
   'Phase check': 'phaseCheck',
+  Validate: 'validateRaw',
 };
+const PHASE_REF = /^P(\d+)$/;
+const TRUNK = 'trunk';
 const BRANCH_NUMBER = /^(\d{2})-\S/;
 const PLAN_SUFFIX = / Implementation Plan$/;
+const FILES_PLACEHOLDER = '{files}';
+// A task's `- Create:` / `- Modify:` / `- Test:` line, the backticked tokens of its value and a trailing line range; the
+// same rule as `pathsOf` in reconcile-evidence.mjs.
+const FILES_LINE = /^\s*-\s+(Create|Modify|Test):\s*(.*)$/;
+const TICKED = /`([^`]+)`/g;
+const RANGE_SUFFIX = /:\d+(?:-\d+)?$/;
 const UNPHASED_CHECK = "the repository's full test command";
 
 // CommonMark fence: a run of 3+ backticks or tildes, then an optional info string; after backticks the info string may
@@ -52,6 +63,14 @@ const TAB_COLUMNS = 4;
 
 const list = (s) => s.split(',').map((x) => x.trim()).filter(Boolean);
 const unquote = (s) => s.trim().replace(/^`([^`]*)`$/, '$1');
+
+// The paths of one `Create:`/`Modify:`/`Test:` value: every backticked token, else the bare trimmed value; a trailing
+// `:<n>` or `:<n>-<m>` is dropped.
+function pathsOf(value) {
+  const ticked = [...value.matchAll(TICKED)].map((m) => m[1]);
+  const raw = ticked.length > 0 ? ticked : [value.trim()];
+  return raw.map((p) => p.trim().replace(RANGE_SUFFIX, '')).filter(Boolean);
+}
 
 // The fence match of `line` ([, run, info]), or null when it is no fence line.
 function fenceOf(line) {
@@ -81,7 +100,8 @@ function scan(text) {
   return { lines, total: all.length };
 }
 
-// Tasks of a plan: [{ id, title, deps, skills, role, tier, start, end }]. `start` is the 1-based line of the
+// Tasks of a plan: [{ id, title, deps, skills, role, tier, files, start, end }]. `files` is { create, modify, test }, the
+// paths of the task's own `- Create:` / `- Modify:` / `- Test:` lines outside fences (three empty arrays without any). `start` is the 1-based line of the
 // `### Task N:` heading and `end` the last line of the task: the line before the next heading of level 1 to 3 outside
 // a fence (a `### ` heading that is no task, or a `## After Merge`), else the last line of the plan. `tier` is null when
 // the task declares none; a value outside TIERS throws.
@@ -100,13 +120,19 @@ export function readTasks(text) {
       const id = `T${Number(h[1])}`;
       if (seen.has(id)) throw new PlanError(`duplicate task ${id} in plan`);
       seen.add(id);
-      current = { id, title: h[2].trim(), deps: [], skills: [], role: null, tier: null, start: no, end: total };
+      current = { id, title: h[2].trim(), deps: [], skills: [], role: null, tier: null, files: { create: [], modify: [], test: [] }, start: no, end: total };
       tasks.push(current);
       continue;
     }
     if (!current) continue;
+    const f = FILES_LINE.exec(line);
+    if (f) { current.files[f[1].toLowerCase()].push(...pathsOf(f[2])); continue; }
     const d = DEPENDS.exec(line);
-    if (d) { current.deps = list(d[1]); continue; }
+    if (d) {
+      const deps = list(d[1]);
+      current.deps = deps.length === 1 && deps[0].toLowerCase() === 'none' ? [] : deps;
+      continue;
+    }
     const s = SKILLS.exec(line);
     if (s) { current.skills = list(s[1]); continue; }
     const r = ROLE.exec(line);
@@ -129,8 +155,57 @@ function branchOf(value) {
   return ticked ? ticked[1].trim() : (value.trim().split(/\s+/)[0] ?? '');
 }
 
-// Phases of a plan: { branchPrefix, sensitivePaths, testPaths, phases: [{ n, title, slice, branch, prTitle,
-// standsAlone, phaseCheck, tasks }] }, `tasks` being task ids. Heading and field lines inside fenced code blocks are not read. A
+// The parent of `phase` ({ kind, value }) from its `**Parent:**` value, or the linear default when it has none. A
+// branch naming a phase of the same plan is that phase; a phase reference must name an earlier phase.
+function resolveParent(phase, phases) {
+  const where = `phase ${phase.n}`;
+  const raw = phase.parentRaw;
+  if (raw === null) return phase.n === 1 ? { kind: 'trunk', value: null } : { kind: 'phase', value: `P${phase.n - 1}` };
+  if (raw === '') throw new PlanError(`${where} has an empty **Parent:**`);
+  if (raw === TRUNK) return { kind: 'trunk', value: null };
+  const ref = PHASE_REF.exec(raw);
+  const own = ref ? Number(ref[1]) : phases.find((p) => p.branch === raw)?.n;
+  if (own === undefined) return { kind: 'branch', value: raw };
+  if (own < 1 || own >= phase.n) {
+    throw new PlanError(`${where} **Parent:** "${raw}" must name an earlier phase (P1 to P${phase.n - 1}), "trunk" or a branch`);
+  }
+  return { kind: 'phase', value: `P${own}` };
+}
+
+// The `validate` of `phase` from its `**Validate:**` value: null when the line is absent or says `none`, else
+// { workflow, compare: string | null } read from `<workflow> [compare=`<cmd>`]`. An unknown or repeated key, a `compare=`
+// without a backticked command (or with a blank one) and an empty workflow throw.
+const VALIDATE = /^(\S+)(?:\s+compare=`([^`]*)`)?(?:\s+(.*))?$/;
+function resolveValidate(phase) {
+  const raw = phase.validateRaw;
+  const where = `phase ${phase.n} **Validate:**`;
+  if (raw === null || raw.toLowerCase() === 'none') return null;
+  const [, workflow, cmd, rest] = VALIDATE.exec(raw) ?? [];
+  if (!workflow || workflow.includes('=')) throw new PlanError(`${where} lacks a workflow`);
+  if (rest) {
+    const key = /^(\w+)=/.exec(rest)?.[1];
+    if (key !== 'compare') throw new PlanError(key ? `${where} has an unknown key "${key}" (expected compare)` : `${where} cannot read "${rest}" (expected compare=\`<cmd>\`)`);
+    throw new PlanError(cmd === undefined ? `${where} compare= must be a command in backticks` : `${where} repeats compare=`);
+  }
+  if (cmd !== undefined && !cmd.trim()) throw new PlanError(`${where} compare= must be a command in backticks`);
+  return { workflow, compare: cmd === undefined ? null : cmd.trim() };
+}
+
+// The command of a `**Landing test:**` value (backticks stripped); it must hold `{files}` exactly once.
+function resolveLandingTest(value) {
+  const command = unquote(value);
+  if (command.split(FILES_PLACEHOLDER).length !== 2) {
+    throw new PlanError(`**Landing test:** must hold ${FILES_PLACEHOLDER} exactly once, in "${command}"`);
+  }
+  return command;
+}
+
+// Phases of a plan: { branchPrefix, sensitivePaths, testPaths, forest, phases: [{ n, title, slice, branch, parent,
+// parentDeclared, prTitle, standsAlone, phaseCheck, validate, tasks }], landingTest }, `tasks` being task ids. `parent` is where the phase
+// branches from: { kind: 'trunk', value: null }, { kind: 'phase', value: 'P<k>' } (k below the phase's own number) or
+// { kind: 'branch', value: <branch> }; without a `**Parent:**` line phase 1 is on the trunk and phase N on P<N-1>.
+// `parentDeclared` tells whether the line was there, and `forest` whether some parent differs from that default.
+// `validate` is null or { workflow, compare } (see resolveValidate) and `landingTest` the command of the header's `**Landing test:**` (before the first `## ` or `### Task` heading) or null. Heading and field lines inside fenced code blocks are not read. A
 // plan with no `**Branch prefix:**` line was written before phases existed (or has no `## Phase` heading): it is one
 // implicit phase `<planStem>/01-plan` holding every task, and any `## Phase` heading in it is ignored.
 export function readPhases(text, planStem) {
@@ -139,13 +214,16 @@ export function readPhases(text, planStem) {
   let prefix = null;
   let sensitive = null;
   let testPaths = null;
+  let landing = null;
   let current = null;
   const phases = [];
   const early = []; // tasks met before any phase
   const all = []; // every task, in plan order
   let stray = null; // the first task under a non-phase heading after a phase began
+  let header = true; // until the first `## ` or `### Task` heading: only there is `**Landing test:**` a plan header field
   for (const { line, no } of lines) {
     let m;
+    if (header && (line.startsWith('## ') || TASK_HEADING.test(line))) header = false;
     if ((m = H1.exec(line))) {
       h1 ??= m[1].trim();
     } else if ((m = PREFIX.exec(line))) {
@@ -154,10 +232,12 @@ export function readPhases(text, planStem) {
       sensitive ??= list(m[1]).map(unquote).filter(Boolean);
     } else if ((m = TEST_PATHS.exec(line))) {
       testPaths ??= list(m[1]).map(unquote).filter(Boolean);
+    } else if (header && (m = LANDING_TEST.exec(line))) {
+      landing ??= m[1];
     } else if ((m = PHASE_HEADING.exec(line))) {
       current = {
-        n: Number(m[1]), title: m[2].trim(), slice: null, branch: null, prTitle: null, standsAlone: null,
-        phaseCheck: null, tasks: [], sawTask: false,
+        n: Number(m[1]), title: m[2].trim(), slice: null, branch: null, parentRaw: null, prTitle: null,
+        standsAlone: null, phaseCheck: null, validateRaw: null, tasks: [], sawTask: false,
       };
       phases.push(current);
     } else if (line.startsWith('## ')) {
@@ -172,11 +252,12 @@ export function readPhases(text, planStem) {
         current.sawTask = true;
       }
     } else if (current && !current.sawTask && (m = PHASE_FIELD.exec(line))) {
-      current[FIELD_KEYS[m[1]]] = m[1] === 'Branch' ? branchOf(m[2]) : m[2].trim();
+      current[FIELD_KEYS[m[1]]] = m[1] === 'Branch' || m[1] === 'Parent' ? branchOf(m[2]) : m[2].trim();
     }
   }
   const sensitivePaths = sensitive ?? [];
   const tests = testPaths ?? [];
+  const landingTest = landing === null ? null : resolveLandingTest(landing);
 
   if (phases.length === 0 || !prefix) {
     const title = (h1 ?? planStem).replace(PLAN_SUFFIX, '');
@@ -184,9 +265,11 @@ export function readPhases(text, planStem) {
       branchPrefix: planStem,
       sensitivePaths,
       testPaths: tests,
+      forest: false,
+      landingTest,
       phases: [{
-        n: 1, title, slice: null, branch: `${planStem}/01-plan`, prTitle: title, standsAlone: null,
-        phaseCheck: UNPHASED_CHECK, tasks: all,
+        n: 1, title, slice: null, branch: `${planStem}/01-plan`, parent: { kind: 'trunk', value: null },
+        parentDeclared: false, prTitle: title, standsAlone: null, phaseCheck: UNPHASED_CHECK, validate: null, tasks: all,
       }],
     };
   }
@@ -207,7 +290,17 @@ export function readPhases(text, planStem) {
     }
     delete phase.sawTask;
   }
-  return { branchPrefix: prefix, sensitivePaths, testPaths: tests, phases };
+  let forest = false;
+  for (const phase of phases) {
+    phase.parent = resolveParent(phase, phases);
+    phase.parentDeclared = phase.parentRaw !== null;
+    delete phase.parentRaw;
+    phase.validate = resolveValidate(phase);
+    delete phase.validateRaw;
+    const def = phase.n === 1 ? null : `P${phase.n - 1}`;
+    if (phase.parent.value !== def || phase.parent.kind !== (def ? 'phase' : 'trunk')) forest = true;
+  }
+  return { branchPrefix: prefix, sensitivePaths, testPaths: tests, forest, landingTest, phases };
 }
 
 // The registration rules of a new ledger (design U1): a plan that declares a tier on any task declares it on every
