@@ -143,7 +143,7 @@ no `*.tasks.json` to name or stage.
 A plan can run in a plain clone that is not opted in, with the plan, its ledger and the entries kept in this repository (the
 coordination root). Export `TRIQUAL_TRACKING_ROOT=<path of the root>` in the shell that runs the plan: `triqual tasks …` and
 `triqual tracking …` then resolve the tracking from the root while the working directory is the clone. The root must be a
-git repository in store mode, else exit 2 naming the variable. `triqual tracking hook …`, the git hooks and the plugin hooks
+git repository opted in to progress tracking, else exit 2 naming the variable. `triqual tracking hook …`, the git hooks and the plugin hooks
 never read it.
 
 The clone's commits are external commits: `triqual tasks done T<N> --commit <rev>` and `triqual tracking add <draft> --commit <rev>`
