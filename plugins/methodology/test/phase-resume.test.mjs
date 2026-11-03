@@ -30,7 +30,7 @@ const gitEnv = (home) => {
 };
 
 // A repo with the plan committed; `ledger` (an array of lines) is written to the plan's workspace, `stackPhases` (state per phase) to its stack state.
-function rig({ ledger = null, stackPhases = null, mode = 'github' } = {}) {
+function rig({ ledger = null, stackPhases = null, mode = 'github', single = false } = {}) {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'phase-resume-')));
   const home = join(base, 'home');
   const dir = join(base, 'repo');
@@ -43,7 +43,7 @@ function rig({ ledger = null, stackPhases = null, mode = 'github' } = {}) {
   git('config', 'user.email', 'test@example.invalid');
   git('config', 'commit.gpgsign', 'false');
   mkdirSync(join(dir, 'docs', 'plans'), { recursive: true });
-  writeFileSync(join(dir, PLAN_REL), PLAN);
+  writeFileSync(join(dir, PLAN_REL), single ? PLAN.slice(0, PLAN.indexOf('## Phase 2')) : PLAN);
   git('add', '.');
   git('commit', '-q', '-m', 'plan');
   const workspace = execFileSync(process.execPath, [WORKSPACE, PLAN_REL], { cwd: dir, env, encoding: 'utf8' }).trim();
@@ -51,7 +51,7 @@ function rig({ ledger = null, stackPhases = null, mode = 'github' } = {}) {
   if (ledger !== null) writeFileSync(ledgerFile, `${ledger.join('\n')}\n`);
   if (stackPhases !== null) {
     mkdirSync(join(dir, '.methodology', 'stack'), { recursive: true });
-    const phases = [['demo/01-core', 'feat: core'], ['demo/02-edge', 'feat: edge']].map(([branch, title], i) => ({
+    const phases = [['demo/01-core', 'feat: core'], ['demo/02-edge', 'feat: edge']].slice(0, single ? 1 : 2).map(([branch, title], i) => ({
       n: i + 1, branch, title, pr: null, state: stackPhases[i] ?? 'pending',
     }));
     writeFileSync(
@@ -161,8 +161,8 @@ test('the heading names a phase with no stack state', () => {
 });
 
 // The Next line is the first applicable action: the first task of the phase that is not complete decides, in plan order.
-const nextOf = (ledger, n = '1', stackPhases = ['active'], mode = 'github') =>
-  withRig({ ledger, stackPhases, mode }, ({ run }) => {
+const nextOf = (ledger, n = '1', stackPhases = ['active'], mode = 'github', single = false) =>
+  withRig({ ledger, stackPhases, mode, single }, ({ run }) => {
     const res = run(PLAN_REL, n);
     assert.equal(res.status, 0, res.stderr);
     return res.stdout.split('\n## Next\n\n')[1].trimEnd();
@@ -266,6 +266,40 @@ test('Next once every task is complete follows the phase review, the stack state
     `P2 is the last phase and is submitted: run the seams review of the plan, then node scripts/stack.mjs submit ${plan} 2 --open.`,
   );
   assert.equal(nextOf([...submitted], '1', ['merged']), 'P1 is merged: nothing to resume.');
+});
+
+test('a task the breaker blocked is blocked until a Ruling follows; a done phase with no phase review points to the review', () => {
+  const blocked = 'Task 2: blocked at fix round 5/5 — an open Important finding';
+  const upTo1 = COMPLETE_ALL.slice(0, 3);
+  const open = [...upTo1, 'BASE: T2 abcdef0123', 'Prep: T2 r1 4444444cccccccc', 'Task 2: fix round 5/5 (0 addressed, 1 open — a finding; commits a..b)', blocked];
+  withRig({ ledger: open, stackPhases: ['active'] }, ({ run }) => {
+    const res = run(PLAN_REL, '1');
+    assert.equal(res.status, 0, res.stderr);
+    assert.ok(res.stdout.includes('| T2 | blocked | blocked at fix round 5/5 |'), res.stdout);
+    assert.ok(res.stdout.trimEnd().endsWith('T2 is blocked: ask your human partner for the decision.'), res.stdout);
+  });
+  // The human's decision unblocks it: a Ruling line (or a granted-rounds Ruling) after the blocked line, and the task runs again.
+  const ruled = [...open, 'Task 2: Ruling: a finding — more rounds — contestable — costs a round'];
+  assert.match(nextOf(ruled), /^Continue T2 \(BASE abcdef0\)/);
+  assert.match(nextOf([...open, 'Ruling: human granted 2 rounds for T2 — why — cost']), /^Continue T2 \(BASE abcdef0\)/);
+  // A Ruling before the blocked line, or on another task, does not unblock it; a new BASE does.
+  assert.match(nextOf([...upTo1, 'BASE: T2 abcdef0123', 'Task 2: Ruling: x — y — z — w', blocked]), /^T2 is blocked: /);
+  assert.match(nextOf([...open, 'Task 3: Ruling: x — y — z — w']), /^T2 is blocked: /);
+  assert.match(nextOf([...open, 'BASE: T2 fedcba9876']), /^Continue T2 \(BASE fedcba9\)/);
+  // A phase marked done in the stack state without a Phase review line still needs the phase review, not a submit.
+  assert.equal(nextOf(COMPLETE_ALL, '1', ['done']), 'Run the Phase check and the phase review of P1 (SKILL.md, step 8).');
+  assert.equal(nextOf(COMPLETE_ALL, '1', ['done'], 'local'), 'Run the Phase check and the phase review of P1 (SKILL.md, step 8).');
+  // A phase begun before the phase review (its Phase complete line is ledgered) is final without one.
+  assert.equal(
+    nextOf([...COMPLETE_ALL, 'Phase 1: complete (demo/01-core, local)'], '1', ['done']),
+    'P1 is submitted: start the next phase with node scripts/stack.mjs phase docs/plans/resume-plan.md 2.',
+  );
+});
+
+test('the last phase names the seams review only in a plan with several phases', () => {
+  const plan = 'docs/plans/resume-plan.md';
+  const done = [...COMPLETE_ALL, 'Phase review: P1 clean', 'Validation: P1 run 8 verdict clean — https://example.invalid/8'];
+  assert.equal(nextOf(done, '1', ['ready'], 'github', true), `P1 is the last phase and is submitted: node scripts/stack.mjs submit ${plan} 1 --open.`);
 });
 
 test('a phase with no declared validation skips the validate step', () => {

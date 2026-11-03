@@ -25,9 +25,9 @@ A submitted phase is final: never amend it, never rebase it, never force push it
 `node scripts/phase-resume PLAN_FILE N` rebuilds where phase N stopped, from the workspace ledger and the stack state, and writes nothing. It prints:
 
 - `# Resume P<n> <branch> (<state>)`, the state being the phase's state in the stack state (`no stack state` without one);
-- a table `Task | State | Evidence`, one row per task of the phase. A task is `complete`, `running (BASE <sha7>)` (its last `Prep:` and fix round are the evidence), `awaiting landing`, `landed, not closed`, `undone — re-run sequential` or `not started`;
+- a table `Task | State | Evidence`, one row per task of the phase. A task is `complete`, `running (BASE <sha7>)` (its last `Prep:` and fix round are the evidence), `blocked` (the breaker's `Task <N>: blocked at fix round` line is the last word: no `Task <N>: Ruling:` or `Ruling: human granted … for T<N>` line follows it, and the Next line asks your human partner for the decision instead of continuing the task), `awaiting landing`, `landed, not closed`, `undone — re-run sequential` or `not started`;
 - `## Validations`: the phase's `Validation:` and `Validation fix:` ledger lines, copied as they are;
-- `## Next`: the first applicable action, by the first task that is not complete (open it, continue it, land it, close it, re-run it sequentially) and, with every task complete, by the phase review, the stack state and the validations.
+- `## Next`: the first applicable action, by the first task that is not complete (open it, continue it, ask for the decision on a blocked one, land it, close it, re-run it sequentially) and, with every task complete, by the phase review (a phase done in the stack state with no `Phase review: P<n>` line still gets it), the stack state and the validations. The seams review is named only in a plan with several phases.
 
 It exits 3 when the plan has no ledger. Its output is the resume note of a fresh orchestrator: pass it as it is, with the plan path and the phase number.
 

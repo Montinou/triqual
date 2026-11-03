@@ -5,12 +5,12 @@
 // Usage: phase-resume PLAN_FILE N
 // Prints Markdown, in this order:
 //   # Resume P<n> <branch> (<state>)     the phase's branch and its state in the stack state (`no stack state` without one)
-//   | Task | State | Evidence |           one row per task of the phase: complete, running (BASE <sha7>), awaiting landing,
+//   | Task | State | Evidence |           one row per task of the phase: complete, running (BASE <sha7>), blocked, awaiting landing,
 //                                         landed, not closed, undone — re-run sequential, not started
 //   ## Validations                        the phase's `Validation:` and `Validation fix:` ledger lines as they are (`(none)`)
 //   ## Next                               the first applicable action
 //
-// The state of a task comes from its ledger lines after its last `BASE:` line (a landing, awaiting-landing or undo line also only after its last `Task <N>: reopened` line): a `Task <N>: complete` line, else a live `Landed:`
+// The state of a task comes from its ledger lines after its last `BASE:` line (a landing, awaiting-landing or undo line also only after its last `Task <N>: reopened` line): a `Task <N>: complete` line, else blocked (a `Task <N>: blocked at fix round` line after the BASE with no `Task <N>: Ruling:` or `Ruling: human granted … for T<N>` line after it), else a live `Landed:`
 // line, else `Task <N>: awaiting landing`, else the undo line of a landing, else the BASE alone (running, with its last `Prep:` and fix round as evidence); no BASE, not started.
 //
 // Exit codes: 0 printed, 2 usage / no such plan file / malformed plan / no such phase, 3 refused (the plan has no ledger), 1 any
@@ -45,6 +45,10 @@
     }
     // A landing counts only after the last BASE and the last reopen: a reopened worktree task writes no new BASE.
     const since = Math.max(base, reopened);
+    // The breaker's blocked line stands until the human's Ruling for the task follows it (a Ruling on the task, or the grant of more rounds).
+    const blockedAt = after(new RegExp(`^Task ${n}: blocked at fix round `));
+    const ruledAt = after(new RegExp(`^(?:Task ${n}: Ruling: |Ruling: human granted \\d+ rounds for T${n} )`));
+    if (blockedAt > since && blockedAt > ruledAt) return { state: 'blocked', evidence: /^Task \d+: (blocked at fix round \d+\/\d+)/.exec(lines[blockedAt])[1] };
     const landedAt = lines.findLastIndex((l) => new RegExp(`^Landed: T${n} (\\S+)\\s*$`).test(l));
     const landed = landedAt > since ? lines[landedAt].split(' ')[2].trim() : null;
     if (landed !== null) {
@@ -113,12 +117,16 @@
       if (open) {
         const t = `T${open.number}`;
         if (open.state === 'not started') return `Open ${t}: ${script('task-open', open.number)}.`;
+        if (open.state === 'blocked') return `${t} is blocked: ask your human partner for the decision.`;
         if (open.state.startsWith('running')) return `Continue ${t} (${open.state.slice('running ('.length, -1)}): finish its build and review, then ${script('task-close', open.number)}.`;
         if (open.state === 'awaiting landing') return `Land ${t}: once every earlier task has landed, ${script('task-close', open.number)}.`;
         if (open.state === 'landed, not closed') return `Close ${t}: ${script('task-close', open.number)}.`;
         return `Re-run ${t} sequentially: ${script('task-open', open.number)}.`;
       }
       if (state === 'merged') return `P${n} is merged: nothing to resume.`;
+      // A phase marked done with no phase review ledgered still needs it, unless it began before the phase review (a Phase submitted / complete line).
+      const beforeReview = lines.some((l) => l.startsWith(`Phase ${n}: submitted`) || l.startsWith(`Phase ${n}: complete (`));
+      if (state === 'done' && review === null && !beforeReview) return `Run the Phase check and the phase review of P${n} (SKILL.md, step 8).`;
       const started = ['submitted', 'ready'].includes(state) || localDone;
       if (!started && state !== 'done') {
         if (review === 'blocked') return `Phase review P${n} is blocked: ask your human partner for the decision.`;
@@ -137,7 +145,7 @@
       if (phases.some((p) => p.n === n + 1)) {
         return phase.validate && !localDone ? `P${n} is validated: start the next phase with ${stackCmd('phase', n + 1)}.` : `P${n} is submitted: start the next phase with ${stackCmd('phase', n + 1)}.`;
       }
-      return `P${n} is the last phase and is submitted: run the seams review of the plan, then ${stackCmd('submit', n, '--open')}.`;
+      return `P${n} is the last phase and is submitted: ${phases.length > 1 ? 'run the seams review of the plan, then ' : ''}${stackCmd('submit', n, '--open')}.`;
     })();
 
     const out = [
