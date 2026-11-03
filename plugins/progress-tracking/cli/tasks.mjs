@@ -25,7 +25,7 @@ import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { LOCAL_HOOK_LINES, NOT_OPTED_IN } from '../scripts/init.mjs';
 import { roleOf } from '../lib/roles.mjs';
-import { resolveTracking, storeTracking } from '../lib/tracking.mjs';
+import { resolveTrackingFor, storeTracking } from '../lib/tracking.mjs';
 import { docsDirs, loadSqlite, maybeDailySnapshot, repoKey, storePaths } from '../lib/store.mjs';
 import { writeAtomic } from '../lib/fsx.mjs';
 import { PlanError, validatePlanForRegistration } from '../lib/plan.mjs';
@@ -113,7 +113,7 @@ function anchorRoot(repoRoot) {
 // What `done` records for --commit: the full sha of a commit of this repo, or with --repo (a commit of another
 // repository) the string `ext:<that repo's path relative to the main worktree root>@<full sha>`, so no home-directory path
 // enters a ledger. Undefined when --commit is absent (the transition then refuses). Runs before any transaction opens.
-function doneArg(repoRoot, values) {
+function doneArg(repoRoot, values, workRepo) {
   if (values.commit === undefined) {
     if (values.repo !== undefined) throw new UsageError('done: --repo requires --commit');
     return undefined;
@@ -123,17 +123,18 @@ function doneArg(repoRoot, values) {
     if (sha === null) throw new LedgerError(`commit ${values.commit} does not resolve`);
     return sha;
   };
-  if (values.repo === undefined) return local();
+  const target = values.repo ?? workRepo;
+  if (target === undefined || target === null) return local();
   let dir;
   try {
-    dir = realpathSync(resolve(values.repo));
+    dir = realpathSync(resolve(target));
   } catch {
-    throw new LedgerError(`--repo ${values.repo} does not exist`);
+    throw new LedgerError(`--repo ${target} does not exist`);
   }
   const path = posix(relative(anchorRoot(repoRoot), dir));
   if (path === '' || dir === realpathSync(repoRoot)) return local(); // --repo names this very repository
   const sha = resolveCommit(dir, values.commit);
-  if (sha === null) throw new LedgerError(`commit ${values.commit} does not resolve in ${values.repo}`);
+  if (sha === null) throw new LedgerError(`commit ${values.commit} does not resolve in ${target}`);
   return `${EXTERNAL_PREFIX}${path}@${sha}`;
 }
 
@@ -482,7 +483,7 @@ function storeTransition(cmd) {
     }
     const selected = selectStoreLedger(st, values.plan);
     let arg = text;
-    if (cmd === 'done') arg = doneArg(st.repoRoot, values) ?? arg; // git runs before the transaction opens
+    if (cmd === 'done') arg = doneArg(st.repoRoot, values, st.workRepo) ?? arg; // git runs before the transaction opens
     // The ledger is read again inside the transaction, so a concurrent writer's change is never overwritten.
     const done = st.store.tx(() => {
       const fresh = st.store.ledgerOf(selected.planId);
@@ -605,7 +606,7 @@ function cmdTransition(cmd) {
     }
     const selected = selectLedger(t, values.plan);
     let arg = text;
-    if (cmd === 'done') arg = doneArg(t.repoRoot, values) ?? arg;
+    if (cmd === 'done') arg = doneArg(t.repoRoot, values, t.workRepo) ?? arg;
     const before = Array.isArray(selected.ledger.tasks) ? selected.ledger.tasks.find((x) => x.id === id) : undefined;
     let result;
     try {
@@ -952,11 +953,11 @@ function cmdPaths(t) {
   }
   if (t.mode === 'store') {
     // The documents directories and the database; a store repository has no progress, status or ledger paths.
-    out(JSON.stringify({ optedIn: true, mode: 'store', root: t.root, ...storeLocations(t), ...facts }, null, 2));
+    out(JSON.stringify({ optedIn: true, mode: 'store', root: t.root, workRepo: t.workRepo, ...storeLocations(t), ...facts }, null, 2));
     return 0;
   }
-  const { mode, root, progress, status, plansDir, specsDir, duplicate } = t;
-  out(JSON.stringify({ optedIn: true, mode, root, progress, status, plansDir, specsDir, duplicate, ...facts }, null, 2));
+  const { mode, root, progress, status, plansDir, specsDir, duplicate, workRepo } = t;
+  out(JSON.stringify({ optedIn: true, mode, root, workRepo, progress, status, plansDir, specsDir, duplicate, ...facts }, null, 2));
   return 0;
 }
 
@@ -1010,7 +1011,7 @@ function currentOf(ledger) {
 // and nothing ever reaches stderr.
 async function lineSegment(argv) {
   if (argv.length) return '';
-  const t = resolveTracking(process.cwd());
+  const t = resolveTrackingFor(process.cwd(), process.env);
   if (!t) return '';
   let active;
   if (t.mode === 'store') {
@@ -1120,7 +1121,7 @@ function parse(argv) {
 
 async function main(argv) {
   const { def, values, positionals } = parse(argv);
-  const t = resolveTracking(process.cwd());
+  const t = resolveTrackingFor(process.cwd(), process.env);
   if (!t && !def.untracked?.(values)) {
     process.stderr.write(`${NOT_OPTED_IN}\n`);
     return 2;
