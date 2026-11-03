@@ -1,0 +1,132 @@
+#!/usr/bin/env node
+// Record the CI verdict of a submitted phase: the newest completed run of the workflow the phase's `**Validate:**` field names,
+// on the head the phase branch has on the remote.
+//
+// Usage: validate PLAN_FILE N
+// Prints, in this order:
+//   Validation: P<n> run <id> verdict <clean|failed> — <url>   the line appended to the workspace ledger
+//   report: <path>                                             <workspace>/phase-<n>-report.md, which got a section for this run
+//
+// Steps: the phase's `validate` (none → exit 3), the stack state (GitHub mode, the phase submitted or ready), `git fetch
+// <remote> <branch>` and `git rev-parse <remote>/<branch>`, then `gh run list --repo <slug> --workflow <w> --commit <sha>`. The
+// newest completed run is judged; none → exit 3 (`no completed run of <w> for <sha> yet`), the caller retries later and nothing
+// is recorded. The verdict is `compare` run with `sh -c` in the repository root, `TRIQUAL_RUN_ID` and `TRIQUAL_REPO_SLUG` in its
+// environment (exit 0 → clean, anything else → failed), else the run's conclusion (`success` → clean, anything else → failed).
+// The report section holds the compare output, or `conclusion: <conclusion>` without a compare.
+//
+// Exit codes: 0 clean, 6 failed, 2 usage / no such plan file / malformed plan / no such phase, 3 refused (the phase declares
+// no validation, no stack state, not GitHub mode, the phase is not submitted or ready, no completed run yet), 5 a gh command
+// failed, 1 any other failure. A failure writes its cause on stderr only: a retry-later refusal is not an `Error:` ledger line.
+//
+// Dynamic imports only: the file has no extension, so Node may load it as CommonJS or as an ES module depending on the
+// nearest package.json.
+(async () => {
+  const { appendFileSync, existsSync, readFileSync, realpathSync } = await import('node:fs');
+  const { basename, dirname, join } = await import('node:path');
+  const { pathToFileURL } = await import('node:url');
+  const here = dirname(realpathSync(process.argv[1]));
+  const load = (...parts) => import(pathToFileURL(join(here, ...parts)).href);
+  const common = await load('lib', 'task-common.mjs');
+  const { PlanError, readPhases } = await load('lib', 'plan.mjs');
+  const stack = await load('stack.mjs');
+  const { ScriptError, EXIT_USAGE, EXIT_REFUSED, EXIT_OTHER, exec, firstLine } = common;
+
+  const USAGE = 'usage: validate PLAN_FILE N';
+  const EXIT_GH = 5;
+  const EXIT_FAILED = 6;
+  const VALIDATABLE = ['submitted', 'ready'];
+  const RUNS_LIMIT = '20';
+
+  try {
+    const [plan, arg, ...extra] = process.argv.slice(2);
+    if (!plan || !/^\d+$/.test(arg ?? '') || extra.length > 0) throw new ScriptError(EXIT_USAGE, USAGE);
+    const n = Number(arg);
+
+    let text;
+    try {
+      text = readFileSync(plan, 'utf8');
+    } catch {
+      throw new ScriptError(EXIT_USAGE, `no such plan file: ${plan}`);
+    }
+    let phases;
+    try {
+      ({ phases } = readPhases(text, basename(plan, '.md')));
+    } catch (e) {
+      if (e instanceof PlanError) throw new ScriptError(EXIT_USAGE, `${plan}: ${e.message}`);
+      throw e;
+    }
+    const phase = phases.find((p) => p.n === n);
+    if (!phase) throw new ScriptError(EXIT_USAGE, `no phase ${n}: the plan has phases 1-${phases.length}`);
+    if (!phase.validate) throw new ScriptError(EXIT_REFUSED, `phase ${n} declares no validation`);
+    const { workflow, compare } = phase.validate;
+
+    common.assertMainCheckout();
+    const root = common.git(['rev-parse', '--show-toplevel']);
+    const statePath = stack.statePath(root, plan);
+    let state;
+    try {
+      state = stack.readState(statePath);
+    } catch (e) {
+      if (e.name === 'StackError') throw new ScriptError(e.code, e.message);
+      throw e;
+    }
+    if (!state) throw new ScriptError(EXIT_REFUSED, `no stack state at ${statePath}: run stack init first`);
+    if (state.mode !== 'github') throw new ScriptError(EXIT_REFUSED, `the stack is in ${state.mode} mode: validate needs GitHub mode`);
+    const recorded = state.phases.find((p) => p.n === n);
+    if (!recorded || !VALIDATABLE.includes(recorded.state)) {
+      throw new ScriptError(EXIT_REFUSED, `phase ${n} is ${recorded?.state ?? 'unknown'}: validate needs a submitted or ready phase`);
+    }
+    const github = stack.githubRemote(state.remote, root);
+    if (!github) throw new ScriptError(EXIT_REFUSED, `remote ${state.remote} is not a GitHub remote`);
+    const { slug } = github;
+
+    // The head CI ran on is the remote's, not the local branch's.
+    common.git(['fetch', state.remote, recorded.branch]);
+    const sha = common.git(['rev-parse', '--verify', `${state.remote}/${recorded.branch}`]);
+
+    const listed = exec('gh', [
+      'run', 'list', '--repo', slug, '--workflow', workflow, '--commit', sha,
+      '--json', 'databaseId,status,conclusion,url', '--limit', RUNS_LIMIT,
+    ], { env: { ...process.env, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1' } });
+    if (listed.status !== 0) throw new ScriptError(EXIT_GH, `gh run list failed: ${firstLine(listed.stderr) || `exited ${listed.status}`}`);
+    let runs;
+    try {
+      runs = JSON.parse(listed.stdout);
+    } catch {
+      throw new ScriptError(EXIT_GH, 'gh run list did not print JSON');
+    }
+    const completed = runs.find((r) => r.status === 'completed'); // gh lists the newest run first
+    if (!completed) throw new ScriptError(EXIT_REFUSED, `no completed run of ${workflow} for ${sha} yet`);
+
+    let clean;
+    let body;
+    if (compare === null) {
+      clean = completed.conclusion === 'success';
+      body = `conclusion: ${completed.conclusion}`;
+    } else {
+      const res = exec('sh', ['-c', compare], {
+        cwd: root,
+        env: { ...process.env, TRIQUAL_RUN_ID: String(completed.databaseId), TRIQUAL_REPO_SLUG: slug },
+      });
+      clean = res.status === 0;
+      body = `${res.stdout}${res.stderr}`.trim() || '(no output)';
+    }
+    const verdict = clean ? 'clean' : 'failed';
+
+    const workspace = common.workspaceOf(plan);
+    const report = join(workspace, `phase-${n}-report.md`);
+    const lead = existsSync(report) && readFileSync(report, 'utf8') !== '' ? '\n' : '';
+    appendFileSync(report, `${lead}## Validation: run ${completed.databaseId} verdict ${verdict}\n\n${body}\n`);
+    const line = `Validation: P${n} run ${completed.databaseId} verdict ${verdict} — ${completed.url}`;
+    common.appendLedger(workspace, line);
+    process.stdout.write(`${line}\nreport: ${report}\n`);
+    process.exitCode = clean ? 0 : EXIT_FAILED;
+  } catch (e) {
+    const err = e instanceof ScriptError ? e : new ScriptError(EXIT_OTHER, `validate: ${e.message}`);
+    process.stderr.write(`${err.message}\n`);
+    process.exitCode = err.code;
+  }
+})().catch((e) => {
+  process.stderr.write(`validate: ${e.stack ?? e}\n`);
+  process.exit(1);
+});
