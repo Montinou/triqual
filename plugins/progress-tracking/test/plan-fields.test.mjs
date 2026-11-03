@@ -159,6 +159,26 @@ test('Landing test in an implicit one-phase plan is read', () => {
   throwsPlan(() => readPhases('# Solo\n\n**Landing test:** `node --test`\n\n### Task 1: A\n', 'solo'), /Landing test/);
 });
 
+test('Landing test after the header is not read', () => {
+  const bad = '**Landing test:** `node --test`';
+  const noHeader = plan(2).replace('### Task 2: Do 2', `### Task 2: Do 2\n\n${bad}`);
+  assert.equal(readPhases(noHeader, 'demo').landingTest, null);
+  const inPreamble = plan(2).replace('**Branch:** `demo/02-part`', `${bad}\n**Branch:** \`demo/02-part\``);
+  assert.equal(readPhases(inPreamble, 'demo').landingTest, null);
+  const solo = '# Solo\n\n### Task 1: A\n\n**Landing test:** `node --test`\n';
+  assert.equal(readPhases(solo, 'solo').landingTest, null);
+});
+
+test('a header Landing test wins over a task-body one', () => {
+  const text = validatePlan([], ['**Landing test:** `npx vitest run {files}`']).replace('### Task 2: Do 2', '### Task 2: Do 2\n\n**Landing test:** `node --test`');
+  assert.equal(readPhases(text, 'demo').landingTest, 'npx vitest run {files}');
+});
+
+test('an empty compare= throws', () => {
+  throwsPlan(() => validateOf(['**Validate:** ci compare=``']), /phase 2.*Validate.*compare/);
+  throwsPlan(() => validateOf(['**Validate:** ci compare=` `']), /phase 2.*Validate.*compare/);
+});
+
 const filesOf = (text) => readTasks(text).map((t) => t.files);
 
 test('files of a task', () => {

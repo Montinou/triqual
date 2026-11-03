@@ -50,7 +50,6 @@ const FILES_PLACEHOLDER = '{files}';
 const FILES_LINE = /^\s*-\s+(Create|Modify|Test):\s*(.*)$/;
 const TICKED = /`([^`]+)`/g;
 const RANGE_SUFFIX = /:\d+(?:-\d+)?$/;
-const VALIDATE_KEYS = Object.freeze(['compare']);
 const UNPHASED_CHECK = "the repository's full test command";
 
 // CommonMark fence: a run of 3+ backticks or tildes, then an optional info string; after backticks the info string may
@@ -174,31 +173,22 @@ function resolveParent(phase, phases) {
 }
 
 // The `validate` of `phase` from its `**Validate:**` value: null when the line is absent or says `none`, else
-// { workflow, compare: string | null } read from `<workflow> [compare=`<cmd>`]`. A key may appear once; an unknown key, a `compare=` without backticks or an empty workflow throws.
+// { workflow, compare: string | null } read from `<workflow> [compare=`<cmd>`]`. An unknown or repeated key, a `compare=`
+// without a backticked command (or with a blank one) and an empty workflow throw.
+const VALIDATE = /^(\S+)(?:\s+compare=`([^`]*)`)?(?:\s+(.*))?$/;
 function resolveValidate(phase) {
   const raw = phase.validateRaw;
   const where = `phase ${phase.n} **Validate:**`;
   if (raw === null || raw.toLowerCase() === 'none') return null;
-  const head = /^(\S*)\s*/.exec(raw);
-  const workflow = head[1];
+  const [, workflow, cmd, rest] = VALIDATE.exec(raw) ?? [];
   if (!workflow || workflow.includes('=')) throw new PlanError(`${where} lacks a workflow`);
-  const out = { workflow, compare: null };
-  const seen = new Set();
-  let rest = raw.slice(head[0].length);
-  while (rest) {
-    const kv = /^(\w+)=/.exec(rest);
-    if (!kv) throw new PlanError(`${where} cannot read "${rest}" (expected compare=\`<cmd>\`)`);
-    const key = kv[1];
-    if (!VALIDATE_KEYS.includes(key)) throw new PlanError(`${where} has an unknown key "${key}" (expected ${VALIDATE_KEYS.join(', ')})`);
-    if (seen.has(key)) throw new PlanError(`${where} repeats ${key}=`);
-    seen.add(key);
-    rest = rest.slice(kv[0].length);
-    const cmd = /^`([^`]+)`/.exec(rest);
-    if (!cmd) throw new PlanError(`${where} compare= must be a command in backticks`);
-    out.compare = cmd[1].trim();
-    rest = rest.slice(cmd[0].length).trimStart();
+  if (rest) {
+    const key = /^(\w+)=/.exec(rest)?.[1];
+    if (key !== 'compare') throw new PlanError(key ? `${where} has an unknown key "${key}" (expected compare)` : `${where} cannot read "${rest}" (expected compare=\`<cmd>\`)`);
+    throw new PlanError(cmd === undefined ? `${where} compare= must be a command in backticks` : `${where} repeats compare=`);
   }
-  return out;
+  if (cmd !== undefined && !cmd.trim()) throw new PlanError(`${where} compare= must be a command in backticks`);
+  return { workflow, compare: cmd === undefined ? null : cmd.trim() };
 }
 
 // The command of a `**Landing test:**` value (backticks stripped); it must hold `{files}` exactly once.
@@ -215,7 +205,7 @@ function resolveLandingTest(value) {
 // branches from: { kind: 'trunk', value: null }, { kind: 'phase', value: 'P<k>' } (k below the phase's own number) or
 // { kind: 'branch', value: <branch> }; without a `**Parent:**` line phase 1 is on the trunk and phase N on P<N-1>.
 // `parentDeclared` tells whether the line was there, and `forest` whether some parent differs from that default.
-// `validate` is null or { workflow, compare } (see resolveValidate) and `landingTest` the top-level command or null. Heading and field lines inside fenced code blocks are not read. A
+// `validate` is null or { workflow, compare } (see resolveValidate) and `landingTest` the command of the header's `**Landing test:**` (before the first `## ` or `### Task` heading) or null. Heading and field lines inside fenced code blocks are not read. A
 // plan with no `**Branch prefix:**` line was written before phases existed (or has no `## Phase` heading): it is one
 // implicit phase `<planStem>/01-plan` holding every task, and any `## Phase` heading in it is ignored.
 export function readPhases(text, planStem) {
@@ -230,8 +220,10 @@ export function readPhases(text, planStem) {
   const early = []; // tasks met before any phase
   const all = []; // every task, in plan order
   let stray = null; // the first task under a non-phase heading after a phase began
+  let header = true; // until the first `## ` or `### Task` heading: only there is `**Landing test:**` a plan header field
   for (const { line, no } of lines) {
     let m;
+    if (header && (line.startsWith('## ') || TASK_HEADING.test(line))) header = false;
     if ((m = H1.exec(line))) {
       h1 ??= m[1].trim();
     } else if ((m = PREFIX.exec(line))) {
@@ -240,7 +232,7 @@ export function readPhases(text, planStem) {
       sensitive ??= list(m[1]).map(unquote).filter(Boolean);
     } else if ((m = TEST_PATHS.exec(line))) {
       testPaths ??= list(m[1]).map(unquote).filter(Boolean);
-    } else if ((m = LANDING_TEST.exec(line))) {
+    } else if (header && (m = LANDING_TEST.exec(line))) {
       landing ??= m[1];
     } else if ((m = PHASE_HEADING.exec(line))) {
       current = {
