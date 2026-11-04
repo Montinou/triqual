@@ -3,6 +3,13 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## progress-tracking 0.9.0 / methodology 1.8.0 / roles 0.8.0
+
+- progress-tracking: `triqual plan generate` and `triqual plan check-collisions` (with `--diff`, which lists the old path of a renamed file); `write plan --all` registers every plan of a directory in one call and refuses an already registered plan up front; the plan reader reads each task's `Create`, `Modify` and `Test` files, the `Parent` and `Validate` phase fields, the `Landing test` header and `Depends on: none`; `tracking add` records external commits; tracking resolves from `TRIQUAL_TRACKING_ROOT`.
+- methodology: `executing-plans` supports initiatives (forest plans). Phases start and squash from their parent, `submit` opens forest phases as plain draft PRs (also on `github.com-*` SSH aliases), `stack status` prints the tree, a `validate` script records CI verdicts per phase, `phase-resume` writes a resume brief, and a plan's `Landing test` command lands parallel tasks. `writing-plans` documents the `Parent`, `Validate` and `Landing test` fields and a simplicity check.
+- roles: the auditors and brainstorming look for the simplest design.
+- Update the plugins and run `triqual sync --yes`, then reload plugins or start a new session. Codex reads the same skills through its `~/.codex/skills` links, so it follows the update.
+
 ## progress-tracking 0.8.0 / methodology 1.7.0 / roles 0.7.0
 
 - progress-tracking: `triqual tasks reconcile [--plan <plan.md|ledger>] [--apply] [--json]` proposes the state of every non-done task from git evidence (the commits that touch a task's `Create:`, `Modify:` and `Test:` files and match its planned commit line) and, in store mode, from the task's progress entries. It is for a ledger that is out of step with its commits, such as after a migration. Without `--apply` it opens the store read-only, takes no lock and writes nothing; with `--apply` it writes only the high-confidence proposals, through the ordinary `start` and `done` transitions. The classifier is `lib/reconcile-evidence.mjs`; the docs say how to reconcile after a migration.
