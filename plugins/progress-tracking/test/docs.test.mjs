@@ -163,21 +163,21 @@ test('README Tiers section documents the heavy-tier warning at registration', ()
   const readme = readFileSync(join(PLUGIN, 'README.md'), 'utf8');
   const tiers = readme.slice(readme.indexOf('#### Tiers'));
   assert.match(tiers.slice(0, 3000).replace(/\s+/g, ' '),
-    /more than 80% of the tasks of a plan of at least 5 are `heavy`[^.]*warning[^.]*stderr[^.]*exit code and the ledger/,
+    /more than 50% of the tasks of a plan of at least 5 are `heavy`[^.]*warning[^.]*stderr[^.]*exit code and the ledger/,
     'README #### Tiers: the warning, its threshold, stderr, and that nothing else changes');
 });
 
-test('plugin.json, marketplace.json and the README table agree on 0.9.0', () => {
+test('plugin.json, marketplace.json and the README table agree on 0.9.1', () => {
   const root = join(PLUGIN, '..', '..');
   const plugin = JSON.parse(readFileSync(join(PLUGIN, '.claude-plugin', 'plugin.json'), 'utf8'));
   const market = JSON.parse(readFileSync(join(root, '.claude-plugin', 'marketplace.json'), 'utf8'));
-  assert.equal(plugin.version, '0.9.0');
-  assert.equal(market.plugins.find(p => p.name === 'progress-tracking').version, '0.9.0');
-  assert.match(readFileSync(join(root, 'README.md'), 'utf8'), /\| `progress-tracking` \| 0\.9\.0 \|/);
+  assert.equal(plugin.version, '0.9.1');
+  assert.equal(market.plugins.find(p => p.name === 'progress-tracking').version, '0.9.1');
+  assert.match(readFileSync(join(root, 'README.md'), 'utf8'), /\| `progress-tracking` \| 0\.9\.1 \|/);
 });
 
-test('the CHANGELOG has a 0.9.0 section', () => {
-  assert.match(readFileSync(join(PLUGIN, '..', '..', 'CHANGELOG.md'), 'utf8'), /^## progress-tracking 0\.9\.0( \/ .*)?$/m);
+test('the CHANGELOG has a 0.9.1 section', () => {
+  assert.match(readFileSync(join(PLUGIN, '..', '..', 'CHANGELOG.md'), 'utf8'), /^## progress-tracking 0\.9\.1( \/ .*)?$/m);
 });
 
 test('both READMEs document recording, compatibility cost and rollout', () => {
