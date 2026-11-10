@@ -153,32 +153,29 @@ test('a Markdown file renamed into an excluded class raises', () => {
   });
 });
 
-test('a small .mjs fix plus its cases in an existing test file stays light; its test lines never count', () => {
+test('a .mjs fix plus its cases in an existing test file stays light; its test lines never count', () => {
   const base = { 'src/a.mjs': lines(30), 'test/a.test.mjs': lines(30) };
   scenario(base, { 'src/a.mjs': lines(30) + lines(10, 'fix'), 'test/a.test.mjs': lines(30) + lines(5, 'case') }, [], (repo, head) => {
     assert.equal(run(repo, 1, head).out, 'ok light');
   });
-  // 100 src lines use the whole allowance; 60 more lines of test cases do not push it over
-  scenario(base, { 'src/a.mjs': lines(30) + lines(100, 'fix'), 'test/a.test.mjs': lines(30) + lines(60, 'case') }, [], (repo, head) => {
+  // 300 src lines use the whole allowance; 200 more lines of test cases do not push it over
+  scenario(base, { 'src/a.mjs': lines(30) + lines(300, 'fix'), 'test/a.test.mjs': lines(30) + lines(200, 'case') }, [], (repo, head) => {
     assert.equal(run(repo, 1, head).out, 'ok light');
   });
-  scenario(base, { 'src/a.mjs': lines(30) + lines(101, 'fix'), 'test/a.test.mjs': lines(30) + lines(10, 'case') }, [], (repo, head) => {
+  scenario(base, { 'src/a.mjs': lines(30) + lines(301, 'fix'), 'test/a.test.mjs': lines(30) + lines(10, 'case') }, [], (repo, head) => {
     const r = run(repo, 1, head);
     assert.match(r.out, RAISE('light', 'standard', 'src/a.mjs'));
-    assert.match(r.out, /101 code lines \(over 100\)/);
+    assert.match(r.out, /301 code lines \(over 300\)/);
   });
 });
 
-test('--fix-round: code added in a fix round raises a light task, whatever its size; without the flag it stays light', () => {
+test('--fix-round applies the same rules: a small code fix stays light, one over the allowance raises', () => {
   const base = { 'src/a.mjs': lines(30), 'docs/a.md': lines(5) };
-  scenario(base, { 'src/a.mjs': lines(30) + lines(4, 'fn') }, [], (repo, head) => {
-    const flagged = run(repo, 1, head, '--fix-round');
-    assert.match(flagged.out, /^raise light standard: fix round adds code: src\/a\.mjs$/);
-    assert.equal(flagged.status, 0);
-    assert.equal(run(repo, 1, head).out, 'ok light');
+  scenario(base, { 'src/a.mjs': lines(30) + lines(40, 'fn') }, [], (repo, head) => {
+    assert.deepEqual(run(repo, 1, head, '--fix-round'), { status: 0, out: 'ok light', err: '' });
   });
-  scenario(base, { 'docs/a.md': lines(5) + lines(6, 'doc') }, [], (repo, head) => {
-    assert.equal(run(repo, 1, head, '--fix-round').out, 'ok light');
+  scenario(base, { 'src/a.mjs': lines(30) + lines(301, 'fn') }, [], (repo, head) => {
+    assert.match(run(repo, 1, head, '--fix-round').out, RAISE('light', 'standard', 'src/a.mjs'));
   });
 });
 
@@ -187,7 +184,7 @@ test('--fix-round leaves other floors and heavy triggers alone, and rides along 
   scenario(base, { 'src/a.mjs': lines(30) + lines(4, 'fn') }, [], (repo, head) => {
     assert.equal(run(repo, 4, head, '--fix-round').out, 'ok standard');
     assert.equal(run(repo, 3, head, '--fix-round').out, 'ok standard'); // tierless, no --floor: floors at standard
-    assert.match(run(repo, 3, head, '--fix-round', '--floor', 'light').out, RAISE('light', 'standard', 'src/a.mjs'));
+    assert.equal(run(repo, 3, head, '--fix-round', '--floor', 'light').out, 'ok light');
     assert.equal(run(repo, 2, head, '--fix-round').out, 'ok heavy');
   });
   scenario(base, { 'src/hooks/x.mjs': lines(2) }, [], (repo, head) => {
@@ -195,35 +192,30 @@ test('--fix-round leaves other floors and heavy triggers alone, and rides along 
   });
 });
 
-test('the light code allowance counts added plus removed lines, up to 100 inclusive', () => {
-  scenario({ 'src/a.mjs': lines(30) }, { 'src/a.mjs': lines(30).replace(/^line 1\n/, '').replace(/^line 2\n/m, '') + lines(8, 'new') }, [], (repo, head) => {
-    // 2 removed + 8 added = 10
+test('the light code allowance counts added plus removed lines, up to 300 inclusive', () => {
+  scenario({ 'src/a.mjs': lines(30) }, { 'src/a.mjs': lines(30) + lines(300, 'new') }, [], (repo, head) => {
     assert.equal(run(repo, 1, head).out, 'ok light');
   });
-  scenario({ 'src/a.mjs': lines(30) }, { 'src/a.mjs': lines(30) + lines(100, 'new') }, [], (repo, head) => {
-    assert.equal(run(repo, 1, head).out, 'ok light');
-  });
-  scenario({ 'src/a.mjs': lines(30) }, { 'src/a.mjs': lines(30) + lines(101, 'new') }, [], (repo, head) => {
+  scenario({ 'src/a.mjs': lines(30) }, { 'src/a.mjs': lines(30) + lines(301, 'new') }, [], (repo, head) => {
     assert.match(run(repo, 1, head).out, RAISE('light', 'standard', 'src/a.mjs'));
   });
-  scenario({ 'src/a.mjs': lines(30) }, { 'src/a.mjs': lines(30).split('\n').slice(10).join('\n') + lines(91, 'new') }, [], (repo, head) => {
-    // 10 removed + 91 added = 101
+  scenario({ 'src/a.mjs': lines(30) }, { 'src/a.mjs': lines(30).split('\n').slice(10).join('\n') + lines(291, 'new') }, [], (repo, head) => {
+    // 10 removed + 291 added = 301
     assert.match(run(repo, 1, head).out, RAISE('light', 'standard', 'src/a.mjs'));
   });
 });
 
-test('a new src file raises light to standard, even when tiny', () => {
-  scenario({ 'src/a.mjs': lines(3) }, { 'src/new.mjs': 'x\n' }, [], (repo, head) => {
-    const r = run(repo, 1, head);
-    assert.match(r.out, RAISE('light', 'standard', 'src/new.mjs'));
-    assert.match(r.out, /creates a file/);
+test('a new src file within the allowance stays light', () => {
+  scenario({ 'src/a.mjs': lines(3) }, { 'src/new.mjs': lines(120) }, [], (repo, head) => {
+    assert.equal(run(repo, 1, head).out, 'ok light');
   });
 });
 
-test('a lockfile change raises, whatever its size', () => {
+test('a lockfile change never raises and never counts, whatever its size', () => {
   for (const path of ['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'sub/Cargo.lock']) {
-    scenario({ [path]: '{"version": 1}\n' }, { [path]: '{"version": 2}\n' }, [], (repo, head) => {
-      assert.match(run(repo, 1, head).out, RAISE('light', 'standard', path), path);
+    scenario({ [path]: lines(5) }, { [path]: lines(1500, 'dep') }, [], (repo, head) => {
+      assert.equal(run(repo, 1, head).out, 'ok light', path);
+      assert.equal(run(repo, 4, head).out, 'ok standard', path);
     });
   }
 });
@@ -232,10 +224,10 @@ test('a pure rename of a .mjs stays light; a rename with edits counts its lines'
   scenario({ 'src/a.mjs': lines(40) }, {}, [['src/a.mjs', 'src/b.mjs']], (repo, head) => {
     assert.equal(run(repo, 1, head).out, 'ok light');
   });
-  scenario({ 'src/a.mjs': lines(200) }, { 'src/b.mjs': lines(200) + lines(125, 'new') }, [['src/a.mjs', 'src/b.mjs']], (repo, head) => {
+  scenario({ 'src/a.mjs': lines(400) }, { 'src/b.mjs': lines(400) + lines(325, 'new') }, [['src/a.mjs', 'src/b.mjs']], (repo, head) => {
     const r = run(repo, 1, head);
     assert.match(r.out, RAISE('light', 'standard', 'src/b.mjs'));
-    assert.match(r.out, /125 code lines/); // the edits are counted, not the rename
+    assert.match(r.out, /325 code lines/); // the edits are counted, not the rename
   });
 });
 
@@ -248,19 +240,28 @@ test('a rename into hooks/ raises to heavy; a rename out of hooks/ does too', ()
   });
 });
 
-test('more than 300 changed lines raises to heavy; exactly 300 does not', () => {
-  scenario({ 'docs/a.md': '' }, { 'docs/a.md': lines(301) }, [], (repo, head) => {
-    assert.match(run(repo, 1, head).out, RAISE('light', 'heavy', 'docs/a.md'));
-    assert.match(run(repo, 4, head).out, RAISE('standard', 'heavy', 'docs/a.md'));
+test('more than 1000 code lines raises to heavy; exactly 1000 does not', () => {
+  scenario({ 'src/a.mjs': '' }, { 'src/a.mjs': lines(1001) }, [], (repo, head) => {
+    assert.match(run(repo, 1, head).out, RAISE('light', 'heavy', 'src/a.mjs'));
+    assert.match(run(repo, 4, head).out, RAISE('standard', 'heavy', 'src/a.mjs'));
   });
-  scenario({ 'docs/a.md': '' }, { 'docs/a.md': lines(300) }, [], (repo, head) => {
-    assert.equal(run(repo, 1, head).out, 'ok light');
+  scenario({ 'src/a.mjs': '' }, { 'src/a.mjs': lines(1000) }, [], (repo, head) => {
+    assert.match(run(repo, 1, head).out, RAISE('light', 'standard', 'src/a.mjs'));
     assert.equal(run(repo, 4, head).out, 'ok standard');
   });
-  // added + removed: 160 removed + 141 added = 301
-  scenario({ 'docs/a.md': lines(160, 'old') }, { 'docs/a.md': lines(141, 'new') }, [], (repo, head) => {
-    assert.match(run(repo, 1, head).out, RAISE('light', 'heavy', 'docs/a.md'));
+  // added + removed: 520 removed + 481 added = 1001
+  scenario({ 'src/a.mjs': lines(520, 'old') }, { 'src/a.mjs': lines(481, 'new') }, [], (repo, head) => {
+    assert.match(run(repo, 4, head).out, RAISE('standard', 'heavy', 'src/a.mjs'));
   });
+});
+
+test('docs, data files and lockfiles never count toward the heavy limit or the light allowance', () => {
+  for (const path of ['docs/a.md', 'CHANGELOG.md', 'data/frames.json', 'data/rows.jsonl', 'data/t.csv', 'data/t.tsv', 'notes/a.txt']) {
+    scenario({ [path]: '' }, { [path]: lines(3000) }, [], (repo, head) => {
+      assert.equal(run(repo, 1, head).out, 'ok light', path);
+      assert.equal(run(repo, 4, head).out, 'ok standard', path);
+    });
+  }
 });
 
 test('the default sensitive paths raise to heavy', () => {
@@ -328,30 +329,22 @@ test('output never names a tier below the declared tier or the floor', () => {
   });
 });
 
-test('a version-only JSON change is a light class; any other key makes it code', () => {
+test('a JSON change is data: it never counts, version bump or not', () => {
   const pkg = (version, extra = {}) => JSON.stringify({ name: 'x', version, dependencies: { a: '1' }, ...extra }, null, 2) + '\n';
-  // 100 code lines already use the whole allowance; the version bump must not count against it.
-  scenario({ 'package.json': pkg('1.0.0'), 'src/a.mjs': lines(30) }, { 'package.json': pkg('1.0.1'), 'src/a.mjs': lines(30) + lines(100, 'new') }, [], (repo, head) => {
+  scenario({ 'package.json': pkg('1.0.0'), 'src/a.mjs': lines(30) }, { 'package.json': pkg('1.0.1', { dependencies: { a: '2', b: '3' } }), 'src/a.mjs': lines(30) + lines(300, 'new') }, [], (repo, head) => {
     assert.equal(run(repo, 1, head).out, 'ok light');
-  });
-  scenario({ 'package.json': pkg('1.0.0') }, { 'package.json': pkg('1.0.1') }, [], (repo, head) => {
-    assert.equal(run(repo, 1, head).out, 'ok light');
-  });
-  // version plus another key changed: it is code, counted by lines (2 + 4 here), so with 100 more code lines it raises
-  scenario({ 'package.json': pkg('1.0.0'), 'src/a.mjs': lines(30) }, { 'package.json': pkg('1.0.1', { dependencies: { a: '2', b: '3' } }), 'src/a.mjs': lines(30) + lines(100, 'new') }, [], (repo, head) => {
-    assert.match(run(repo, 1, head).out, RAISE('light', 'standard', 'src/a.mjs'));
   });
 });
 
-test('a binary change raises to standard', () => {
+test('a media file change never raises', () => {
   const bin = (b) => Buffer.from([0, 1, 2, b, 0, 0, 255]);
   scenario({ 'img/a.png': bin(1) }, { 'img/a.png': bin(9) }, [], (repo, head) => {
-    assert.match(run(repo, 1, head).out, RAISE('light', 'standard', 'img/a.png'));
+    assert.equal(run(repo, 1, head).out, 'ok light');
   });
 });
 
 test('a deleted file counts its removed lines', () => {
-  scenario({ 'src/a.mjs': lines(125) }, { 'src/a.mjs': null }, [], (repo, head) => {
+  scenario({ 'src/a.mjs': lines(325) }, { 'src/a.mjs': null }, [], (repo, head) => {
     assert.match(run(repo, 1, head).out, RAISE('light', 'standard', 'src/a.mjs'));
   });
   scenario({ 'src/a.mjs': lines(5) }, { 'src/a.mjs': null }, [], (repo, head) => {
@@ -419,26 +412,12 @@ test('a path with a newline still matches a sensitive glob', () => {
   });
 });
 
-test('a JSON key reorder is code, even with a version bump; a reformat without a version change is not version-only', () => {
-  const exportsA = { '.': { import: './a.mjs', require: './a.cjs' } };
-  const exportsB = { '.': { require: './a.cjs', import: './a.mjs' } };
-  const pkg = (version, exports) => JSON.stringify({ name: 'x', version, exports }, null, 2) + '\n';
-  // the reorder is 2 + 2 lines of code; with 100 more code lines it is over the allowance
-  scenario({ 'package.json': pkg('1.0.0', exportsA), 'src/a.mjs': lines(30) }, { 'package.json': pkg('1.0.1', exportsB), 'src/a.mjs': lines(30) + lines(100, 'new') }, [], (repo, head) => {
-    assert.match(run(repo, 1, head).out, RAISE('light', 'standard', 'src/a.mjs'));
-  });
-  // a whitespace-only reformat (no version change) over 100 lines is code, not a version bump
-  const wide = { name: 'x', version: '1.0.0', list: Array.from({ length: 60 }, (_, i) => `v${i}`) };
-  scenario({ 'package.json': JSON.stringify(wide, null, 2) + '\n' }, { 'package.json': JSON.stringify(wide, null, 4) + '\n' }, [], (repo, head) => {
-    assert.match(run(repo, 1, head).out, RAISE('light', 'standard', 'package.json'));
-  });
-});
 
 test('files git treats as binary through .git/info/attributes still count their lines toward heavy', () => {
   const repo = makeRepo({ 'src/a.mjs': lines(5) });
   try {
     writeFileSync(join(repo.dir, '.git', 'info', 'attributes'), '*.mjs -diff\n');
-    const head = repo.change({ 'src/a.mjs': lines(301, 'new') });
+    const head = repo.change({ 'src/a.mjs': lines(1001, 'new') });
     assert.match(run(repo, 4, head).out, RAISE('standard', 'heavy', 'src/a.mjs'));
     assert.match(run(repo, 1, head).out, RAISE('light', 'heavy', 'src/a.mjs'));
   } finally {
@@ -446,13 +425,8 @@ test('files git treats as binary through .git/info/attributes still count their 
   }
 });
 
-// ---- fix round 2 ----
-
-// The only seam that breaks the line count and nothing else: the script counts a binary change in a temp dir, and
-// TMPDIR points at a directory that does not exist, so the count cannot be obtained.
-test('a binary change whose lines cannot be counted fails strict: raise to heavy, naming the path', () => {
+test('a binary code change whose lines cannot be counted fails strict: raise to heavy, naming the path', () => {
   const missingTmp = join(tmpdir(), 'tier-check-no-such-dir', 'x');
-  const bin = (b) => Buffer.from([0, 1, 2, b, 0, 0, 255]);
   const forced = makeRepo({ 'src/a.mjs': lines(5) });
   try {
     writeFileSync(join(forced.dir, '.git', 'info', 'attributes'), '*.mjs -diff\n');
@@ -464,52 +438,41 @@ test('a binary change whose lines cannot be counted fails strict: raise to heavy
   } finally {
     forced.cleanup();
   }
-  scenario({ 'img/a.png': bin(1) }, { 'img/a.png': bin(9) }, [], (repo, head) => {
-    const r = runWithEnv(repo, { TMPDIR: missingTmp }, 1, head);
-    assert.match(r.out, /^raise light heavy: uncountable binary diff: img\/a\.png$/);
-  });
 });
-
-// ---- fix round 3 ----
 
 test('a code file with a NUL byte counts its newlines toward heavy; known media types do not', () => {
   const withNul = (text) => Buffer.concat([Buffer.from([0]), Buffer.from(text)]);
-  scenario({ 'src/a.mjs': withNul(lines(5)) }, { 'src/a.mjs': withNul(lines(301, 'new')) }, [], (repo, head) => {
+  scenario({ 'src/a.mjs': withNul(lines(5)) }, { 'src/a.mjs': withNul(lines(1001, 'new')) }, [], (repo, head) => {
     assert.match(run(repo, 4, head).out, RAISE('standard', 'heavy', 'src/a.mjs'));
-    assert.match(run(repo, 1, head).out, RAISE('light', 'heavy', 'src/a.mjs'));
   });
-  // the over-count stays under the limit for a small NUL-bearing change: it only raises to standard
   scenario({ 'src/a.mjs': withNul(lines(5)) }, { 'src/a.mjs': withNul(lines(6, 'new')) }, [], (repo, head) => {
-    assert.match(run(repo, 1, head).out, /^raise light standard: binary change: src\/a\.mjs$/);
+    assert.equal(run(repo, 1, head).out, 'ok light');
   });
-  // a media file keeps 0 lines whatever its bytes, in any letter case
   for (const path of ['img/a.png', 'img/B.PNG', 'doc/c.Pdf', 'fonts/d.woff2', 'pack/e.zip']) {
-    scenario({ [path]: withNul(lines(5)) }, { [path]: withNul(lines(400, 'new')) }, [], (repo, head) => {
-      assert.match(run(repo, 1, head).out, new RegExp(`^raise light standard: binary change: ${path.replace('.', '\\.')}$`), path);
+    scenario({ [path]: withNul(lines(5)) }, { [path]: withNul(lines(4000, 'new')) }, [], (repo, head) => {
+      assert.equal(run(repo, 1, head).out, 'ok light', path);
     });
   }
 });
 
-test('a created or deleted binary file is countable: the missing side is empty, not a failure', () => {
+test('a created or deleted media file never raises', () => {
   const bin = Buffer.from([0, 1, 2, 3, 0, 0, 255]);
   scenario({ 'keep.txt': 'k\n' }, { 'img/a.png': bin }, [], (repo, head) => {
-    assert.match(run(repo, 1, head).out, /^raise light standard: binary change: img\/a\.png$/);
+    assert.equal(run(repo, 1, head).out, 'ok light');
   });
   scenario({ 'img/a.png': bin }, { 'img/a.png': null }, [], (repo, head) => {
-    assert.match(run(repo, 1, head).out, /^raise light standard: binary change: img\/a\.png$/);
+    assert.equal(run(repo, 1, head).out, 'ok light');
   });
 });
 
-// ---- non-test lines (plan roles-calibration-and-lean-review, T2) ----
-
 test('test lines do not count toward the heavy limit', () => {
-  scenario({ 'src/a.mjs': lines(5), 'test/a.test.mjs': '' }, { 'src/a.mjs': lines(15), 'test/a.test.mjs': lines(400) }, [], (repo, head) => {
+  scenario({ 'src/a.mjs': lines(5), 'test/a.test.mjs': '' }, { 'src/a.mjs': lines(15), 'test/a.test.mjs': lines(1400) }, [], (repo, head) => {
     assert.equal(run(repo, 4, head).out, 'ok standard');
   });
 });
 
-test('non-test lines over 300 still raise to heavy', () => {
-  scenario({ 'src/a.mjs': '' }, { 'src/a.mjs': lines(310) }, [], (repo, head) => {
+test('non-test code lines over 1000 still raise to heavy', () => {
+  scenario({ 'src/a.mjs': '' }, { 'src/a.mjs': lines(1010) }, [], (repo, head) => {
     assert.match(run(repo, 4, head).out, RAISE('standard', 'heavy', 'src/a.mjs'));
   });
 });
@@ -520,22 +483,22 @@ test('a new test file alone keeps a light task light', () => {
   });
 });
 
-test('a new src file raises light to standard', () => {
-  scenario({ 'keep.txt': 'k\n' }, { 'src/new.mjs': lines(30) }, [], (repo, head) => {
+test('a new src file over the allowance raises light to standard', () => {
+  scenario({ 'keep.txt': 'k\n' }, { 'src/new.mjs': lines(330) }, [], (repo, head) => {
     const r = run(repo, 1, head);
     assert.match(r.out, RAISE('light', 'standard', 'src/new.mjs'));
-    assert.match(r.out, /creates a file/);
+    assert.match(r.out, /330 code lines \(over 300\)/);
   });
 });
 
-test('light allows 100 src lines, raises at 101', () => {
-  scenario({ 'src/a.mjs': lines(30) }, { 'src/a.mjs': lines(30) + lines(60, 'new') }, [], (repo, head) => {
+test('light allows 300 src lines, raises past it', () => {
+  scenario({ 'src/a.mjs': lines(30) }, { 'src/a.mjs': lines(30) + lines(200, 'new') }, [], (repo, head) => {
     assert.equal(run(repo, 1, head).out, 'ok light');
   });
-  scenario({ 'src/a.mjs': lines(30) }, { 'src/a.mjs': lines(30) + lines(120, 'new') }, [], (repo, head) => {
+  scenario({ 'src/a.mjs': lines(30) }, { 'src/a.mjs': lines(30) + lines(320, 'new') }, [], (repo, head) => {
     const r = run(repo, 1, head);
     assert.match(r.out, RAISE('light', 'standard', 'src/a.mjs'));
-    assert.match(r.out, /over 100/);
+    assert.match(r.out, /over 300/);
   });
 });
 
@@ -546,13 +509,13 @@ test('a test file under a sensitive path raises to heavy', () => {
   });
 });
 
-test('a test-only fix round stays light', () => {
+test('a test-only fix round stays light, and so does a small code fix', () => {
   const base = { 'src/a.mjs': lines(30), 'test/a.test.mjs': lines(10) };
   scenario(base, { 'test/a.test.mjs': lines(10) + lines(8, 'case') }, [], (repo, head) => {
     assert.equal(run(repo, 1, head, '--fix-round').out, 'ok light');
   });
   scenario(base, { 'test/a.test.mjs': lines(10) + lines(8, 'case'), 'src/a.mjs': lines(30) + lines(2, 'fn') }, [], (repo, head) => {
-    assert.match(run(repo, 1, head, '--fix-round').out, RAISE('light', 'standard', 'src/a.mjs'));
+    assert.equal(run(repo, 1, head, '--fix-round').out, 'ok light');
   });
 });
 
@@ -560,7 +523,7 @@ test("the plan's **Test paths:** line adds test globs", () => {
   const repo = makeRepo({ 'spec/a.js': '', 'src/a.mjs': lines(3) });
   try {
     writeFileSync(repo.plan, PLAN.replace('**Sensitive paths:**', '**Test paths:** `spec/**`\n\n**Sensitive paths:**'));
-    const head = repo.change({ 'spec/a.js': lines(400) });
+    const head = repo.change({ 'spec/a.js': lines(1400) });
     assert.equal(run(repo, 4, head).out, 'ok standard');
     // the same diff is heavy without the plan's line
     writeFileSync(repo.plan, PLAN);
@@ -570,14 +533,18 @@ test("the plan's **Test paths:** line adds test globs", () => {
   }
 });
 
-test('the default test globs cover test dirs and .test./.spec. files, and no other path', () => {
-  for (const path of ['test/a.mjs', 'pkg/tests/a.py', 'src/__tests__/a.js', 'src/a.test.ts', 'src/a.spec.js']) {
-    scenario({ 'keep.txt': 'k\n' }, { [path]: lines(400) }, [], (repo, head) => {
+test('the default test globs cover test dirs, .test./.spec. files, evals, fixtures and datasets, and no other path', () => {
+  for (const path of [
+    'test/a.mjs', 'pkg/tests/a.py', 'src/__tests__/a.js', 'src/a.test.ts', 'src/a.spec.js',
+    'evals/delegation.eval.ts', 'evals/cases/r1.mjs', 'src/scoring.eval.mjs', 'test-data/fixtures/a.mjs', 'datasets/a.py',
+  ]) {
+    scenario({ 'keep.txt': 'k\n' }, { [path]: lines(1400) }, [], (repo, head) => {
       assert.equal(run(repo, 4, head).out, 'ok standard', path);
+      assert.equal(run(repo, 1, head).out, 'ok light', path);
     });
   }
-  for (const path of ['src/contest/a.mjs', 'src/a.tests.mjs', 'src/latest.mjs']) {
-    scenario({ 'keep.txt': 'k\n' }, { [path]: lines(400) }, [], (repo, head) => {
+  for (const path of ['src/contest/a.mjs', 'src/a.tests.mjs', 'src/latest.mjs', 'src/evaluate.mjs']) {
+    scenario({ 'keep.txt': 'k\n' }, { [path]: lines(1400) }, [], (repo, head) => {
       assert.match(run(repo, 4, head).out, RAISE('standard', 'heavy', path), path);
     });
   }

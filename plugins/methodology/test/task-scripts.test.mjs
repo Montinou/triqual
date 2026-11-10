@@ -313,7 +313,7 @@ test('task-prep: first round runs review move, tier-check and the package', () =
 
 test('task-prep: a raise retiers and writes the Tier raised line', () => withRig({}, (r) => {
   const o = open(r, 1);
-  const big = r.commit('src/big.js', Array.from({ length: 301 }, (_, i) => `export const v${i} = ${i};`).join('\n') + '\n');
+  const big = r.commit('src/big.js', Array.from({ length: 1001 }, (_, i) => `export const v${i} = ${i};`).join('\n') + '\n');
   const res = ok(r.run('task-prep', r.plan, '1'));
   const got = out(res);
   assert.equal(got.tier, 'heavy');
@@ -322,8 +322,8 @@ test('task-prep: a raise retiers and writes the Tier raised line', () => withRig
   assert.ok(existsSync(got.package));
   assert.equal(r.taskState(1).effectiveTier, 'heavy');
   const raised = r.ledger().filter((l) => l.startsWith('Tier raised:'));
-  assert.deepEqual(raised, ['Tier raised: T1 standard → heavy — 301 changed lines (over 300): src/big.js']);
-  assert.ok(r.calls().includes(`tasks retier T1 heavy --reason 301 changed lines (over 300): src/big.js --plan ${r.plan}`));
+  assert.deepEqual(raised, ['Tier raised: T1 standard → heavy — 1001 code lines (over 1000): src/big.js']);
+  assert.ok(r.calls().includes(`tasks retier T1 heavy --reason 1001 code lines (over 1000): src/big.js --plan ${r.plan}`));
   assert.deepEqual(r.ledger().filter((l) => l.startsWith('Prep:')), [`Prep: T1 r1 ${big}`]);
   assert.equal(o.base, r.git('rev-parse', `${big}~1`).trim());
 
@@ -345,9 +345,9 @@ test('task-prep: without tracking the floor is the last Tier or Tier raised line
   assert.deepEqual(r.calls().filter((c) => !c.startsWith('tasks paths')), []);
 
   r.seedLedger(`BASE: T1 ${base}`);
-  r.commit('src/big.js', Array.from({ length: 301 }, (_, i) => `export const v${i} = ${i};`).join('\n') + '\n');
+  r.commit('src/big.js', Array.from({ length: 1001 }, (_, i) => `export const v${i} = ${i};`).join('\n') + '\n');
   assert.equal(out(ok(r.run('task-prep', r.plan, '1'))).tier, 'heavy');
-  assert.ok(r.ledger().includes('Tier raised: T1 standard → heavy — 302 changed lines (over 300): src/a.js, src/big.js'));
+  assert.ok(r.ledger().includes('Tier raised: T1 standard → heavy — 1002 code lines (over 1000): src/a.js, src/big.js'));
   assert.deepEqual(r.calls().filter((c) => !c.startsWith('tasks paths')), [], 'a retier without tracking');
 }));
 
@@ -375,10 +375,10 @@ const lines = (count, tag) => Array.from({ length: count }, (_, i) => `export co
 const raisedLines = (r) => r.ledger().filter((l) => l.startsWith('Tier raised:'));
 const prepLines = (r) => r.ledger().filter((l) => l.startsWith('Prep:'));
 
-test('task-prep --fix-round: a fix that pushes the task past 300 lines raises it and calls for the full review of BASE..head', () => withRig({}, (r) => {
+test('task-prep --fix-round: a fix that pushes the task past 1000 code lines raises it and calls for the full review of BASE..head', () => withRig({}, (r) => {
   const { o, head: first } = firstRound(r, 1); // T1 is standard; firstRound commits 1 line
-  const mid = r.commit('src/mid.js', lines(290, 'm'));
-  ok(r.run('task-prep', r.plan, '1', '--fix-round')); // round 2: 290 lines, still standard
+  const mid = r.commit('src/mid.js', lines(990, 'm'));
+  ok(r.run('task-prep', r.plan, '1', '--fix-round')); // round 2: 990 lines, still standard
   assert.equal(r.taskState(1).effectiveTier ?? 'standard', 'standard');
   const fix = r.commit('src/more.js', lines(20, 'x'), 'fixup! edit');
   r.clearCalls();
@@ -393,8 +393,8 @@ test('task-prep --fix-round: a fix that pushes the task past 300 lines raises it
   assert.match(readFileSync(got.package, 'utf8'), new RegExp(`^# Review package: ${o.base}\\.\\.${fix}`));
   assert.equal(r.taskState(1).effectiveTier, 'heavy');
   assert.equal(raisedLines(r).length, 1);
-  assert.match(raisedLines(r)[0], /^Tier raised: T1 standard → heavy — 311 changed lines \(over 300\)/);
-  assert.ok(r.calls().some((c) => c.startsWith('tasks retier T1 heavy --reason 311 changed lines')));
+  assert.match(raisedLines(r)[0], /^Tier raised: T1 standard → heavy — 1011 code lines \(over 1000\)/);
+  assert.ok(r.calls().some((c) => c.startsWith('tasks retier T1 heavy --reason 1011 code lines')));
   assert.deepEqual(prepLines(r), [`Prep: T1 r1 ${first}`, `Prep: T1 r2 ${mid}`, `Prep: T1 r3 ${fix}`]);
 
   // A rerun at the same head prints the same and adds no second Prep or Tier raised line.
@@ -408,10 +408,10 @@ test('task-prep --fix-round: a fix that pushes the task past 300 lines raises it
   assert.equal(prepLines(r).length, 3);
 }));
 
-test('task-prep --fix-round: a fix of over 300 lines raises the task and calls for the full review', () => withRig({}, (r) => {
+test('task-prep --fix-round: a fix of over 1000 code lines raises the task and calls for the full review', () => withRig({}, (r) => {
   firstRound(r, 6);
-  // 301 changed lines in one fix commit: the round check alone raises it, and so does the cumulative one.
-  const fix = r.commit('src/big.js', lines(301, 'b'), 'fixup! edit');
+  // 1001 code lines in one fix commit: the round check alone raises it, and so does the cumulative one.
+  const fix = r.commit('src/big.js', lines(1001, 'b'), 'fixup! edit');
   const got = out(ok(r.run('task-prep', r.plan, '6', '--fix-round')));
   assert.equal(got.tier, 'heavy');
   assert.equal(got['full-review'], 'yes');
@@ -447,7 +447,7 @@ test('task-prep: a plain call after a fix round reuses the round at the same hea
 
 test('task-prep: the Tier raised line is written before the retier, and a rerun does not write it twice', () => withRig({}, (r) => {
   open(r, 1);
-  r.commit('src/big.js', lines(301, 'b'));
+  r.commit('src/big.js', lines(1001, 'b'));
   r.failMove('retier');
   const failed = r.run('task-prep', r.plan, '1');
   assert.notEqual(failed.status, 0);

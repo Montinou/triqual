@@ -226,7 +226,8 @@ test('## Task Tiers carries the three-tier rubric and its rules', () => {
   for (const phrase of [
     'the default',
     'docs, comments, config values, version bumps, renames with no behavior change',
-    'within the light code allowance (at most 100 non-test added+removed lines in total, no new non-test file, no prompt-like Markdown, no sensitive path)',
+    'within the light code allowance (at most 300 non-test code lines added+removed in total, no prompt-like Markdown, no sensitive path)',
+    'a task whose code is only evals is light',
   ]) {
     assert.ok(bullet('light').includes(phrase), `the light bullet lacks "${phrase}"`);
   }
@@ -245,7 +246,7 @@ test('## Task Tiers carries the three-tier rubric and its rules', () => {
 test('the plan self-review and audit check tiers', () => {
   const item = section(PLANS, '## Self-Review').find((line) => line.startsWith('**7. Tiers:**'));
   assert.ok(item, 'the plan Self-Review has no **7. Tiers:** item');
-  assert.match(item, /more than 80% of (?:its|the plan's) tasks[^.]*`heavy`[^.]*at least 5 tasks/, 'item 7 does not re-check a mostly heavy plan');
+  assert.match(item, /more than 50% of (?:its|the plan's) tasks[^.]*`heavy`[^.]*at least 5 tasks/, 'item 7 does not re-check a mostly heavy plan');
   assert.match(section(PLANS, '## Plan Audit').join(' '), /tier/i, 'the Plan Audit does not mention tiers');
 });
 
@@ -275,7 +276,8 @@ test('sensitive paths make a task heavy, on top of the default set, and a big di
   const rule = tiers.find((line) => line.includes('touches a sensitive path'));
   assert.ok(rule, '## Task Tiers does not say that touching a sensitive path makes a task heavy');
   assert.match(rule, /heavy/);
-  assert.match(rule, /300 changed lines/, 'the sensitive-path sentence does not state the 300 changed lines rule');
+  assert.match(rule, /1000 code lines/, 'the sensitive-path sentence does not state the 1000 code lines rule');
+  assert.match(rule, /`\*\*\/evals\/\*\*`/, 'the default test paths do not include evals');
   for (const glob of defaults) assert.ok(rule.includes(`\`${glob}\``), `the sensitive-path sentence lacks the default glob ${glob}`);
   const item = section(PLANS, '## Self-Review').find((line) => line.startsWith('**7. Tiers:**'));
   assert.match(item, /touches a sensitive path/, 'Self-Review item 7 does not check a sensitive path for heavy');
@@ -394,7 +396,7 @@ const executingRubric = () => executingPlans().split('\n').find((line) => line.s
 test('both rubrics name light as the default and complex-implementer as heavy', () => {
   const texts = { 'writing-plans': section(PLANS, '## Task Tiers').join('\n'), 'executing-plans': executingRubric() };
   for (const [name, text] of Object.entries(texts)) {
-    for (const phrase of ['light is the default', '`roles:complex-implementer`', 'only with a one-line reason', 'at most 100 non-test', '`**Test paths:**`']) {
+    for (const phrase of ['light is the default', '`roles:complex-implementer`', 'only with a one-line reason', 'at most 300 non-test', '`**Test paths:**`']) {
       assert.ok(text.includes(phrase), `the ${name} rubric lacks "${phrase}"`);
     }
     assert.ok(!text.includes('at most 20'), `the ${name} rubric still says "at most 20"`);
@@ -404,10 +406,10 @@ test('both rubrics name light as the default and complex-implementer as heavy', 
 
 test('the tier-check rules paragraph states the non-test numbers and the test-path rules', () => {
   const para = executingPlans().split('\n').find((line) => line.startsWith('- **`tier-check`**')) ?? '';
-  for (const phrase of ['300 non-test lines', 'at most 100 non-test lines', '`**/test/**`', '`**/*.spec.*`', '`**Test paths:**`', 'a sensitive path always wins over a test path', 'a new test file alone stays light', '`--fix-round`']) {
+  for (const phrase of ['1000 code lines', 'at most 300 non-test code lines', '`**/test/**`', '`**/*.spec.*`', '`**/evals/**`', '`**Test paths:**`', 'a sensitive path always wins over a test path', 'a new test file alone stays light', '`--fix-round`']) {
     assert.ok(para.includes(phrase), `the tier-check paragraph lacks "${phrase}"`);
   }
-  for (const stale of ['at most 20', 'test lines count', 'a new test file is a raise']) assert.ok(!para.includes(stale), `the tier-check paragraph still says "${stale}"`);
+  for (const stale of ['at most 20', 'test lines count', 'a new test file is a raise', 'fix round adds code', 'Lockfiles are never light']) assert.ok(!para.includes(stale), `the tier-check paragraph still says "${stale}"`);
 });
 
 test('the header template carries the optional Test paths line and Self-Review 7 checks a default-light heavy trigger', () => {

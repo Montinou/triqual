@@ -433,10 +433,10 @@ test('tier-check runs before the review and again on every fix round, and a rais
   assert.ok(text.includes("`tier-check` runs again on each round's `FIX_BASE..HEAD` and on the cumulative `BASE..HEAD`"));
 });
 
-test('a fix round passes --fix-round on its FIX_BASE..HEAD check, so code added by a fix raises a light task', () => {
+test('a fix round passes --fix-round on its FIX_BASE..HEAD check, judged by the same rules as a first build', () => {
   const text = flat(skill());
   assert.ok(text.includes("`node scripts/tier-check PLAN_FILE N FIX_BASE HEAD --floor <tier> --fix-round`"));
-  assert.ok(text.includes('`--fix-round`: with a light floor, any change outside the light classes raises to standard'));
+  assert.ok(text.includes('`--fix-round`: the round is judged by the same rules as a first build, so a fix within the light code allowance keeps a light task light'));
   assert.ok(text.includes('the cumulative `BASE..HEAD` check never carries it'));
   assert.ok(text.includes('the re-review follows the higher tier'));
 });
@@ -2349,7 +2349,7 @@ test('the 1.4.0 CHANGELOG entry and the orchestrator prompt carry the parallel r
   for (const line of ['Parallel tasks', 'At most 3 implementers', '`task-open --worktree`', 'plan order', 'landing conflict', 'TRIQUAL_LANDING_TEST_TIMEOUT_MS']) {
     assert.ok(entry.includes(line), `the 1.4.0 CHANGELOG entry lacks: ${line}`);
   }
-  assert.equal(JSON.parse(readFileSync(join(PLUGIN, '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.8.0');
+  assert.equal(JSON.parse(readFileSync(join(PLUGIN, '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.9.0');
   assert.ok(PROMPT().includes('## Parallel Tasks'), 'the orchestrator prompt has no Parallel Tasks section');
 });
 

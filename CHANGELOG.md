@@ -3,6 +3,12 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## progress-tracking 0.9.1 / methodology 1.9.0
+
+- methodology: looser review tiers. `tier-check` raises to heavy only for a sensitive path or more than 1000 code lines (was 300 changed lines), and from light to standard only for prompt-like Markdown or more than 300 code lines (was 100). Code lines leave out tests, Markdown, lockfiles, data files (`.json`, `.jsonl`, `.ndjson`, `.csv`, `.tsv`, `.txt`) and media. A new file, a lockfile or a binary change no longer raises by itself, and a fix round follows the same rules as a first build. Evals, fixtures and datasets (`**/evals/**`, `**/*.eval.*`, `**/fixtures/**`, `**/datasets/**`) are default test paths, so an eval task stays light. `writing-plans` tiers by what a task touches, not its size.
+- progress-tracking: the heavy-tier warning at plan registration fires above 50% heavy (was 80%).
+- Update the plugins and run `triqual sync --yes`, then reload plugins or start a new session.
+
 ## progress-tracking 0.9.0 / methodology 1.8.0 / roles 0.8.0
 
 - progress-tracking: `triqual plan generate` and `triqual plan check-collisions` (with `--diff`, which lists the old path of a renamed file); `write plan --all` registers every plan of a directory in one call and refuses an already registered plan up front; the plan reader reads each task's `Create`, `Modify` and `Test` files, the `Parent` and `Validate` phase fields, the `Landing test` header and `Depends on: none`; `tracking add` records external commits; tracking resolves from `TRIQUAL_TRACKING_ROOT`.

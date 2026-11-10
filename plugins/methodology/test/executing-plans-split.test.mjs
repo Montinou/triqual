@@ -21,8 +21,10 @@ const MAX_BYTES = 87040;
 // hashes follow that text.
 // `ledger-vocabulary` and `parallel-tasks` were edited on 2026-11-03 (initiative-native-support T33): the validation and
 // phase-fix ledger lines, and the Landing test sentence, so their hashes follow that text.
+// `setup` was edited on 2026-11-10 (looser review tiers): the tier rubric's light allowance, standard reasons, the
+// 1000-line heavy limit and the eval, fixture and dataset test paths, so its hash follows that text.
 const REFERENCES = [
-  ['setup', '## Setup', '1b99234fecba023f0dd0da96d207e8cf8d946f47b37107a33b879cc2194ce7bb'],
+  ['setup', '## Setup', 'c66bac7a9f74a5192843fa1056e2a2704d5199f3d6f2aaffb435334f1dd0b0a0'],
   ['records', '## Records', '02b8991659b3c27db3e207b8d15f1160a6963b22ee9feac7ce48fbb3d5dad778'],
   ['ledger-vocabulary', '## Ledger vocabulary', '96fa32a4663c80a4ba996549d9a229c60f2646f8c4ddeebcd7d5339b3c909224'],
   ['worktrees', '## Worktrees', 'e45e1f51e4aafb1e43441712df14b8c4980a3382fae9c3b3ce201f4d1c416f05'],

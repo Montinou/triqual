@@ -274,7 +274,7 @@ function checkRegistration(tasks) {
 
 // The heavy-tier warning at registration: a plan of at least HEAVY_WARN_MIN_TASKS tasks with more than
 // HEAVY_WARN_SHARE of them declared heavy. It is advice only: the exit code and the ledger stay as they are.
-const HEAVY_WARN_SHARE = 0.8;
+const HEAVY_WARN_SHARE = 0.5;
 const HEAVY_WARN_MIN_TASKS = 5;
 
 // The warning line for a plan about to be registered, or null.
