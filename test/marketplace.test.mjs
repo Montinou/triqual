@@ -154,9 +154,9 @@ test('plugin versions are the ones this release ships', () => {
     .filter((p) => !isExternal(p)).map((p) => [p.name, p.version]));
   assert.deepEqual(versions, {
     'progress-tracking': '0.9.1',
-    'workflow-gate': '0.3.3',
+    'workflow-gate': '0.4.0',
     roles: '0.8.0',
-    methodology: '1.9.0',
+    methodology: '1.9.1',
     'memory-report': '0.5.0',
   });
   assert.equal(readJson('plugins/methodology-codex/.codex-plugin/plugin.json').version, '0.2.0');
@@ -201,7 +201,7 @@ test('workflow-gate\'s descriptions name the Workflow cap and the Agent and Task
   const entry = readJson('.claude-plugin/marketplace.json').plugins.find((p) => p.name === 'workflow-gate');
   const manifest = readJson('plugins/workflow-gate/.claude-plugin/plugin.json');
   for (const description of [entry.description, manifest.description]) {
-    for (const word of [/Workflow script/, /fable 3, opus 8, sonnet 12, haiku unlimited/, /Agent/, /Task/, /120 s/]) {
+    for (const word of [/Workflow script/, /fable 4, opus 10, sonnet 15, haiku unlimited/, /Agent/, /Task/, /120 s/]) {
       assert.match(description, word, description);
     }
   }

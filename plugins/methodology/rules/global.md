@@ -93,7 +93,7 @@ Do not use `general-purpose` for these roles; pick the matching agent type above
 ### Workflow Fan-out Caps
 
 A `PreToolUse(Workflow)` hook, shipped in the `workflow-gate` plugin, caps the
-agents a workflow script launches **per model**: Fable 3, Opus 8, Sonnet 12,
+agents a workflow script launches **per model**: Fable 4, Opus 10, Sonnet 15,
 Haiku unlimited (env `WORKFLOW_MAX_FABLE` / `_OPUS` / `_SONNET` override). It
 exists because one uncapped `findings × 3 refuters` stage spawned 92 Fable
 agents and burned the session limit. The "Dynamic workflow size" setting is
