@@ -342,11 +342,11 @@ function runHook(input, stateHome, env = {}) {
   return r.stdout === '' ? null : JSON.parse(r.stdout).hookSpecificOutput;
 }
 
-test('the hook denies the 9th Opus start from the fixture and prints a PreToolUse deny', () => {
+test('the hook denies the 11th Opus start from the fixture and prints a PreToolUse deny', () => {
   const home = tempDir();
   try {
     const input = fixture('agent-pretooluse-opus.json');
-    for (let i = 0; i < 8; i++) assert.equal(runHook(input, home), null);
+    for (let i = 0; i < 10; i++) assert.equal(runHook(input, home), null);
     const out = runHook(input, home);
     assert.equal(out.hookEventName, 'PreToolUse');
     assert.equal(out.permissionDecision, 'deny');
@@ -355,7 +355,7 @@ test('the hook denies the 9th Opus start from the fixture and prints a PreToolUs
     // The state lives under <XDG_STATE_HOME>/triqual/workflow-gate/<session_id>.json.
     const state = JSON.parse(readFileSync(join(home, 'triqual', 'workflow-gate', 'fixture-session.json'), 'utf8'));
     assert.equal(state.v, 1);
-    assert.equal(state.starts.length, 8);
+    assert.equal(state.starts.length, 10);
     assert.ok(state.starts.every((s) => s.model === 'opus' && Number.isFinite(s.at)));
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -366,7 +366,7 @@ test('the hook maps roles through the real ROLE_MODELS and lets Haiku through', 
   const home = tempDir();
   try {
     const sonnet = fixture('agent-pretooluse.json'); // roles:tdd-implementer with model sonnet
-    for (let i = 0; i < 12; i++) assert.equal(runHook(sonnet, home), null);
+    for (let i = 0; i < 15; i++) assert.equal(runHook(sonnet, home), null);
     assert.equal(runHook(sonnet, home).permissionDecision, 'deny');
     const hunter = { ...sonnet, tool_input: { subagent_type: 'roles:hunter' } };
     for (let i = 0; i < 20; i++) assert.equal(runHook(hunter, home), null);
@@ -379,7 +379,7 @@ test('the hook counts roles:spec-reviewer as an opus start through the real ROLE
   const home = tempDir();
   try {
     const reviewer = { ...fixture('agent-pretooluse.json'), tool_input: { subagent_type: 'roles:spec-reviewer' } };
-    for (let i = 0; i < 8; i++) assert.equal(runHook(reviewer, home), null);
+    for (let i = 0; i < 10; i++) assert.equal(runHook(reviewer, home), null);
     const out = runHook(reviewer, home);
     assert.equal(out.permissionDecision, 'deny');
     assert.match(out.permissionDecisionReason, /opus/);
@@ -394,7 +394,7 @@ test('the hook counts roles:phase-orchestrator as a sonnet start through the rea
   const home = tempDir();
   try {
     const orchestrator = { ...fixture('agent-pretooluse.json'), tool_input: { subagent_type: 'roles:phase-orchestrator' } };
-    for (let i = 0; i < 12; i++) assert.equal(runHook(orchestrator, home), null);
+    for (let i = 0; i < 15; i++) assert.equal(runHook(orchestrator, home), null);
     const out = runHook(orchestrator, home);
     assert.equal(out.permissionDecision, 'deny');
     assert.match(out.permissionDecisionReason, /sonnet/);
@@ -436,11 +436,11 @@ test('the hook allows silently on malformed stdin and on a non-agent tool', () =
   }
 });
 
-test('concurrent hooks lose no update: 9 simultaneous Opus starts give exactly 1 deny', async () => {
+test('concurrent hooks lose no update: 11 simultaneous Opus starts give exactly 1 deny', async () => {
   const home = tempDir();
   try {
     const input = JSON.stringify(fixture('agent-pretooluse-opus.json'));
-    const runs = Array.from({ length: 9 }, () => new Promise((resolve, reject) => {
+    const runs = Array.from({ length: 11 }, () => new Promise((resolve, reject) => {
       const child = spawn('node', [GATE, 'agent'], { env: { ...process.env, XDG_STATE_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'] });
       let stdout = '';
       let stderr = '';
@@ -455,7 +455,7 @@ test('concurrent hooks lose no update: 9 simultaneous Opus starts give exactly 1
     const denies = results.filter((r) => r.stdout !== '' && JSON.parse(r.stdout).hookSpecificOutput.permissionDecision === 'deny');
     assert.equal(denies.length, 1, results.map((r) => r.stdout).join('\n'));
     const state = JSON.parse(readFileSync(join(home, 'triqual', 'workflow-gate', 'fixture-session.json'), 'utf8'));
-    assert.equal(state.starts.length, 8);
+    assert.equal(state.starts.length, 10);
     // The lock is released: no lock dir is left behind.
     assert.deepEqual(readdirSync(join(home, 'triqual', 'workflow-gate')), ['fixture-session.json']);
   } finally {

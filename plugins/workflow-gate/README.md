@@ -18,9 +18,9 @@ Caps per script, per model:
 
 | Model | Cap | Override |
 |---|---|---|
-| Fable | 3 | `WORKFLOW_MAX_FABLE` |
-| Opus | 8 | `WORKFLOW_MAX_OPUS` |
-| Sonnet | 12 | `WORKFLOW_MAX_SONNET` |
+| Fable | 4 | `WORKFLOW_MAX_FABLE` |
+| Opus | 10 | `WORKFLOW_MAX_OPUS` |
+| Sonnet | 15 | `WORKFLOW_MAX_SONNET` |
 | Haiku | unlimited | none |
 
 An override must be a number of 0 or more (0 is valid and forbids that model). A value that is
@@ -111,7 +111,7 @@ started `cap` agents of that model within the last window:
 
 | Setting | Value | Override |
 |---|---|---|
-| Fable, Opus, Sonnet caps | 3, 8, 12, the same as the Workflow caps | `WORKFLOW_MAX_FABLE`, `WORKFLOW_MAX_OPUS`, `WORKFLOW_MAX_SONNET` |
+| Fable, Opus, Sonnet caps | 4, 10, 15, the same as the Workflow caps | `WORKFLOW_MAX_FABLE`, `WORKFLOW_MAX_OPUS`, `WORKFLOW_MAX_SONNET` |
 | Haiku | never denied | none |
 | Window | 120 s | `WORKFLOW_GATE_AGENT_WINDOW_S` (a number above 0; anything else is ignored) |
 | State directory | `$XDG_STATE_HOME/triqual/workflow-gate/`, else `~/.local/state/triqual/workflow-gate/` | none |
@@ -144,7 +144,7 @@ every start of that model.
 - A denial lists every problem found, each with its fix, then the caps in force and the
   role-to-model map.
 - An accepted script gets `permissionDecision: "allow"` with a one-line note, for example
-  `ok: 3 agent() call(s), opus 2/8, haiku unlimited, fan-outs bounded`.
+  `ok: 3 agent() call(s), opus 2/10, haiku unlimited, fan-outs bounded`.
 - Script source, in order: the inline `script`, then the file at `scriptPath` if it exists,
   then, for a `name`, the first of these that exists:
   1. `./.claude/workflows/<name>.js`

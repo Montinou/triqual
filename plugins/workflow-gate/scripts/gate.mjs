@@ -8,9 +8,9 @@
 //
 // The gate controls one thing: how many agents of each expensive model a
 // script may launch. Caps per model family (env overrides in parentheses):
-//   fable  3  (WORKFLOW_MAX_FABLE)
-//   opus   8  (WORKFLOW_MAX_OPUS)
-//   sonnet 12 (WORKFLOW_MAX_SONNET)
+//   fable  4  (WORKFLOW_MAX_FABLE)
+//   opus   10 (WORKFLOW_MAX_OPUS)
+//   sonnet 15 (WORKFLOW_MAX_SONNET)
 //   haiku  unlimited
 // To check that mechanically it needs:
 //   1. every agent() call to resolve to a model: a string `model:` or a
@@ -34,9 +34,9 @@ import { decideAgent, DEFAULT_WINDOW_S } from "./agent-gate.mjs";
 
 const capFrom = (name, dflt) => (Number(process.env[name]) >= 0 && process.env[name] !== undefined && process.env[name] !== "" ? Number(process.env[name]) : dflt);
 const CAPS = {
-  fable: capFrom("WORKFLOW_MAX_FABLE", 3),
-  opus: capFrom("WORKFLOW_MAX_OPUS", 8),
-  sonnet: capFrom("WORKFLOW_MAX_SONNET", 12),
+  fable: capFrom("WORKFLOW_MAX_FABLE", 4),
+  opus: capFrom("WORKFLOW_MAX_OPUS", 10),
+  sonnet: capFrom("WORKFLOW_MAX_SONNET", 15),
   haiku: Infinity,
 };
 const CAPPED = ["fable", "opus", "sonnet"];

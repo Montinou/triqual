@@ -3,6 +3,12 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## workflow-gate 0.4.0 / methodology 1.9.1
+
+- workflow-gate: higher caps per model, for Workflow scripts and for Agent/Task starts in the 120 s window: Fable 4 (was 3), Opus 10 (was 8), Sonnet 15 (was 12); Haiku stays unlimited. The `WORKFLOW_MAX_*` overrides are unchanged.
+- methodology: the global rules state the new caps.
+- Update the plugins and run `triqual sync --yes` so `~/.claude/CLAUDE.md` carries the new caps.
+
 ## progress-tracking 0.9.1 / methodology 1.9.0
 
 - methodology: looser review tiers. `tier-check` raises to heavy only for a sensitive path or more than 1000 code lines (was 300 changed lines), and from light to standard only for prompt-like Markdown or more than 300 code lines (was 100). Code lines leave out tests, Markdown, lockfiles, data files (`.json`, `.jsonl`, `.ndjson`, `.csv`, `.tsv`, `.txt`) and media. A new file, a lockfile or a binary change no longer raises by itself, and a fix round follows the same rules as a first build. Evals, fixtures and datasets (`**/evals/**`, `**/*.eval.*`, `**/fixtures/**`, `**/datasets/**`) are default test paths, so an eval task stays light. `writing-plans` tiers by what a task touches, not its size.

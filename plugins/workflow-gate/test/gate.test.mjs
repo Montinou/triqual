@@ -67,22 +67,22 @@ test('denies the old single-number MAX_AGENTS form with the per-model replacemen
   assertDeny(runGate(script('// MAX_AGENTS: 1\n' + NO_BUDGET)), /old single-number form.*opus=1/);
 });
 
-test('caps fable at 3', () => {
+test('caps fable at 4', () => {
   const s = (n) => `// MAX_AGENTS: fable=${n}\nawait agent("x", { model: "claude-fable-5-1" });\n`;
-  assertAllow(runGate(script(s(3))));
-  assertDeny(runGate(script(s(4))), 'fable=4, over the fable cap of 3');
+  assertAllow(runGate(script(s(4))));
+  assertDeny(runGate(script(s(5))), 'fable=5, over the fable cap of 4');
 });
 
-test('caps opus at 8', () => {
+test('caps opus at 10', () => {
   const s = (n) => `// MAX_AGENTS: opus=${n}\nawait agent("x", { agentType: "roles:final-adversarial-reviewer" });\n`;
-  assertAllow(runGate(script(s(8))));
-  assertDeny(runGate(script(s(9))), 'opus=9, over the opus cap of 8');
+  assertAllow(runGate(script(s(10))));
+  assertDeny(runGate(script(s(11))), 'opus=11, over the opus cap of 10');
 });
 
 test('phase-orchestrator is a sonnet role: it needs a sonnet budget and is capped with the sonnet agents', () => {
   const s = (n) => `// MAX_AGENTS: sonnet=${n}\nawait agent("x", { agentType: "roles:phase-orchestrator" });\n`;
   assertAllow(runGate(script(s(1))));
-  assertDeny(runGate(script(s(13))), 'sonnet=13, over the sonnet cap of 12');
+  assertDeny(runGate(script(s(16))), 'sonnet=16, over the sonnet cap of 15');
   assertDeny(runGate(script('await agent("x", { agentType: "roles:phase-orchestrator" });\n')), /no budget comment/);
   assertDeny(runGate(script('// MAX_AGENTS: sonnet=1\nawait agent("x", { agentType: "roles:phase-orchestrator" });\nawait agent("y", { agentType: "roles:tdd-implementer" });\n')), /declares sonnet=1 but the script has 2 sonnet agent\(\) call site/);
 });
@@ -90,14 +90,14 @@ test('phase-orchestrator is a sonnet role: it needs a sonnet budget and is cappe
 test('spec-reviewer is an opus role: it needs an opus budget and is capped with the opus agents', () => {
   const s = (n) => `// MAX_AGENTS: opus=${n}\nawait agent("x", { agentType: "roles:spec-reviewer" });\n`;
   assertAllow(runGate(script(s(1))));
-  assertDeny(runGate(script(s(9))), 'opus=9, over the opus cap of 8');
+  assertDeny(runGate(script(s(11))), 'opus=11, over the opus cap of 10');
   assertDeny(runGate(script('// MAX_AGENTS: sonnet=1\nawait agent("x", { agentType: "roles:spec-reviewer" });\n')), /launches opus agents \(1 call site\(s\)\) but MAX_AGENTS does not declare opus=N/);
 });
 
-test('caps sonnet at 12', () => {
+test('caps sonnet at 15', () => {
   const s = (n) => `// MAX_AGENTS: sonnet=${n}\nawait agent("x", { model: "sonnet" });\n`;
-  assertAllow(runGate(script(s(12))));
-  assertDeny(runGate(script(s(13))), 'sonnet=13, over the sonnet cap of 12');
+  assertAllow(runGate(script(s(15))));
+  assertDeny(runGate(script(s(16))), 'sonnet=16, over the sonnet cap of 15');
 });
 
 test('haiku is unlimited and needs no budget line', () => {
