@@ -2,7 +2,7 @@
 // Collects the numbers of a performance audit of the triqual plugins into one JSON file per dataset, read-only:
 // `node collect.mjs --out <dir> [--days 10] [--project triqual] [--hooks]`. Late window = the last --days UTC days
 // (today included); early window = the --days before it. Datasets (arrays of row objects, written to <out>/<name>.json):
-// cost_by_role, controller_sessions, latency, tier_by_day, hunter_yield, hooks (with --hooks). USD is an ESTIMATE at
+// cost_by_role, controller_sessions, latency, tier_by_day, escapes, hunter_yield, hooks (with --hooks). USD is an ESTIMATE at
 // cli/lib/prices.json. It prints counts and role names, never message content. Exit 0 done, 2 usage.
 import { readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -86,7 +86,17 @@ for (const file of files) {
 
 const write = (name, rows) => { mkdirSync(out, { recursive: true }); writeFileSync(join(out, `${name}.json`), `${JSON.stringify(rows, null, 1)}\n`); process.stdout.write(`${name}: ${rows.length} rows\n`); };
 
-write('cost_by_role', [...byRole.values()].map((r) => ({ period: r.period, role: r.role, model: r.model, usd: round(r.usd), runs: r.files.size, msgs: r.msgs, out_tokens: r.out_tokens, cache_read_m: round(r.cache_read_m, 1), usd_per_run: round(r.usd / r.files.size) })).filter((r) => r.usd >= 0.5).sort((a, b) => b.usd - a.usd));
+// Rows under $0.50 fold into one `other` row per period, so each period still totals what `triqual cost` reports.
+const costRows = [];
+const other = new Map();
+for (const r of byRole.values()) {
+  const row = { period: r.period, role: r.role, model: r.model, usd: r.usd, runs: r.files.size, msgs: r.msgs, out_tokens: r.out_tokens, cache_read_m: r.cache_read_m };
+  if (r.usd >= 0.5) { costRows.push(row); continue; }
+  const o = other.get(r.period) || { period: r.period, role: 'other (<$0.50)', model: 'mixed', usd: 0, runs: 0, msgs: 0, out_tokens: 0, cache_read_m: 0 };
+  for (const k of ['usd', 'runs', 'msgs', 'out_tokens', 'cache_read_m']) o[k] += row[k];
+  other.set(r.period, o);
+}
+write('cost_by_role', [...costRows, ...other.values()].map((r) => ({ ...r, usd: round(r.usd), cache_read_m: round(r.cache_read_m, 1), usd_per_run: round(r.usd / Math.max(1, r.runs)) })).sort((a, b) => b.usd - a.usd));
 
 write('controller_sessions', sessions.filter((s) => s.window === 'late').sort((a, b) => b.usd - a.usd).slice(0, 10).map((s, i) => ({
   rank: i + 1, usd: round(s.usd, 1), msgs: s.msgs, avg_context_k: Math.round(s.cacheRead / s.msgs / 1000),
@@ -106,6 +116,17 @@ for (const r of reviews) {
   perDay.set(d, row);
 }
 write('tier_by_day', [...perDay.values()].sort((a, b) => a.day.localeCompare(b.day)));
+
+// Escapes: findings a phase or final review traced to a task's tier, dated by that review, over the tasks reviewed at
+// that tier in the same window. Important counts critical and important.
+const escapeRows = [];
+for (const period of ['early', 'late']) for (const tier of ['heavy', 'standard', 'light']) {
+  const tasks = reviews.filter((r) => r.tier === tier && windowOf(r.at.slice(0, 10)) === period).length;
+  const found = records.filter((r) => r.kind === 'final-escapes' && windowOf(r.at.slice(0, 10)) === period).flatMap((r) => r.escapes || []).filter((e) => e.tier === tier);
+  const important = found.filter((e) => e.severity !== 'minor').length;
+  escapeRows.push({ period, tier, tasks, escapes: found.length, important, escapes_per_task: tasks ? round(found.length / tasks) : null, important_per_task: tasks ? round(important / tasks) : null });
+}
+write('escapes', escapeRows);
 
 const yieldRows = new Map();
 for (const r of reviews) for (const h of r.hunters || []) {
