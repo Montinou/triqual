@@ -7,10 +7,10 @@ seams review (Final Review, its Seams Scope). Pass no model: the role's
 definition pins it.
 
 **Purpose:** Try to break the range under review against its spec, across task
-boundaries no per-task review could see, verify every candidate the hunters
-([hunter-prompt.md](hunter-prompt.md)) of a phase review found, and triage the
-deferred and parked ledger items before merge. The seams review has no hunters
-and reads only what the phase reviews could not see.
+boundaries no per-task review could see, and triage the deferred and parked
+ledger items before merge. No review has candidates (no hunters run since
+2026-11-12), and the seams review reads only what the phase reviews could not
+see.
 
 ```
 Subagent (roles:final-adversarial-reviewer):
@@ -51,29 +51,12 @@ Subagent (roles:final-adversarial-reviewer):
 
     ## Candidates to Verify
 
-    Candidates files from the hunters: [CANDIDATES_PATHS]
+    Candidates files: [CANDIDATES_PATHS]
 
-    The hunters (a cheaper model) of a phase review read the phase's range:
-    the correctness hunter covers three categories together, the security
-    hunter one. Each candidate in their files
-    is an unverified claim of a defect, with an id (`<category>-<k>`), a
-    `file:line`, a one-sentence claim and how to reproduce or refute it.
-    Verify each one yourself against the package and the code, by running or tracing its trigger: a candidate is
-    neither true nor false because it was written. The controller never tells
-    you how to rule on a candidate.
-
-    Give every candidate exactly one verdict:
-    - `confirmed`, with evidence and a severity (`critical`, `important` or
-      `minor`);
-    - `refuted`, with evidence;
-    - `duplicate-candidate` of another candidate id;
-    - `duplicate-review` of one of your own findings (report that finding
-      once, in Findings).
-
-    A candidate with no location (`file:line`) or no reproduction is
-    `refuted` for that reason. A candidate left without a verdict makes your
-    review incomplete, and the controller sends it back. When the line above
-    says none, there are no candidates: write "None" under Candidate Verdicts.
+    There are no candidates in this review: no hunters ran. Write "None" under
+    Candidate Verdicts. Find the defects yourself, from the package and the
+    code, and verify each by running or tracing its trigger: a claim is neither
+    true nor false because it was written.
 
     ## Phase Scope
 
@@ -81,7 +64,7 @@ Subagent (roles:final-adversarial-reviewer):
 
     This dispatch covers one phase's range only: [PHASE_RANGE] (phase base..phase
     top, the range of the package). Review nothing outside it, and ignore the
-    rest of the branch. Every candidate comes from the phase's `correctness` hunter (correctness, state and spec drift together) and, when the range touches a sensitive path, its `security` hunter, who read this range.
+    rest of the branch.
 
     The phase's tasks, from the plan: [PHASE_TASKS]
 
@@ -96,7 +79,7 @@ Subagent (roles:final-adversarial-reviewer):
     Seams review only; the controller deletes this section from a phase review.
 
     The package covers the whole stack, `trunk..top`; each phase already passed
-    its own review, with its own hunters and its own reviewer (the controller
+    its own review, with its own reviewer (the controller
     ran the phase review of any phase submitted before 1.1.0 before this one):
     do not review the phases again. Look only at: the interfaces one phase exposes and a
     later one consumes (names, signatures, formats, error paths and the
@@ -105,7 +88,7 @@ Subagent (roles:final-adversarial-reviewer):
     phase changed under an earlier one); and every `Ruling:`, deferred-minor
     and parked line of the workspace ledger still open. Review nothing else:
     a defect that sits inside one phase is out of scope, and goes in Declined
-    to Judge. There are no candidates in this review (no hunters ran): write
+    to Judge. There are no candidates in this review: write
     "None" under Candidate Verdicts. The ledger to triage is the whole
     workspace ledger, [SDD_LEDGER_PATH].
 
@@ -246,8 +229,7 @@ Subagent (roles:final-adversarial-reviewer):
 - `[PHASE_TASKS]` — phase review only: this phase's tasks, as the plan states them (the task headings and goals)
 - `[PHASE_LEDGER_LINES]` — phase review only: the file `<workspace>/phase-<N>-ledger.md`, holding this phase's
   `Ruling:`, deferred-minor and parked ledger lines, which the controller copies there
-- `[CANDIDATES_PATHS]` — in a phase review, every `phase-<N>-candidates-<category>.md` the hunters
-  returned; "none" when the hunters were skipped or returned no file, and always "none" in the seams review
+- `[CANDIDATES_PATHS]` — always "none": no hunters run, in a phase review or in the seams review
 
 **Final reviewer returns:** findings by severity, each with the task it traces
 to (or `untraced`) and its phase, a verdict for every candidate, the ledger triage, the declined-to-judge list, and a merge verdict

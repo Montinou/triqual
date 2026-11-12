@@ -23,13 +23,15 @@ const MAX_BYTES = 87040;
 // phase-fix ledger lines, and the Landing test sentence, so their hashes follow that text.
 // `setup` was edited on 2026-11-10 (looser review tiers): the tier rubric's light allowance, standard reasons, the
 // 1000-line heavy limit and the eval, fixture and dataset test paths, so its hash follows that text.
+// `setup`, `records` and `example` were edited again on 2026-11-12 (hunters disabled): no hunter skip rule in `setup`, no
+// phase `hunters` record in `records`, and no hunter in the worked `example`, so their hashes follow that text.
 const REFERENCES = [
-  ['setup', '## Setup', 'c66bac7a9f74a5192843fa1056e2a2704d5199f3d6f2aaffb435334f1dd0b0a0'],
-  ['records', '## Records', '02b8991659b3c27db3e207b8d15f1160a6963b22ee9feac7ce48fbb3d5dad778'],
+  ['setup', '## Setup', 'd74a196c8df60391258e6f109abe9ecda8e9e762154043c290669f59f0b42b43'],
+  ['records', '## Records', '60286438e7fa3cd555bf252984293a7dfdc3b0d8ccc1848685be56fc3b2726ab'],
   ['ledger-vocabulary', '## Ledger vocabulary', '96fa32a4663c80a4ba996549d9a229c60f2646f8c4ddeebcd7d5339b3c909224'],
   ['worktrees', '## Worktrees', 'e45e1f51e4aafb1e43441712df14b8c4980a3382fae9c3b3ce201f4d1c416f05'],
   ['final-review', '## Final Review', 'caa9a5fc7b13fb478039fd0cc6b2eec8ce5082e76cca3168d77d0d29deb7dbcd'],
-  ['example', '## Example', 'a18b9e2520e807f500c732ad1b767f786d5029881e544b5d694152db6b7c4da3'],
+  ['example', '## Example', 'bca99f052e60ce47c544f813315c1e04b94149adb5c3178980845bb7d61430ce'],
   ['parallel-tasks', '### Parallel tasks', '41a0285c4e55e046984cf07ace03fda0005b212f41683c707fef36ca19744768'],
 ];
 
