@@ -365,7 +365,7 @@ Plans run only through subagents. For each plan phase the main session dispatche
 runs the phase's task loop: it dispatches a role agent for each task, sizes the task's review by its tier (`heavy`,
 `standard` or `light`, declared by `writing-plans` and raised, never lowered, by `tier-check`) and follows TDD on every
 task. The main session reads only the orchestrator's summary of at most 20 lines, then runs the Phase check, the phase
-review (one or two hunters and one `roles:final-adversarial-reviewer`), `stack.mjs done` and `submit`. The next phase starts at
+review (one `roles:final-adversarial-reviewer`, no hunters), `stack.mjs done` and `submit`. The next phase starts at
 once, with no pause; a compacted or new session resumes from the ledger. Independent
 tasks of one phase run at the same time, at most 3 implementers, one in the main checkout and the others in task
 worktrees that land on the phase branch in plan order (parallel runs need store or local tracking mode). When the
@@ -391,7 +391,7 @@ The [root README](../../README.md#skills) has the review matrix.
 | `executing-plans` | Execute a plan: every task is done by a role agent, reviewed by its tier, one stacked branch and draft PR per plan phase. |
 | `test-driven-development` | Write the failing test first, for any feature or bugfix. |
 | `systematic-debugging` | Find the cause of any bug, test failure or unexpected behavior before proposing a fix. |
-| `reviewing-code` | Review a commit range or a pull request outside a plan (two hunters and a spec reviewer), and act on review feedback: verify it, fix what is real, refute the rest with evidence. |
+| `reviewing-code` | Review a commit range or a pull request outside a plan (a spec reviewer), and act on review feedback: verify it, fix what is real, refute the rest with evidence. |
 | `verification-before-completion` | Run the verification commands and read the output before claiming work is done, fixed or passing. |
 | `finishing-branch` | When implementation is complete and tests pass: close the plan and decide how to integrate the work. |
 | `diagnosing-methodology` | Find why a session that ran these skills went wrong, or build a bug report for this system's repository, on any harness. |

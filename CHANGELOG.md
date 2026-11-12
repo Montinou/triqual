@@ -3,6 +3,13 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## methodology 1.9.3 / roles 0.8.1
+
+- methodology: hunters are no longer dispatched. The phase review of `executing-plans` (step 8) sends none: `roles:final-adversarial-reviewer` runs with no candidates (`[CANDIDATES_PATHS]` is always "none"), the ledger line stays `Round 1: P<n> — hunters 0/0`, and a phase writes only its `final-escapes` record. `reviewing-code` drops its two hunters, so a review is one `roles:spec-reviewer`. The 2026-11-12 performance audit showed the hunters yield too little for their cost.
+- methodology: the global rules mark `roles:hunter` as dispatched by none since 2026-11-12. `hunter-prompt.md`, the `roles:hunter` agent and the `hunters` record kind stay for A/B tests; the role-eval store and its readers are unchanged.
+- roles: the README says the hunter is no longer dispatched.
+- Update the plugins and run `triqual sync --yes` so `~/.claude/CLAUDE.md` carries the changed roles table.
+
 ## methodology 1.9.2
 
 - methodology: `cli/lib/prices.json` adds Claude Fable 5.2 ($8 / $40 per MTok, cache read $0.20) and corrects the Claude Sonnet 5.5 cache read to $0.10 (was $0.20), at the list of 2026-11-03. `triqual cost` had dropped every Fable 5.2 message from its totals and counted Sonnet 5.5 cache reads at twice their price.

@@ -15,33 +15,13 @@ Replies, commit messages and review text are in English; the conversation mirror
    - A range: `BASE` is the commit before the work (for a whole branch, run `git merge-base origin/main HEAD` and note what it prints); `HEAD` is what `git rev-parse HEAD` prints. Never guess `HEAD~1` for work of several commits.
    - A pull request: its number `N`. `gh pr view N --json title,body,baseRefName,headRefName` gives the description to use as the requirements.
 2. **Write down what the change should do:** a short description plus the requirements: a spec or plan path, the task text, or the PR description. A reviewer without requirements can only judge style.
-3. **Make a private directory for the hunters' files:** run `mktemp -d` and note the directory it prints as `<d>`.
-4. **Dispatch two hunters in one response**, both in the background (`roles:hunter`, no model: the role pins it): `correctness` and `spec-drift`. When the change is mostly about trust boundaries (auth, secrets, input parsing, permissions), use `security` in place of `spec-drift`.
-
-   ```
-   Subagent (roles:hunter):
-     description: "Hunt [CATEGORY] candidates"
-     prompt: |
-       Category: [CATEGORY]
-
-       Review target: [TARGET]
-       (A range: read it with git log --oneline, git diff --stat and git diff on BASE..HEAD.
-       A pull request: read it with gh pr view N and gh pr diff N.)
-
-       Requirements: [REQUIREMENTS]
-
-       Write your candidates to: <d>/candidates-[CATEGORY].md
-   ```
-
-   Wait up to 10 minutes. A hunter that fails or is late is dropped; tell the reviewer which one.
-5. **Dispatch `roles:spec-reviewer`** with [reviewer-prompt.md](reviewer-prompt.md), filled with the description, the requirements, the target and the candidates files. It verifies every candidate and reviews the change itself. Pass no model.
-6. **Act on the verdict**, severity by severity:
+3. **Dispatch `roles:spec-reviewer`** with [reviewer-prompt.md](reviewer-prompt.md), filled with the description, the requirements and the target. It reviews the change itself, with no candidates. Pass no model.
+4. **Act on the verdict**, severity by severity:
    - Critical: fix now.
    - Important: fix before you merge or move on.
    - Minor: list it for your human partner; fix it only when it is cheap and in the same lines.
    - A finding you can refute: do not fix it. Answer it with the evidence (see Receive feedback).
-7. **Fix what is real:** a failing test first for a behavior defect (methodology:test-driven-development), then run the check and read its output before you say it is fixed (methodology:verification-before-completion). After a fix larger than the findings it answers, ask for one more review of the fix range only.
-8. **Clean up:** `rm -rf <d>`.
+5. **Fix what is real:** a failing test first for a behavior defect (methodology:test-driven-development), then run the check and read its output before you say it is fixed (methodology:verification-before-completion). After a fix larger than the findings it answers, ask for one more review of the fix range only.
 
 Review early and often: after a major feature, before a merge, when you are stuck, before a refactor. Skipping the review because the change is small is how small changes ship defects.
 

@@ -2,20 +2,18 @@
 
 Use this template to dispatch the reviewer of a range or a pull request outside
 a plan execution (the steps are in [SKILL.md](SKILL.md)). The reviewer is
-`roles:spec-reviewer`: it judges the change against its requirements and
-verifies the candidates the two hunters wrote. Pass no model: the role's
-definition pins it.
+`roles:spec-reviewer`: it judges the change against its requirements. Pass no
+model: the role's definition pins it.
 
 **Purpose:** Catch what the author cannot see before it cascades: wrong or
-missing behavior, weak tests, and defects the hunters suspect.
+missing behavior and weak tests.
 
 ```
 Subagent (roles:spec-reviewer):
   description: "Review [TARGET_NAME]"
   prompt: |
-    You are reviewing a change against what it was meant to do, and verifying
-    the defects two hunters suspect. Work from the code, not from the author's
-    account of it.
+    You are reviewing a change against what it was meant to do. Work from the
+    code, not from the author's account of it.
 
     ## What Was Built
 
@@ -31,17 +29,6 @@ Subagent (roles:spec-reviewer):
 
     A range is read with `git log --oneline`, `git diff --stat` and `git diff`
     on BASE..HEAD. A pull request is read with `gh pr view N` and `gh pr diff N`.
-
-    ## Candidates to Verify
-
-    Candidates files the hunters wrote: [CANDIDATES_FILES]
-    (Hunters not listed failed or were late: say so in your report; do not
-    wait for them.)
-
-    For every candidate, in its own words, one verdict: Confirmed (with a
-    severity and the file:line that proves it) or Refuted (with the evidence:
-    the line, the call site or the test that shows it is not a defect). Trace
-    the code path; a candidate you did not trace is not a verdict.
 
     ## The spec is a vision document
 
@@ -110,9 +97,6 @@ Subagent (roles:spec-reviewer):
     ### Strengths
     [What is done well, specifically.]
 
-    ### Candidate Verdicts
-    [One line per candidate id: Confirmed (severity, file:line) or Refuted (evidence).]
-
     ### Issues
 
     #### Critical (Must Fix)
@@ -151,8 +135,7 @@ Subagent (roles:spec-reviewer):
 - `[DESCRIPTION]` — a brief summary of what was built
 - `[REQUIREMENTS]` — what it should do: a spec or plan path, the task text, or the PR description
 - `[TARGET]` — `Range: BASE..HEAD` with both commits, or `Pull request: #N`
-- `[CANDIDATES_FILES]` — the paths of the candidates files the hunters wrote
 - `[SHA]`, `[path]` — a commit and a file the reviewer fills in itself when it needs another revision
 
-**Reviewer returns:** Strengths, Candidate Verdicts, Issues (Critical / Important
+**Reviewer returns:** Strengths, Issues (Critical / Important
 / Minor), Declined to judge, Assessment.

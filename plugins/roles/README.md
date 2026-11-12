@@ -43,7 +43,7 @@ Found by searching `roles:<name>` in `plugins/methodology/skills`:
 | `spec-reviewer` | `executing-plans`, `reviewing-code` |
 | `review-fixer` | `executing-plans` (fix rounds) |
 | `final-adversarial-reviewer` | `executing-plans`, `brainstorming` (spec audit), `writing-plans` (plan audit) |
-| `hunter` | `executing-plans`, `reviewing-code` |
+| `hunter` | none since 2026-11-12; kept for A/B tests |
 | `phase-orchestrator` | `executing-plans`: one per phase, from methodology 1.3.0 |
 
 A plan's task `**Role:**` line is `roles:tdd-implementer` (the default when the line is
@@ -61,13 +61,12 @@ In a plan with tiers a `roles:complex-implementer` task is `heavy` and a `coordi
 
 | Tier | `hunter` | `safety-reviewer` | `spec-reviewer` |
 |---|---|---|---|
-| heavy | 2: correctness, and security or state, picked from the task's heavy reason line | yes | every candidate and the spec fit |
+| heavy | none | yes, in parallel with the spec reviewer | yes, in parallel with the gate |
 | standard | none | yes, in parallel with the spec reviewer | yes, in parallel with the gate |
 | light | none | yes | only on a finding or `Cannot verify` from the gate |
 
-Each phase of a plan also gets a deep review before it is submitted: one or two hunters (`correctness`, which covers
-correctness, state and spec drift together, always, and `security` only when the phase touches a sensitive path)
-and the `final-adversarial-reviewer` over the phase diff. The final review of a plan with several phases is a
+No hunter is dispatched since 2026-11-12 (the agent stays for A/B tests). Each phase of a plan gets a deep review
+before it is submitted: the `final-adversarial-reviewer` over the phase diff, with no candidates. The final review of a plan with several phases is a
 seams review by the `final-adversarial-reviewer` alone, with no hunters; in a single-phase plan the phase review is the
 final review.
 

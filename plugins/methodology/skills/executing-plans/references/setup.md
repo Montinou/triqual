@@ -52,7 +52,7 @@ With fence detected, installing a skill is the human's step, never the implement
 
 Read the plan once, note its context, Global Constraints, Review Focus and `**Sensitive paths:**`, and create a todo per task. The scripts read it with `scripts/lib/plan.mjs`, the same reader as `triqual tasks`, so every reader agrees on task boundaries and fields. If the plan names a Spec, read less of it. At setup and at each resume, read the plan, the spec's `## Units` and the current phase's `## Delivery Slices` entry, not the whole spec (a spec without those headings is read whole). Before writing a `Ruling:`, read the spec sections the ruling depends on: the spec stays binding, and conflicts inside the plan resolve against it. The phase and seams reviewers get the whole spec. A plan with no reachable spec gets a ledger note saying so — rulings made without one are provisional.
 
-Check the roles once: a task role the `roles` plugin does not define, or a reviewer role named as a task's role, is a stop (see Role Dispatch). Hunters, and a safety gate that cannot be dispatched at all, follow the skip rule at their first dispatch (see When the stage does not run).
+Check the roles once: a task role the `roles` plugin does not define, or a reviewer role named as a task's role, is a stop (see Role Dispatch). A safety gate that cannot be dispatched at all follows the skip rule at its first dispatch (see When the stage does not run).
 
 ### Tiers at setup
 

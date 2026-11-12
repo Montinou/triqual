@@ -1,5 +1,7 @@
 # Hunter Prompt Template
 
+No skill dispatches this template since 2026-11-12; it and `roles:hunter` are kept for A/B tests.
+
 Use this template to dispatch a hunter, `roles:hunter`, only in a phase review,
 for each hunter it sends (a task's review sends none at any tier, and the seams
 review at the end of a plan sends none). One hunter looks at one category of defect, except the phase

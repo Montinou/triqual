@@ -110,6 +110,7 @@ test("global.md role table points at the methodology skills, and methodology's s
   assert.ok(rows.length > 0, 'no role rows');
   const skills = join(RULES, '..', 'skills');
   for (const row of rows) {
+    if (row.includes('`roles:hunter`')) continue; // dispatched by none since 2026-11-12, pinned in its own test
     const named = [...row.matchAll(/`methodology:([a-z-]+)`/g)].map((m) => m[1]);
     assert.ok(named.length > 0, `row names no methodology skill: ${row}`);
     for (const name of named) assert.ok(existsSync(join(skills, name, 'SKILL.md')), `methodology:${name} is not a skill`);
@@ -159,12 +160,12 @@ test('global.md keeps the session model for coordination only', () => {
   assert.ok(!/final adversarial review/i.test(caps), 'the caps section still reserves the session model for the final review');
 });
 
-test('global.md credits the one orchestrator, executing-plans, for every role it dispatches', () => {
+test('global.md credits the one orchestrator, executing-plans, for every role it dispatches; the hunter is dispatched by none since 2026-11-12', () => {
   const row = roleRows().find((line) => line.includes('`roles:hunter`'));
   assert.ok(row, 'no hunter row');
-  assert.ok(cells(row)[4].includes('`methodology:executing-plans`'), `the hunter row is not dispatched by executing-plans: ${row}`);
-  assert.ok(cells(row)[4].includes('`methodology:reviewing-code`'), `the hunter row is not dispatched by reviewing-code: ${row}`);
-  for (const line of roleRows().filter((l) => /`roles:(brief-writer|tdd-implementer|complex-implementer|safety-reviewer|spec-reviewer|review-fixer|final-adversarial-reviewer|hunter)`/.test(l))) {
+  assert.ok(cells(row)[4].includes('none since 2026-11-12 (kept for A/B tests)'), `the hunter row is not marked as dispatched by none: ${row}`);
+  assert.ok(!cells(row)[4].includes('`methodology:'), `the hunter row still names a dispatching skill: ${row}`);
+  for (const line of roleRows().filter((l) => /`roles:(brief-writer|tdd-implementer|complex-implementer|safety-reviewer|spec-reviewer|review-fixer|final-adversarial-reviewer)`/.test(l))) {
     assert.ok(cells(line)[4].includes('`methodology:executing-plans`'), `the row is not dispatched by executing-plans: ${line}`);
   }
   assert.ok(row.includes('verified by the Opus spec reviewer'), row);
