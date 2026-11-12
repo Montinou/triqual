@@ -24,9 +24,12 @@ listed as unverified.
    node <this skill's directory>/scripts/collect.mjs --out <scratchpad>/data --days 10 --hooks
    ```
 
-   It writes `cost_by_role`, `controller_sessions`, `latency`, `tier_by_day`, `hunter_yield` and `hooks` as JSON.
-   Cross-check once: its `cost_by_role` totals per period equal `triqual cost --since .. --until .. --project ..`.
-   A mismatch is a bug in the script: fix it before reporting.
+   It writes `cost_by_role`, `controller_sessions`, `latency`, `tier_by_day`, `escapes`, `hunter_yield` and `hooks`
+   as JSON. Cross-check once: its `cost_by_role` totals per period equal `triqual cost --since .. --until .. --project ..`.
+   A mismatch is a bug in the script: fix it before reporting. Then check that every model in the transcripts has a
+   row in `cli/lib/prices.json` and that its prices match the current list: a model missing there is dropped from
+   every total without a warning. For the machine-wide view, run it again with `--project -` (every project directory
+   name contains a dash).
 3. **Read the numbers, in this order**, and say for each what it does and does not show:
    - **Cost by role and period.** Which line is largest? Controller sessions: cache read, cache write and output share,
      average and peak context. Per-run cost of a role before and after a change, with the mix caveat.
@@ -37,8 +40,9 @@ listed as unverified.
    - **Hunter yield by tier and category.** Important and critical findings per 100 runs, and precision. A category
      that yields almost nothing important is a candidate to drop; test it as an A/B, never by assumption.
    - **Hooks.** Blocking hooks against the node floor; anything async is CPU, not latency.
-   - **Escapes**, from `triqual role-eval summary --by-tier`: what the phase and final reviews caught that the task
-     reviews did not. This is the evidence for or against lighter task review.
+   - **Escapes**, the `escapes` dataset: what the phase and final reviews caught that the task reviews did not, per
+     task reviewed, by window, tier and severity (`triqual role-eval summary --by-tier` gives the all-time totals).
+     This is the evidence for or against lighter task review.
 4. **Check what you are told.** When your human partner states a practice ("I force every task light"), find it in the
    data (declared against effective tier by day) before building on it. When the data contradicts a belief, or a
    belief contradicts the data, say which and show the rows.
@@ -79,8 +83,12 @@ figure that is not marked to a dataset. Say at the end that the report is privat
   the `task-review` record.
 - Cost per task and per tier: cost is by role, review yield is by task, and nothing joins them.
 - Phase-level hunter yield: `role-eval summary` reports the task-level records only.
-- Prices: `cli/lib/prices.json` carries a "cached" date; re-check it against the list before quoting dollars.
+- Prices: `cli/lib/prices.json` carries a "cached" date (re-checked 2026-11-12); re-check it against the list before
+  quoting dollars. A model it lacks is still dropped silently by `triqual cost` and the collector.
 - Wall-clock: latency is the sum of agent durations, and parallel agents overlap.
+- Escapes are dated by the review that found them, not by the task's own review; a task near a window edge can land in
+  the other window.
+- Hook timings need an idle machine; the 2026-11-12 run was taken under load (load average 6 to 11).
 
 The roles calibration of 2026-10-29 (`references/calibration.md`) replaced the model-quality gap with what the replay
 could not answer:
@@ -89,7 +97,6 @@ could not answer:
 - Safety gate model and effort: not replayed.
 - Implementer effort: one run per cell, one cell blocked.
 - Planted-defect recall (judge recall on seeded defects): not run; the seeder exists.
-- Light-tier escape severity: 0.81 findings per task reach the phase review; their severity split is not in the store.
 - The judge is Opus: it may favour Opus findings; no second judge model was used.
 - Reviewers saw the diff only, not the plan or the code around it.
 - Sample size: 8 commits from a few repositories; 2 phase diffs.
@@ -110,6 +117,14 @@ Keep this short and dated; it is the baseline the next run compares against.
   `security` hunter only when the phase diff touches a sensitive path. The final adversarial reviewer at effort low
   reached recall 0.70 against 0.80 at medium on 10 real defects, so it stays at low. The implementer passed 7 of 10 and 6 of 8 tests at effort high, so it stays at high. Review tiers: heavy 0.46 fix rounds
   per task, standard 0.08, light 0.02, no task hit the 5-round breaker. Baseline for the next run.
+- 2026-11-12 (windows 10-24..11-02 and 11-03..11-12; prices corrected first: Fable 5.2 was missing, Sonnet 5.5 cache
+  read was double the list): triqual spend fell from $196 to $130 over 379 and 308 tasks reviewed; the controller is
+  still the largest line (45% of the latest window, costliest session $41 at 327K average context). Review and fix
+  agents took 2.5 agent-hours against 7.2 for implementers, the reverse of 10-28. Orchestrator p90 97 min against a
+  32 min median. Escapes per task fell for heavy (0.92 to 0.24) and standard (0.67 to 0.25) but not for light (1.12
+  to 0.60, important 0.16 to 0.17). Machine-wide, generic agents launched with an Opus override cost $6.97 a run
+  against $1.39 on Sonnet ($160 in the latest window); enforcing Sonnet with a hook was declined by the owner. The
+  looser tiers of 2026-11-10 have too little data to judge.
 
 ## Red flags
 

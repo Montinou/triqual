@@ -3,6 +3,11 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## methodology 1.9.2
+
+- methodology: `cli/lib/prices.json` adds Claude Fable 5.2 ($8 / $40 per MTok, cache read $0.20) and corrects the Claude Sonnet 5.5 cache read to $0.10 (was $0.20), at the list of 2026-11-03. `triqual cost` had dropped every Fable 5.2 message from its totals and counted Sonnet 5.5 cache reads at twice their price.
+- methodology: the `auditing-performance` collector keeps roles under $0.50 as one `other` row per window, so its totals equal `triqual cost`, and writes an `escapes` dataset (final-review escapes per task, by window, tier and severity). The skill checks the price table against the transcripts' models and describes the machine-wide run (`--project -`).
+
 ## workflow-gate 0.4.0 / methodology 1.9.1
 
 - workflow-gate: higher caps per model, for Workflow scripts and for Agent/Task starts in the 120 s window: Fable 4 (was 3), Opus 10 (was 8), Sonnet 15 (was 12); Haiku stays unlimited. The `WORKFLOW_MAX_*` overrides are unchanged.
