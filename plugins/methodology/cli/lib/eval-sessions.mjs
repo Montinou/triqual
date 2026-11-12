@@ -5,6 +5,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
 const IDLE_MS = 300_000;
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const n = (v) => (Number.isSafeInteger(v) && v > 0 ? v : 0);
 
 // The price rule of cost.mjs: the model name, else without a date suffix and a trailing [..]; null when unlisted.
@@ -23,12 +24,13 @@ export function sessionSignals(file, { prices }) {
   try { text = readFileSync(file, 'utf8'); } catch { /* an unreadable file has no signals */ }
   // Null-prototype map: a model name is only ever a key (`__proto__` included).
   const models = Object.create(null);
+  const days = Object.create(null); // UTC day -> model -> { messages, usd }: what a --since/--until window is cut from
   const seen = new Set();
   const unpriced = new Set();
   const sig = {
     sessionId: basename(file).replace(/\.jsonl$/, ''), project: null, entrypoint: null, start: null, end: null, models,
     usd: 0, turns: 0, ctxPeak: 0, ctxAvg: 0, compactions: 0, idleRewrites: 0, rewriteUsd: 0, stopHookBlocks: 0,
-    toolErrors: 0, userMessages: 0, unpriced: [], arm: null, contaminated: false,
+    toolErrors: 0, userMessages: 0, unpriced: [], arm: null, contaminated: false, days: {},
   };
   let first = true;
   let ctxSum = 0;
@@ -71,10 +73,17 @@ export function sessionSignals(file, { prices }) {
       const ctx = t.input + t.cacheRead + t.cacheWrite;
       ctxSum += ctx;
       if (ctx > sig.ctxPeak) sig.ctxPeak = ctx;
-      if (p !== null) {
-        const usd = usdOf(p, t);
+      const usd = p === null ? null : usdOf(p, t);
+      if (usd !== null) {
         m.usd += usd;
         sig.usd += usd;
+      }
+      // The day of the cost.mjs rule: the first 10 characters of the timestamp; a turn with no usable one is in no day.
+      const day = at === null ? '' : at.slice(0, 10);
+      if (DAY.test(day)) {
+        const dm = (days[day] ??= Object.create(null))[msg.model] ??= { messages: 0, usd: usd === null ? null : 0 };
+        dm.messages += 1;
+        if (usd !== null) dm.usd += usd;
       }
       const ms = at === null ? NaN : Date.parse(at);
       if (prevAt !== null && !Number.isNaN(ms) && ms - prevAt > IDLE_MS && t.cacheWrite > 0 && t.cacheWrite >= 0.5 * ctx) {
@@ -87,6 +96,7 @@ export function sessionSignals(file, { prices }) {
   sig.ctxAvg = sig.turns === 0 ? 0 : ctxSum / sig.turns;
   sig.unpriced = [...unpriced].sort();
   sig.models = { ...models };
+  sig.days = Object.fromEntries(Object.entries(days).map(([d, byModel]) => [d, { ...byModel }]));
   return sig;
 }
 
