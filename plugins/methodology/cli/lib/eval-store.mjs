@@ -28,7 +28,8 @@ const grew = (end, storedEnd) => end !== null && (typeof storedEnd !== 'string' 
 
 // Reads the main transcripts under `root` (outside the lock, so a slow scan never holds it), then merges them into
 // `file` under the store lock: a new sessionId is added, a stored line is replaced when its transcript's `end` grew, a
-// stored line whose transcript is gone stays. The file is rewritten through a temp file and a rename, so a reader
+// stored line whose `entrypoint` is null while its transcript now has one is patched in that field only, a stored line
+// whose transcript is gone stays. The file is rewritten through a temp file and a rename, so a reader
 // sees the old store or the new one. { sessions: every stored line, added, updated, skipped: lines of the file that
 // were not rows }.
 export function refreshSessions({ root, file, prices, now = new Date() }) {
@@ -55,6 +56,9 @@ export function refreshSessions({ root, file, prices, now = new Date() }) {
       const cur = stored.get(id);
       if (cur === undefined) { stored.set(id, { ...sig, refreshedAt }); added += 1; }
       else if (grew(sig.end, cur.end)) { stored.set(id, { ...sig, refreshedAt }); updated += 1; }
+      // An unchanged transcript whose stored line lost its entrypoint (an older extractor read it from the first record
+      // only): patch that one field, keep the rest of the line.
+      else if (cur.entrypoint == null && sig.entrypoint !== null) { stored.set(id, { ...cur, entrypoint: sig.entrypoint }); updated += 1; }
     }
     if (added + updated > 0) {
       const tmp = `${file}.${process.pid}.tmp`;

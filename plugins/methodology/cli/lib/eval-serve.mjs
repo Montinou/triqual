@@ -89,11 +89,11 @@ export function sessionView(file) {
   return { firstPrompt: ownerMessages[0] ?? '', ownerMessages, toolCounts: Object.fromEntries(tools), usd, ctxCurve, stalls };
 }
 
-const CSS = `body{font:15px/1.5 system-ui,sans-serif;max-width:56rem;margin:1.5rem auto;padding:0 1rem;background:#fff;color:#1a1a1a}
-@media (prefers-color-scheme:dark){body{background:#16161a;color:#e8e8ea}pre,.msg{background:#222228}}
+const CSS = `html{color-scheme:light}body{font:15px/1.5 system-ui,sans-serif;max-width:56rem;margin:1.5rem auto;padding:0 1rem;background:#fff;color:#1a1a1a}
 h1{font-size:1.1rem}.meta{color:#666}.msg{background:#f3f3f5;border-radius:6px;padding:.6rem .8rem;margin:.5rem 0;white-space:pre-wrap;overflow-wrap:anywhere}
 button{font:inherit;padding:.4rem .9rem;margin-right:.4rem;cursor:pointer}textarea{width:100%;min-height:4rem;font:inherit;box-sizing:border-box}
-svg{width:100%;height:60px}polyline{fill:none;stroke:currentColor;stroke-width:1.5}.status{min-height:1.5rem}`;
+svg{width:100%;height:60px}polyline{fill:none;stroke:currentColor;stroke-width:1.5}.status{min-height:1.5rem}
+@media (prefers-color-scheme:dark){html{color-scheme:dark}body{background:#16161a;color:#e8e8ea}pre,.msg{background:#222228}.meta{color:#a0a0a8}}`;
 
 const SCRIPT = `
 const HEADER = 'x-triqual-token';

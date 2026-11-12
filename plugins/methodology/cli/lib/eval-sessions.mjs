@@ -32,7 +32,6 @@ export function sessionSignals(file, { prices }) {
     usd: 0, turns: 0, ctxPeak: 0, ctxAvg: 0, compactions: 0, idleRewrites: 0, rewriteUsd: 0, stopHookBlocks: 0,
     toolErrors: 0, userMessages: 0, unpriced: [], arm: null, contaminated: false, days: {},
   };
-  let first = true;
   let ctxSum = 0;
   let prevAt = null;
   for (const line of text.split('\n')) {
@@ -40,7 +39,8 @@ export function sessionSignals(file, { prices }) {
     let rec;
     try { rec = JSON.parse(line); } catch { continue; }
     if (rec === null || typeof rec !== 'object') continue;
-    if (first) { sig.entrypoint = typeof rec.entrypoint === 'string' ? rec.entrypoint : null; first = false; }
+    // The first records of a transcript (mode, session-owner, file-history-snapshot) carry no entrypoint: take the first one that does.
+    if (sig.entrypoint === null && typeof rec.entrypoint === 'string') sig.entrypoint = rec.entrypoint;
     if (sig.project === null && typeof rec.cwd === 'string' && rec.cwd !== '') sig.project = rec.cwd;
     const at = typeof rec.timestamp === 'string' ? rec.timestamp : null;
     if (at !== null && !Number.isNaN(Date.parse(at))) {

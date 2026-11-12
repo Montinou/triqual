@@ -130,6 +130,25 @@ test('a growing session is rewritten, not duplicated', () => {
   } finally { cleanup(e); }
 });
 
+test('a stored row with a null entrypoint is rewritten once its transcript yields one', () => {
+  const e = env();
+  try {
+    write(e, '-home-me-a', 'ep', [opening('2026-11-01T08:00:00Z'), turn({ id: 'e1', at: '2026-11-01T08:00:10Z', input: 10, output: 10 })]);
+    runJson(e);
+    const file = join(e.evals, 'sessions.jsonl');
+    // The store as an older extractor wrote it: same transcript end, entrypoint lost.
+    const old = readJsonl(file).rows.map((r) => ({ ...r, entrypoint: null }));
+    writeFileSync(file, old.map((r) => `${JSON.stringify(r)}\n`).join(''));
+    assert.equal(readJsonl(file).rows[0].entrypoint, null);
+    const again = runJson(e);
+    assert.equal(again.sessions[0].entrypoint, 'cli');
+    const stored = readJsonl(file).rows;
+    assert.equal(stored.length, 1);
+    assert.equal(stored[0].entrypoint, 'cli');
+    assert.equal(stored[0].turns, 1);
+  } finally { cleanup(e); }
+});
+
 test('unpriced lists the model', () => {
   const e = env();
   try {

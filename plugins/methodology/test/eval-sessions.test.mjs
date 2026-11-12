@@ -25,6 +25,29 @@ const assistant = ({ id, req = `r-${id}`, at, model = 'claude-opus-5-5', input =
 const jsonl = (recs) => recs.map((r) => (typeof r === 'string' ? r : JSON.stringify(r))).join('\n');
 const tmp = () => mkdtempSync(join(tmpdir(), 'cm-evsig-'));
 
+test('entrypoint comes from the first record that has one, not from the first record', () => {
+  const dir = tmp();
+  const file = join(dir, 'sess-ep.jsonl');
+  writeFileSync(file, jsonl([
+    { type: 'mode', mode: 'default' },
+    { type: 'session-owner', sessionId: 'sess-ep' },
+    { type: 'file-history-snapshot', snapshot: {} },
+    { type: 'user', cwd: '/work/proj', entrypoint: 'cli', timestamp: '2026-11-01T09:59:30.000Z', message: { role: 'user', content: 'hi' } },
+    { type: 'user', entrypoint: 'sdk-cli', timestamp: '2026-11-01T10:00:30.000Z', message: { role: 'user', content: 'again' } },
+  ]));
+  assert.equal(sessionSignals(file, { prices: PRICES }).entrypoint, 'cli');
+});
+
+test('entrypoint stays null when no record has one', () => {
+  const dir = tmp();
+  const file = join(dir, 'sess-none.jsonl');
+  writeFileSync(file, jsonl([
+    { type: 'mode', mode: 'default' },
+    { type: 'user', entrypoint: 7, timestamp: '2026-11-01T09:59:30.000Z', message: { role: 'user', content: 'hi' } },
+  ]));
+  assert.equal(sessionSignals(file, { prices: PRICES }).entrypoint, null);
+});
+
 test('sessionSignals matches hand-computed values', () => {
   const dir = tmp();
   const file = join(dir, 'sess-abc.jsonl');

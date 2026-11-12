@@ -226,3 +226,72 @@ test('a torn last line in labels.jsonl neither crashes nor swallows the next lab
   }
   assert.deepEqual(parsed.map((r) => [r.sessionId, r.label, r.note]), [['s1', 'good', ''], ['s2', 'bad', 'after the tear']]);
 });
+
+// Cascade of the stylesheet the server actually serves, for one colour scheme. Every selector here is a single
+// class or element, so specificity is equal and the later declaration wins.
+function servedCascade(css, scheme) {
+  const decls = [];
+  const addRules = (text, dark) => {
+    for (const m of text.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      for (const sel of m[1].split(',').map((s) => s.trim())) {
+        for (const d of m[2].split(';')) {
+          const i = d.indexOf(':');
+          if (i > 0) decls.push({ sel, prop: d.slice(0, i).trim(), value: d.slice(i + 1).trim(), dark });
+        }
+      }
+    }
+  };
+  let rest = css;
+  for (;;) {
+    const at = rest.match(/@media\s*\(prefers-color-scheme:\s*dark\)\s*\{/);
+    if (!at) break;
+    addRules(rest.slice(0, at.index), false);
+    let depth = 1; let i = at.index + at[0].length;
+    for (; i < rest.length && depth; i++) depth += rest[i] === '{' ? 1 : rest[i] === '}' ? -1 : 0;
+    addRules(rest.slice(at.index + at[0].length, i - 1), true);
+    rest = rest.slice(i);
+  }
+  addRules(rest, false);
+  const active = decls.filter((d) => !d.dark || scheme === 'dark');
+  const get = (sel, prop) => active.filter((d) => d.sel === sel && d.prop === prop).at(-1)?.value;
+  return { decls, get };
+}
+
+const luminance = (hex) => {
+  const full = hex.length === 4 ? `#${[...hex.slice(1)].map((c) => c + c).join('')}` : hex;
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(full.slice(i, i + 2), 16) / 255)
+    .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const contrast = (a, b) => {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+};
+
+test('the served page is readable in the light and in the dark colour scheme', async () => {
+  const s = await start();
+  const html = await (await fetch(`${s.url.replace(/\/$/, '')}/`)).text();
+  const css = html.match(/<style[^>]*>([\s\S]*?)<\/style>/)[1];
+  const { decls, get } = servedCascade(css, 'dark');
+
+  // A dark-scheme override must not be beaten by a later light rule for the same selector and property.
+  for (const d of decls.filter((x) => x.dark)) {
+    const later = decls.slice(decls.indexOf(d) + 1).filter((x) => !x.dark && x.sel === d.sel && x.prop === d.prop);
+    assert.deepEqual(later, [], `light rule after the dark override of ${d.sel} { ${d.prop} }`);
+  }
+
+  for (const scheme of ['light', 'dark']) {
+    const { get: val } = servedCascade(css, scheme);
+    const bodyBg = val('body', 'background');
+    const bodyFg = val('body', 'color');
+    const msgBg = val('.msg', 'background');
+    const msgFg = val('.msg', 'color') ?? bodyFg; // inherited when not set
+    const metaFg = val('.meta', 'color');
+    assert.ok(contrast(msgFg, msgBg) >= 4.5, `${scheme}: .msg text ${msgFg} on ${msgBg}`);
+    assert.ok(contrast(metaFg, bodyBg) >= 4.5, `${scheme}: .meta text ${metaFg} on page ${bodyBg}`);
+    assert.ok(contrast(metaFg, msgBg) >= 4.5, `${scheme}: .meta text ${metaFg} on .msg ${msgBg}`);
+    // The note box and the buttons take the browser's own colours: they must follow the scheme.
+    assert.equal(val('html', 'color-scheme'), scheme === 'dark' ? 'dark' : 'light', `${scheme}: form controls follow the scheme`);
+  }
+  assert.ok(luminance(get('.msg', 'background')) < 0.2, 'dark: .msg background is dark');
+});
