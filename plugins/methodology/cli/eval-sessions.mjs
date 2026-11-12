@@ -13,6 +13,9 @@ import { inWindow, refreshSessions } from './lib/eval-store.mjs';
 const PRICES = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'lib', 'prices.json'), 'utf8')).models;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
+// The line `triqual eval` lists this subcommand under.
+export const SUMMARY = 'refresh the sessions store from the transcripts and list sessions with their cost';
+
 const USAGE = [
   'usage:',
   '  triqual eval sessions [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--project <text>] [--json]',

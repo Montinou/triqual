@@ -88,6 +88,7 @@ test('COMMANDS maps every triqual command to its plugin and cli file', () => {
     migrate: ['methodology', 'cli/migrate.mjs'],
     cost: ['methodology', 'cli/cost.mjs'],
     plan: ['progress-tracking', 'cli/plan.mjs'],
+    eval: ['methodology', 'cli/eval.mjs'],
   });
 });
 
@@ -99,6 +100,24 @@ test('plan resolves to progress-tracking cli/plan.mjs and gets --help from the v
     const shipped = JSON.parse(readFileSync(join(ROOT, 'plugins', 'progress-tracking', '.claude-plugin', 'plugin.json'), 'utf8')).version;
     assert.equal(acceptsHelp('plan', join(ROOT, 'plugins', 'progress-tracking')), true, `plugin.json says ${shipped}`);
     assert.equal(acceptsHelp('plan', plan.installPath), false, 'a progress-tracking without a readable version gets no --help');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('eval resolves to methodology cli/eval.mjs and gets --help from methodology 1.10.0', () => {
+  const home = fixtureHome({ methodology: { 'cli/eval.mjs': '// eval\n' } });
+  try {
+    const ev = resolveCommand({ home, cwd: home, cmd: 'eval' });
+    assert.ok(ev.file?.endsWith(join('methodology', '0.1.0', 'cli', 'eval.mjs')), JSON.stringify(ev));
+    assert.equal(acceptsHelp('eval', join(ROOT, 'plugins', 'methodology')), true, 'the shipped methodology accepts --help for eval');
+    assert.equal(acceptsHelp('eval', ev.installPath), false, 'a methodology without a readable version gets no --help');
+    const old = join(home, 'old');
+    mkdirSync(join(old, '.claude-plugin'), { recursive: true });
+    writeFileSync(join(old, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'methodology', version: '1.9.3' }));
+    assert.equal(acceptsHelp('eval', old), false, 'methodology 1.9.3 predates eval');
+    writeFileSync(join(old, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'methodology', version: '1.10.0' }));
+    assert.equal(acceptsHelp('eval', old), true);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -368,6 +387,7 @@ test('DESCRIPTIONS gives every command its one-line description', () => {
     migrate: `move this machine from ${BRAND.legacy.marketplace} to ${BRAND.marketplace}`,
     cost: 'estimated token spend per model from the Claude Code transcripts, controller vs subagents',
     plan: 'write plan files from one shared layout and a data file, each checked as registration reads it',
+    eval: 'evals and A/B experiments: session signals, labels, judges, experiments, report',
   });
 });
 

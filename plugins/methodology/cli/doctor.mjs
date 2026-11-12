@@ -93,6 +93,7 @@ export const SHIM_COMMANDS = {
   migrate: ['methodology', 'cli/migrate.mjs'],
   cost: ['methodology', 'cli/cost.mjs'],
   plan: ['progress-tracking', 'cli/plan.mjs'],
+  eval: ['methodology', 'cli/eval.mjs'],
 };
 
 // { value } for a parsed JSON file, { missing: true } when it does not exist, { error } when it cannot be read or
