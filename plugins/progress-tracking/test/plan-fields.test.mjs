@@ -255,3 +255,11 @@ test('Lane and Sequential because inside a code fence are not read', () => {    
   assert.equal(readPhases(text, 'demo').phases[0].sequentialBecause, null);
   assert.equal(readTasks(text)[1].lane, null);
 });
+test('a parenthetical note after the Parent value is not read as list elements', () => {
+  const p1 = readPhases(plan(3, { 2: 'trunk', 3: 'P1 (core, api)' }), 'demo').phases[2];
+  assert.deepEqual([p1.parent, p1.parents], [phase('P1'), [1]]);
+  const branch = readPhases(plan(2, { 2: 'feature/base (shared, see notes)' }), 'demo').phases[1];
+  assert.deepEqual([branch.parent, branch.parents], [{ kind: 'branch', value: 'feature/base' }, []]);
+  assert.deepEqual(parentsOf(plan(3, { 2: 'trunk', 3: '`P1`, `P2`' }))[2], [1, 2]);
+  assert.deepEqual(parentsOf(plan(3, { 2: 'trunk', 3: 'P1, P2 (core and api)' }))[2], [1, 2]);
+});

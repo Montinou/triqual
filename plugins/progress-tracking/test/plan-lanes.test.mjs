@@ -99,6 +99,42 @@ test('lane-depends: a Depends on across lanes, and the closing task is exempt', 
   assert.equal(r.violations[0].message, 'T2 (lane B) depends on T1 (lane A): put both in one lane, or make T2 the closing task that depends on every lane');
 });
 
+// Two lanes: T1 is lane A, T2 and T3 lane B; T3 reaches into lane A in the middle of lane B, T4 continues lane B.
+const TWO_LANES = (t3deps) => [{
+  tasks: [
+    { lane: 'A' },
+    { lane: 'B' },
+    { lane: 'B', deps: t3deps },
+    { lane: 'B', deps: ['T3'] },
+  ],
+}];
+
+test('lane-depends: with two lanes a lane-B task depending only on lane A is a violation, and plan lanes exits 1', (t) => {
+  const r = lanesOf(TWO_LANES(['T1']));
+  assert.deepEqual(codes(r), [['lane-depends', 1, 'T3']]);
+  assert.equal(r.violations[0].message, 'T3 (lane B) depends on T1 (lane A): put both in one lane, or make T3 the closing task that depends on every lane');
+  const s = setup(t, planText(TWO_LANES(['T1'])));
+  assert.equal(s.run().status, 1);
+});
+
+test('lane-depends: a convergence task that depends on the other lane and continues its own lane is exempt', () => {
+  assert.deepEqual(lanesOf(TWO_LANES(['T1', 'T2'])).violations, []);
+});
+
+test('lane-depends: a convergence task continuing lane A with a later task after it is exempt in three lanes', () => {
+  const r = lanesOf([{
+    tasks: [
+      { lane: 'A', files: ['f1.mjs'] },
+      { lane: 'A', deps: ['T1'], files: ['f2.mjs'] },
+      { lane: 'B', files: ['f3.mjs'] },
+      { lane: 'C', files: ['f4.mjs'] },
+      { lane: 'A', deps: ['T2', 'T3', 'T4'], files: ['f5.mjs'] },
+      { lane: 'A', deps: ['T3', 'T5', 'T4'], files: ['f6.mjs'] },
+    ],
+  }]);
+  assert.deepEqual(r.violations, []);
+});
+
 test('false-parent: an independent phase that names another, and none once it says trunk', (t) => {
   const phases = (p2) => [
     { tasks: [{ files: ['a.mjs'] }] },

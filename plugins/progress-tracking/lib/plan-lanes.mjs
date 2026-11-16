@@ -105,7 +105,10 @@ export function planLanes(text, stem) {
     for (const task of withLane) {
       const deps = depsOf(task).map((d) => byId.get(d)).filter((d) => phaseOf.get(d.id) === n && d.lane);
       const others = [...allLanes].filter((l) => l !== task.lane);
-      if (others.every((l) => deps.some((d) => d.lane === l))) continue;
+      // A closing (convergence) task reaches every other lane and, when its own lane has an earlier task, continues it.
+      const continuesOwn = !withLane.some((o) => o.lane === task.lane && byId.get(o.id).index < byId.get(task.id).index)
+        || deps.some((d) => d.lane === task.lane);
+      if (continuesOwn && others.every((l) => deps.some((d) => d.lane === l))) continue;
       for (const dep of deps.filter((d) => d.lane !== task.lane)) {
         add('lane-depends', n, task.id, `${task.id} (lane ${task.lane}) depends on ${dep.id} (lane ${dep.lane}): put both in one lane, or make ${task.id} the closing task that depends on every lane`);
       }

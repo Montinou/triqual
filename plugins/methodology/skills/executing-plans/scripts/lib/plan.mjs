@@ -173,7 +173,8 @@ function resolveParent(phase, phases) {
       ? { parent: { kind: 'trunk', value: null }, parents: [] }
       : { parent: { kind: 'phase', value: `P${phase.n - 1}` }, parents: [phase.n - 1] };
   }
-  const elements = raw.split(',').map((el) => branchOf(el)).filter(Boolean);
+  // Only the part before a `(` is the list: a note in parentheses may hold commas of its own.
+  const elements = raw.split('(')[0].split(',').map((el) => branchOf(el)).filter(Boolean);
   if (elements.length === 0) throw new PlanError(`${where} has an empty **Parent:**`);
   const resolved = elements.map((el) => {
     if (el === TRUNK) return { parent: { kind: 'trunk', value: null }, own: null };
