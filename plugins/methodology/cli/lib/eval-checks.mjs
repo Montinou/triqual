@@ -1,6 +1,8 @@
 // Code checks for session evaluators: one deterministic check per failure category. node: built-ins only,
 // so a snapshot copy of this file runs alone.
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 // Thrown by a check that needs the transcript when the file is gone; runCheck turns it into "undecided".
 export class TranscriptMissing extends Error {
@@ -138,4 +140,10 @@ export function runCheck(id, signals, transcriptPath, checks = CHECKS) {
     if (err instanceof TranscriptMissing) return 'undecided';
     throw err;
   }
+}
+
+// The version of the checks: the first 16 hex characters of the SHA-256 of this file's own source. A verdict is
+// recorded under it, so changing a check makes every session due for a new verdict.
+export function checkVersion() {
+  return createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex').slice(0, 16);
 }

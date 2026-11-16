@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { askModel, appendPrivate, sampleSessions } from '../cli/lib/eval-ask.mjs';
@@ -389,6 +389,22 @@ test('acceptReference writes a label and a category line for a session that has 
   assert.deepEqual(again, { labels: 0, categories: 0 });
   assert.equal(readFileSync(catFile, 'utf8'), catsText);
   assert.equal(readFileSync(labelFile, 'utf8'), labelsText);
+});
+
+test('acceptReference waits for the label-categories lock a concurrent applyRulings holds, and releases its own', async () => {
+  const fx = fixture();
+  const { spawn } = stub(() => ({ structured_output: validAnswer() }));
+  await run(fx, { spawn });
+  const sessions = sampleSessions({ evals: fx.evals, root: fx.root, taxonomy: TAXONOMY, home: fx.home, platform: 'linux' });
+  const catFile = join(fx.evals, 'label-categories.jsonl');
+  const lock = `${catFile}.lock`;
+  writeFileSync(lock, 'holder\n'); // a fresh lock, as applyRulings holds it while it rewrites the file
+  assert.throws(() => acceptReference({ evals: fx.evals, sessions, now: NOW }), /lock timeout/);
+  assert.equal(readJsonl(catFile).rows.length, 0, 'nothing is appended while the lock is held');
+  assert.equal(readFileSync(lock, 'utf8'), 'holder\n', 'the holder keeps its lock');
+  unlinkSync(lock);
+  assert.deepEqual(acceptReference({ evals: fx.evals, sessions, now: NOW }), { labels: 3, categories: 3 });
+  assert.equal(existsSync(lock), false, 'the lock is released');
 });
 
 test('acceptReference skips a session with no reference line', () => {
