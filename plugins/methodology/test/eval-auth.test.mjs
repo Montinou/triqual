@@ -21,7 +21,7 @@ test('authPath: TRIQUAL_EVAL_AUTH_FILE wins, else the config dir', () => {
 });
 
 test('no file gives the ambient entry', () => {
-  assert.deepEqual(loadChain(join(tmp(), 'missing.json')), [{ name: 'ambient', env: {} }]);
+  assert.deepEqual(loadChain(join(tmp(), 'missing.json')), [{ name: 'ambient', env: {}, paid: false }]);
 });
 
 test('a chain file loads in order', () => {
@@ -110,10 +110,11 @@ const OBSERVED = {
   api_error_status: 429, api_error: 'usage_limit_reached', terminal_reason: 'api_error', total_cost_usd: 0,
 };
 
-test('isLimit: usage_limit_reached, status 429 and each limit text are limits; a 529 overload result and a successful result are not', () => {
+test('isLimit: usage_limit_reached and each limit text are limits; a bare 429, a 529 overload result and a successful result are not', () => {
   assert.equal(isLimit(OBSERVED), true);
   assert.equal(isLimit({ is_error: true, api_error: 'usage_limit_reached' }), true);
-  assert.equal(isLimit({ is_error: true, api_error_status: 429 }), true);
+  assert.equal(isLimit({ is_error: true, api_error_status: 429 }), false);
+  assert.equal(isLimit({ is_error: true, api_error_status: 429, result: 'Too many requests' }), false);
   for (const text of [
     "You've hit your session limit · resets 3:45pm", "You've hit your limit", "You've hit your weekly limit · resets Mon 12:00am",
     'Credit balance is too low', "You've hit your monthly spend limit · raise it at …", "API Error: You've hit your limit",

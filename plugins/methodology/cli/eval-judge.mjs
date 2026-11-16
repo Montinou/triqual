@@ -5,14 +5,14 @@
 // chosen). A usage-limit or API-error outcome writes no line, so a later run judges that session. The sessions run one
 // at a time through the credential chain (lib/eval-auth.mjs): a limit moves every later session to the next entry.
 // The last stdout line is `judged <n>: <entry> <k>[, ...]; errors <e>; left <m>`. It prints counts, ids and entry
-// names, never transcript text or a secret. Exit codes: 0 every session got a line; 1 some were left (an error, a
+// names, never transcript text or a secret. A chain entry marked paid is used only with --paid. Exit codes: 0 every session got a line; 1 some were left (an error, a
 // credential problem, every entry limited); 2 usage (a code category included).
 // node: built-ins only. main() is exported for tests and runs only when this file is the entry point.
 import { appendFileSync, chmodSync, openSync, closeSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { AuthError, ChainExhausted, authPath, childEnv, loadChain, withChain } from './lib/eval-auth.mjs';
+import { AuthError, ChainExhausted, LIMIT_NOTE, PAID_NOTE, authPath, childEnv, loadChain, usableChain, withChain } from './lib/eval-auth.mjs';
 import { ensureDir, evalsDir, transcriptsRoot } from './lib/eval-paths.mjs';
 import { JudgePromptError, judgeSession, loadJudgePrompt, redactSecrets, spawnCapture } from './lib/eval-judge.mjs';
 import { readJsonl } from './lib/eval-store.mjs';
@@ -28,7 +28,7 @@ const CATEGORY = /^[a-z][a-z0-9-]{1,39}$/;
 
 const USAGE = [
   'usage:',
-  '  triqual eval judge --category <id> --sessions <file>',
+  '  triqual eval judge --category <id> --sessions <file> [--paid]',
   '      Judges each session of <file> (JSONL with sessionId, or one id per line) with the judge prompt of the',
   '      category (plugins/methodology/evals/judges/<id>.md, front matter model: <full model id>) and appends',
   '      { sessionId, category, result, promptHash, model, auth, at } to <evals>/judgments/<id>.jsonl, once per',
@@ -37,6 +37,8 @@ const USAGE = [
   '      sent. The model credentials come from the chain in TRIQUAL_EVAL_AUTH_FILE,',
   '      else ~/.config/triqual/eval-auth.json (no file: the ambient login). A usage limit or an API error writes no',
   '      line; the session is judged by a later run. Only category checks of kind "judge" are accepted.',
+  '      A chain entry marked "paid": true in that file is used only with --paid (it spends money); without it, those',
+  '      entries are left out.',
   '      Last line: judged <n>: <entry> <k>[, ...]; errors <e>; left <m>. Exit 0 when every session got a line, else 1.',
   '  triqual eval judge --help',
   '',
@@ -47,6 +49,7 @@ const clip = (s) => (s.length > 40 ? `${s.slice(0, 40)}...` : s);
 function parseArgs(argv) {
   const opts = {};
   for (let i = 0; i < argv.length; i += 1) {
+    if (argv[i] === '--paid') { opts.paid = true; continue; }
     const m = /^--(category|sessions)(?:=(.*))?$/s.exec(argv[i]);
     if (!m) return { error: `unknown argument ${clip(argv[i])}` };
     const value = m[2] ?? argv[++i];
@@ -141,7 +144,9 @@ export async function main(argv, {
   let excluded = 0;
   let errors = 0;
   let judged = 0;
-  const chainRun = withChain(chain, async (id, entry) => judgeSession({
+  const usable = usableChain(chain, { paid: opts.paid === true });
+  const paidOnly = chain.length > 0 && usable.length === 0;
+  const chainRun = withChain(usable, async (id, entry) => judgeSession({
     category: opts.category, prompt, session: join(root, store.get(id).projectDir, `${id}.jsonl`), spawn,
     env: childEnv(entry, env, { home }), cwd, bin,
   }));
@@ -150,21 +155,25 @@ export async function main(argv, {
   for (const id of ids) {
     if (done.has(keyOf(id))) continue;
     const s = store.get(id);
-    if (judgeExcluded(s?.project ?? null, taxonomy.judgeExclude, { home, platform })) {
-      if (record(id, { result: 'undecided', reason: 'excluded' })) excluded += 1;
-      continue;
-    }
-    if (stop !== null) continue;
     if (s === undefined || typeof s.projectDir !== 'string') {
       errors += 1;
       stderr.write(`triqual eval judge: ${id}: not in the sessions store; run "triqual eval review sample" first\n`);
       continue;
     }
+    if (judgeExcluded(s.project ?? null, taxonomy.judgeExclude, { home, platform })) {
+      if (record(id, { result: 'undecided', reason: 'excluded' })) excluded += 1;
+      continue;
+    }
+    if (stop !== null) continue;
     let ran;
     try {
       ran = await chainRun.run(id);
     } catch (err) {
-      if (err instanceof ChainExhausted) { stderr.write(`triqual eval judge: every credential entry hit a usage limit (tried: ${err.tried.join(', ')})\n`); stop = 'limit'; continue; }
+      if (err instanceof ChainExhausted) {
+        stderr.write(paidOnly ? `triqual eval judge: ${PAID_NOTE}\n` : `triqual eval judge: ${LIMIT_NOTE} (tried: ${err.tried.join(', ')})\n`);
+        stop = 'limit';
+        continue;
+      }
       if (err instanceof AuthError) { stderr.write(`triqual eval judge: ${err.message}\n`); stop = 'auth'; continue; }
       throw err;
     }

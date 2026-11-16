@@ -8,20 +8,31 @@
 // rows (sessions not yet in the sample) to the existing sample, keeping its rows and order; it needs a sample and takes
 // no --n or --force. It prints counts, ids and paths, never transcript text. Exit codes: 0 done; 1 the store could not be updated, a sample exists (no --force), there is
 // no sample to serve, or the server could not start; 2 usage.
+// `propose [--accept] [--paid]` has a model read each sample session (lib/eval-reference.mjs: the redacted rendering, never the
+// raw transcript, and never a session under the taxonomy's judgeExclude) and append its proposed label and categories to
+// <evals>/review/reference.jsonl, once per session. --accept then copies the proposals into the label files for the
+// sessions that have no human line. A chain entry marked paid is used only with --paid. The last stdout line is
+// `proposed <n>: <entry> <k>[, ...]; errors <e>; left <m>`; the exit is 0 when `left` is 0, else 1.
 // node: built-ins only. main() is exported for tests and runs only when this file is the entry point.
 import { randomBytes } from 'node:crypto';
 import { readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { evalsDir, transcriptsRoot } from './lib/eval-paths.mjs';
+import { AuthError, LIMIT_NOTE, PAID_NOTE, authPath, loadChain, usableChain } from './lib/eval-auth.mjs';
+import { sampleSessions } from './lib/eval-ask.mjs';
+import { JudgePromptError, spawnCapture } from './lib/eval-judge.mjs';
+import { ensureDir, evalsDir, transcriptsRoot } from './lib/eval-paths.mjs';
+import { acceptReference, loadReferencePrompt, proposeReference } from './lib/eval-reference.mjs';
 import { drawSample, moreRandom, SampleExists, writeSample } from './lib/eval-sample.mjs';
 import { readJsonl, refreshSessions } from './lib/eval-store.mjs';
 import { startServer } from './lib/eval-serve.mjs';
+import { TaxonomyError, loadLabelCategories, loadTaxonomy } from './lib/eval-taxonomy.mjs';
 
-export const SUMMARY = 'draw the stratified review sample (sample) and serve the local labeling page (serve)';
+export const SUMMARY = 'draw the stratified review sample (sample), serve the local labeling page (serve), propose labels with a model (propose)';
 
 const PRICES = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'lib', 'prices.json'), 'utf8')).models;
+const DEFAULT_REFERENCE = join(dirname(fileURLToPath(import.meta.url)), '..', 'evals', 'reference.md');
 const DEFAULT_N = 100;
 const STRATA = ['random', 'cost', 'outlier'];
 
@@ -41,6 +52,14 @@ const USAGE = [
   '      good/bad labels to <evals>/review/labels.jsonl. Binds to 127.0.0.1 only, checks the Host and Origin',
   '      headers, and requires a per-run token (embedded in the page) on every label POST. Prints the URL;',
   '      runs until SIGINT.',
+  '  triqual eval review propose [--accept] [--paid]',
+  '      A model reads each session of the sample (the redacted rendering; never a session under a judgeExclude',
+  '      pattern of <evals>/taxonomy.json) and proposes the good/bad label and the failure categories present,',
+  '      appended once per session to <evals>/review/reference.jsonl. The credentials come from the chain in',
+  '      TRIQUAL_EVAL_AUTH_FILE, else ~/.config/triqual/eval-auth.json; an entry marked "paid": true is used only',
+  '      with --paid. --accept then adds a label (review/labels.jsonl) and a category line (label-categories.jsonl)',
+  '      for each proposed session that has none there; existing lines are never changed. Needs a sample.',
+  '      Last line: proposed <n>: <entry> <k>[, ...]; errors <e>; left <m>. Exit 0 when left is 0, else 1.',
   '  triqual eval review --help',
   '',
 ].join('\n');
@@ -71,11 +90,17 @@ function parse(rest, flags) {
 
 // Runs the command and returns its exit code; every dependency is injected so a test never reads the real home.
 // `until` (serve only) is a promise that ends the server when it settles; the default is SIGINT or SIGTERM.
-export async function main(argv, { env = process.env, stdout = process.stdout, stderr = process.stderr, now = new Date(), until } = {}) {
+// `now` is a Date or a function returning one; `spawn`, `platform` and `referencePrompt` are for `propose`.
+export async function main(argv, {
+  env = process.env, stdout = process.stdout, stderr = process.stderr, now = () => new Date(), until, spawn = spawnCapture,
+  platform = process.platform, referencePrompt = DEFAULT_REFERENCE,
+} = {}) {
+  const clock = typeof now === 'function' ? now : () => now;
+  now = new Date(clock());
   const usage = (m) => { stderr.write(`triqual eval review: ${m}\n${USAGE}`); return 2; };
   const [sub, ...rest] = argv;
   if (sub === '--help' || sub === '-h' || rest.includes('--help') || rest.includes('-h')) { stdout.write(USAGE); return 0; }
-  if (sub !== 'sample' && sub !== 'serve') return usage(sub === undefined ? 'a subcommand is needed: sample or serve' : `unknown subcommand ${sub.length > 40 ? `${sub.slice(0, 40)}...` : sub}`);
+  if (sub !== 'sample' && sub !== 'serve' && sub !== 'propose') return usage(sub === undefined ? 'a subcommand is needed: sample, serve or propose' : `unknown subcommand ${sub.length > 40 ? `${sub.slice(0, 40)}...` : sub}`);
 
   const home = env.HOME || homedir();
   const dir = join(evalsDir(env, home), 'review');
@@ -138,6 +163,42 @@ export async function main(argv, { env = process.env, stdout = process.stdout, s
     lines.push(`Written to ${sampleFile}`, '');
     stdout.write(lines.join('\n'));
     return 0;
+  }
+
+  if (sub === 'propose') {
+    const { opts, error } = parse(rest, { accept: 'bool', paid: 'bool' });
+    if (error) return usage(error);
+    const fail = (m) => { stderr.write(`triqual eval review: ${m}\n`); return 1; };
+    const evals = evalsDir(env, home);
+    if (readJsonl(sampleFile).rows.every((r) => typeof r.sessionId !== 'string')) return fail(`no sample at ${sampleFile}; run "triqual eval review sample" first`);
+    let taxonomy;
+    let prompt;
+    let chain;
+    let paidOnly = false;
+    try {
+      taxonomy = loadTaxonomy(join(evals, 'taxonomy.json'), { labels: loadLabelCategories(join(evals, 'label-categories.jsonl')) });
+      prompt = loadReferencePrompt(referencePrompt, taxonomy);
+      const loaded = loadChain(authPath(env, home));
+      chain = usableChain(loaded, { paid: opts.paid === true });
+      paidOnly = loaded.length > 0 && chain.length === 0;
+    } catch (err) {
+      if (err instanceof TaxonomyError || err instanceof JudgePromptError || err instanceof AuthError) return fail(err.message);
+      throw err;
+    }
+    const root = transcriptsRoot(env, home);
+    const sessions = sampleSessions({ evals, root, taxonomy, home, platform });
+    const cwd = join(evals, 'judge-cwd');
+    ensureDir(cwd);
+    const result = await proposeReference({ evals, sessions, prompt, chain, spawn, env, home, cwd, bin: env.TRIQUAL_CLAUDE_BIN || 'claude', now: clock });
+    if (result.stop === 'limit') stderr.write(`triqual eval review: ${paidOnly ? PAID_NOTE : LIMIT_NOTE}\n`);
+    if (result.stop === 'auth') stderr.write('triqual eval review: a credential source could not be read\n');
+    if (opts.accept === true) {
+      const a = acceptReference({ evals, sessions, now: clock });
+      stdout.write(`accepted: labels ${a.labels}, categories ${a.categories}\n`);
+    }
+    const pairs = Object.entries(result.byEntry).map(([name, k]) => `${name} ${k}`).join(', ');
+    stdout.write(`proposed ${result.proposed}: ${pairs === '' ? 'none' : pairs}; errors ${result.errors}; left ${result.left}\n`);
+    return result.left > 0 ? 1 : 0;
   }
 
   const { opts, error } = parse(rest, { port: 'value' });
