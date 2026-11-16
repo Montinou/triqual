@@ -120,8 +120,10 @@ export function writeSample(file, rows, { force = false } = {}) {
 }
 
 // k more random-stratum rows (seeded) among the cli sessions whose id is not in `existing` (SampleRow[]); fewer when
-// fewer are left.
-export function moreRandom(sessions, existing, k, seed, { root = defaultRoot() } = {}) {
+// fewer are left. With `since` (YYYY-MM-DD or an ISO timestamp, compared as text with the session's `start`) only the
+// sessions that started at or after it are candidates.
+export function moreRandom(sessions, existing, k, seed, { root = defaultRoot(), since } = {}) {
   const had = new Set(existing.map((r) => r.sessionId));
-  return shuffled(population(sessions, had), seed).slice(0, k).map((s) => rowOf(s, 'random', root));
+  const pool = population(sessions, had).filter((s) => since === undefined || (typeof s.start === 'string' && s.start >= since));
+  return shuffled(pool, seed).slice(0, k).map((s) => rowOf(s, 'random', root));
 }

@@ -4,7 +4,7 @@
 // rows per stratum and the seed; an existing sample is kept unless --force. `serve` starts the loopback review page
 // (lib/eval-serve.mjs, 127.0.0.1 only, Host and Origin checked) over that sample, appends the labels to
 // <evals>/review/labels.jsonl, prints its plain URL, and runs until SIGINT or SIGTERM. A random per-run value is embedded in the
-// served page and required on every label POST; it is never printed. `sample --more <k>` appends k more random-stratum
+// served page and required on every label POST; it is never printed. `sample --more <k> [--since <day | ISO timestamp>]` appends k more random-stratum
 // rows (sessions not yet in the sample) to the existing sample, keeping its rows and order; it needs a sample and takes
 // no --n or --force. It prints counts, ids and paths, never transcript text. Exit codes: 0 done; 1 the store could not be updated, a sample exists (no --force), there is
 // no sample to serve, or the server could not start; 2 usage.
@@ -44,9 +44,10 @@ const USAGE = [
   '      by highest cost, the rest by outlier score (stop-hook blocks, idle cache rewrites, turns). The same --seed',
   '      draws the same sample; without it the seed is the current epoch second, and it is printed. An existing',
   '      sample is kept unless --force. Prints the rows per stratum, never message content.',
-  '  triqual eval review sample --more <k> [--seed <int>]',
+  '  triqual eval review sample --more <k> [--seed <int>] [--since <YYYY-MM-DD | ISO timestamp>]',
   '      Appends k more random-stratum rows (interactive sessions not yet in the sample, seeded like --seed above) to the',
   '      existing sample.jsonl, keeping its rows; fewer when fewer sessions are left. Needs a sample; no --n or --force.',
+  '      --since <YYYY-MM-DD | ISO timestamp> keeps only sessions that started at or after it; it needs --more.',
   '  triqual eval review serve [--port <n>]',
   '      Serves the sample on http://127.0.0.1:<port>/ (a free port when --port is absent or 0) and appends the',
   '      good/bad labels to <evals>/review/labels.jsonl. Binds to 127.0.0.1 only, checks the Host and Origin',
@@ -63,6 +64,18 @@ const USAGE = [
   '  triqual eval review --help',
   '',
 ].join('\n');
+
+// The --since value as moreRandom compares it: undefined when absent, a day kept as is, a full ISO timestamp as the
+// UTC instant (the form a transcript's `start` has); null when it is neither.
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const STAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+function sinceOf(v) {
+  if (v === undefined) return undefined;
+  if (!DAY.test(v) && !STAMP.test(v)) return null;
+  const ms = Date.parse(v);
+  if (Number.isNaN(ms)) return null;
+  return DAY.test(v) ? v : new Date(ms).toISOString();
+}
 
 const stopOnSignal = () => new Promise((resolve) => {
   process.once('SIGINT', resolve);
@@ -107,12 +120,15 @@ export async function main(argv, {
   const sampleFile = join(dir, 'sample.jsonl');
 
   if (sub === 'sample') {
-    const { opts, error } = parse(rest, { n: 'value', seed: 'value', force: 'bool', more: 'value' });
+    const { opts, error } = parse(rest, { n: 'value', seed: 'value', force: 'bool', more: 'value', since: 'value' });
     if (error) return usage(error);
+    if (opts.since !== undefined && opts.more === undefined) return usage('--since needs --more');
     if (opts.more !== undefined) {
       if (opts.n !== undefined || opts.force === true) return usage('--more takes no --n or --force');
       if (!/^\d+$/.test(opts.more) || !Number.isSafeInteger(Number(opts.more)) || Number(opts.more) < 1) return usage('--more needs a positive integer');
       if (opts.seed !== undefined && !/^\d+$/.test(opts.seed)) return usage('--seed needs a non-negative integer');
+      const since = sinceOf(opts.since);
+      if (since === null) return usage('--since needs a day (YYYY-MM-DD) or an ISO timestamp');
       const existing = readJsonl(sampleFile).rows.filter((r) => typeof r.sessionId === 'string');
       if (existing.length === 0) {
         stderr.write(`triqual eval review: no sample at ${sampleFile}; run "triqual eval review sample" first\n`);
@@ -126,7 +142,7 @@ export async function main(argv, {
         stderr.write(`triqual eval review: the sessions store could not be updated: ${err?.code ?? err?.message ?? 'error'}\n`);
         return 1;
       }
-      const added = moreRandom(sessions, existing, Number(opts.more), seed, { root: transcriptsRoot(env, home) });
+      const added = moreRandom(sessions, existing, Number(opts.more), seed, { root: transcriptsRoot(env, home), since });
       try {
         writeSample(sampleFile, [...existing, ...added], { force: true });
       } catch (err) {

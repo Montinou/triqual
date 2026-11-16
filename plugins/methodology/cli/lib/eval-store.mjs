@@ -28,7 +28,7 @@ const grew = (end, storedEnd) => end !== null && (typeof storedEnd !== 'string' 
 
 // Reads the main transcripts under `root` (outside the lock, so a slow scan never holds it), then merges them into
 // `file` under the store lock: a new sessionId is added, a stored line is replaced when its transcript's `end` grew, a
-// stored line whose `entrypoint` is null while its transcript now has one is patched in that field only, a stored line
+// stored line without a `methodologyVersion` key is replaced by the recomputed signals, a stored line whose `entrypoint` is null while its transcript now has one is patched in that field only, a stored line
 // whose transcript is gone stays. The file is rewritten through a temp file and a rename, so a reader
 // sees the old store or the new one. { sessions: every stored line, added, updated, skipped: lines of the file that
 // were not rows }.
@@ -56,6 +56,8 @@ export function refreshSessions({ root, file, prices, now = new Date() }) {
       const cur = stored.get(id);
       if (cur === undefined) { stored.set(id, { ...sig, refreshedAt }); added += 1; }
       else if (grew(sig.end, cur.end)) { stored.set(id, { ...sig, refreshedAt }); updated += 1; }
+      // A stored line from before methodologyVersion existed (no such key) is replaced by the recomputed signals.
+      else if (!('methodologyVersion' in cur)) { stored.set(id, { ...sig, refreshedAt }); updated += 1; }
       // An unchanged transcript whose stored line lost its entrypoint (an older extractor read it from the first record
       // only): patch that one field, keep the rest of the line.
       else if (cur.entrypoint == null && sig.entrypoint !== null) { stored.set(id, { ...cur, entrypoint: sig.entrypoint }); updated += 1; }
@@ -80,7 +82,7 @@ export function refreshSessions({ root, file, prices, now = new Date() }) {
 // day). null when the session has no turn in the window. The rest (start, end, context, compactions...) stays that of
 // the whole session.
 export function inWindow(sig, { since, until }) {
-  const models = {};
+  const models = Object.create(null); // a model named `__proto__` is only ever a key
   let usd = 0;
   let turns = 0;
   for (const [day, byModel] of Object.entries(sig.days ?? {})) {
@@ -94,5 +96,5 @@ export function inWindow(sig, { since, until }) {
   }
   if (turns === 0) return null;
   const unpriced = Object.keys(models).filter((k) => models[k].usd === null).sort();
-  return { ...sig, models, usd, turns, unpriced };
+  return { ...sig, models: { ...models }, usd, turns, unpriced };
 }

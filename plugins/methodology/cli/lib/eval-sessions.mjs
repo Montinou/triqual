@@ -6,6 +6,8 @@ import { basename, join } from 'node:path';
 
 const IDLE_MS = 300_000;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
+// The methodology plugin version a session loaded: the first cache path of the installed plugin in the transcript text.
+const VERSION_PATH = /plugins\/cache\/triqual\/methodology\/(\d+\.\d+\.\d+)\//;
 const n = (v) => (Number.isSafeInteger(v) && v > 0 ? v : 0);
 
 // The price rule of cost.mjs: the model name, else without a date suffix and a trailing [..]; null when unlisted.
@@ -31,6 +33,7 @@ export function sessionSignals(file, { prices }) {
     sessionId: basename(file).replace(/\.jsonl$/, ''), project: null, entrypoint: null, start: null, end: null, models,
     usd: 0, turns: 0, ctxPeak: 0, ctxAvg: 0, compactions: 0, idleRewrites: 0, rewriteUsd: 0, stopHookBlocks: 0,
     toolErrors: 0, userMessages: 0, unpriced: [], arm: null, contaminated: false, days: {},
+    methodologyVersion: VERSION_PATH.exec(text)?.[1] ?? null,
   };
   let ctxSum = 0;
   let prevAt = null;
