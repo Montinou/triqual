@@ -146,11 +146,12 @@ Every architectural spec carries these two sections, with exactly these headings
 ### S<n> — <name>
 **Delivers:** what this slice puts on trunk.
 **Units:** units, or parts of units, it builds.
+**Depends on:** the earlier slices it needs, as `S<k>, …`, or `none`.
 **Stands alone because:** why trunk stays green and coherent if this slice merges alone, in order: no half-built reachable code; behind a feature flag where the global Feature Flags rule applies.
 **Acceptance:** observable checks.
 ```
 
-- A slice depends only on earlier slices.
+- A slice depends only on earlier slices, and only for a real need: a unit it uses, or a file both change. Slices with no dependency between them are stated as parallel, in a line after the slices ("S1 and S2 have no dependency between them and are built at the same time").
 - Together the slices cover every unit.
 - A slice that would need more than about 6 atomic tasks is split.
 - Work that needs the merge (deploy, production migration, publish) goes under the spec's rollout, not into a slice.
@@ -169,7 +170,7 @@ Every architectural spec carries these two sections, with exactly these headings
 2. **Internal consistency:** do sections contradict each other, or the architecture the feature descriptions?
 3. **Scope check:** is it focused enough for one implementation plan, or does it need decomposing?
 4. **Ambiguity check:** could a requirement be read two ways? Pick one and say it.
-5. **Modularity:** does every unit state its interface and what it depends on, does every slice depend only on earlier slices, do the slices cover every unit, does each slice say why it stands alone, and is any slice big enough (more than about 6 atomic tasks) to split?
+5. **Modularity:** does every unit state its interface and what it depends on, does every slice depend only on earlier slices, does every slice carry `**Depends on:**`, is any slice order serial without a dependency, do the slices cover every unit, does each slice say why it stands alone, and is any slice big enough (more than about 6 atomic tasks) to split?
 6. **Simplicity:** every unit, interface, flag, option and verdict traces to the request or names the failure it prevents, else it is cut.
 
 Fix what you find inline and move on; this pass needs no second review.
