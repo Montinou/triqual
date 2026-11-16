@@ -432,6 +432,7 @@ function cmdInit(args) {
   const ctx = context(rest[0]);
   refuseCommittedTracking(ctx.cwd);
   const { prefix, forest, phases } = parsePhases(readFileSync(ctx.planFile, 'utf8'), ctx.planFile);
+  if (phases.some((p) => p.parents.length > 1)) fail(EXIT_REFUSED, 'joins need a methodology version that runs concurrent phases');
   const aliasRemote = () => {
     const githubName = pickGithubRemote(ctx.cwd, opts.remote);
     return githubName ? githubRemote(githubName, ctx.cwd).alias : false;
