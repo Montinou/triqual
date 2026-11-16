@@ -11,6 +11,11 @@
 //                                           task's unreviewed commits are never its base)
 //   workdir: <path>                        (only with --worktree: the task's worktree)
 //
+// Right after BASE the ledger gets `Opened: T<N> <time>` (UTC, to the second; TRIQUAL_NOW, when set, is the time written) unless the
+// task's last `Opened:`/`Closed:` line is an `Opened:` one: a rerun, and the sequential re-run of an undone landing, add none, and the
+// task's next open after a `Closed:` line (a reopen) adds one. A TRIQUAL_NOW that is not a time like 2026-11-16T10:00:00Z is exit 2,
+// read before anything is written.
+//
 // With --worktree the task is built in `.claude/worktrees/<plan stem>-t<N>` on the branch `wt/<plan stem>-t<N>`, made from BASE (the
 // last closed commit of the phase branch: the phase tip, or the BASE of a main-checkout task whose commits no close has squashed yet), so tasks of one phase can run side by side and each lands (task-close) as soon as its review is clean. A worktree that
 // is already there is reused. `.claude/worktrees/` is appended to `.git/info/exclude` when absent. The install command is chosen
@@ -35,7 +40,7 @@
 // without --worktree is refused (exit 3, nothing written) while one is open; a task opened with --worktree is refused while an open task
 // is built in the main checkout, an undone one included (it has no worktree and no landing until its sequential re-run closes).
 //
-// Exit codes: 0 ok, 2 usage / no such plan file / malformed plan, 3 refused (linked worktree, unknown task, a started task
+// Exit codes: 0 ok, 2 usage / no such plan file / malformed plan / TRIQUAL_NOW not an ISO time, 3 refused (linked worktree, unknown task, a started task
 // with no BASE line, a blocked task, a coordinator task with an earlier task open, a task opened in the main checkout beside an open one, a worktree task opened beside one built in the main checkout, a move the ledger refuses), 1 any other failure. A failure appends `Error: task-open T<N> — exit <code> — <cause>` to the ledger.
 //
 // Dynamic imports only: the file has no extension, so Node may load it as CommonJS or as an ES module depending on the
@@ -107,12 +112,15 @@
     if (base === null && state && STARTED.includes(state.status)) {
       throw new ScriptError(EXIT_REFUSED, `no BASE recorded for a started task (T${n} is ${state.status}): append "BASE: T${n} <sha>" to ${join(workspace, 'sdd-ledger.md')}, the sha being the commit before the task's first commit`);
     }
+    // The time is read before the start move: a TRIQUAL_NOW that is no time leaves the task as it was.
+    const at = common.now();
     if (state && STARTABLE.includes(state.status)) common.taskMove('start', n, plan);
     // BASE goes in before the brief: a brief that fails must not leave the rerun to take a later HEAD.
     if (base === null) {
       base = worktree ? common.worktreeBase(planName, n, common.ledgerLines(workspace)) : common.git(['rev-parse', 'HEAD']);
       common.appendLedger(workspace, `BASE: T${n} ${base}`);
     }
+    if (common.lastTimeLine(common.ledgerLines(workspace), n) !== 'Opened') common.appendLedger(workspace, `Opened: T${n} ${at}`);
 
     let workdir = null;
     if (worktree) {

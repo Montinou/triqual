@@ -122,6 +122,27 @@ export function ledgerLines(workspace) {
   return existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter((l) => l !== '') : [];
 }
 
+// ---- the time lines ----
+
+// `Opened: T<N> <time>` and `Closed: T<N> <time>` mark the window a task was open: task-open writes the first, task-close the
+// second (one write before the complete line), and the timeline reads both. A time is UTC, to the second.
+export const ISO_TIME = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/;
+export const TIME_LINE = /^(Opened|Closed): T(\d+) (\S+)\s*$/;
+
+// The time every script writes: TRIQUAL_NOW when set and not empty (a test or a replay sets it), else the clock.
+export function now() {
+  const set = process.env.TRIQUAL_NOW;
+  if (set === undefined || set === '') return new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+  if (!ISO_TIME.test(set)) throw new ScriptError(EXIT_USAGE, `TRIQUAL_NOW must be an ISO time like 2026-11-16T10:00:00Z, not ${set}`);
+  return set;
+}
+
+// The kind of the last time line of task N in `lines` ('Opened' or 'Closed'), else null.
+export function lastTimeLine(lines, n) {
+  const hits = lines.map((l) => TIME_LINE.exec(l)).filter((m) => m && Number(m[2]) === n);
+  return hits.length ? hits.at(-1)[1] : null;
+}
+
 // The sha of the last `BASE: T<N> <sha>` line, else null.
 export function lastBase(lines, n) {
   const re = new RegExp(`^BASE: T${n} (\\S+)\\s*$`);

@@ -8,6 +8,10 @@
 //                                      commit, the tip of the phase branch when a worktree task made none: its complete line reads `<tip>..<tip>`, so a reopen squashes from the tip)
 //   record: <recorded|already recorded>   what `triqual role-eval record` said
 //
+// The complete line is written with `Closed: T<N> <time>` just before it, in one write (UTC, to the second; the time is the record's
+// `at`, and TRIQUAL_NOW, when set, is the time written), so the complete line stays the task's last line. A resume, an undo and every
+// refusal write no `Closed:` line. A TRIQUAL_NOW that is not a time like 2026-11-16T10:00:00Z is exit 2, read before anything is written.
+//
 // Inputs, all read before anything is written (a missing or malformed one is an Error and nothing changes):
 //   - git: whether BASE..HEAD holds a commit (a task with none needs no reviewer output), and, for a task with commits, that
 //     HEAD is the head of the attempt's last `Prep:` line (else exit 3: commits no reviewer saw are never squashed; a reopened
@@ -90,7 +94,7 @@
 // `<workspace>/task-<N>-closed-<attempt>`, and an attempt after the first takes only the outputs (gate, spec, hunters) saved
 // after the marker of the attempt before. A stale or missing one is an Error naming it: attempt 1's counts are never reused.
 //
-// Exit codes: 0 ok, 2 usage / no such plan file / bad --head, 3 refused (linked worktree, unknown task, no BASE, commits after the last
+// Exit codes: 0 ok, 2 usage / no such plan file / bad --head / TRIQUAL_NOW not an ISO time, 3 refused (linked worktree, unknown task, no BASE, commits after the last
 // Prep, a move or the squash refused, another task's landing with no Tested: line, an undone landing), 1 any other failure. A failure appends `Error: task-close T<N> — exit <code> — <cause>` to the ledger.
 //
 // Dynamic imports only: the file has no extension, so Node may load it as CommonJS or as an ES module depending on the
@@ -418,7 +422,7 @@
 
     const record = {
       v: 2,
-      at: new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
+      at: common.now(),
       provider,
       task: `T${n}`,
       kind: 'task-review',
@@ -603,7 +607,8 @@
         sha = printed === 'no commits' ? common.git(['rev-parse', 'HEAD']) : printed;
       }
       if (state && state.status !== 'done') common.taskMove('done', n, plan, ['--commit', sha]);
-      common.appendLedger(workspace, `Task ${n}: complete (commits ${closeBase.slice(0, 7)}..${sha.slice(0, 7)}, ${parked > 0 ? `${parked} parked` : 'review clean'})`);
+      // One write, the time line first: the complete line stays the task's last line.
+      common.appendLedger(workspace, `Closed: T${n} ${record.at}`, `Task ${n}: complete (commits ${closeBase.slice(0, 7)}..${sha.slice(0, 7)}, ${parked > 0 ? `${parked} parked` : 'review clean'})`);
     }
 
     // The close marker of this attempt (see the header): the cutoff for the next attempt's outputs.

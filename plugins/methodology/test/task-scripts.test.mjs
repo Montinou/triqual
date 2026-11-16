@@ -215,6 +215,8 @@ const pairs = (res) => res.stdout.split('\n').filter(Boolean).map((line) => {
 const keys = (res) => pairs(res).map(([k]) => k);
 const out = (res) => Object.fromEntries(pairs(res));
 const open = (r, n) => out(ok(r.run('task-open', r.plan, String(n))));
+// The `Opened:` and `Closed:` time lines are a file format of their own; the tests that pin the other ledger lines leave them out.
+const withoutTimes = (lines) => lines.filter((l) => !/^(Opened|Closed): /.test(l));
 
 // ---- task-open ----
 
@@ -228,12 +230,13 @@ test('task-open: starts the task, writes the brief, records BASE once', () => wi
   assert.equal(o.base, base);
   assert.match(readFileSync(o.brief, 'utf8'), /^### Task 1: Standard task/);
   assert.equal(r.taskState(1).status, 'in_progress');
-  assert.deepEqual(r.ledger(), [`BASE: T1 ${base}`]);
+  assert.deepEqual(withoutTimes(r.ledger()), [`BASE: T1 ${base}`]);
 
   r.commit('src/a.js', 'a\n');
   const second = ok(r.run('task-open', r.plan, '1'));
   assert.equal(second.stdout, first.stdout);
-  assert.deepEqual(r.ledger(), [`BASE: T1 ${base}`], 'a second BASE line was added');
+  assert.deepEqual(withoutTimes(r.ledger()), [`BASE: T1 ${base}`], 'a second BASE line was added');
+  assert.equal(r.ledger().filter((l) => l.startsWith('Opened: T1 ')).length, 1);
 }));
 
 test('task-open: without tracking no triqual tasks move is made, and the output is the same', () => withRig({ store: false }, (r) => {
@@ -242,7 +245,8 @@ test('task-open: without tracking no triqual tasks move is made, and the output 
   assert.deepEqual(keys(res), ['brief', 'report', 'base']);
   assert.equal(out(res).base, base);
   assert.ok(existsSync(out(res).brief));
-  assert.deepEqual(r.ledger(), [`BASE: T1 ${base}`]);
+  assert.deepEqual(withoutTimes(r.ledger()), [`BASE: T1 ${base}`]);
+  assert.equal(r.ledger().filter((l) => l.startsWith('Opened: T1 ')).length, 1);
   const moves = r.calls().filter((c) => !c.startsWith('tasks paths'));
   assert.deepEqual(moves, [], 'a triqual call other than the opt-in probe');
 }));
@@ -2793,4 +2797,83 @@ test('task-open does not restart a blocked task: only the human decision moves i
   // After the owner's ruling the main session makes the move, and the same call goes on.
   ok(r.triqual('tasks', 'start', 'T1', '--plan', r.plan));
   ok(r.run('task-open', r.plan, '1'));
+}));
+
+// ---- the Opened and Closed time lines ----
+
+const runAt = (r, at, script, ...args) => spawnSync(process.execPath, [join(SCRIPTS, script), ...args], { cwd: r.dir, env: { ...r.env, TRIQUAL_NOW: at }, encoding: 'utf8' });
+const AT = (hm) => `2026-11-16T${hm}:00Z`;
+const timeLines = (r) => r.ledger().filter((l) => /^(Opened|Closed): /.test(l));
+const STANDARD_OUTPUTS = (r, n) => {
+  save(r, n, 'safety-reviewer', 1, footerText('safety-reviewer'));
+  save(r, n, 'spec-reviewer', 1, footerText('spec-reviewer'));
+};
+
+test('task-open writes one Opened line per window, and a rerun writes none', () => withRig({}, (r) => {
+  const base = r.head();
+  ok(runAt(r, AT('10:00'), 'task-open', r.plan, '1'));
+  assert.deepEqual(r.ledger(), [`BASE: T1 ${base}`, `Opened: T1 ${AT('10:00')}`]);
+  ok(runAt(r, AT('10:05'), 'task-open', r.plan, '1'));
+  assert.deepEqual(timeLines(r), [`Opened: T1 ${AT('10:00')}`]);
+}));
+
+test('task-close writes Closed in one write just before the complete line, and a resumed close writes none', () => withRig({}, (r) => {
+  prepared(r, 1);
+  STANDARD_OUTPUTS(r, 1);
+  ok(runAt(r, AT('10:30'), 'task-close', r.plan, '1'));
+  assert.equal(r.ledger().at(-2), `Closed: T1 ${AT('10:30')}`);
+  assert.match(r.ledger().at(-1), /^Task 1: complete \(commits /);
+  const again = out(ok(runAt(r, AT('10:45'), 'task-close', r.plan, '1')));
+  assert.equal(again.record, 'already recorded');
+  assert.deepEqual(r.ledger().filter((l) => l.startsWith('Closed: T1 ')), [`Closed: T1 ${AT('10:30')}`]);
+  assert.match(r.ledger().at(-1), /^Task 1: complete \(commits /);
+}));
+
+test('a reopened task gets a second Opened line from task-open and a second Closed line from its next close', () => withRig({}, (r) => {
+  prepared(r, 1);
+  STANDARD_OUTPUTS(r, 1);
+  ok(runAt(r, AT('10:30'), 'task-close', r.plan, '1'));
+  ok(r.triqual('tasks', 'reopen', 'T1', 'Phase check failed', '--plan', r.plan));
+  r.appendLedger('Task 1: reopened — Phase check failed — node --test');
+  ok(runAt(r, AT('10:40'), 'task-open', r.plan, '1'));
+  assert.equal(r.ledger().filter((l) => l.startsWith('Opened: T1 ')).length, 2);
+  assert.equal(r.ledger().filter((l) => l.startsWith('Opened: T1 ')).at(-1), `Opened: T1 ${AT('10:40')}`);
+  r.commit('src/t1-fix.js', 'export const fix = 1;\n', 'fix: t1');
+  ok(r.triqual('tasks', 'review', 'T1', '--plan', r.plan));
+  ageFile(markerPath(r, 1, 1), 60);
+  STANDARD_OUTPUTS(r, 1);
+  ok(runAt(r, AT('10:50'), 'task-close', r.plan, '1'));
+  assert.equal(r.ledger().filter((l) => l.startsWith('Closed: T1 ')).length, 2);
+  assert.equal(r.ledger().at(-2), `Closed: T1 ${AT('10:50')}`);
+  assert.equal(recordOf(r, 1).attempt, 2);
+}));
+
+test('an undone landing writes no Closed line, and the sequential re-run adds no Opened line', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  ok(runAt(r, AT('10:00'), 'task-open', r.plan, '1', '--worktree'));
+  wtReview(r, 1, { test: FAILING_TEST });
+  assert.equal(closeOf(r, 1).status, 3);
+  assert.deepEqual(r.ledger().filter((l) => l.startsWith('Closed: ')), []);
+  assert.equal(r.ledger().filter((l) => l.startsWith('Opened: T1 ')).length, 1);
+  open(r, 1);
+  assert.deepEqual(timeLines(r), [`Opened: T1 ${AT('10:00')}`]);
+}));
+
+test('a TRIQUAL_NOW that is not an ISO time is exit 2 before task-open writes anything', () => withRig({}, (r) => {
+  const res = runAt(r, 'yesterday', 'task-open', r.plan, '1');
+  assert.equal(res.status, 2, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /TRIQUAL_NOW must be an ISO time like 2026-11-16T10:00:00Z, not yesterday/);
+  assert.deepEqual(r.ledger().filter((l) => !l.startsWith('Error:')), []);
+  assert.equal(r.ledger().filter((l) => l.startsWith('BASE: T1 ')).length, 0);
+  assert.equal(r.taskState(1).status, 'pending');
+}));
+
+test('an Opened line after the complete line does not turn a close rerun into a reopen', () => withRig({}, (r) => {
+  prepared(r, 1);
+  STANDARD_OUTPUTS(r, 1);
+  ok(runAt(r, AT('10:30'), 'task-close', r.plan, '1'));
+  r.appendLedger(`Opened: T1 ${AT('11:00')}`);
+  const again = out(ok(runAt(r, AT('11:05'), 'task-close', r.plan, '1')));
+  assert.equal(again.record, 'already recorded');
+  assert.equal(r.ledger().filter((l) => l.startsWith('Task 1: complete (commits ')).length, 1);
 }));
