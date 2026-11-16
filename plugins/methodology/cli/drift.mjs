@@ -7,6 +7,8 @@
 // SETUP_NOTICE and drops every line that names `triqual sync`, a command that is not installed yet.
 // With `--harness <id>` (Codex, Grok; spec Addendum F.3) the rules line checks that harness's rules target instead of
 // ~/.claude/CLAUDE.md, and names `triqual sync --harness <id>`.
+// The evals notice (the newest round's judges below the bar, failed steps) is for every harness, in a checkout of this
+// repository only: the session's cwd comes from the hook's stdin payload (the Codex and Grok bridge passes it through).
 // Never throws; the hook always exits 0. A swallowed error (not a missing settings or CLAUDE.md file) is logged as one
 // line to ${CLAUDE_PLUGIN_DATA}/log when that is set.
 import { appendFileSync, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
@@ -18,7 +20,7 @@ import { readManagedSection, sha256 } from './lib/fsx.mjs';
 import { readMethodologyConfig, supersededEnabled } from './lib/settings.mjs';
 import { HARNESS_IDS, expectedRules, harnessPaths } from './lib/harnesses.mjs';
 import { evalsDir } from './lib/eval-paths.mjs';
-import { evalsNotice } from './lib/eval-notice.mjs';
+import { evalsCheckout, evalsNotice } from './lib/eval-notice.mjs';
 
 const RULES_NOTICE = 'triqual: global rules out of date: run `triqual sync`';
 // Injected first, on Claude's path, while the triqual CLI is not installed (/methodology:setup installs it).
@@ -130,9 +132,12 @@ function wrappedSkill(pluginRoot, dataDir) {
   }
 }
 
-// The evals notice for the newest round report, or null; never throws.
-function evalsLine(env, home, dataDir) {
+// The evals notice for the newest round report, or null; never throws. Null too unless the session's directory is in a
+// checkout of this repository (evalsCheckout): the line asks for work on this repository's files, so a session anywhere
+// else, or one without a directory, never gets it.
+function evalsLine(env, home, dataDir, cwd) {
   try {
+    if (evalsCheckout(cwd, home) === null) return null;
     return evalsNotice({ evals: evalsDir(env, home) });
   } catch (err) {
     logError(dataDir, err);
@@ -145,13 +150,14 @@ function evalsLine(env, home, dataDir) {
 // instead when the manifest supersedes something, none of it is enabled and keepSuperseded is off: the resumed
 // conversation may predate the rollout. harness: a HARNESS_IDS id whose rules target the rules line checks, or null
 // for Claude's ~/.claude/CLAUDE.md. env locates the evals directory (evalsDir), whose newest round report may add an
-// `evals:` notice for every harness. Returns null when there is nothing to inject.
-export function sessionContext({ home, pluginRoot, dataDir = null, source, harness = null, env = process.env }) {
+// `evals:` notice for every harness, but only when cwd, the session's working directory, is in a checkout of this
+// repository (evalsCheckout); an absent cwd means no notice. Returns null when there is nothing to inject.
+export function sessionContext({ home, pluginRoot, dataDir = null, source, harness = null, env = process.env, cwd }) {
   const config = methodologyConfig(home, dataDir); // read once for the drift lines and the introduction
   const state = config.keepSuperseded ? null : supersededState(home, pluginRoot, dataDir);
   const setupIncomplete = harness === null && !cliInstalled(home);
   const driftText = driftLines({ home, pluginRoot, dataDir, config, state, harness, syncAvailable: !setupIncomplete });
-  const lines = [driftText, evalsLine(env, home, dataDir)].filter((line) => line !== null).join('\n') || null;
+  const lines = [driftText, evalsLine(env, home, dataDir, cwd)].filter((line) => line !== null).join('\n') || null;
   let skill = null;
   if (source !== 'resume') skill = config.keepSuperseded ? KEEP_NOTE : wrappedSkill(pluginRoot, dataDir);
   else if (state && state.supersedes.length > 0 && state.enabled.length === 0) skill = RESUME_NOTE;
@@ -159,15 +165,16 @@ export function sessionContext({ home, pluginRoot, dataDir = null, source, harne
   return parts.length > 0 ? parts.join('\n\n') : null;
 }
 
-// The hook's `source`, from its stdin JSON; undefined when the input is empty or not JSON.
-async function readSource() {
+// The hook's `source` and `cwd`, from its stdin JSON, read once. source is undefined when the input is empty or not JSON;
+// cwd falls back to the process's working directory when the payload has no string cwd.
+async function readInput() {
+  let payload = null;
   try {
     let input = '';
     for await (const chunk of process.stdin) input += chunk;
-    return JSON.parse(input)?.source;
-  } catch {
-    return undefined;
-  }
+    payload = JSON.parse(input);
+  } catch { /* an empty or non-JSON input has no fields */ }
+  return { source: payload?.source, cwd: typeof payload?.cwd === 'string' ? payload.cwd : process.cwd() };
 }
 
 // The `--harness <id>` argument when it names a known harness, else null.
@@ -178,13 +185,15 @@ function harnessArg(argv) {
 }
 
 async function main() {
+  const { source, cwd } = await readInput();
   const context = sessionContext({
     home: homedir(),
     pluginRoot: dirname(dirname(fileURLToPath(import.meta.url))),
     dataDir: process.env.CLAUDE_PLUGIN_DATA || null,
-    source: await readSource(),
+    source,
     harness: harnessArg(process.argv.slice(2)),
     env: process.env,
+    cwd,
   });
   if (context !== null) {
     process.stdout.write(JSON.stringify({

@@ -1,7 +1,8 @@
 // The session-start line about the evals improve loop. node: built-ins only. Reads at most the newest round report in
 // <evals>/rounds/ and <evals>/revisions.jsonl; never throws, and returns null when there is nothing to say.
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+// evalsCheckout says whether a session's directory is in a checkout of this repository, the only place the line is for.
+import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { dirname, join, sep } from 'node:path';
 
 const isStrings = (value) => Array.isArray(value) && value.every((item) => typeof item === 'string');
 
@@ -36,6 +37,51 @@ export function evalsNotice({ evals } = {}) {
       if (pending.length > 0) lines.push(`evals: ${pending.length} judge(s) below the bar (${pending.join(', ')}): run methodology:improving-evals`);
     }
     return lines.length > 0 ? lines.join('\n') : null;
+  } catch {
+    return null;
+  }
+}
+
+const JUDGES_DIR = join('plugins', 'methodology', 'evals', 'judges');
+
+const realOr = (path) => {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+};
+
+const isDirectory = (path) => {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+const inside = (path, parent) => path === parent || path.startsWith(parent.endsWith(sep) ? parent : parent + sep);
+
+// The root of the checkout of this repository that `dir` is in, or null: the nearest of `dir` and its ancestors that
+// holds plugins/methodology/evals/judges, unless that root is under a harness plugin directory of `home`
+// (.claude/plugins, .codex): the plugin cache and the marketplace clones are copies the plugin manager owns, never a
+// place to work. Real paths are compared, so a symlinked home does not defeat the exclusion. Never throws.
+export function evalsCheckout(dir, home) {
+  try {
+    if (typeof dir !== 'string' || dir === '') return null;
+    let current = realpathSync(dir);
+    while (!isDirectory(join(current, JUDGES_DIR))) {
+      const parent = dirname(current);
+      if (parent === current) return null;
+      current = parent;
+    }
+    if (typeof home === 'string' && home !== '') {
+      for (const base of new Set([home, realOr(home)])) {
+        const owned = [join(base, '.claude', 'plugins'), join(base, '.codex')];
+        for (const path of owned) if (inside(current, path) || inside(current, realOr(path))) return null;
+      }
+    }
+    return current;
   } catch {
     return null;
   }
