@@ -127,9 +127,32 @@ test('the owner\'s --paid reaches the step 3e re-judge as well as the improve co
   assert.match(step, /--paid/);
 });
 
-test('the merge is this skill\'s job under the pre-authorisation, and no other stops are named', () => {
-  assert.match(flat, /the merge, under the repository's own merge rule, is part of this skill's job/);
-  assert.match(flat, /your human partner pre-authorised merges in this repository/);
+test('the skill claims no merge authority of its own: it merges only where the repository or the human partner authorises it, and else stops at the pull request', () => {
+  assert.doesNotMatch(text, /pre-authorised/);
+  assert.doesNotMatch(text, /not a stop/);
+  assert.match(flat, /only when this repository's own instructions or your human partner's standing instructions authorise you to merge there/);
+  assert.match(flat, /without that authorisation, stop at the pull request and report its link/);
+  assert.match(flat, /a merge nobody authorised is a human-only decision/);
+  const rule = text.split('\n').find((l) => l.startsWith('- ') && l.includes('merge'));
+  assert.ok(rule, 'a Rules line about the merge');
+  assert.match(rule, /authoris/);
+});
+
+test('the score step compares with the version in place before the rewrite, noted from the report, through --against', () => {
+  assert.match(flat, /triqual eval score --category <id> --against <baseline>/);
+  assert.match(flat, /the category's `version` in the report's `scores` entry: that is the baseline, the version in place before the rewrite/);
+  assert.match(flat, /`from` is the baseline/);
+});
+
+test('round is the report\'s file name with .json, the branch is evals/<name without .json>, and the file name is not called the round\'s id', () => {
+  assert.match(flat, /`round` is the report's file name including `\.json`, such as `2026-11-16T100000Z\.json`/);
+  assert.match(flat, /`evals\/<the report's file name without \.json>`/);
+  assert.doesNotMatch(flat, /round's id/);
+  assert.doesNotMatch(flat, /evals\/<round id>/);
+});
+
+test('a category that already has a revisions line for this round is skipped', () => {
+  assert.match(flat, /a category that already has a line in `<evals>\/revisions\.jsonl` for this round is skipped/i);
 });
 
 test('the node command resolves the evals directory with evalsDir, not a hard-coded path', () => {

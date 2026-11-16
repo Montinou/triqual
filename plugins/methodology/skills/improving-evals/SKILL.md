@@ -21,14 +21,14 @@ or your human partner asks you to improve the evals. Without either, do not star
 
 1. **Get a report.** Run `triqual eval improve`. When the newest file of `<evals>/rounds/` is under a day old, read it
    instead and run nothing. Pass `--paid` only when your human partner asked for it: a credential entry marked paid
-   spends money and is used only with the flag. The report is `<evals>/rounds/<YYYY-MM-DDTHHMMSSZ>.json`; its file
-   name is the round's id.
+   spends money and is used only with the flag. The report is `<evals>/rounds/<YYYY-MM-DDTHHMMSSZ>.json`.
 2. **Read what failed.** When the report's `failed` is not empty, name those steps in the final report to your human
    partner (`review sample`, `review propose`, `check`, `judge <id>`, `referee`, `score <id>`, `validate <id>`), and
    say so when `paidOnly` is true. A round with failed steps still has a usable `revise`, built from what exists:
    continue with it. Exit code 3 of `triqual eval improve` means the same.
-3. **For each category id of `revise`, once**, do 3a to 3h on one round branch (`evals/<round id>`, made once,
-   before the first category). An empty `revise` ends the round: report it.
+3. **For each category id of `revise`, once**, do 3a to 3h on one round branch (`evals/<the report's file name without
+   .json>`, made once, before the first category). A category that already has a line in `<evals>/revisions.jsonl` for
+   this round is skipped: it was attempted. An empty `revise` ends the round: report it.
 
    a. **Read the notes.** The `misleading` notes of that category's rulings, on train sessions only. This command
       lists them; run it with the category id in place of `<id>`, and never open `rulings.jsonl` any other way:
@@ -38,7 +38,8 @@ node -e "Promise.all([import('./plugins/methodology/cli/lib/eval-validate.mjs'),
 ```
 
    b. **Read the dev counts.** From the report's `scores` entry of the category, only its `dev` counts: `fn` is the
-      failures the judge missed, `fp` the false alarms. Read nothing else about dev or test.
+      failures the judge missed, `fp` the false alarms. Note too the category's `version` in the report's `scores`
+      entry: that is the baseline, the version in place before the rewrite. Read nothing else about dev or test.
    c. **Rewrite** `plugins/methodology/evals/judges/<id>.md`, from those notes and counts and nothing else:
       - the FAIL conditions as a checklist;
       - the look-alikes that are not the failure, under PASS;
@@ -51,24 +52,26 @@ node -e "Promise.all([import('./plugins/methodology/cli/lib/eval-validate.mjs'),
    e. **Judge the sample.** Run `triqual eval judge --category <id> --sessions <evals>/review/sample.jsonl`. It records
       verdicts under the new prompt's hash. Pass `--paid` here too when your human partner asked for it. Exit 1 means
       sessions were left (a limit or an error): rerun once, then treat the result as it stands.
-   f. **Score.** Run `triqual eval score --category <id>`. Its `dev:` line is `dev: previous <balanced>
+   f. **Score.** Run `triqual eval score --category <id> --against <baseline>`. Its `dev:` line is `dev: previous <balanced>
       (<correct>/<n>), current <balanced> (<correct>/<n>): <verdict>`.
    g. **Keep or revert.** Keep the file only when the `dev:` line ends `better`. Otherwise (`not-better`, or `first
       version`, which compares nothing) restore it with `git checkout -- plugins/methodology/evals/judges/<id>.md`.
    h. **Record.** Append one line to `<evals>/revisions.jsonl`, written with `umask 077` so the file is mode 0600:
       `{ at, round, category, from, to, kept, n, previous, current }`. `at` is the time now (ISO 8601), `round` is the
-      report's file name, `category` is the id, `kept` is true or false. `from`, `to`, `n`, `previous` and `current`
+      report's file name including `.json`, such as `2026-11-16T100000Z.json`, `category` is the id, `kept` is true or false. `from`, `to`, `n`, `previous` and `current`
       come from the `previous` block of the category's last line in `<evals>/scores.jsonl` (read that block and nothing
-      else of the line): `from` is `previous.version` (the prompt hash before the rewrite), `to` is the line's own
+      else of the line): `from` is the baseline (the prompt hash before the rewrite), `to` is the line's own
       `version` (the hash after it), and `n`, `previous` and `current` are `previous.n`, `previous.previous` and
       `previous.current`. A line with no `previous` block (`dev: first version`) gives `from` null, `n` 0, and null
       `previous` and `current`. Then write the progress entry with both versions' counts, kept or reverted.
 4. **Ship what was kept**, once for the whole round. On the round branch make one commit per kept category, with this
    in the body: `dev: previous <balanced> (<correct>/<n>), current <balanced> (<correct>/<n>)`. Then make one bump
    commit of `methodology`'s `version`, as the repository's release rule says, so the installed copy changes: it is the
-   last commit of the branch, and no category commit bumps. Push the branch, open one pull request, make one merge
-   under the repository's own merge rule, then do one plugin update, `claude plugin update methodology@triqual`. When
-   no category was kept, there is no branch to ship: nothing is committed, pushed or merged.
+   last commit of the branch, and no category commit bumps. Push the branch and open one pull request. Make one merge
+   under the repository's own merge rule, then do one plugin update, `claude plugin update methodology@triqual`, only
+   when this repository's own instructions or your human partner's standing instructions authorise you to merge there;
+   without that authorisation, stop at the pull request and report its link. When no category was kept, there is no
+   branch to ship: nothing is committed, pushed or merged.
 5. **Report** to your human partner in the format below.
 
 ## Rules
@@ -78,7 +81,7 @@ node -e "Promise.all([import('./plugins/methodology/cli/lib/eval-validate.mjs'),
 - one attempt per category per round
 - a rewrite is a candidate, never an improvement until measured
 - a change to a skill, role or rule is released and measured by the next rounds' `triqual eval rates`, and a controlled comparison is an experiment
-- the merge, under the repository's own merge rule, is part of this skill's job: your human partner pre-authorised merges in this repository, so a merge is not a stop here
+- merge only where authorised: without the authorisation of step 4 the round stops at the pull request, because a merge nobody authorised is a human-only decision
 - stop only for a denial by policy, a human-only decision, or a failure you cannot explain
 
 ## Final report

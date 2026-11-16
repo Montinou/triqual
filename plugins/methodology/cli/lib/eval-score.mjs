@@ -46,7 +46,8 @@ function verdicts(judgments, category, version) {
 
 const decided = (r) => r === 'pass' || r === 'fail';
 
-export function scoreCategory({ category, sample, labels, labelCategories, judgments, version }) {
+// `against`, when given, is the one version the dev comparison is made with, in place of the most recent other version.
+export function scoreCategory({ category, sample, labels, labelCategories, judgments, version, against }) {
   const id = category.id;
   const rows = (judgments ?? []).filter((j) => j?.category === undefined || j.category === id);
   const base = { category: id, labels, labelCategories, judgments: rows };
@@ -55,11 +56,12 @@ export function scoreCategory({ category, sample, labels, labelCategories, judgm
   const dev = cut(split('dev'));
   const test = { ...cut(split('test')), usable: split('test').usable };
 
-  // The previous version is the most recent other version that has dev sessions to compare on; none: the first version.
+  // The previous version is `against`, or else the most recent other version that has dev sessions to compare on; none:
+  // the first version.
   let previous = null;
   let verdict = 'first';
   const after = verdicts(rows, id, version);
-  for (const prevVersion of otherVersions(rows, version)) {
+  for (const prevVersion of against === undefined ? otherVersions(rows, version) : [against]) {
     const before = verdicts(rows, id, prevVersion);
     // The labeled dev sessions with a pass or fail verdict under both versions: the only ones the two are compared on.
     const both = (sample ?? []).filter((r) => splitOf(r.sessionId, r.stratum) === 'dev' && decided(before.get(r.sessionId)) && decided(after.get(r.sessionId)));
