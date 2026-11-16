@@ -3,6 +3,13 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## methodology 1.10.0
+
+- methodology: new `triqual eval` command, the start of the evals and A/B work. `triqual eval` dispatches to `cli/eval-<name>.mjs` and lists each with its summary, so a later subcommand needs no edit to the dispatcher. The shim lists `eval` (its `--help` is forwarded from methodology 1.10.0).
+- methodology: `triqual eval sessions [--since] [--until] [--project] [--json]` reads the main Claude Code transcripts, keeps one line of signals per session (cost, context size, compactions, idle cache rewrites, stop-hook blocks, tool errors, user messages) in `sessions.jsonl`, and lists them. It never prints message content.
+- methodology: `triqual eval review sample [--n 100] [--seed <int>] [--force]` draws a stratified sample of interactive sessions (half random, a quarter by cost, the rest outliers) and `triqual eval review serve [--port <n>]` serves it on a loopback-only page (`127.0.0.1`) where each session is labeled good or bad. The page is reachable only from this machine: the server binds to `127.0.0.1`, checks the `Host` and `Origin` headers, and requires a per-run token, embedded in the page it serves, on every label POST; the printed URL is plain.
+- The data lives under `~/.local/share/triqual/evals/` (or `TRIQUAL_EVALS_DIR`): directories 0700, files 0600. Update the plugin and rerun `/methodology:setup` (or `node bin/bootstrap.mjs` from a clone) so the shim lists `eval`.
+
 ## methodology 1.9.3 / roles 0.8.1
 
 - methodology: hunters are no longer dispatched. The phase review of `executing-plans` (step 8) sends none: `roles:final-adversarial-reviewer` runs with no candidates (`[CANDIDATES_PATHS]` is always "none"), the ledger line stays `Round 1: P<n> — hunters 0/0`, and a phase writes only its `final-escapes` record. `reviewing-code` drops its two hunters, so a review is one `roles:spec-reviewer`. The 2026-11-12 performance audit showed the hunters yield too little for their cost.
