@@ -403,6 +403,68 @@ Removed in 1.0: the old orchestrator skill (now `executing-plans`), the old inli
 skills now belong to Headjack (`headjack:writing-skills`, `headjack:skill-finder`). The
 [CHANGELOG](../../CHANGELOG.md) has the full list.
 
+## Evals improve loop
+
+`triqual eval improve` runs one round of the evals loop without a person. It needs a review sample
+(`triqual eval review sample`). The directory `<evals>` below is `TRIQUAL_EVALS_DIR`, else
+`~/.local/share/triqual/evals`; its files are mode 0600. A round does these steps in order:
+
+1. refresh the sessions store;
+2. draw `--more <k>` (default 30; 0 draws none) random sessions that started after every sampled one;
+3. propose a label and failure categories for each sampled session and accept them where there is none (`review propose --accept`);
+4. run the code checks (`check`), then each judge over the sample (`judge`);
+5. settle the cases where a judge contradicts a label (`referee`);
+6. score every category and validate every judge (`score`, `validate`);
+7. compute the failure rates by month and by methodology version (`rates`).
+
+The commands (none of them prints transcript text; output is counts, ids and paths):
+
+| Command | What it does |
+|---|---|
+| `triqual eval judge --category <id> --sessions <file> [--paid]` | Judges the sessions of a file with the category's judge prompt and appends a verdict per session and prompt hash to `judgments/<id>.jsonl`. |
+| `triqual eval review propose [--accept] [--paid]` | A model reads each sampled session and proposes a good or bad label and the failure categories present (`review/reference.jsonl`). `--accept` adds a label and a category line for each proposed session that has none. |
+| `triqual eval referee [--category <id>] [--paid]` | One model call for each case where a judge's verdict contradicts the label and there is no ruling yet; the ruling goes to `rulings.jsonl` and the category labels follow it. |
+| `triqual eval check [--category <id>]` | Records a verdict for each code check, per session and check version. |
+| `triqual eval score [--category <id> [--against <version>]]` | Prints each evaluator's confusion counts on the train, dev and test splits and its dev score against the version it replaced (`better`, `not-better` or `first version`); appends to `scores.jsonl`. `--against <version>` (needs `--category`) compares with exactly that version instead, as the improving skill does with the prompt in place before its rewrite; naming the current version is an error (exit 2). The test split is only reported. |
+| `triqual eval rates` | Prints each category's failure rate by month and by methodology version, with a 90% Wilson interval from 5 sessions. |
+| `triqual eval improve [--more <k>] [--paid]` | Runs the whole round and writes its report. Exit 0 done, 1 no sample or an unusable store, 3 a step after the first failed or was left unfinished. |
+
+What the loop keeps under `<evals>`:
+
+| Path | What |
+|---|---|
+| `review/reference.jsonl` | The model's proposed label and categories for each sampled session. |
+| `rulings.jsonl` | The referee's rulings; a ruling is never changed. |
+| `scores.jsonl` | Each evaluator's score per run, with the time and the plugin version. |
+| `rounds/<YYYY-MM-DDTHHMMSSZ>.json` | One report per round: counts, `failed` (the steps that failed), `paidOnly`, scores, rates and `revise` (the judge categories with at least 3 ruled disagreements on the train and dev sessions). |
+| `revisions.jsonl` | One line for each attempt to revise a judge prompt: the round, the category, both prompt versions, whether it was kept and the dev counts. |
+
+A credential entry of `~/.config/triqual/eval-auth.json` (or `TRIQUAL_EVAL_AUTH_FILE`) marked `"paid": true` spends
+money. Commands use it only with `--paid`; without the flag those entries are left out.
+
+When the newest report has a judge in `revise` that no line of `revisions.jsonl` names for that round, or has failed
+steps, the SessionStart hook adds `evals: <n> judge(s) below the bar (<ids>): run methodology:improving-evals` or
+`evals: the last round had failed steps (<names>): see <report path>`. The skill `methodology:improving-evals` takes
+it from there: it rewrites each flagged judge prompt from the train split's notes, scores it, and keeps the rewrite
+only when its dev score is strictly better than the previous version's; otherwise the file is restored. It ships what
+it kept as one pull request.
+
+To run a round every week, one `crontab` line (cron has a short `PATH`, so it names the shim; the paths are examples):
+
+```text
+0 6 * * 1  cd /path/to/triqual && "$HOME/.local/bin/triqual" eval improve >> "$HOME/triqual-eval-improve.log" 2>&1
+```
+
+On macOS a `launchd` job does the same: a LaunchAgent plist in `~/Library/LaunchAgents` whose `ProgramArguments` run
+`triqual eval improve` from that directory, with a `StartCalendarInterval` of `Weekday` 1 and `Hour` 6.
+
+Two limits to keep in mind:
+
+- Labels are checked only where a judge disagreed with one. A label that is wrong and that every judge agrees with is
+  never looked at again.
+- The dev split is small, so a kept change can be noise. A rewrite is a candidate until later rounds' `triqual eval
+  rates` show whether the failure rate moved.
+
 ## Files and environment variables
 
 Files this plugin reads or writes. `~` is the home directory.

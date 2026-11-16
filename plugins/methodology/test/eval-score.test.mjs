@@ -225,6 +225,49 @@ test('a dev session that is not labeled does not make a version comparable', () 
   assert.equal(r.verdict, 'first');
 });
 
+// Three versions in file order A, B, C (current), each judged on the same labeled dev sessions. B measures worse than A;
+// C measures better than B and the same as A.
+function threeVersions() {
+  reset();
+  const p1 = dev(true, undefined, undefined); const p2 = dev(true, undefined, undefined);
+  const n1 = dev(false, undefined, undefined); const n2 = dev(false, undefined, undefined);
+  const rows = [];
+  const under = (v, verdicts) => [p1, p2, n1, n2].forEach((s, i) => rows.push([s.id, v, verdicts[i]]));
+  under('A', ['fail', 'fail', 'pass', 'pass']);
+  under('B', ['pass', 'fail', 'pass', 'pass']); // B misses one failure: worse than A
+  under('C', ['fail', 'fail', 'pass', 'pass']);
+  const input = build3([p1, p2, n1, n2], rows);
+  input.version = 'C';
+  return input;
+}
+
+test('with no baseline the comparison is with the most recent other version, B, a version that measured worse than A', () => {
+  const r = scoreCategory(threeVersions());
+  assert.equal(r.previous.version, 'B');
+  assert.deepEqual(r.previous.previous, { tp: 1, fn: 1, tn: 2, fp: 0, balanced: 0.75 });
+  assert.equal(r.verdict, 'better');
+});
+
+test('against names the version to compare with: A, in place of the most recent other version, and the verdict follows A', () => {
+  const r = scoreCategory({ ...threeVersions(), against: 'A' });
+  assert.equal(r.previous.version, 'A');
+  assert.equal(r.previous.n, 4);
+  assert.deepEqual(r.previous.previous, { tp: 2, fn: 0, tn: 2, fp: 0, balanced: 1 });
+  assert.deepEqual(r.previous.current, { tp: 2, fn: 0, tn: 2, fp: 0, balanced: 1 });
+  assert.equal(r.verdict, 'not-better');
+});
+
+test('against a version with no labeled dev session decided under both is first, and no other version is tried', () => {
+  const input = threeVersions();
+  input.judgments.push({ sessionId: trainIds[0], category: CAT.id, result: 'pass', promptHash: 'Z' }); // Z: a train session only
+  const r = scoreCategory({ ...input, against: 'Z' });
+  assert.equal(r.previous, null);
+  assert.equal(r.verdict, 'first');
+  const none = scoreCategory({ ...threeVersions(), against: 'never-judged' });
+  assert.equal(none.previous, null);
+  assert.equal(none.verdict, 'first');
+});
+
 test('previousVersion is the hash of the last differing line, not the first', () => {
   const j = (h) => ({ sessionId: 'x', promptHash: h });
   assert.equal(previousVersion([j('v1'), j('v2'), j('cur'), j('cur')], 'cur'), 'v2');
@@ -351,4 +394,64 @@ test('no sample exits 1 and writes nothing', async () => {
   const r = await run([], f);
   assert.equal(r.code, 1);
   assert.throws(() => statSync(f.out));
+});
+
+// ---- --against on the command
+
+function threeVersionFixture() {
+  const f = fixture();
+  const hash = loadJudgePrompt(join(f.judges, 'repeat-ask.md')).hash;
+  const [d1, d2] = ids.dev;
+  const rows = [
+    [d1, 'vA', 'fail'], [d2, 'vA', 'pass'], // A: both right
+    [d1, 'vB', 'pass'], [d2, 'vB', 'pass'], // B: misses the failure
+    [d1, hash, 'fail'], [d2, hash, 'pass'], // C, the current one: both right
+  ].map(([sessionId, promptHash, result]) => `${JSON.stringify({ sessionId, category: 'repeat-ask', result, promptHash })}\n`).join('');
+  writeFileSync(join(f.evals, 'judgments', 'repeat-ask.jsonl'), rows);
+  return { ...f, hash };
+}
+
+test('--against compares with that version, where no flag compares with the most recent other one', async () => {
+  const f = threeVersionFixture();
+  const plain = await run(['--category', 'repeat-ask'], f);
+  assert.equal(plain.code, 0);
+  assert.match(plain.out, /^dev: previous 0\.500 \(1\/2\), current 1\.000 \(2\/2\): better$/m);
+  const against = await run(['--category', 'repeat-ask', '--against', 'vA'], f);
+  assert.equal(against.code, 0);
+  assert.match(against.out, /^dev: previous 1\.000 \(2\/2\), current 1\.000 \(2\/2\): not-better$/m);
+  const written = lines(f.out);
+  assert.equal(written.length, 2);
+  assert.equal(written[1].previous.version, 'vA');
+  assert.equal(written[1].verdict, 'not-better');
+});
+
+test('--against a version that shares no dev session prints first version', async () => {
+  const f = threeVersionFixture();
+  const r = await run(['--category', 'repeat-ask', '--against=vNone'], f);
+  assert.equal(r.code, 0);
+  assert.match(r.out, /^dev: first version$/m);
+  assert.equal(lines(f.out)[0].previous, null);
+});
+
+test('--against without --category is a usage error, exit 2, and the usage text names it', async () => {
+  const f = threeVersionFixture();
+  const r = await run(['--against', 'vA'], f);
+  assert.equal(r.code, 2);
+  assert.match(r.err, /--against needs --category/);
+  assert.match(r.err, /triqual eval score \[--category <id>\] \[--against <version>\]/);
+  assert.throws(() => statSync(f.out));
+});
+
+test('--against the current version is an error, exit 2 like the other argument errors, and nothing is written', async () => {
+  const f = threeVersionFixture();
+  const r = await run(['--category', 'repeat-ask', '--against', f.hash], f);
+  assert.equal(r.code, 2);
+  assert.match(r.err, /did not change/);
+  assert.throws(() => statSync(f.out));
+});
+
+test('--help documents --against', async () => {
+  const h = await run(['--help'], threeVersionFixture());
+  assert.equal(h.code, 0);
+  assert.match(h.out, /--against <version>/);
 });

@@ -343,10 +343,10 @@ const pinProblems = ({ skills }, pins = PINS) =>
     return flat.includes(text) ? [] : [`${skill}/SKILL.md lost its pinned line: ${text} (${why})`];
   });
 
-// The eleven skills (the ten of 1.0 and auditing-performance), and nothing else.
-const TEN_SKILLS = [
-  'auditing-performance', 'brainstorming', 'diagnosing-methodology', 'executing-plans', 'finishing-branch', 'reviewing-code',
-  'systematic-debugging', 'test-driven-development', 'using-methodology', 'verification-before-completion', 'writing-plans',
+// The twelve skills (the ten of 1.0, auditing-performance and improving-evals), and nothing else.
+const TWELVE_SKILLS = [
+  'auditing-performance', 'brainstorming', 'diagnosing-methodology', 'executing-plans', 'finishing-branch', 'improving-evals',
+  'reviewing-code', 'systematic-debugging', 'test-driven-development', 'using-methodology', 'verification-before-completion', 'writing-plans',
 ];
 
 // No skill tells an agent to dispatch a generic `general-purpose` agent: every dispatch names a role. The harness
@@ -458,8 +458,8 @@ test('skill commands are plain', () => {
   assert.deepEqual(plainCommandProblems(REAL), []);
 });
 
-test('exactly these 10 skills exist', () => {
-  assert.deepEqual(skillDirs(), TEN_SKILLS);
+test('exactly these 12 skills exist', () => {
+  assert.deepEqual(skillDirs(), TWELVE_SKILLS);
 });
 
 test('no skill names a generic general-purpose agent outside the codex and grok references', () => {

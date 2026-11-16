@@ -17,7 +17,7 @@ Invoke the skills that apply, and any your human partner names, before you answe
 
 Process skills go first because they decide how you approach the work; implementation and domain skills carry it out. "Let's build X" starts with brainstorming; "fix this bug" starts with systematic-debugging.
 
-## The eleven skills
+## The twelve skills
 
 Invoke each as `methodology:<name>`.
 
@@ -32,6 +32,7 @@ Invoke each as `methodology:<name>`.
 - `finishing-branch`: merge the stack, close the ledger, finish the checklist after the merge.
 - `diagnosing-methodology`: a session went wrong; find out why and build an issue.
 - `auditing-performance`: audit the cost, speed and review yield of the plugins and roles, and repeat the audit.
+- `improving-evals`: when an `evals:` line asks.
 
 ## The plugins
 

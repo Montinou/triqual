@@ -1,9 +1,10 @@
-// `triqual eval score [--category <id>]`: for each category of the taxonomy (or the one named) measures its evaluator
-// (the judge prompt, or the code check) against the labels on the train, dev and test splits, and compares the dev
-// split with the version it replaced (lib/eval-score.mjs). The dev line says whether the current version is better;
-// test is reported, never used to decide. Each result is appended, with `at` and `pluginVersion`, to
-// <evals>/scores.jsonl (0600). It prints counts, ids and rates, never transcript text. Exit codes: 0 done; 1 the
-// taxonomy, a judge prompt or the sample is unusable; 2 usage.
+// `triqual eval score [--category <id> [--against <version>]]`: for each category of the taxonomy (or the one named)
+// measures its evaluator (the judge prompt, or the code check) against the labels on the train, dev and test splits,
+// and compares the dev split with the version it replaced, or with the one `--against` names (lib/eval-score.mjs).
+// The dev line says whether the current version is better; test is reported, never used to decide. Each result is
+// appended, with `at` and `pluginVersion`, to <evals>/scores.jsonl (0600). It prints counts, ids and rates, never
+// transcript text. Exit codes: 0 done; 1 the taxonomy, a judge prompt or the sample is unusable; 2 usage (an
+// `--against` without `--category`, or equal to the current version, included).
 // node: built-ins only. main() is exported for tests and runs only when this file is the entry point.
 import { readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -27,7 +28,7 @@ const CATEGORY = /^[a-z][a-z0-9-]{1,39}$/;
 
 const USAGE = [
   'usage:',
-  '  triqual eval score [--category <id>]',
+  '  triqual eval score [--category <id>] [--against <version>]',
   '      For each category of <evals>/taxonomy.json (or the one named) with an evaluator (plugins/methodology/evals/',
   '      judges/<id>.md for a judge category, the code check for a code one), prints the confusion counts of its current',
   '      version on the train, dev and test splits, then',
@@ -36,7 +37,10 @@ const USAGE = [
   '      better when the current balanced rate (TPR + TNR) / 2 is strictly higher, or, when either is undefined, when',
   '      more verdicts are correct; else not-better; "dev: first version" when there is no previous version). Appends',
   '      each result with at and pluginVersion to <evals>/scores.jsonl. The test split is reported only.',
-  '      Exit 0 when done.',
+  '      With --against <version> (needs --category) the comparison is with exactly that version, in place of the most',
+  '      recent other version; when it shares no labeled dev session decided under both, or the version is unknown, the',
+  '      result is "dev: first version". --against equal to the current version is an error (the prompt did not change).',
+  '      Exit 0 when done; 2 on a usage error, including an --against that needs --category or names the current version.',
   '  triqual eval score --help',
   '',
 ].join('\n');
@@ -46,7 +50,7 @@ const clip = (s) => (s.length > 40 ? `${s.slice(0, 40)}...` : s);
 function parseArgs(argv) {
   const opts = {};
   for (let i = 0; i < argv.length; i += 1) {
-    const m = /^--(category)(?:=(.*))?$/s.exec(argv[i]);
+    const m = /^--(category|against)(?:=(.*))?$/s.exec(argv[i]);
     if (!m) return { error: `unknown argument ${clip(argv[i])}` };
     const value = m[2] ?? argv[++i];
     if (value === undefined || value === '' || (m[2] === undefined && value.startsWith('--'))) return { error: `--${m[1]} needs a value` };
@@ -73,6 +77,7 @@ export async function main(argv, {
   const { opts, error } = parseArgs(argv);
   if (error) return usage(error);
   if (opts.category !== undefined && !CATEGORY.test(opts.category)) return usage('--category is not a category id');
+  if (opts.against !== undefined && opts.category === undefined) return usage('--against needs --category');
 
   const evals = evalsDir(env, env.HOME || homedir());
   const labelCategories = loadLabelCategories(join(evals, 'label-categories.jsonl'));
@@ -105,8 +110,9 @@ export async function main(argv, {
       }
       throw err;
     }
+    if (opts.against !== undefined && opts.against === current) return usage(`--against is the current version of ${c.id}: the prompt did not change`);
     const judgments = readJsonl(join(evals, 'judgments', `${c.id}.jsonl`)).rows;
-    scored.push(scoreCategory({ category: c, sample, labels, labelCategories, judgments, version: current }));
+    scored.push(scoreCategory({ category: c, sample, labels, labelCategories, judgments, version: current, against: opts.against }));
   }
 
   const out = [];

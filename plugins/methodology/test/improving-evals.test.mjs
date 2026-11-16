@@ -1,0 +1,275 @@
+// Text pins for the improving-evals skill: the lines that keep a judge rewrite measured, test-split-blind and
+// owner-free, the order of its steps, and the one-line `node` command it gives for reading the train-split notes, run
+// here against an invented evals directory (no real data, no model call).
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const PLUGIN = join(dirname(fileURLToPath(import.meta.url)), '..');
+const ROOT = join(PLUGIN, '..', '..');
+const { loadJudgePrompt } = await import(pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'cli', 'lib', 'eval-judge.mjs')).href);
+const { splitOf } = await import(pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'cli', 'lib', 'eval-validate.mjs')).href);
+const SKILL_FILE = join(PLUGIN, 'skills', 'improving-evals', 'SKILL.md');
+const text = existsSync(SKILL_FILE) ? readFileSync(SKILL_FILE, 'utf8') : '';
+const flat = text.replace(/\s*\n\s*/g, ' ');
+const frontMatter = /^---\n([\s\S]*?)\n---\n/.exec(text)?.[1] ?? '';
+const body = text.slice(text.indexOf('\n---\n', 4) + 5);
+
+test('the skill file exists', () => {
+  assert.ok(existsSync(SKILL_FILE), 'plugins/methodology/skills/improving-evals/SKILL.md');
+});
+
+test('the front matter names the skill and its description starts "Use when"', () => {
+  assert.match(frontMatter, /^name: improving-evals$/m);
+  assert.match(frontMatter, /^description: Use when /m);
+});
+
+test('the body carries each required string', () => {
+  for (const needle of [
+    'triqual eval improve', 'eval.mjs score --category', 'better', 'revisions.jsonl', 'train',
+    'never open a test-split session', 'never ask the owner', 'one attempt per category per round', 'invented',
+    'triqual eval rates',
+  ]) assert.ok(body.includes(needle), `the body lacks: ${needle}`);
+});
+
+test('using-methodology names improving-evals and counts twelve skills', () => {
+  const entry = readFileSync(join(PLUGIN, 'skills', 'using-methodology', 'SKILL.md'), 'utf8');
+  assert.ok(entry.includes('`improving-evals`'));
+  assert.ok(entry.includes('## The twelve skills'));
+});
+
+test('the using-methodology entry gives its trigger, the evals: line', () => {
+  const entry = readFileSync(join(PLUGIN, 'skills', 'using-methodology', 'SKILL.md'), 'utf8');
+  const line = entry.split('\n').find((l) => l.startsWith('- `improving-evals`'));
+  assert.ok(line, 'an entry line for improving-evals');
+  assert.match(line, /when an `evals:` line asks/);
+});
+
+test('the steps come in the specified order', () => {
+  const order = [
+    'run methodology:improving-evals',
+    '`triqual eval improve`',
+    '`failed`',
+    '`revise`',
+    '`misleading`',
+    'plugins/methodology/evals/judges/<id>.md',
+    'node --test plugins/methodology/test/eval-checks.test.mjs',
+    'eval.mjs judge --category <id> --sessions',
+    'eval.mjs score --category <id>',
+    'git checkout -- ',
+    'revisions.jsonl',
+    'dev: previous',
+    'never open a test-split session',
+    'triqual eval rates',
+    'at most 20 lines',
+  ];
+  let at = -1;
+  for (const needle of order) {
+    const next = flat.indexOf(needle, at + 1);
+    assert.ok(next > at, `"${needle}" is missing or out of order`);
+    at = next;
+  }
+});
+
+test('the skill keeps a file only on a dev line that ends better, and reverts otherwise', () => {
+  assert.match(flat, /ends in `better`|ends `better`|ends with `better`/);
+  assert.match(flat, /git checkout -- plugins\/methodology\/evals\/judges\/<id>\.md/);
+  assert.match(flat, /a rewrite is a candidate, never an improvement until measured/);
+});
+
+test('the report names the failed steps, and a failed round still has a usable revise', () => {
+  assert.match(flat, /`failed` is not empty, name those steps in the final report/);
+  assert.match(flat, /still has a usable `revise`/);
+});
+
+test('rulings.jsonl is read only through the train-split command, never opened another way', () => {
+  assert.match(flat, /never open `rulings\.jsonl` (any other way|in any other way)/);
+  assert.ok(text.includes('splitOf'));
+});
+
+test('the revisions line has its nine keys and takes n, previous and current from the score', () => {
+  for (const key of ['at', 'round', 'category', 'from', 'to', 'kept', 'n', 'previous', 'current']) {
+    assert.ok(text.includes(key), `revisions line lacks ${key}`);
+  }
+  assert.match(flat, /`\{ at, round, category, from, to, kept, n, previous, current \}`/);
+});
+
+test('the owner never rules, and the rules stand each on its own line', () => {
+  const lines = text.split('\n');
+  for (const needle of [
+    'never open a test-split session or a ruling about one', 'never ask the owner to rule on a case',
+    'one attempt per category per round', 'a rewrite is a candidate, never an improvement until measured',
+    'a change to a skill, role or rule is released and measured by the next rounds\' `triqual eval rates`',
+  ]) assert.ok(lines.some((line) => line.includes(needle)), `no single line holds: ${needle}`);
+});
+
+test('a paid credential entry is used only when the owner asked for --paid', () => {
+  assert.match(flat, /`--paid`/);
+  assert.match(flat, /paidOnly/);
+});
+
+test('the ship step is one round branch, one commit per kept category, then one bump, one pull request, one merge, one plugin update', () => {
+  assert.match(flat, /one round branch/);
+  assert.match(flat, /one commit per kept category/);
+  assert.match(flat, /one bump commit of `methodology`'s `version`/);
+  assert.match(flat, /one pull request/);
+  assert.match(flat, /one merge under the repository's own merge rule/);
+  assert.match(flat, /one plugin update/);
+  assert.doesNotMatch(flat, /on its own branch/);
+  assert.doesNotMatch(flat, /evals\/<id>-<round id>/);
+});
+
+test('the owner\'s --paid reaches the step 3e re-judge as well as the improve command', () => {
+  const step = /\*\*Judge the sample\.\*\*([\s\S]*?)\n\s+f\. /.exec(text)?.[1] ?? '';
+  assert.match(step, /--paid/);
+});
+
+test('the skill claims no merge authority of its own: it merges only where the repository or the human partner authorises it, and else stops at the pull request', () => {
+  assert.doesNotMatch(text, /pre-authorised/);
+  assert.doesNotMatch(text, /not a stop/);
+  assert.match(flat, /only when this repository's own instructions or your human partner's standing instructions authorise you to merge there/);
+  assert.match(flat, /without that authorisation, stop at the pull request and report its link/);
+  assert.match(flat, /a merge nobody authorised is a human-only decision/);
+  const rule = text.split('\n').find((l) => l.startsWith('- ') && l.includes('merge'));
+  assert.ok(rule, 'a Rules line about the merge');
+  assert.match(rule, /authoris/);
+});
+
+test('the score step compares with the version in place before the rewrite, noted from the report, through --against', () => {
+  assert.match(flat, /node plugins\/methodology\/cli\/eval\.mjs score --category <id> --against <baseline>/);
+  assert.match(flat, /the category's `version` in the report's `scores` entry: that is the baseline, the version in place before the rewrite/);
+  assert.match(flat, /`from` is the baseline/);
+});
+
+test('round is the report\'s file name with .json, the branch is evals/<name without .json>, and the file name is not called the round\'s id', () => {
+  assert.match(flat, /`round` is the report's file name including `\.json`, such as `2026-11-16T100000Z\.json`/);
+  assert.match(flat, /`evals\/<the report's file name without \.json>`/);
+  assert.doesNotMatch(flat, /round's id/);
+  assert.doesNotMatch(flat, /evals\/<round id>/);
+});
+
+test('a category that already has a revisions line for this round is skipped', () => {
+  assert.match(flat, /a category that already has a line in `<evals>\/revisions\.jsonl` for this round is skipped/i);
+});
+
+test('the node command resolves the evals directory with evalsDir, not a hard-coded path', () => {
+  const line = text.split('\n').find((l) => l.startsWith('node -e '));
+  assert.ok(line.includes('eval-paths.mjs'));
+  assert.ok(line.includes('evalsDir(process.env,os.homedir())'));
+  assert.ok(!line.includes('.local/share'), 'no hard-coded data directory');
+});
+
+test('the node command follows XDG_DATA_HOME when TRIQUAL_EVALS_DIR is unset', () => {
+  const line = text.split('\n').find((l) => l.startsWith('node -e '));
+  const home = mkdtempSync(join(tmpdir(), 'improving-evals-xdg-'));
+  try {
+    const run = spawnSync(line.replace(/<id>/g, 'cat-a'), { shell: true, cwd: ROOT, encoding: 'utf8', env: { ...process.env, TRIQUAL_EVALS_DIR: '', XDG_DATA_HOME: home } });
+    // Nothing is there, so it fails reading the sample under the XDG directory, never under ~/.local/share.
+    assert.notEqual(run.status, 0);
+    assert.ok(run.stderr.includes(home), run.stderr);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('no model alias and no text copied from a session', () => {
+  assert.doesNotMatch(text, /\b(sonnet|haiku|opus)\b(?!-\d)/i);
+  for (const alias of text.match(/(?<![./\w-])claude-[a-z]+(-[a-z0-9.]+)*\b/g) ?? []) {
+    assert.match(alias, /-\d/, `${alias} is an alias, not a full model id`);
+  }
+});
+
+test('the node command lists the train-split misleading notes of one category, and only those', () => {
+  const line = text.split('\n').find((l) => l.startsWith('node -e '));
+  assert.ok(line, 'the skill gives a one-line node command');
+  const dir = mkdtempSync(join(tmpdir(), 'improving-evals-'));
+  try {
+    mkdirSync(join(dir, 'review'), { recursive: true });
+    // Invented ids; the split of each follows splitOf, so the sample is built from the real function.
+    const ids = Array.from({ length: 12 }, (_, i) => `invented-session-${i}`);
+    const sample = [
+      ...ids.map((sessionId) => ({ sessionId, stratum: 'random' })),
+      { sessionId: 'invented-cost-1', stratum: 'cost' },
+    ];
+    const split = (r) => splitOf(r.sessionId, r.stratum);
+    const dev = sample.find((r) => split(r) === 'dev');
+    const test_ = sample.find((r) => split(r) === 'test');
+    const train = sample.find((r) => split(r) === 'train');
+    assert.ok(dev && test_ && train, 'the invented sample covers the three splits');
+    writeFileSync(join(dir, 'review', 'sample.jsonl'), sample.map((r) => JSON.stringify(r)).join('\n') + '\n');
+    const rulings = [
+      { sessionId: train.sessionId, category: 'cat-a', misleading: 'invented note train a' },
+      { sessionId: train.sessionId, category: 'cat-b', misleading: 'invented note train b' },
+      { sessionId: dev.sessionId, category: 'cat-a', misleading: 'invented note dev a' },
+      { sessionId: test_.sessionId, category: 'cat-a', misleading: 'invented note test a' },
+      { sessionId: train.sessionId, category: 'cat-a', misleading: '' },
+    ];
+    writeFileSync(join(dir, 'rulings.jsonl'), rulings.map((r) => JSON.stringify(r)).join('\n') + '\n');
+    const run = spawnSync(line.replace(/<id>/g, 'cat-a'), { shell: true, cwd: ROOT, encoding: 'utf8', env: { ...process.env, TRIQUAL_EVALS_DIR: dir } });
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(run.stdout.trim(), 'invented note train a');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('it ends with a report format of at most 20 lines, one per category', () => {
+  const tail = flat.slice(flat.lastIndexOf('at most 20 lines'));
+  assert.match(tail, /one per category/);
+  assert.match(tail, /kept or reverted/);
+});
+
+test('a category with no scores entry or no version in the report is skipped, never rewritten or scored without --against, and named in the final report', () => {
+  assert.match(flat, /a category with no `scores` entry, or no `version` in it, in the report is skipped: it is not rewritten, and it is never scored without `--against`/i);
+  const tail = flat.slice(flat.lastIndexOf('at most 20 lines'));
+  assert.match(tail, /the categories skipped for a missing score/);
+});
+
+test('exit 2 of the score step with "the prompt did not change" means the rewrite changed nothing: restored and recorded as not kept', () => {
+  assert.match(flat, /exit 2 with "the prompt did not change" means the rewrite changed nothing: restore the file \(3g\) and record `kept: false` \(3h\), with `to` equal to `from` and null counts/i);
+});
+
+test('steps 3e and 3f run the checkout\'s own dispatcher, because triqual runs the installed copy and its installed judge prompts', () => {
+  assert.ok(text.includes('node plugins/methodology/cli/eval.mjs judge --category <id> --sessions <evals>/review/sample.jsonl'));
+  assert.ok(text.includes('node plugins/methodology/cli/eval.mjs score --category <id> --against <baseline>'));
+  assert.doesNotMatch(text, /triqual eval judge/);
+  assert.doesNotMatch(text, /triqual eval score/);
+  assert.match(flat, /`triqual` runs the installed copy of the plugin, whose judge prompts are the installed ones, so it would judge the old prompt/);
+});
+
+test('the checkout must be the trunk, up to date, with its plugin version equal to the report\'s pluginVersion, before step 3', () => {
+  assert.match(flat, /the checkout is the trunk, up to date, and the `version` in `plugins\/methodology\/\.claude-plugin\/plugin\.json` equals the report's `pluginVersion`/);
+  assert.match(flat, /the report's `version` for a category is the hash of the prompt in the checkout/);
+  assert.match(flat, /update the checkout or the installed plugin, whichever is behind, and run `triqual eval improve` again before step 3/);
+});
+
+test('the score command the skill names scores the checkout\'s judge prompt, not an installed one', () => {
+  const line = text.split('\n').find((l) => l.includes('node plugins/methodology/cli/eval.mjs score --category'));
+  assert.ok(line, 'the skill gives the score command');
+  const command = /(node plugins\/methodology\/cli\/eval\.mjs score --category <id> --against <baseline>)/.exec(line)[1]
+    .replace('<id>', 'unchecked-premise').replace('<baseline>', 'a-version-before-the-rewrite');
+  const dir = mkdtempSync(join(tmpdir(), 'improving-evals-score-'));
+  try {
+    mkdirSync(join(dir, 'review'), { recursive: true });
+    let devId;
+    for (let i = 0; !devId; i += 1) if (splitOf(`invented-score-${i}`, 'random') === 'dev') devId = `invented-score-${i}`;
+    writeFileSync(join(dir, 'taxonomy.json'), JSON.stringify({
+      judgeExclude: [],
+      categories: [{ id: 'unchecked-premise', name: 'Invented name', definition: 'An invented definition.', examples: ['e1', 'e2', 'e3'], check: 'judge' }],
+    }));
+    writeFileSync(join(dir, 'label-categories.jsonl'), [...['e1', 'e2', 'e3'], devId].map((sessionId) => `${JSON.stringify({ sessionId, categories: [] })}\n`).join(''));
+    writeFileSync(join(dir, 'review', 'sample.jsonl'), `${JSON.stringify({ sessionId: devId, stratum: 'random' })}\n`);
+    writeFileSync(join(dir, 'review', 'labels.jsonl'), `${JSON.stringify({ sessionId: devId })}\n`);
+    const run = spawnSync(command, { shell: true, cwd: ROOT, encoding: 'utf8', env: { ...process.env, TRIQUAL_EVALS_DIR: dir } });
+    assert.equal(run.status, 0, run.stderr);
+    const row = JSON.parse(readFileSync(join(dir, 'scores.jsonl'), 'utf8').trim().split('\n').pop());
+    assert.equal(row.category, 'unchecked-premise');
+    assert.equal(row.version, loadJudgePrompt(join(PLUGIN, 'evals', 'judges', 'unchecked-premise.md')).hash);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
