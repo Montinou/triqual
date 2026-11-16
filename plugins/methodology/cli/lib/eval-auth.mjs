@@ -20,6 +20,8 @@ export class ChainExhausted extends Error {
   }
 }
 
+export const LIMIT_NOTE = 'every credential entry hit a usage limit';
+
 export const CREDENTIAL_VARS = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL'];
 // Everything a child must not inherit: the credentials, the provider selectors and the arm marker.
 const STRIPPED = [...CREDENTIAL_VARS, 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY', 'TRIQUAL_EVAL_ARM'];
@@ -44,13 +46,14 @@ function validSource(v) {
   return typeof v.envFile === 'string' && v.envFile !== '' && typeof v.var === 'string' && VAR_NAME.test(v.var) && hasOnly(v, ['envFile', 'var']);
 }
 
-// Reads { chain: [{ name, env }] }. No file: the single entry `ambient`, which sets nothing. The values are not resolved here.
+// Reads { chain: [{ name, env, paid? }] }. `paid` (default false) marks an entry that spends money: usableChain leaves it
+// out unless the caller opted in. No file: the single entry `ambient`, which sets nothing. The values are not resolved here.
 export function loadChain(file) {
   let text;
   try {
     text = readFileSync(file, 'utf8');
   } catch (err) {
-    if (err?.code === 'ENOENT') return [{ name: 'ambient', env: {} }];
+    if (err?.code === 'ENOENT') return [{ name: 'ambient', env: {}, paid: false }];
     throw new AuthError('eval-auth file: unreadable');
   }
   let doc;
@@ -63,17 +66,23 @@ export function loadChain(file) {
     if (!isObject(e)) throw new AuthError(`chain[${i}]: not an object`);
     if (typeof e.name !== 'string' || !NAME.test(e.name)) throw new AuthError(`chain[${i}].name: must match ${NAME}`);
     const at = `chain entry ${e.name}`;
-    for (const k of Object.keys(e)) if (k !== 'name' && k !== 'env') throw new AuthError(`${at}: unknown key ${shown(k)}`);
+    for (const k of Object.keys(e)) if (k !== 'name' && k !== 'env' && k !== 'paid') throw new AuthError(`${at}: unknown key ${shown(k)}`);
     if (seen.has(e.name)) throw new AuthError(`${at}: duplicate name`);
     seen.add(e.name);
+    if (Object.hasOwn(e, 'paid') && typeof e.paid !== 'boolean') throw new AuthError(`${at}.paid: must be true or false`);
     const env = e.env ?? {};
     if (!isObject(env)) throw new AuthError(`${at}.env: must be an object`);
     for (const [k, v] of Object.entries(env)) {
       if (!CREDENTIAL_VARS.includes(k)) throw new AuthError(`${at}.env: unknown variable ${shown(k)}`);
       if (!validSource(v)) throw new AuthError(`${at}.env.${k}: must be a string, { file } or { envFile, var }`);
     }
-    return { name: e.name, env: { ...env } };
+    return { name: e.name, env: { ...env }, paid: e.paid === true };
   });
+}
+
+// The entries a command may use: every entry with `paid`, else the entries that are not paid, in order.
+export function usableChain(chain, { paid = false } = {}) {
+  return paid === true ? chain : chain.filter((e) => e.paid !== true);
 }
 
 const unquote = (s) => {
@@ -116,9 +125,10 @@ export const limitText = (text) => typeof text === 'string'
   && (/^(API Error: )?You've hit your\b/i.test(text) || /\b(usage|spend) limit\b/i.test(text)
     || /credit balance is too low/i.test(text) || /shared budget/i.test(text));
 
-// The final result object of `claude -p --output-format json` ended on a usage limit.
+// The final result object of `claude -p --output-format json` ended on a usage limit. A 429 alone is a transient rate
+// limit (an error for that session, the chain stays on its entry); it counts only with usage_limit_reached or the limit text.
 export const isLimit = (result) => result !== null && typeof result === 'object' && result.is_error === true
-  && (result.api_error === 'usage_limit_reached' || result.api_error_status === 429 || limitText(result.result));
+  && (result.api_error === 'usage_limit_reached' || limitText(result.result));
 
 // Runs units through the chain: `attempt(unit, entry)` returns a result; on a limit (isLimit, or a `{ limit: true }`
 // outcome of a caller that already classified it) the current entry moves to the next one for every later unit and

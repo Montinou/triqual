@@ -352,13 +352,14 @@ test('a session under a judgeExclude pattern is never passed to a judge', async 
   assert.equal(r.lines.at(-1), 'judged 1: ambient 1; errors 0; left 0');
 });
 
-test('an unknown project counts as excluded when a pattern is set, and a session missing from the store is not spawned', async () => {
+test('an unknown project counts as excluded when a pattern is set; a session missing from the store is not spawned, gets no line and is an error', async () => {
   const e = fixture({ exclude: ['/home/x/Client'], sessions: ['s1'], projects: { s1: '' } });
   writeFileSync(e.sessionsFile, `${JSON.stringify({ sessionId: 's1' })}\n${JSON.stringify({ sessionId: 'ghost' })}\n`);
   const r = await run(e, ['--category', 'stalls', '--sessions', e.sessionsFile]);
   assert.equal(calls(e).length, 0);
-  assert.deepEqual(lines(e).map((x) => [x.sessionId, x.reason]), [['s1', 'excluded'], ['ghost', 'excluded']]);
-  assert.equal(r.code, 0);
+  assert.deepEqual(lines(e).map((x) => [x.sessionId, x.reason]), [['s1', 'excluded']]);
+  assert.match(r.err, /ghost: not in the sessions store/);
+  assert.equal(r.code, 1);
 });
 
 test('an unreadable or empty transcript is an error: no spawn, no judgment line, counted in errors and left', async () => {
