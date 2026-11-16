@@ -21,7 +21,10 @@ or your human partner asks you to improve the evals. Without either, do not star
 
 1. **Get a report.** Run `triqual eval improve`. When the newest file of `<evals>/rounds/` is under a day old, read it
    instead and run nothing. Pass `--paid` only when your human partner asked for it: a credential entry marked paid
-   spends money and is used only with the flag. The report is `<evals>/rounds/<YYYY-MM-DDTHHMMSSZ>.json`.
+   spends money and is used only with the flag. The report is `<evals>/rounds/<YYYY-MM-DDTHHMMSSZ>.json`. Before step 3 the checkout is the trunk, up to date, and the
+   `version` in `plugins/methodology/.claude-plugin/plugin.json` equals the report's `pluginVersion`; then the report's
+   `version` for a category is the hash of the prompt in the checkout. When they differ, update the checkout or the
+   installed plugin, whichever is behind, and run `triqual eval improve` again before step 3.
 2. **Read what failed.** When the report's `failed` is not empty, name those steps in the final report to your human
    partner (`review sample`, `review propose`, `check`, `judge <id>`, `referee`, `score <id>`, `validate <id>`), and
    say so when `paidOnly` is true. A round with failed steps still has a usable `revise`, built from what exists:
@@ -50,10 +53,12 @@ node -e "Promise.all([import('./plugins/methodology/cli/lib/eval-validate.mjs'),
       - the `model:` line unchanged, unless the change is the model (then the full model id, never an alias).
    d. **Test the prompt.** Run `node --test plugins/methodology/test/eval-checks.test.mjs`. A failure is a defect of the
       rewrite: fix the prompt, or revert it (3g).
-   e. **Judge the sample.** Run `triqual eval judge --category <id> --sessions <evals>/review/sample.jsonl`. It records
-      verdicts under the new prompt's hash. Pass `--paid` here too when your human partner asked for it. Exit 1 means
+   e. **Judge the sample.** Run
+      `node plugins/methodology/cli/eval.mjs judge --category <id> --sessions <evals>/review/sample.jsonl` from the
+      repository root, never as `triqual`: `triqual` runs the installed copy of the plugin, whose judge prompts are the
+      installed ones, so it would judge the old prompt. It records verdicts under the new prompt's hash. Pass `--paid` here too when your human partner asked for it. Exit 1 means
       sessions were left (a limit or an error): rerun once, then treat the result as it stands.
-   f. **Score.** Run `triqual eval score --category <id> --against <baseline>`. Its `dev:` line is `dev: previous <balanced>
+   f. **Score.** Run `node plugins/methodology/cli/eval.mjs score --category <id> --against <baseline>`. Its `dev:` line is `dev: previous <balanced>
       (<correct>/<n>), current <balanced> (<correct>/<n>): <verdict>`. Exit 2 with "the prompt did not change" means the
       rewrite changed nothing: restore the file (3g) and record `kept: false` (3h), with `to` equal to `from` and null
       counts.

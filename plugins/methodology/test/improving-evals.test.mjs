@@ -11,6 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const PLUGIN = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ROOT = join(PLUGIN, '..', '..');
+const { loadJudgePrompt } = await import(pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'cli', 'lib', 'eval-judge.mjs')).href);
 const { splitOf } = await import(pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'cli', 'lib', 'eval-validate.mjs')).href);
 const SKILL_FILE = join(PLUGIN, 'skills', 'improving-evals', 'SKILL.md');
 const text = existsSync(SKILL_FILE) ? readFileSync(SKILL_FILE, 'utf8') : '';
@@ -29,7 +30,7 @@ test('the front matter names the skill and its description starts "Use when"', (
 
 test('the body carries each required string', () => {
   for (const needle of [
-    'triqual eval improve', 'triqual eval score --category', 'better', 'revisions.jsonl', 'train',
+    'triqual eval improve', 'eval.mjs score --category', 'better', 'revisions.jsonl', 'train',
     'never open a test-split session', 'never ask the owner', 'one attempt per category per round', 'invented',
     'triqual eval rates',
   ]) assert.ok(body.includes(needle), `the body lacks: ${needle}`);
@@ -57,8 +58,8 @@ test('the steps come in the specified order', () => {
     '`misleading`',
     'plugins/methodology/evals/judges/<id>.md',
     'node --test plugins/methodology/test/eval-checks.test.mjs',
-    'triqual eval judge --category <id> --sessions',
-    'triqual eval score --category <id>',
+    'eval.mjs judge --category <id> --sessions',
+    'eval.mjs score --category <id>',
     'git checkout -- ',
     'revisions.jsonl',
     'dev: previous',
@@ -139,7 +140,7 @@ test('the skill claims no merge authority of its own: it merges only where the r
 });
 
 test('the score step compares with the version in place before the rewrite, noted from the report, through --against', () => {
-  assert.match(flat, /triqual eval score --category <id> --against <baseline>/);
+  assert.match(flat, /node plugins\/methodology\/cli\/eval\.mjs score --category <id> --against <baseline>/);
   assert.match(flat, /the category's `version` in the report's `scores` entry: that is the baseline, the version in place before the rewrite/);
   assert.match(flat, /`from` is the baseline/);
 });
@@ -177,7 +178,7 @@ test('the node command follows XDG_DATA_HOME when TRIQUAL_EVALS_DIR is unset', (
 
 test('no model alias and no text copied from a session', () => {
   assert.doesNotMatch(text, /\b(sonnet|haiku|opus)\b(?!-\d)/i);
-  for (const alias of text.match(/\bclaude-[a-z]+(-[a-z0-9.]+)*\b/g) ?? []) {
+  for (const alias of text.match(/(?<![./\w-])claude-[a-z]+(-[a-z0-9.]+)*\b/g) ?? []) {
     assert.match(alias, /-\d/, `${alias} is an alias, not a full model id`);
   }
 });
@@ -230,4 +231,45 @@ test('a category with no scores entry or no version in the report is skipped, ne
 
 test('exit 2 of the score step with "the prompt did not change" means the rewrite changed nothing: restored and recorded as not kept', () => {
   assert.match(flat, /exit 2 with "the prompt did not change" means the rewrite changed nothing: restore the file \(3g\) and record `kept: false` \(3h\), with `to` equal to `from` and null counts/i);
+});
+
+test('steps 3e and 3f run the checkout\'s own dispatcher, because triqual runs the installed copy and its installed judge prompts', () => {
+  assert.ok(text.includes('node plugins/methodology/cli/eval.mjs judge --category <id> --sessions <evals>/review/sample.jsonl'));
+  assert.ok(text.includes('node plugins/methodology/cli/eval.mjs score --category <id> --against <baseline>'));
+  assert.doesNotMatch(text, /triqual eval judge/);
+  assert.doesNotMatch(text, /triqual eval score/);
+  assert.match(flat, /`triqual` runs the installed copy of the plugin, whose judge prompts are the installed ones, so it would judge the old prompt/);
+});
+
+test('the checkout must be the trunk, up to date, with its plugin version equal to the report\'s pluginVersion, before step 3', () => {
+  assert.match(flat, /the checkout is the trunk, up to date, and the `version` in `plugins\/methodology\/\.claude-plugin\/plugin\.json` equals the report's `pluginVersion`/);
+  assert.match(flat, /the report's `version` for a category is the hash of the prompt in the checkout/);
+  assert.match(flat, /update the checkout or the installed plugin, whichever is behind, and run `triqual eval improve` again before step 3/);
+});
+
+test('the score command the skill names scores the checkout\'s judge prompt, not an installed one', () => {
+  const line = text.split('\n').find((l) => l.includes('node plugins/methodology/cli/eval.mjs score --category'));
+  assert.ok(line, 'the skill gives the score command');
+  const command = /(node plugins\/methodology\/cli\/eval\.mjs score --category <id> --against <baseline>)/.exec(line)[1]
+    .replace('<id>', 'unchecked-premise').replace('<baseline>', 'a-version-before-the-rewrite');
+  const dir = mkdtempSync(join(tmpdir(), 'improving-evals-score-'));
+  try {
+    mkdirSync(join(dir, 'review'), { recursive: true });
+    let devId;
+    for (let i = 0; !devId; i += 1) if (splitOf(`invented-score-${i}`, 'random') === 'dev') devId = `invented-score-${i}`;
+    writeFileSync(join(dir, 'taxonomy.json'), JSON.stringify({
+      judgeExclude: [],
+      categories: [{ id: 'unchecked-premise', name: 'Invented name', definition: 'An invented definition.', examples: ['e1', 'e2', 'e3'], check: 'judge' }],
+    }));
+    writeFileSync(join(dir, 'label-categories.jsonl'), [...['e1', 'e2', 'e3'], devId].map((sessionId) => `${JSON.stringify({ sessionId, categories: [] })}\n`).join(''));
+    writeFileSync(join(dir, 'review', 'sample.jsonl'), `${JSON.stringify({ sessionId: devId, stratum: 'random' })}\n`);
+    writeFileSync(join(dir, 'review', 'labels.jsonl'), `${JSON.stringify({ sessionId: devId })}\n`);
+    const run = spawnSync(command, { shell: true, cwd: ROOT, encoding: 'utf8', env: { ...process.env, TRIQUAL_EVALS_DIR: dir } });
+    assert.equal(run.status, 0, run.stderr);
+    const row = JSON.parse(readFileSync(join(dir, 'scores.jsonl'), 'utf8').trim().split('\n').pop());
+    assert.equal(row.category, 'unchecked-premise');
+    assert.equal(row.version, loadJudgePrompt(join(PLUGIN, 'evals', 'judges', 'unchecked-premise.md')).hash);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
