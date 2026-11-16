@@ -17,6 +17,8 @@ import { BRAND } from './lib/brand.mjs';
 import { readManagedSection, sha256 } from './lib/fsx.mjs';
 import { readMethodologyConfig, supersededEnabled } from './lib/settings.mjs';
 import { HARNESS_IDS, expectedRules, harnessPaths } from './lib/harnesses.mjs';
+import { evalsDir } from './lib/eval-paths.mjs';
+import { evalsNotice } from './lib/eval-notice.mjs';
 
 const RULES_NOTICE = 'triqual: global rules out of date: run `triqual sync`';
 // Injected first, on Claude's path, while the triqual CLI is not installed (/methodology:setup installs it).
@@ -128,16 +130,28 @@ function wrappedSkill(pluginRoot, dataDir) {
   }
 }
 
+// The evals notice for the newest round report, or null; never throws.
+function evalsLine(env, home, dataDir) {
+  try {
+    return evalsNotice({ evals: evalsDir(env, home) });
+  } catch (err) {
+    logError(dataDir, err);
+    return null;
+  }
+}
+
 // source: the SessionStart `source` (startup, resume, clear, compact). Every source but resume gets the skill (the
 // keepSuperseded note instead when that is set): the resumed conversation already holds it. A resume gets RESUME_NOTE
 // instead when the manifest supersedes something, none of it is enabled and keepSuperseded is off: the resumed
 // conversation may predate the rollout. harness: a HARNESS_IDS id whose rules target the rules line checks, or null
-// for Claude's ~/.claude/CLAUDE.md. Returns null when there is nothing to inject.
-export function sessionContext({ home, pluginRoot, dataDir = null, source, harness = null }) {
+// for Claude's ~/.claude/CLAUDE.md. env locates the evals directory (evalsDir), whose newest round report may add an
+// `evals:` notice for every harness. Returns null when there is nothing to inject.
+export function sessionContext({ home, pluginRoot, dataDir = null, source, harness = null, env = process.env }) {
   const config = methodologyConfig(home, dataDir); // read once for the drift lines and the introduction
   const state = config.keepSuperseded ? null : supersededState(home, pluginRoot, dataDir);
   const setupIncomplete = harness === null && !cliInstalled(home);
-  const lines = driftLines({ home, pluginRoot, dataDir, config, state, harness, syncAvailable: !setupIncomplete });
+  const driftText = driftLines({ home, pluginRoot, dataDir, config, state, harness, syncAvailable: !setupIncomplete });
+  const lines = [driftText, evalsLine(env, home, dataDir)].filter((line) => line !== null).join('\n') || null;
   let skill = null;
   if (source !== 'resume') skill = config.keepSuperseded ? KEEP_NOTE : wrappedSkill(pluginRoot, dataDir);
   else if (state && state.supersedes.length > 0 && state.enabled.length === 0) skill = RESUME_NOTE;
@@ -170,6 +184,7 @@ async function main() {
     dataDir: process.env.CLAUDE_PLUGIN_DATA || null,
     source: await readSource(),
     harness: harnessArg(process.argv.slice(2)),
+    env: process.env,
   });
   if (context !== null) {
     process.stdout.write(JSON.stringify({
