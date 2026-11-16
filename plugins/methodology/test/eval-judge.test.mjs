@@ -403,7 +403,8 @@ test('a readable transcript with no text is skipped: no spawn, no line, not an e
 test('a session whose transcript was deleted but whose render is kept is judged from the kept text', async () => {
   const e = fixture({ sessions: ['s1'] });
   const file = join(e.env.TRIQUAL_TRANSCRIPTS_DIR, '-home-x-proj', 's1.jsonl');
-  keepRenders({ evals: e.evals, sessions: [{ sessionId: 's1', file, excluded: false }] });
+  // the fixture transcript was just written: a clock two hours on makes it quiet
+  keepRenders({ evals: e.evals, sessions: [{ sessionId: 's1', file, excluded: false }], now: () => Date.now() + 2 * 60 * 60 * 1000 });
   rmSync(file);
   const r = await run(e, ['--category', 'stalls', '--sessions', e.sessionsFile]);
   assert.equal(r.code, 0, r.err);

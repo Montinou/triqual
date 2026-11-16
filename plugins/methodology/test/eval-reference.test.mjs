@@ -308,7 +308,7 @@ test('a transcript that is gone, with no kept render, is an error, is not sent a
 
 test('a session whose transcript was deleted but whose render is kept is proposed from the kept text', async () => {
   const fx = fixture({ sessions: [{ id: 's1', project: '/home/x/alpha', text: 'Please fix the parser.' }] });
-  keepRenders({ evals: fx.evals, sessions: sampleSessions({ evals: fx.evals, root: fx.root, taxonomy: TAXONOMY, home: fx.home, platform: 'linux' }) });
+  keepRenders({ evals: fx.evals, sessions: sampleSessions({ evals: fx.evals, root: fx.root, taxonomy: TAXONOMY, home: fx.home, platform: 'linux' }), now: () => Date.now() + 2 * 60 * 60 * 1000 });
   unlinkSync(join(fx.root, '-home-x-s1', 's1.jsonl'));
   const { spawn, calls } = stub();
   const out = await run(fx, { spawn });

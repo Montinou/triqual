@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sessionSignals } from '../cli/lib/eval-sessions.mjs';
@@ -81,6 +81,10 @@ test('inWindow keeps a model named __proto__ off the prototype', () => {
   assert.equal(Object.getOwnPropertyDescriptor(w.models, '__proto__').value.messages, 2);
 });
 
+// Every fixture transcript is days older than the tests' clock (2026-11-18), so none may still be running.
+const OLD = new Date('2026-11-01T00:00:00Z');
+const age = (file, at = OLD) => utimesSync(file, at, at);
+
 const sess = (id, start) => ({ sessionId: id, entrypoint: 'cli', projectDir: '-w', start, usd: 1, turns: 1 });
 const ROOT = '/fixture/projects';
 
@@ -109,9 +113,10 @@ function fixture() {
   mkdirSync(join(root, '-w'), { recursive: true });
   const ids = ['s1', 's2', 's3'];
   const days = ['2026-11-10', '2026-11-16', '2026-11-17'];
-  ids.forEach((id, i) => writeFileSync(join(root, '-w', `${id}.jsonl`), jsonl([
-    user('hi', `${days[i]}T10:00:00.000Z`), turn(`m-${id}`, `${days[i]}T10:00:05.000Z`),
-  ])));
+  ids.forEach((id, i) => {
+    writeFileSync(join(root, '-w', `${id}.jsonl`), jsonl([user('hi', `${days[i]}T10:00:00.000Z`), turn(`m-${id}`, `${days[i]}T10:00:05.000Z`)]));
+    age(join(root, '-w', `${id}.jsonl`));
+  });
   mkdirSync(join(evals, 'review'), { recursive: true });
   writeFileSync(join(evals, 'review', 'sample.jsonl'), `${JSON.stringify({ sessionId: 'seed0', project: null, file: null, stratum: 'random', usd: 0, turns: 0 })}\n`);
   return { env: { HOME: home, TRIQUAL_EVALS_DIR: evals, TRIQUAL_TRANSCRIPTS_DIR: root }, evals };
@@ -168,11 +173,12 @@ function mixedFixture() {
   const bad = ['t1', 't2', 't3', 't4'];
   good.forEach((id, i) => writeFileSync(join(root, '-w', `${id}.jsonl`), jsonl([user(`invented task ${id}`, `2026-11-1${i}T10:00:00.000Z`), turn(`m-${id}`, `2026-11-1${i}T10:00:05.000Z`)])));
   bad.forEach((id, i) => writeFileSync(join(root, '-w', `${id}.jsonl`), textless(`2026-11-1${i}T11:00:00.000Z`)));
+  for (const id of [...good, ...bad]) age(join(root, '-w', `${id}.jsonl`));
   mkdirSync(join(evals, 'review'), { recursive: true });
   const first = `${JSON.stringify({ sessionId: 'seed0', project: null, file: null, stratum: 'cost', usd: 1.5, turns: 3, note: 'kept as is' })}\n`;
   const second = `${JSON.stringify({ sessionId: 'seed1', project: '/work/q', file: '/gone/x.jsonl', stratum: 'random', usd: 0, turns: 0 })}\n`;
   writeFileSync(join(evals, 'review', 'sample.jsonl'), first + second);
-  return { env: { HOME: home, TRIQUAL_EVALS_DIR: evals, TRIQUAL_TRANSCRIPTS_DIR: root }, evals, existing: first + second, good, bad };
+  return { env: { HOME: home, TRIQUAL_EVALS_DIR: evals, TRIQUAL_TRANSCRIPTS_DIR: root }, root, evals, existing: first + second, good, bad };
 }
 
 test('review sample --more never adds a session with nothing to judge, still adds k rows, and leaves the existing rows as they were', async () => {
@@ -201,4 +207,27 @@ test('review sample --more adds fewer than k when fewer sessions with text exist
   assert.match(r.out, /Added 5 of 20/);
   const added = readFileSync(join(f.evals, 'review', 'sample.jsonl'), 'utf8').slice(f.existing.length).trim().split('\n').map((l) => JSON.parse(l).sessionId);
   assert.deepEqual(added.sort(), f.good);
+});
+
+test('review sample --more passes over a candidate whose transcript changed 10 minutes before now, adds k rows from the others, and a later run can take it', async () => {
+  const sampleIds = (f) => readFileSync(join(f.evals, 'review', 'sample.jsonl'), 'utf8').slice(f.existing.length).trim().split('\n').filter(Boolean).map((l) => JSON.parse(l).sessionId);
+  for (const seed of ['1', '2', '3', '4']) {
+    const f = mixedFixture();
+    age(join(f.root, '-w', 'g1.jsonl'), new Date('2026-11-17T23:50:00Z')); // `now` of run() is 2026-11-18T00:00Z
+    const r = await run(f, ['sample', '--more', '4', '--seed', seed]);
+    assert.equal(r.code, 0, r.err);
+    const added = sampleIds(f);
+    assert.equal(added.length, 4, `seed ${seed}: k rows`);
+    assert.ok(!added.includes('g1'), `seed ${seed}: ${added}`);
+    assert.ok(added.every((id) => f.good.includes(id)));
+    const g = mixedFixture();
+    age(join(g.root, '-w', 'g1.jsonl'), new Date('2026-11-17T23:50:00Z'));
+    await run(g, ['sample', '--more', '4', '--seed', seed]);
+    assert.deepEqual(sampleIds(g), added, 'deterministic');
+  }
+  const f = mixedFixture();
+  age(join(f.root, '-w', 'g1.jsonl'), new Date('2026-11-17T23:50:00Z'));
+  assert.match((await run(f, ['sample', '--more', '20', '--seed', '1'])).out, /Added 4 of 20/);
+  age(join(f.root, '-w', 'g1.jsonl'));
+  assert.match((await run(f, ['sample', '--more', '20', '--seed', '1'])).out, /Added 1 of 20/);
 });

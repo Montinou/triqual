@@ -313,7 +313,7 @@ test('a pair whose transcript was deleted but whose render is kept is ruled from
   const f = fixture();
   try {
     const file = join(f.base, 'projects', '-home-x-s1', 's1.jsonl');
-    keepRenders({ evals: f.evals, sessions: [{ sessionId: 's1', file, excluded: false }] });
+    keepRenders({ evals: f.evals, sessions: [{ sessionId: 's1', file, excluded: false }], now: () => Date.now() + 2 * 60 * 60 * 1000 });
     rmSync(file);
     const s = stub();
     const r = await run(f, [], s);

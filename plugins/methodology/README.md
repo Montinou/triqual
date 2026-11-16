@@ -410,7 +410,7 @@ skills now belong to Headjack (`headjack:writing-skills`, `headjack:skill-finder
 `~/.local/share/triqual/evals`; its files are mode 0600. A round does these steps in order:
 
 1. refresh the sessions store;
-2. draw `--more <k>` (default 30; 0 draws none) random sessions that started after every sampled one (a session whose transcript holds no user or assistant text is never drawn);
+2. draw `--more <k>` (default 30; 0 draws none) random sessions that started after every sampled one (a session whose transcript holds no user or assistant text, or changed within the last hour, is never drawn);
 3. keep the redacted render of each sampled session (`keep renders`);
 4. propose a label and failure categories for each sampled session and accept them where there is none (`review propose --accept`);
 5. run the code checks (`check`), then each judge over the sample (`judge`);
@@ -421,7 +421,7 @@ skills now belong to Headjack (`headjack:writing-skills`, `headjack:skill-finder
 The host deletes transcripts after a retention period, and a labeled session whose transcript is gone could no longer be
 judged under a rewritten prompt. So the redacted render that a judge reads, for every sample session, is kept in
 `<evals>/review/renders/<sessionId>.txt` (mode 0600, directory 0700); `review propose`, `judge` and `referee` read the
-kept text in place of the transcript. Sessions of excluded projects (`judgeExclude`) are never kept. Deleting that
+kept text in place of the transcript. A session whose transcript changed within the last hour may still be running, so it is neither drawn nor kept until a later round. Sessions of excluded projects (`judgeExclude`) are never kept, and the kept render of one that became excluded is deleted. Deleting that
 directory drops the kept text; the next round keeps again what is still readable. A session with nothing to judge (no
 user or assistant text) is skipped by those commands, not counted as an error, and reported as `empty`.
 

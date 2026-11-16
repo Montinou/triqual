@@ -6,8 +6,8 @@
 // <evals>/review/labels.jsonl, prints its plain URL, and runs until SIGINT or SIGTERM. A random per-run value is embedded in the
 // served page and required on every label POST; it is never printed. `sample --more <k> [--since <day | ISO timestamp>]` appends k more random-stratum
 // rows (sessions not yet in the sample) to the existing sample, keeping its rows and order; it needs a sample and takes
-// no --n or --force. A candidate with nothing to judge (an unreadable transcript, or one with no user or assistant text)
-// is passed over and the draw goes on, so k rows are added when enough candidates are usable. It prints counts, ids and paths, never transcript text. Exit codes: 0 done; 1 the store could not be updated, a sample exists (no --force), there is
+// no --n or --force. A candidate with nothing to judge (an unreadable transcript, or one with no user or assistant text) or
+// that may still be running (its transcript was modified within the last hour) is passed over and the draw goes on, so k rows are added when enough candidates are usable. It prints counts, ids and paths, never transcript text. Exit codes: 0 done; 1 the store could not be updated, a sample exists (no --force), there is
 // no sample to serve, or the server could not start; 2 usage.
 // `propose [--accept] [--paid]` has a model read each sample session (lib/eval-reference.mjs: the redacted rendering, never the
 // raw transcript, and never a session under the taxonomy's judgeExclude) and append its proposed label and categories to
@@ -27,7 +27,7 @@ import { sampleSessions } from './lib/eval-ask.mjs';
 import { JudgePromptError, renderForJudge, spawnCapture } from './lib/eval-judge.mjs';
 import { ensureDir, evalsDir, transcriptsRoot } from './lib/eval-paths.mjs';
 import { acceptReference, loadReferencePrompt, proposeReference } from './lib/eval-reference.mjs';
-import { transcriptReadable } from './lib/eval-renders.mjs';
+import { transcriptQuiet } from './lib/eval-renders.mjs';
 import { drawSample, moreRandom, SampleExists, writeSample } from './lib/eval-sample.mjs';
 import { readJsonl, refreshSessions } from './lib/eval-store.mjs';
 import { startServer } from './lib/eval-serve.mjs';
@@ -51,7 +51,8 @@ const USAGE = [
   '  triqual eval review sample --more <k> [--seed <int>] [--since <YYYY-MM-DD | ISO timestamp>]',
   '      Appends k more random-stratum rows (interactive sessions not yet in the sample, seeded like --seed above) to the',
   '      existing sample.jsonl, keeping its rows; fewer when fewer sessions are left. A session whose transcript is',
-  '      unreadable or holds no user or assistant text is passed over, never added. Needs a sample; no --n or --force.',
+  '      unreadable, holds no user or assistant text, or was modified within the last hour (it may still be running) is',
+  '      passed over, not added. Needs a sample; no --n or --force.',
   '      --since <YYYY-MM-DD | ISO timestamp> keeps only sessions that started at or after it; it needs --more.',
   '  triqual eval review serve [--port <n>]',
   '      Serves the sample on http://127.0.0.1:<port>/ (a free port when --port is absent or 0) and appends the',
@@ -149,8 +150,9 @@ export async function main(argv, {
         stderr.write(`triqual eval review: the sessions store could not be updated: ${err?.code ?? err?.message ?? 'error'}\n`);
         return 1;
       }
-      // A candidate whose transcript is unreadable, or reads but renders no text, has nothing to judge: it is passed over.
-      const usable = ({ file }) => transcriptReadable(file) && renderForJudge(file).trim() !== '';
+      // A candidate whose transcript is unreadable, was modified within the last hour (the session may still be running:
+      // its text is partial) or reads but renders no text is passed over; a later draw can take it.
+      const usable = ({ file }) => transcriptQuiet(file, now.getTime()) && renderForJudge(file).trim() !== '';
       const added = moreRandom(sessions, existing, Number(opts.more), seed, { root: transcriptsRoot(env, home), since, usable });
       try {
         writeSample(sampleFile, [...existing, ...added], { force: true });

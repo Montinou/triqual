@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { main } from '../cli/eval-validate.mjs';
@@ -287,7 +287,10 @@ function reviewFixture(count) {
   mkdirSync(join(root, '-work-proj'), { recursive: true });
   for (let i = 0; i < count; i += 1) {
     const id = `s${String(i).padStart(3, '0')}`;
-    writeFileSync(join(root, '-work-proj', `${id}.jsonl`), `${[opening('2026-11-01T10:00:00Z'), turn(`m${id}`, '2026-11-01T10:01:00Z', 1000 * (i + 1))].join('\n')}\n`);
+    const file = join(root, '-work-proj', `${id}.jsonl`);
+    writeFileSync(file, `${[opening('2026-11-01T10:00:00Z'), turn(`m${id}`, '2026-11-01T10:01:00Z', 1000 * (i + 1))].join('\n')}\n`);
+    utimesSync(file, new Date('2026-11-01T11:00:00Z'), new Date('2026-11-01T11:00:00Z')); // long quiet, whatever the clock of the run
+
   }
   return { base, evals: join(base, 'evals'), env: { HOME: join(base, 'home'), TRIQUAL_TRANSCRIPTS_DIR: root, TRIQUAL_EVALS_DIR: join(base, 'evals') } };
 }

@@ -1,6 +1,6 @@
 // The kept renders of the evals: the redacted text a judge reads for each review-sample session, saved under
 // <evals>/review/renders/<sessionId>.txt (mode 0600, the directory 0700) so a labeled session can still be judged after the
-// host deletes its transcript. keepRenders is the only writer; every reader goes through sessionRender, which never writes.
+// host deletes its transcript. keepRenders is the only writer (and remover); every reader goes through sessionRender, which never writes.
 // A kept render is private session text: it is never printed or logged here. node: built-ins only.
 import { chmodSync, closeSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -27,9 +27,24 @@ export function transcriptReadable(file) {
   } catch { return false; }
 }
 
-// The kept text of `path`, or null when there is none or it cannot be read.
+// A transcript untouched for this long is taken as no longer running: a session whose file changed within it may still be
+// open, so its render (and a label proposed from it) would freeze a partial text.
+export const QUIET_MS = 60 * 60 * 1000;
+
+// Whether the transcript `file` is readable and its last modification is at least QUIET_MS before `now` (ms since the
+// epoch, a Date, or a function returning either).
+export function transcriptQuiet(file, now = Date.now) {
+  if (!transcriptReadable(file)) return false;
+  const at = Number(typeof now === 'function' ? now() : now);
+  try { return statSync(file).mtimeMs <= at - QUIET_MS; } catch { return false; }
+}
+
+// The kept text of `path`, or null when there is none, it cannot be read, or it is blank (a torn write counts as absent).
 function readKept(path) {
-  try { return readFileSync(path, 'utf8'); } catch { return null; }
+  try {
+    const text = readFileSync(path, 'utf8');
+    return text.trim() === '' ? null : text;
+  } catch { return null; }
 }
 
 // The text to judge for `session` ({ sessionId, file }): its kept render when there is one, else the render of its
@@ -42,31 +57,44 @@ export function sessionRender(evals, session) {
 }
 
 // Keeps the render of each of `sessions` ({ sessionId, file, excluded }) that is not excluded and has none yet.
-// { kept, empty, unreadable }: renders written; sessions whose transcript reads but renders no text (nothing is written);
-// sessions whose transcript is unreadable or absent. A session that already has a kept render counts in none. The write goes
-// through a temp file and a rename (file 0600, directory 0700). Throws for a session id that is not a plain file name.
-export function keepRenders({ evals, sessions }) {
+// { kept, empty, unreadable, failed }: renders written; sessions whose transcript reads but renders no text (nothing is
+// written); sessions whose transcript is unreadable or absent; sessions whose render could not be written or removed (one
+// session's failure never stops the others; an id that is not a plain file name counts here). A session that already has a
+// kept render counts in none, and neither does one whose transcript is not quiet (see QUIET_MS; `now` is ms, a Date or a
+// function): it is kept by a later round. The kept render of an excluded session is removed (an excluded session with an
+// invalid id is skipped). The write goes through a temp file and a rename (file 0600, directory 0700).
+export function keepRenders({ evals, sessions, now = Date.now }) {
+  const at = Number(typeof now === 'function' ? now() : now);
   let kept = 0;
   let empty = 0;
   let unreadable = 0;
+  let failed = 0;
   for (const s of sessions) {
-    if (s.excluded === true) continue;
-    const path = renderPath(evals, s.sessionId);
+    if (s.excluded === true) {
+      let path;
+      try { path = renderPath(evals, s.sessionId); } catch { continue; }
+      try { rmSync(path, { force: true }); } catch { failed += 1; }
+      continue;
+    }
+    let path;
+    try { path = renderPath(evals, s.sessionId); } catch { failed += 1; continue; }
     if (readKept(path) !== null) continue;
     if (!transcriptReadable(s.file)) { unreadable += 1; continue; }
+    if (!transcriptQuiet(s.file, at)) continue;
     const text = renderForJudge(s.file);
     if (text.trim() === '') { empty += 1; continue; }
-    ensureDir(dirname(path));
     const tmp = `${path}.${process.pid}.tmp`;
     try {
+      ensureDir(dirname(path));
+      chmodSync(dirname(path), 0o700);
       writeFileSync(tmp, text, { mode: 0o600 });
       chmodSync(tmp, 0o600);
       renameSync(tmp, path);
-    } catch (err) {
+      kept += 1;
+    } catch {
       rmSync(tmp, { force: true });
-      throw err;
+      failed += 1;
     }
-    kept += 1;
   }
-  return { kept, empty, unreadable };
+  return { kept, empty, unreadable, failed };
 }

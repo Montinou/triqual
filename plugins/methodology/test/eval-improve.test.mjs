@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { main } from '../cli/eval-improve.mjs';
@@ -23,9 +23,13 @@ const TAXONOMY = {
   ],
 };
 
-function write(f, sessionId, at) {
+// The transcript's file time is `touched` (default: weeks before the round's clock, so the session is quiet).
+const OLD = new Date('2026-11-01T00:00:00Z');
+function write(f, sessionId, at, touched = OLD) {
   mkdirSync(join(f.root, '-home-x-proj'), { recursive: true });
-  writeFileSync(join(f.root, '-home-x-proj', `${sessionId}.jsonl`), `${turn('user', `invented task of ${sessionId}`, at)}\n${turn('assistant', 'invented reply', at)}\n`);
+  const file = join(f.root, '-home-x-proj', `${sessionId}.jsonl`);
+  writeFileSync(file, `${turn('user', `invented task of ${sessionId}`, at)}\n${turn('assistant', 'invented reply', at)}\n`);
+  utimesSync(file, touched, touched);
 }
 
 // s1 and s2 are sampled; n1 started after both and is not; o1 (added by a test) started before both.
@@ -194,6 +198,7 @@ const renderFile = (f, id) => join(f.evals, 'review', 'renders', `${id}.txt`);
 test('a sample with one text-less session and nothing else wrong: exit 0, failed [], errors 0, empty 1, kept for the others, no call for it', async () => {
   const f = fixture();
   writeFileSync(join(f.root, '-home-x-proj', 's2.jsonl'), `${turn('user', [], '2026-11-11T10:00:00.000Z')}\n`);
+  utimesSync(join(f.root, '-home-x-proj', 's2.jsonl'), OLD, OLD);
   const s = stub();
   const r = await run(f, [], s.spawn);
   assert.equal(r.code, 0, r.err);
@@ -223,7 +228,36 @@ test('a session whose transcript is deleted after it was kept is still judged in
   assert.deepEqual([reportOf(f).failed, reportOf(f).errors, reportOf(f).judged], [[], 0, 2]);
 });
 
-test('a keepRenders that throws lands keep renders in failed, the report is still written and the later steps ran', async () => {
+test('a session whose render cannot be written is a failed step with the right kept, and the round goes on', async () => {
+  const f = fixture();
+  mkdirSync(renderFile(f, 's1'), { recursive: true }); // s1's render path is occupied by a directory
+  const s = stub();
+  const r = await run(f, [], s.spawn);
+  assert.equal(r.code, 3, r.err);
+  const rep = reportOf(f);
+  assert.deepEqual(rep.failed, ['keep renders']);
+  assert.deepEqual([rep.kept, rep.empty], [2, 0], 's2 and the drawn n1 were still kept');
+  assert.deepEqual([rep.added, rep.proposed, rep.judged], [1, 3, 3]);
+  assert.ok(failedLine(r.out).includes('keep renders'), r.out);
+  assert.ok(r.out.includes('renders: kept 2, empty 0'), r.out);
+});
+
+test('a session whose transcript changed within the hour is neither drawn nor kept; a later round takes it', async () => {
+  const f = fixture();
+  write(f, 'n1', '2026-11-12T10:00:00.000Z', new Date('2026-11-16T11:50:00Z')); // modified 10 minutes before the round
+  const s = stub();
+  const r = await run(f, [], s.spawn);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual([reportOf(f).added, reportOf(f).kept], [0, 2]);
+  assert.equal(existsSync(renderFile(f, 'n1')), false);
+  clock += 3 * 60 * 60 * 1000;
+  const later = await run(f, [], s.spawn);
+  assert.equal(later.code, 0, later.err);
+  assert.equal(reportOf(f).added, 1);
+  assert.equal(existsSync(renderFile(f, 'n1')), true);
+});
+
+test('a keepRenders that fails for every session lands keep renders in failed, the report is still written and the later steps ran', async () => {
   const f = fixture();
   mkdirSync(join(f.evals, 'review'), { recursive: true });
   writeFileSync(join(f.evals, 'review', 'renders'), 'not a directory'); // the render directory cannot be created

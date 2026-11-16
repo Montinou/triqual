@@ -1,9 +1,10 @@
 // `triqual eval improve [--more <k>] [--paid]`: one unattended round of the evals loop, every step run in-process with
 // its output captured. (1) refresh the sessions store; (2) with no review sample, stop (exit 1); else draw --more
 // random sessions that started after every sampled one (`review sample --more <k> --since <latest sampled start>`; a
-// session with nothing to judge is never drawn); (3) `keep renders`: the redacted render of each sample session that is not
+// session with nothing to judge, or that may still be running, is never drawn); (3) `keep renders`: the redacted render of each sample session that is not
 // under judgeExclude is kept in <evals>/review/renders/ (0600, lib/eval-renders.mjs) so the labeled set outlives the host's
-// transcript cleanup; (4) `review propose --accept`; (5) `check`, then `judge` over the sample for each judge category;
+// transcript cleanup (a session whose transcript changed within the last hour may still be running: it is kept by a later
+// round; a session that became excluded loses its kept render; one session's failure fails the step, not the others); (4) `review propose --accept`; (5) `check`, then `judge` over the sample for each judge category;
 // (6) `referee`; (7) score every category (appended to <evals>/scores.jsonl as `eval score` does) and validate every judge
 // category; (8) the failure rates. A session with nothing to judge is skipped by steps 4 to 6 (not an error, not left). It
 // writes <evals>/rounds/<YYYY-MM-DDTHHMMSSZ>.json (0600) and prints at most 30 lines: the
@@ -51,10 +52,12 @@ const USAGE = [
   '      One unattended round over the review sample (it needs one: "triqual eval review sample"):',
   '        1 refreshes the sessions store;',
   '        2 draws --more <k> (default 30; 0 draws nothing) random sessions that started after every sampled one (a',
-  '          session whose transcript holds no user or assistant text is never drawn);',
+  '          session whose transcript holds no user or assistant text, or changed within the last hour, is never drawn);',
   '        3 "keep renders": the redacted render of each sample session that is not under a judgeExclude pattern is',
   '          kept in <evals>/review/renders/<sessionId>.txt (0600), so the session can be judged after the host deletes',
-  '          its transcript; a session with a kept render is not rendered again;',
+  '          its transcript; a session with a kept render is not rendered again; a session whose transcript changed within',
+  '          the last hour (it may still be running) is kept by a later round; the kept render of a session that became',
+  '          excluded is deleted; a render that cannot be written fails the step, not the round;',
   '        4 "review propose --accept"; 5 "check", then "judge" over the sample for each judge category;',
   '        6 "referee";',
   '        7 scores every category (appended to <evals>/scores.jsonl) and validates every judge category;',
@@ -178,9 +181,9 @@ export async function main(argv, {
   let kept = 0;
   let empty = 0;
   await call('keep renders', () => {
-    const done = keepRenders({ evals, sessions: sampleSessions({ evals, root: transcriptsRoot(env, home), taxonomy, home, platform }) });
+    const done = keepRenders({ evals, sessions: sampleSessions({ evals, root: transcriptsRoot(env, home), taxonomy, home, platform }), now: () => new Date(clock()).getTime() });
     ({ kept, empty } = done);
-    return 0;
+    return done.failed > 0 ? 1 : 0;
   }, []);
 
   // (4) the reference labels
