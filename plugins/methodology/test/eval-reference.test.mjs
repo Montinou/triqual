@@ -407,34 +407,23 @@ test('a missing structured output is one error for the session, nothing is writt
   assert.deepEqual(readJsonl(join(fx.evals, 'review', 'reference.jsonl')).rows, []);
 });
 
-test('two overlapping runs over one evals directory send each session once and write one line each', async () => {
+test('two overlapping runs over one evals directory leave one line per session and neither is busy', async () => {
   const fx = fixture();
-  const calls = [];
-  const spawn = async (bin, args, opts) => {
-    calls.push(opts.input);
+  let calls = 0;
+  const spawn = async () => {
+    calls += 1;
     await new Promise((res) => setTimeout(res, 5));
     return { code: 0, stdout: JSON.stringify({ type: 'result', is_error: false, structured_output: validAnswer() }), stderr: '' };
   };
   const [a, b] = await Promise.all([run(fx, { spawn }), run(fx, { spawn })]);
-  assert.equal(calls.length, 3, 'each session is sent once');
-  assert.equal(a.proposed + b.proposed, 3);
+  assert.notEqual(a.stop, 'busy');
+  assert.notEqual(b.stop, 'busy');
+  assert.ok(calls >= 3, 'a session may be sent twice');
+  assert.equal(a.proposed + b.proposed, 3, 'a line counts for the run that wrote it');
   const rows = readJsonl(join(fx.evals, 'review', 'reference.jsonl')).rows;
   assert.deepEqual(rows.map((r) => r.sessionId).sort(), ['s1', 's2', 's3']);
-  const busy = a.proposed === 0 ? a : b;
-  assert.equal(busy.stop, 'busy');
-  // the run lock is released: a later run goes through and has nothing left to send
-  const again = await run(fx, { spawn });
-  assert.equal(again.proposed, 0);
-  assert.equal(again.stop, null);
-  assert.equal(calls.length, 3);
-});
-
-test('a run lock left by a dead process does not block a run', async () => {
-  const fx = fixture();
-  writeFileSync(join(fx.evals, 'review', 'reference.jsonl.run'), '2147483646 somehost\n');
-  const ok = stub();
-  const r = await run(fx, { spawn: ok.spawn });
-  assert.equal(r.proposed, 3);
+  assert.equal(a.left, 0);
+  assert.equal(b.left, 0);
 });
 
 test('a row is not appended twice when another writer added it after the done set was read', async () => {

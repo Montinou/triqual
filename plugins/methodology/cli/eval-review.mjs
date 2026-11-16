@@ -191,7 +191,6 @@ export async function main(argv, {
     ensureDir(cwd);
     const result = await proposeReference({ evals, sessions, prompt, chain, spawn, env, home, cwd, bin: env.TRIQUAL_CLAUDE_BIN || 'claude', now: clock });
     if (result.stop === 'limit') stderr.write(`triqual eval review: ${paidOnly ? PAID_NOTE : LIMIT_NOTE}\n`);
-    if (result.stop === 'busy') stderr.write('triqual eval review: another propose run holds the reference file; nothing was proposed\n');
     if (result.stop === 'auth') stderr.write('triqual eval review: a credential source could not be read\n');
     if (opts.accept === true) {
       const a = acceptReference({ evals, sessions, now: clock });
