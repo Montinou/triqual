@@ -1,0 +1,19 @@
+{"type":"user","timestamp":"2026-11-10T10:00:00.000Z","cwd":"/home/x/Client","sessionId":"synthetic","message":{"role":"user","content":"Add a retry to the upload helper and keep the change small."}}
+{"type":"assistant","timestamp":"2026-11-10T10:01:00.000Z","cwd":"/home/x/Client","sessionId":"synthetic","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}]}}
+{"type":"user","timestamp":"2026-11-10T10:02:00.000Z","cwd":"/home/x/Client","sessionId":"synthetic","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":"ok"}]}}
+{"type":"user","timestamp":"2026-11-10T10:03:00.000Z","cwd":"/home/x/Client","sessionId":"synthetic","message":{"role":"user","content":"Is anything happening? How much longer will it take?"},"isMeta":true}
+{"type":"assistant","timestamp":"2026-11-10T10:04:00.000Z","cwd":"/home/x/Client","sessionId":"synthetic","message":{"role":"assistant","content":[{"type":"text","text":"Reading the helper first."}]}}
+{"type":"user","timestamp":"2026-11-10T10:05:00.000Z","cwd":"/home/x/Client","sessionId":"synthetic","message":{"role":"user","content":"<task-notification>The background task is still working. Why is it so slow? Anything happening?</task-notification>"}}
+{"type":"user","timestamp":"2026-11-10T10:06:00.000Z","cwd":"/home/x/Client","sessionId":"synthetic","message":{"role":"user","content":[{"type":"text","text":"<system-reminder>Reminder: how much longer should the retry wait?</system-reminder>"},{"type":"text","text":"How long should the retry backoff be by default?"}]}}
+{"type":"assistant","timestamp":"2026-11-10T10:07:00.000Z","cwd":"/home/x/Client","sessionId":"synthetic","message":{"role":"assistant","content":[{"type":"text","text":"Two seconds, doubling."}]}}
+{"type":"user","timestamp":"2026-11-10T10:08:00.000Z","cwd":"/home/x/Client","sessionId":"synthetic","message":{"role":"user","content":"Summary of the earlier talk: the owner wanted to know why it was so slow."},"isCompactSummary":true}
+{"type":"user","timestamp":"2026-11-10T10:09:00.000Z","cwd":"/home/x/Client","sessionId":"synthetic","message":{"role":"user","content":"Perfecto, gracias. Cuánto vale el timeout actual en el cliente?"}}
+{"type":"assistant","timestamp":"2026-11-10T10:10:00.000Z","cwd":"/home/x/Client","sessionId":"synthetic","message":{"role":"assistant","content":[{"type":"text","text":"Thirty seconds."}]}}
+{"type":"user","timestamp":"2026-11-10T10:11:00.000Z","cwd":"/home/x/Client","sessionId":"synthetic","message":{"role":"user","content":"The search query is too slow, add an index."}}
+{"type":"user","timestamp":"2026-11-10T10:12:00.000Z","cwd":"/home/x/Client","sessionId":"synthetic","message":{"role":"user","content":"Is this working now after your fix?"}}
+{"type":"user","timestamp":"2026-11-10T10:13:00.000Z","cwd":"/home/x/Client","sessionId":"synthetic","message":{"role":"user","content":"Reject any update that lacks a token."}}
+{"type":"user","timestamp":"2026-11-10T10:14:00.000Z","cwd":"/home/x/Client","sessionId":"synthetic","message":{"role":"user","content":"La consulta es tan lenta que hay que paginarla."}}
+{"type":"user","timestamp":"2026-11-10T10:15:00.000Z","cwd":"/home/x/Client","sessionId":"synthetic","message":{"role":"user","content":"El endpoint tarda mucho en responder, optimizalo."}}
+{"type":"user","timestamp":"2026-11-10T10:16:00.000Z","cwd":"/home/x/Client","sessionId":"synthetic","message":{"role":"user","content":"What's going on with this stack trace?"}}
+{"type":"user","timestamp":"2026-11-10T10:17:00.000Z","cwd":"/home/x/Client","sessionId":"synthetic","message":{"role":"user","content":"How much longer is the timeout than the default?"}}
+{"type":"user","timestamp":"2026-11-10T10:18:00.000Z","cwd":"/home/x/Client","sessionId":"synthetic","message":{"role":"user","content":"Qué está pasando con este stack trace?"}}
