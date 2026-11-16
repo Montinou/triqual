@@ -6,13 +6,16 @@
 // <evals>/review/labels.jsonl, prints its plain URL, and runs until SIGINT or SIGTERM. A random per-run value is embedded in the
 // served page and required on every label POST; it is never printed. `sample --more <k> [--since <day | ISO timestamp>]` appends k more random-stratum
 // rows (sessions not yet in the sample) to the existing sample, keeping its rows and order; it needs a sample and takes
-// no --n or --force. It prints counts, ids and paths, never transcript text. Exit codes: 0 done; 1 the store could not be updated, a sample exists (no --force), there is
+// no --n or --force. A candidate with nothing to judge (an unreadable transcript, or one with no user or assistant text)
+// is passed over and the draw goes on, so k rows are added when enough candidates are usable. It prints counts, ids and paths, never transcript text. Exit codes: 0 done; 1 the store could not be updated, a sample exists (no --force), there is
 // no sample to serve, or the server could not start; 2 usage.
 // `propose [--accept] [--paid]` has a model read each sample session (lib/eval-reference.mjs: the redacted rendering, never the
 // raw transcript, and never a session under the taxonomy's judgeExclude) and append its proposed label and categories to
 // <evals>/review/reference.jsonl, once per session. --accept then copies the proposals into the label files for the
-// sessions that have no human line. A chain entry marked paid is used only with --paid. The last stdout line is
-// `proposed <n>: <entry> <k>[, ...]; errors <e>; left <m>`; the exit is 0 when `left` is 0, else 1.
+// sessions that have no human line. A chain entry marked paid is used only with --paid. A session with nothing to judge
+// (its kept render, else its transcript, holds no user or assistant text) is skipped: no model call, not an error, not left.
+// The last stdout line is `proposed <n>: <entry> <k>[, ...]; errors <e>; left <m>; empty <k>`; the exit is 0 when `left` is
+// 0, else 1.
 // node: built-ins only. main() is exported for tests and runs only when this file is the entry point.
 import { randomBytes } from 'node:crypto';
 import { readFileSync, realpathSync } from 'node:fs';
@@ -21,9 +24,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { AuthError, LIMIT_NOTE, PAID_NOTE, authPath, loadChain, usableChain } from './lib/eval-auth.mjs';
 import { sampleSessions } from './lib/eval-ask.mjs';
-import { JudgePromptError, spawnCapture } from './lib/eval-judge.mjs';
+import { JudgePromptError, renderForJudge, spawnCapture } from './lib/eval-judge.mjs';
 import { ensureDir, evalsDir, transcriptsRoot } from './lib/eval-paths.mjs';
 import { acceptReference, loadReferencePrompt, proposeReference } from './lib/eval-reference.mjs';
+import { transcriptReadable } from './lib/eval-renders.mjs';
 import { drawSample, moreRandom, SampleExists, writeSample } from './lib/eval-sample.mjs';
 import { readJsonl, refreshSessions } from './lib/eval-store.mjs';
 import { startServer } from './lib/eval-serve.mjs';
@@ -46,7 +50,8 @@ const USAGE = [
   '      sample is kept unless --force. Prints the rows per stratum, never message content.',
   '  triqual eval review sample --more <k> [--seed <int>] [--since <YYYY-MM-DD | ISO timestamp>]',
   '      Appends k more random-stratum rows (interactive sessions not yet in the sample, seeded like --seed above) to the',
-  '      existing sample.jsonl, keeping its rows; fewer when fewer sessions are left. Needs a sample; no --n or --force.',
+  '      existing sample.jsonl, keeping its rows; fewer when fewer sessions are left. A session whose transcript is',
+  '      unreadable or holds no user or assistant text is passed over, never added. Needs a sample; no --n or --force.',
   '      --since <YYYY-MM-DD | ISO timestamp> keeps only sessions that started at or after it; it needs --more.',
   '  triqual eval review serve [--port <n>]',
   '      Serves the sample on http://127.0.0.1:<port>/ (a free port when --port is absent or 0) and appends the',
@@ -59,8 +64,10 @@ const USAGE = [
   '      appended once per session to <evals>/review/reference.jsonl. The credentials come from the chain in',
   '      TRIQUAL_EVAL_AUTH_FILE, else ~/.config/triqual/eval-auth.json; an entry marked "paid": true is used only',
   '      with --paid. --accept then adds a label (review/labels.jsonl) and a category line (label-categories.jsonl)',
-  '      for each proposed session that has none there; existing lines are never changed. Needs a sample.',
-  '      Last line: proposed <n>: <entry> <k>[, ...]; errors <e>; left <m>. Exit 0 when left is 0, else 1.',
+  '      for each proposed session that has none there; existing lines are never changed. Needs a sample. A session whose',
+  '      text (its kept render in <evals>/review/renders/<id>.txt, else its transcript) is empty is skipped: no model',
+  '      call, not an error, not left; a kept render is read in place of a deleted transcript.',
+  '      Last line: proposed <n>: <entry> <k>[, ...]; errors <e>; left <m>; empty <k>. Exit 0 when left is 0, else 1.',
   '  triqual eval review --help',
   '',
 ].join('\n');
@@ -142,7 +149,9 @@ export async function main(argv, {
         stderr.write(`triqual eval review: the sessions store could not be updated: ${err?.code ?? err?.message ?? 'error'}\n`);
         return 1;
       }
-      const added = moreRandom(sessions, existing, Number(opts.more), seed, { root: transcriptsRoot(env, home), since });
+      // A candidate whose transcript is unreadable, or reads but renders no text, has nothing to judge: it is passed over.
+      const usable = ({ file }) => transcriptReadable(file) && renderForJudge(file).trim() !== '';
+      const added = moreRandom(sessions, existing, Number(opts.more), seed, { root: transcriptsRoot(env, home), since, usable });
       try {
         writeSample(sampleFile, [...existing, ...added], { force: true });
       } catch (err) {
@@ -213,7 +222,7 @@ export async function main(argv, {
       stdout.write(`accepted: labels ${a.labels}, categories ${a.categories}\n`);
     }
     const pairs = Object.entries(result.byEntry).map(([name, k]) => `${name} ${k}`).join(', ');
-    stdout.write(`proposed ${result.proposed}: ${pairs === '' ? 'none' : pairs}; errors ${result.errors}; left ${result.left}\n`);
+    stdout.write(`proposed ${result.proposed}: ${pairs === '' ? 'none' : pairs}; errors ${result.errors}; left ${result.left}; empty ${result.empty}\n`);
     return result.left > 0 ? 1 : 0;
   }
 

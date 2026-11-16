@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { main } from '../cli/eval-referee.mjs';
@@ -8,6 +8,7 @@ import { main as evalMain } from '../cli/eval.mjs';
 import { LIMIT_NOTE, PAID_NOTE } from '../cli/lib/eval-auth.mjs';
 import { loadJudgePrompt } from '../cli/lib/eval-judge.mjs';
 import { applyRulings, disagreements } from '../cli/lib/eval-referee.mjs';
+import { keepRenders } from '../cli/lib/eval-renders.mjs';
 import { loadRulings } from '../cli/lib/eval-taxonomy.mjs';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'cm-referee-'));
@@ -151,7 +152,7 @@ test('one disagreement and one agreement: one call, one ruling with twelve keys,
     const before = lines(join(f.evals, 'label-categories.jsonl'));
     const r = await run(f, [], { spawn });
     assert.equal(r.code, 0, r.err);
-    assert.equal(lastLine(r.out), 'refereed 1: pro 1; errors 0; left 0');
+    assert.equal(lastLine(r.out), 'refereed 1: pro 1; errors 0; left 0; empty 0');
     assert.equal(calls.length, 1);
     assert.equal(calls[0].cwd, join(f.evals, 'judge-cwd'));
     assert.equal(calls[0].bin, 'claude-stub');
@@ -211,7 +212,7 @@ test('a second run makes no call', async () => {
     await run(f, [], { spawn });
     const again = await run(f, [], { spawn });
     assert.equal(again.code, 0);
-    assert.equal(lastLine(again.out), 'refereed 0: none; errors 0; left 0');
+    assert.equal(lastLine(again.out), 'refereed 0: none; errors 0; left 0; empty 0');
     assert.equal(calls.length, 1);
     assert.equal(lines(join(f.evals, 'rulings.jsonl')).length, 1);
   } finally { rmSync(f.base, { recursive: true, force: true }); }
@@ -233,7 +234,7 @@ test('an owner ruling for the pair prevents the call and the label carries its p
     const r = await run(f, [], { spawn });
     assert.equal(r.code, 0, r.err);
     assert.equal(calls.length, 0);
-    assert.equal(lastLine(r.out), 'refereed 0: none; errors 0; left 0');
+    assert.equal(lastLine(r.out), 'refereed 0: none; errors 0; left 0; empty 0');
     const after = lines(join(f.evals, 'label-categories.jsonl')).map((l) => JSON.parse(l));
     assert.deepEqual(after[3].categories, ['repeat-ask', 'false-claim']);
     assert.deepEqual(after[4].categories, ['false-claim', 'repeat-ask']);
@@ -248,7 +249,7 @@ test('a limit on a one-entry chain writes no ruling, says so on stderr and exits
     const before = readFileSync(join(f.evals, 'label-categories.jsonl'), 'utf8');
     const r = await run(f, [], stub(() => ({ is_error: true, result: 'You have hit your usage limit' })));
     assert.equal(r.code, 1);
-    assert.equal(lastLine(r.out), 'refereed 0: none; errors 0; left 1');
+    assert.equal(lastLine(r.out), 'refereed 0: none; errors 0; left 1; empty 0');
     assert.ok(r.err.includes(LIMIT_NOTE), r.err);
     assert.throws(() => statSync(join(f.evals, 'rulings.jsonl')));
     assert.equal(readFileSync(join(f.evals, 'label-categories.jsonl'), 'utf8'), before);
@@ -263,11 +264,11 @@ test('a chain of paid entries only, without --paid, says so once, makes no call 
     const r = await run(f, [], s);
     assert.equal(r.code, 1);
     assert.equal(s.calls.length, 0);
-    assert.equal(lastLine(r.out), 'refereed 0: none; errors 0; left 1');
+    assert.equal(lastLine(r.out), 'refereed 0: none; errors 0; left 1; empty 0');
     assert.equal(r.err.split(PAID_NOTE).length - 1, 1, r.err);
     const p = await run(f, ['--paid'], s);
     assert.equal(p.code, 0, p.err);
-    assert.equal(lastLine(p.out), 'refereed 1: api 1; errors 0; left 0');
+    assert.equal(lastLine(p.out), 'refereed 1: api 1; errors 0; left 0; empty 0');
   } finally { rmSync(f.base, { recursive: true, force: true }); }
 });
 
@@ -279,19 +280,48 @@ test('an excluded session is never sent', async () => {
     const r = await run(f, [], s);
     assert.equal(r.code, 0, r.err);
     assert.equal(s.calls.length, 0);
-    assert.equal(lastLine(r.out), 'refereed 0: none; errors 0; left 0');
+    assert.equal(lastLine(r.out), 'refereed 0: none; errors 0; left 0; empty 0');
   } finally { rmSync(f.base, { recursive: true, force: true }); }
 });
 
-test('a session with an empty transcript counts as an error and stays left', async () => {
+test('a pair whose session has a readable transcript with no text is skipped: no call, not an error, not left, exit 0, counted in empty', async () => {
   const f = fixture();
   try {
     writeFileSync(join(f.base, 'projects', '-home-x-s1', 's1.jsonl'), '');
     const s = stub();
     const r = await run(f, [], s);
+    assert.equal(r.code, 0, r.err);
+    assert.equal(s.calls.length, 0);
+    assert.equal(lastLine(r.out), 'refereed 0: none; errors 0; left 0; empty 1');
+    assert.throws(() => statSync(join(f.evals, 'rulings.jsonl')));
+  } finally { rmSync(f.base, { recursive: true, force: true }); }
+});
+
+test('a pair whose transcript is gone, with no kept render, is an error and stays left', async () => {
+  const f = fixture();
+  try {
+    rmSync(join(f.base, 'projects', '-home-x-s1', 's1.jsonl'));
+    const s = stub();
+    const r = await run(f, [], s);
     assert.equal(r.code, 1);
     assert.equal(s.calls.length, 0);
-    assert.equal(lastLine(r.out), 'refereed 0: none; errors 1; left 1');
+    assert.equal(lastLine(r.out), 'refereed 0: none; errors 1; left 1; empty 0');
+  } finally { rmSync(f.base, { recursive: true, force: true }); }
+});
+
+test('a pair whose transcript was deleted but whose render is kept is ruled from the kept text, and no render is written', async () => {
+  const f = fixture();
+  try {
+    const file = join(f.base, 'projects', '-home-x-s1', 's1.jsonl');
+    keepRenders({ evals: f.evals, sessions: [{ sessionId: 's1', file, excluded: false }] });
+    rmSync(file);
+    const s = stub();
+    const r = await run(f, [], s);
+    assert.equal(r.code, 0, r.err);
+    assert.equal(s.calls.length, 1);
+    assert.ok(s.calls[0].input.includes('Please fix the parser.'), 'the stub receives the kept text');
+    assert.equal(lastLine(r.out), 'refereed 1: pro 1; errors 0; left 0; empty 0');
+    assert.deepEqual(readdirSync(join(f.evals, 'review', 'renders')), ['s1.txt']);
   } finally { rmSync(f.base, { recursive: true, force: true }); }
 });
 
@@ -300,7 +330,7 @@ test('an answer that fails the schema writes no ruling and counts as an error', 
   try {
     const r = await run(f, [], stub(() => ({ structured_output: { present: 'maybe', quote: '', why: 'x', misleading: 'y' } })));
     assert.equal(r.code, 1);
-    assert.equal(lastLine(r.out), 'refereed 0: none; errors 1; left 1');
+    assert.equal(lastLine(r.out), 'refereed 0: none; errors 1; left 1; empty 0');
     assert.throws(() => statSync(join(f.evals, 'rulings.jsonl')));
   } finally { rmSync(f.base, { recursive: true, force: true }); }
 });

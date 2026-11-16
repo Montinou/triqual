@@ -115,3 +115,24 @@ test('file defaults to the TRIQUAL_TRANSCRIPTS_DIR root of the sessions store', 
     if (prev === undefined) delete process.env.TRIQUAL_TRANSCRIPTS_DIR; else process.env.TRIQUAL_TRANSCRIPTS_DIR = prev;
   }
 });
+
+test('moreRandom with a usable predicate passes over the candidates it refuses and draws on, in the same order', () => {
+  const sessions = fixture(60);
+  const existing = drawSample(sessions, { n: 20, seed: 5, root: ROOT });
+  const all = moreRandom(sessions, existing, 1000, 99, { root: ROOT });
+  const blocked = new Set(all.slice(0, 10).map((r) => r.sessionId).concat(all.slice(12, 14).map((r) => r.sessionId)));
+  const seen = [];
+  const usable = (row) => { seen.push(row); return !blocked.has(row.sessionId); };
+  const more = moreRandom(sessions, existing, 15, 99, { root: ROOT, usable });
+  assert.equal(more.length, 15, 'k rows are still added');
+  assert.ok(more.every((r) => !blocked.has(r.sessionId)));
+  assert.deepEqual(more, all.filter((r) => !blocked.has(r.sessionId)).slice(0, 15), 'the candidates in draw order, minus the passed-over ones');
+  assert.ok(seen.every((r) => typeof r.file === 'string' && r.file.endsWith(`${r.sessionId}.jsonl`)), 'the predicate gets the row with its transcript file');
+  assert.ok(seen.length < all.length, 'the draw stops once k rows are found');
+  assert.deepEqual(moreRandom(sessions, existing, 15, 99, { root: ROOT, usable }), more, 'deterministic');
+  // fewer usable candidates than k: what there is
+  const few = moreRandom(sessions, existing, 15, 99, { root: ROOT, usable: (row) => row.sessionId === all[3].sessionId });
+  assert.deepEqual(few.map((r) => r.sessionId), [all[3].sessionId]);
+  // without a predicate nothing changes
+  assert.deepEqual(moreRandom(sessions, existing, 15, 99, { root: ROOT }), all.slice(0, 15));
+});

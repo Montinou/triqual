@@ -126,9 +126,10 @@ function parseResult(stdout) {
 }
 
 // One judge call. { result: "pass"|"fail"|"undecided", reason? } | { limit: true } | { error: string }.
+// `session` is the transcript file; `render`, when given, is the text to judge in its place (the caller's kept render).
 // `spawn(bin, args, { input, env, cwd })` resolves { code, stdout, stderr }; stdout alone is parsed.
-export async function judgeSession({ category, prompt, session, spawn = spawnCapture, env, cwd, bin = 'claude' }) {
-  const transcript = renderForJudge(session);
+export async function judgeSession({ category, prompt, session, render, spawn = spawnCapture, env, cwd, bin = 'claude' }) {
+  const transcript = render ?? renderForJudge(session);
   // An unreadable or empty transcript is not a session without a failure: judging it would record a verdict for good.
   if (transcript.trim() === '') return { error: 'the transcript is unreadable or empty' };
   const input = `${prompt.body.trimEnd()}\n\nFailure category: ${category}\n\n--- session transcript ---\n${transcript}\n`;

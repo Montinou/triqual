@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { main } from '../cli/eval-judge.mjs';
 import { loadJudgePrompt, judgeSession, redactSecrets, renderForJudge } from '../cli/lib/eval-judge.mjs';
+import { keepRenders } from '../cli/lib/eval-renders.mjs';
 import { readJsonl } from '../cli/lib/eval-store.mjs';
 
 // Fixture secrets are built at run time so no secret-looking literal sits in the source.
@@ -290,7 +291,7 @@ test('pass and fail are recorded once per prompt hash', async () => {
   const e = fixture();
   const r = await run(e, ['--category', 'stalls', '--sessions', e.sessionsFile]);
   assert.equal(r.code, 0, r.err);
-  assert.equal(r.lines.at(-1), 'judged 2: ambient 2; errors 0; left 0');
+  assert.equal(r.lines.at(-1), 'judged 2: ambient 2; errors 0; left 0; empty 0');
   const rows = lines(e);
   assert.deepEqual(rows.map((x) => [x.sessionId, x.result]), [['s1', 'pass'], ['s2', 'fail']]);
   const hash = loadJudgePrompt(join(e.judges, 'stalls.md')).hash;
@@ -303,7 +304,7 @@ test('pass and fail are recorded once per prompt hash', async () => {
   }
   const r2 = await run(e, ['--category', 'stalls', '--sessions', e.sessionsFile]);
   assert.equal(r2.code, 0, r2.err);
-  assert.equal(r2.lines.at(-1), 'judged 0: none; errors 0; left 0');
+  assert.equal(r2.lines.at(-1), 'judged 0: none; errors 0; left 0; empty 0');
   assert.equal(lines(e).length, 2);
   assert.equal(calls(e).length, 2);
   // a changed prompt is a new hash: judged again
@@ -324,7 +325,7 @@ test('the taxonomy is read from <evals>/taxonomy.json, not from the config dir',
   assert.ok(!('TRIQUAL_TAXONOMY_FILE' in e.env));
   const r = await run(e, ['--category', 'stalls', '--sessions', e.sessionsFile]);
   assert.equal(r.code, 0, r.err);
-  assert.equal(r.lines.at(-1), 'judged 2: ambient 2; errors 0; left 0');
+  assert.equal(r.lines.at(-1), 'judged 2: ambient 2; errors 0; left 0; empty 0');
 });
 
 test('the judge runs in an empty directory under the evals dir with the lean flags', async () => {
@@ -349,7 +350,7 @@ test('a session under a judgeExclude pattern is never passed to a judge', async 
   assert.equal(a.reason, 'excluded');
   assert.equal(Object.hasOwn(a, 'auth'), false);
   assert.equal(b.sessionId, 's2');
-  assert.equal(r.lines.at(-1), 'judged 1: ambient 1; errors 0; left 0');
+  assert.equal(r.lines.at(-1), 'judged 1: ambient 1; errors 0; left 0; empty 0');
 });
 
 test('an unknown project counts as excluded when a pattern is set; a session missing from the store is not spawned, gets no line and is an error', async () => {
@@ -362,23 +363,69 @@ test('an unknown project counts as excluded when a pattern is set; a session mis
   assert.equal(r.code, 1);
 });
 
-test('an unreadable or empty transcript is an error: no spawn, no judgment line, counted in errors and left', async () => {
-  const e = fixture({ sessions: ['s1', 's2', 's3'] });
+test('an unreadable transcript with no kept render is an error: no spawn, no judgment line, counted in errors and left', async () => {
+  const e = fixture({ sessions: ['s1', 's3'] });
   const dir = join(e.env.TRIQUAL_TRANSCRIPTS_DIR, '-home-x-proj');
   rmSync(join(dir, 's1.jsonl'));
-  writeFileSync(join(dir, 's2.jsonl'), '');
-  writeTranscript(join(dir, 's3.jsonl'), [turn('user', 'task of s3'), turn('assistant', textBlock('working'))]);
   const r = await run(e, ['--category', 'stalls', '--sessions', e.sessionsFile]);
   assert.equal(r.code, 1);
   assert.equal(calls(e).length, 1, 'only the readable session was spawned');
   assert.deepEqual(lines(e).map((x) => x.sessionId), ['s3']);
-  assert.equal(r.lines.at(-1), 'judged 1: ambient 1; errors 2; left 2');
+  assert.equal(r.lines.at(-1), 'judged 1: ambient 1; errors 1; left 1; empty 0');
   assert.match(r.err, /s1: .*transcript/);
-  assert.match(r.err, /s2: .*transcript/);
   // once the transcript exists, the next run judges it
   writeTranscript(join(dir, 's1.jsonl'), [turn('user', 'task of s1'), turn('assistant', textBlock('working'))]);
   const r2 = await run(e, ['--category', 'stalls', '--sessions', e.sessionsFile]);
-  assert.equal(r2.lines.at(-1), 'judged 1: ambient 1; errors 1; left 1');
+  assert.equal(r2.lines.at(-1), 'judged 1: ambient 1; errors 0; left 0; empty 0');
+  assert.equal(r2.code, 0);
+});
+
+test('a readable transcript with no text is skipped: no spawn, no line, not an error, not left, exit 0, counted in empty', async () => {
+  const e = fixture({ sessions: ['s1', 's2', 's3'] });
+  const dir = join(e.env.TRIQUAL_TRANSCRIPTS_DIR, '-home-x-proj');
+  writeFileSync(join(dir, 's2.jsonl'), '');
+  writeTranscript(join(dir, 's3.jsonl'), [JSON.stringify({ type: 'summary', summary: 'no turns' })]);
+  const r = await run(e, ['--category', 'stalls', '--sessions', e.sessionsFile]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(calls(e).length, 1, 'only the session with text was spawned');
+  assert.deepEqual(lines(e).map((x) => x.sessionId), ['s1']);
+  assert.equal(r.lines.at(-1), 'judged 1: ambient 1; errors 0; left 0; empty 2');
+  assert.ok(!/s2|s3/.test(r.err), r.err);
+  // alone, the only session: exit 0, nothing judged
+  const o = fixture({ sessions: ['s1'] });
+  writeFileSync(join(o.env.TRIQUAL_TRANSCRIPTS_DIR, '-home-x-proj', 's1.jsonl'), '');
+  const only = await run(o, ['--category', 'stalls', '--sessions', o.sessionsFile]);
+  assert.equal(only.code, 0, only.err);
+  assert.equal(calls(o).length, 0);
+  assert.equal(only.lines.at(-1), 'judged 0: none; errors 0; left 0; empty 1');
+});
+
+test('a session whose transcript was deleted but whose render is kept is judged from the kept text', async () => {
+  const e = fixture({ sessions: ['s1'] });
+  const file = join(e.env.TRIQUAL_TRANSCRIPTS_DIR, '-home-x-proj', 's1.jsonl');
+  keepRenders({ evals: e.evals, sessions: [{ sessionId: 's1', file, excluded: false }] });
+  rmSync(file);
+  const r = await run(e, ['--category', 'stalls', '--sessions', e.sessionsFile]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.lines.at(-1), 'judged 1: ambient 1; errors 0; left 0; empty 0');
+  assert.equal(calls(e).length, 1);
+  assert.ok(calls(e)[0].stdin.includes('task of s1'), 'the judge received the kept text');
+  assert.deepEqual(lines(e).map((x) => [x.sessionId, x.result]), [['s1', 'pass']]);
+  assert.equal(existsSync(join(e.evals, 'review', 'renders', 's1.txt')), true, 'the render is still there');
+});
+
+test('judging never writes a render', async () => {
+  const e = fixture({ sessions: ['s1'] });
+  const r = await run(e, ['--category', 'stalls', '--sessions', e.sessionsFile]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(existsSync(join(e.evals, 'review', 'renders')), false);
+});
+
+test('judgeSession judges the text it is handed, whatever the file holds', async () => {
+  const calls2 = [];
+  const out = await judgeSession({ ...base(), session: '/nonexistent/transcript.jsonl', render: 'USER: handed text', spawn: spawnReturning(resultJson(), { calls: calls2 }) });
+  assert.equal(out.result, 'pass');
+  assert.ok(calls2[0].opts.input.includes('handed text'));
 });
 
 test('with the default empty judgeExclude the same session is judged', async () => {
@@ -408,7 +455,7 @@ test('unparseable judge output writes no line (an error); a result with no struc
   const r = await run(e, ['--category', 'stalls', '--sessions', e.sessionsFile]);
   assert.equal(r.code, 1);
   assert.equal(lines(e).length, 0);
-  assert.equal(r.lines.at(-1), 'judged 0: none; errors 1; left 1');
+  assert.equal(r.lines.at(-1), 'judged 0: none; errors 1; left 1; empty 0');
   const e2 = fixture({ sessions: ['s1'], mode: 'nostruct' });
   const r2 = await run(e2, ['--category', 'stalls', '--sessions', e2.sessionsFile]);
   assert.equal(r2.code, 0, r2.err);
@@ -422,7 +469,7 @@ test('a limit result moves to the next entry: every session is judged on the sec
   e.env.FAKE_FIRST = first;
   const r = await run(e, ['--category', 'stalls', '--sessions', e.sessionsFile]);
   assert.equal(r.code, 0, r.err);
-  assert.equal(r.lines.at(-1), 'judged 2: two 2; errors 0; left 0');
+  assert.equal(r.lines.at(-1), 'judged 2: two 2; errors 0; left 0; empty 0');
   assert.deepEqual(lines(e).map((x) => x.auth), ['two', 'two']);
   assert.deepEqual(calls(e).map((c) => c.oauth), [first, second, second], 'the first entry was tried once, then never again');
   const everything = r.out + r.err + readFileSync(e.judgments, 'utf8');
@@ -439,7 +486,7 @@ test('every entry limited: exit 1, no line, stderr names the entries and no secr
   assert.match(r.err, /one/);
   assert.match(r.err, /two/);
   assert.ok(!(r.out + r.err).includes(first) && !(r.out + r.err).includes(second));
-  assert.equal(r.lines.at(-1), 'judged 0: none; errors 0; left 2');
+  assert.equal(r.lines.at(-1), 'judged 0: none; errors 0; left 2; empty 0');
 });
 
 test('an API error result writes no line and exits 1; a later run judges the session', async () => {
@@ -447,7 +494,7 @@ test('an API error result writes no line and exits 1; a later run judges the ses
   const r = await run(e, ['--category', 'stalls', '--sessions', e.sessionsFile]);
   assert.equal(r.code, 1);
   assert.equal(lines(e).length, 0);
-  assert.equal(r.lines.at(-1), 'judged 0: none; errors 1; left 1');
+  assert.equal(r.lines.at(-1), 'judged 0: none; errors 1; left 1; empty 0');
   delete e.env.FAKE_MODE;
   const r2 = await run(e, ['--category', 'stalls', '--sessions', e.sessionsFile]);
   assert.equal(r2.code, 0, r2.err);

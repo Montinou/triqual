@@ -155,3 +155,50 @@ test('review sample rejects a malformed --since, and --since without --more, wit
   }
   assert.equal(readFileSync(join(f.evals, 'review', 'sample.jsonl'), 'utf8'), before, 'nothing was written');
 });
+
+// Sessions whose transcript holds no user or assistant text are still cli sessions with a start.
+const textless = (at) => jsonl([{ type: 'user', cwd: '/work/p', entrypoint: 'cli', timestamp: at, message: { role: 'user', content: [] } }]);
+
+function mixedFixture() {
+  const home = tmp();
+  const evals = join(home, 'evals');
+  const root = join(home, 'projects');
+  mkdirSync(join(root, '-w'), { recursive: true });
+  const good = ['g1', 'g2', 'g3', 'g4', 'g5'];
+  const bad = ['t1', 't2', 't3', 't4'];
+  good.forEach((id, i) => writeFileSync(join(root, '-w', `${id}.jsonl`), jsonl([user(`invented task ${id}`, `2026-11-1${i}T10:00:00.000Z`), turn(`m-${id}`, `2026-11-1${i}T10:00:05.000Z`)])));
+  bad.forEach((id, i) => writeFileSync(join(root, '-w', `${id}.jsonl`), textless(`2026-11-1${i}T11:00:00.000Z`)));
+  mkdirSync(join(evals, 'review'), { recursive: true });
+  const first = `${JSON.stringify({ sessionId: 'seed0', project: null, file: null, stratum: 'cost', usd: 1.5, turns: 3, note: 'kept as is' })}\n`;
+  const second = `${JSON.stringify({ sessionId: 'seed1', project: '/work/q', file: '/gone/x.jsonl', stratum: 'random', usd: 0, turns: 0 })}\n`;
+  writeFileSync(join(evals, 'review', 'sample.jsonl'), first + second);
+  return { env: { HOME: home, TRIQUAL_EVALS_DIR: evals, TRIQUAL_TRANSCRIPTS_DIR: root }, evals, existing: first + second, good, bad };
+}
+
+test('review sample --more never adds a session with nothing to judge, still adds k rows, and leaves the existing rows as they were', async () => {
+  for (const seed of ['1', '2', '3', '4', '5', '6']) {
+    const f = mixedFixture();
+    const r = await run(f, ['sample', '--more', '4', '--seed', seed]);
+    assert.equal(r.code, 0, r.err);
+    const text = readFileSync(join(f.evals, 'review', 'sample.jsonl'), 'utf8');
+    assert.ok(text.startsWith(f.existing), 'the existing rows are byte for byte unchanged');
+    const added = text.slice(f.existing.length).trim().split('\n').map((l) => JSON.parse(l));
+    assert.equal(added.length, 4, `seed ${seed}: k rows`);
+    assert.ok(added.every((x) => f.good.includes(x.sessionId) && x.stratum === 'random'), `seed ${seed}: ${added.map((x) => x.sessionId)}`);
+    assert.match(r.out, /Added 4 of 4/);
+    // the same seed over the same population gives the same rows
+    const g = mixedFixture();
+    await run(g, ['sample', '--more', '4', '--seed', seed]);
+    const again = readFileSync(join(g.evals, 'review', 'sample.jsonl'), 'utf8').slice(g.existing.length).trim().split('\n').map((l) => JSON.parse(l).sessionId);
+    assert.deepEqual(again, added.map((x) => x.sessionId));
+  }
+});
+
+test('review sample --more adds fewer than k when fewer sessions with text exist', async () => {
+  const f = mixedFixture();
+  const r = await run(f, ['sample', '--more', '20', '--seed', '1']);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Added 5 of 20/);
+  const added = readFileSync(join(f.evals, 'review', 'sample.jsonl'), 'utf8').slice(f.existing.length).trim().split('\n').map((l) => JSON.parse(l).sessionId);
+  assert.deepEqual(added.sort(), f.good);
+});

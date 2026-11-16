@@ -5,8 +5,9 @@ import { chmodSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node
 import { dirname, join } from 'node:path';
 import { askModel, appendPrivate } from './eval-ask.mjs';
 import { AuthError, ChainExhausted, childEnv, withChain } from './eval-auth.mjs';
-import { redactSecrets, renderForJudge } from './eval-judge.mjs';
+import { redactSecrets } from './eval-judge.mjs';
 import { ensureDir } from './eval-paths.mjs';
+import { sessionRender, transcriptReadable } from './eval-renders.mjs';
 import { readJsonl } from './eval-store.mjs';
 import { loadLabelCategories, loadRulings } from './eval-taxonomy.mjs';
 import { withStoreLock } from './role-eval.mjs';
@@ -112,9 +113,12 @@ function referenceQuotes(evals) {
 
 // Rules on every disagreement of `categories` ([{ category, judgments, version }] with the category's id, name and
 // definition) over `sessions` (sampleSessions rows), then applies the rulings to the label file.
-// { refereed, byEntry, errors, left, applied, stop: null | 'limit' | 'auth' }. A ruling is appended only when the
-// rulings file, re-read under the store lock, has none for the pair yet. `left` counts the disagreements that still have
-// no ruling; a limit on every chain entry stops with 'limit', an unreadable credential source with 'auth'.
+// { refereed, byEntry, errors, left, empty, applied, stop: null | 'limit' | 'auth' }. A ruling is appended only when the
+// rulings file, re-read under the store lock, has none for the pair yet. The text of a session is its kept render when there
+// is one (lib/eval-renders.mjs; never written here), else the rendering of its transcript. A pair whose session has nothing
+// to judge (a readable transcript, or a kept render, with no text) is skipped: no model call, not an error, not in `left`;
+// `empty` counts those pairs. A transcript that is gone with no kept render is an error and stays left. `left` counts the
+// disagreements that still have no ruling, those skipped apart; a limit on every chain entry stops with 'limit', an unreadable credential source with 'auth'.
 export async function runReferee({ evals, sessions, categories, prompt, chain, spawn, env, home, cwd, bin, now = () => new Date() }) {
   const file = join(evals, 'rulings.jsonl');
   ensureDir(dirname(file));
@@ -124,6 +128,7 @@ export async function runReferee({ evals, sessions, categories, prompt, chain, s
   let refereed = 0;
   let errors = 0;
   let stop = null;
+  const nothing = new Set();
   const runner = withChain(chain, async (input, entry) => askModel({
     model: prompt.model, input, schema: REFEREE_SCHEMA, spawn, env: childEnv(entry, env ?? {}, { home }), cwd, bin,
   }));
@@ -137,8 +142,11 @@ export async function runReferee({ evals, sessions, categories, prompt, chain, s
   for (const c of categories) {
     if (stop !== null) break;
     for (const { session, judge } of pending(c)) {
-      const rendered = session.file === null ? '' : renderForJudge(session.file);
-      if (rendered.trim() === '') { errors += 1; continue; }
+      const rendered = sessionRender(evals, session);
+      if (rendered.trim() === '') {
+        if (transcriptReadable(session.file)) nothing.add(`${session.sessionId}\0${c.id}`); else errors += 1;
+        continue;
+      }
       const labeled = labels.get(session.sessionId).includes(c.id);
       const quote = quoteOf(session.sessionId, c.id);
       const input = `${prompt.body}\n\nFailure category: ${c.id} (${c.name})\nDefinition: ${c.definition}\nThe judge said: ${judge}\n`
@@ -164,6 +172,6 @@ export async function runReferee({ evals, sessions, categories, prompt, chain, s
     }
   }
   const applied = applyRulings({ evals, rulings: loadRulings(file) });
-  const left = categories.reduce((n, c) => n + pending(c).length, 0);
-  return { refereed, byEntry, errors, left, applied, stop };
+  const left = categories.reduce((n, c) => n + pending(c).filter(({ session }) => !nothing.has(`${session.sessionId}\0${c.id}`)).length, 0);
+  return { refereed, byEntry, errors, left, empty: nothing.size, applied, stop };
 }

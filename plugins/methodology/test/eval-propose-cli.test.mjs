@@ -76,7 +76,7 @@ test('propose over the fixture prints the last line with the entry name and exit
     const { spawn, calls } = stub();
     const r = await run(f, ['propose'], { spawn });
     assert.equal(r.code, 0, r.err);
-    assert.equal(lastLine(r.out), 'proposed 2: pro 2; errors 0; left 0');
+    assert.equal(lastLine(r.out), 'proposed 2: pro 2; errors 0; left 0; empty 0');
     assert.equal(calls.length, 2);
     assert.equal(calls[0].cwd, join(f.evals, 'judge-cwd'));
     assert.equal(calls[0].bin, 'claude-stub');
@@ -89,8 +89,45 @@ test('propose over the fixture prints the last line with the entry name and exit
     // a second run has nothing left to propose
     const again = await run(f, ['propose'], { spawn });
     assert.equal(again.code, 0);
-    assert.equal(lastLine(again.out), 'proposed 0: none; errors 0; left 0');
+    assert.equal(lastLine(again.out), 'proposed 0: none; errors 0; left 0; empty 0');
     assert.equal(calls.length, 2);
+  } finally { rmSync(f.base, { recursive: true, force: true }); }
+});
+
+test('a session with a readable transcript and no text is skipped: no call, not an error, not left, exit 0, empty 1', async () => {
+  const f = fixture();
+  try {
+    writeFileSync(join(f.env.TRIQUAL_TRANSCRIPTS_DIR, '-home-x-s1', 's1.jsonl'), '');
+    const { spawn, calls } = stub();
+    const r = await run(f, ['propose', '--accept'], { spawn });
+    assert.equal(r.code, 0, r.err);
+    assert.equal(lastLine(r.out), 'proposed 1: pro 1; errors 0; left 0; empty 1');
+    assert.equal(calls.length, 1);
+    writeFileSync(join(f.env.TRIQUAL_TRANSCRIPTS_DIR, '-home-x-s2', 's2.jsonl'), `${JSON.stringify({ type: 'summary', summary: 'no turns' })}\n`);
+    rmSync(join(f.evals, 'review', 'reference.jsonl'));
+    const both = await run(f, ['propose'], stub());
+    assert.equal(both.code, 0, both.err);
+    assert.equal(lastLine(both.out), 'proposed 0: none; errors 0; left 0; empty 2');
+    assert.ok(!existsSync(join(f.evals, 'review', 'renders')), 'a proposal never writes a render');
+  } finally { rmSync(f.base, { recursive: true, force: true }); }
+});
+
+test('a missing transcript with no kept render is still an error and left; a kept render stands in for it', async () => {
+  const f = fixture();
+  try {
+    rmSync(join(f.env.TRIQUAL_TRANSCRIPTS_DIR, '-home-x-s1', 's1.jsonl'));
+    const { spawn, calls } = stub();
+    const r = await run(f, ['propose'], { spawn });
+    assert.equal(r.code, 1);
+    assert.equal(lastLine(r.out), 'proposed 1: pro 1; errors 1; left 1; empty 0');
+    assert.equal(calls.length, 1);
+    // a kept render of the deleted transcript is proposed from
+    mkdirSync(join(f.evals, 'review', 'renders'), { recursive: true });
+    writeFileSync(join(f.evals, 'review', 'renders', 's1.txt'), 'USER: invented kept text\n');
+    const kept = await run(f, ['propose'], { spawn });
+    assert.equal(kept.code, 0, kept.err);
+    assert.equal(lastLine(kept.out), 'proposed 1: pro 1; errors 0; left 0; empty 0');
+    assert.ok(calls[1].input.includes('invented kept text'), 'the stub receives the kept text');
   } finally { rmSync(f.base, { recursive: true, force: true }); }
 });
 
@@ -100,7 +137,7 @@ test('--accept prints the accepted line before the last line and writes both fil
     const r = await run(f, ['propose', '--accept'], stub());
     assert.equal(r.code, 0, r.err);
     const out = r.out.trimEnd().split('\n');
-    assert.equal(out.at(-1), 'proposed 2: pro 2; errors 0; left 0');
+    assert.equal(out.at(-1), 'proposed 2: pro 2; errors 0; left 0; empty 0');
     assert.equal(out.at(-2), 'accepted: labels 2, categories 2');
     const labels = join(f.evals, 'review', 'labels.jsonl');
     const cats = join(f.evals, 'label-categories.jsonl');
@@ -117,14 +154,14 @@ test('a paid chain entry is used only with --paid: the limit note goes to stderr
     const limit = () => ({ is_error: true, result: 'You have hit your usage limit' });
     const r = await run(f, ['propose'], stub(limit));
     assert.equal(r.code, 1);
-    assert.equal(lastLine(r.out), 'proposed 0: none; errors 0; left 2');
+    assert.equal(lastLine(r.out), 'proposed 0: none; errors 0; left 2; empty 0');
     assert.ok(r.err.includes(LIMIT_NOTE), r.err);
     // without --paid the paid entry was never tried; with it the second entry answers
     let n = 0;
     const second = stub(() => (n++ === 0 ? limit() : { structured_output: answer() }));
     const p = await run(f, ['propose', '--paid'], second);
     assert.equal(p.code, 0, p.err);
-    assert.equal(lastLine(p.out), 'proposed 2: api 2; errors 0; left 0');
+    assert.equal(lastLine(p.out), 'proposed 2: api 2; errors 0; left 0; empty 0');
     assert.equal(second.calls[1].env.ANTHROPIC_API_KEY, 'api-tok');
   } finally { rmSync(f.base, { recursive: true, force: true }); }
 });
@@ -137,7 +174,7 @@ test('a chain of paid entries only, without --paid, says so, makes no call and e
     const r = await run(f, ['propose'], s);
     assert.equal(r.code, 1);
     assert.equal(s.calls.length, 0);
-    assert.equal(lastLine(r.out), 'proposed 0: none; errors 0; left 2');
+    assert.equal(lastLine(r.out), 'proposed 0: none; errors 0; left 2; empty 0');
     assert.equal(r.err.split(PAID_NOTE).length - 1, 1, r.err);
     assert.ok(!r.err.includes(LIMIT_NOTE), r.err);
   } finally { rmSync(f.base, { recursive: true, force: true }); }

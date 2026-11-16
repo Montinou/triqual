@@ -410,12 +410,20 @@ skills now belong to Headjack (`headjack:writing-skills`, `headjack:skill-finder
 `~/.local/share/triqual/evals`; its files are mode 0600. A round does these steps in order:
 
 1. refresh the sessions store;
-2. draw `--more <k>` (default 30; 0 draws none) random sessions that started after every sampled one;
-3. propose a label and failure categories for each sampled session and accept them where there is none (`review propose --accept`);
-4. run the code checks (`check`), then each judge over the sample (`judge`);
-5. settle the cases where a judge contradicts a label (`referee`);
-6. score every category and validate every judge (`score`, `validate`);
-7. compute the failure rates by month and by methodology version (`rates`).
+2. draw `--more <k>` (default 30; 0 draws none) random sessions that started after every sampled one (a session whose transcript holds no user or assistant text is never drawn);
+3. keep the redacted render of each sampled session (`keep renders`);
+4. propose a label and failure categories for each sampled session and accept them where there is none (`review propose --accept`);
+5. run the code checks (`check`), then each judge over the sample (`judge`);
+6. settle the cases where a judge contradicts a label (`referee`);
+7. score every category and validate every judge (`score`, `validate`);
+8. compute the failure rates by month and by methodology version (`rates`).
+
+The host deletes transcripts after a retention period, and a labeled session whose transcript is gone could no longer be
+judged under a rewritten prompt. So the redacted render that a judge reads, for every sample session, is kept in
+`<evals>/review/renders/<sessionId>.txt` (mode 0600, directory 0700); `review propose`, `judge` and `referee` read the
+kept text in place of the transcript. Sessions of excluded projects (`judgeExclude`) are never kept. Deleting that
+directory drops the kept text; the next round keeps again what is still readable. A session with nothing to judge (no
+user or assistant text) is skipped by those commands, not counted as an error, and reported as `empty`.
 
 The commands (none of them prints transcript text; output is counts, ids and paths):
 
@@ -434,6 +442,7 @@ What the loop keeps under `<evals>`:
 | Path | What |
 |---|---|
 | `review/reference.jsonl` | The model's proposed label and categories for each sampled session. |
+| `review/renders/<sessionId>.txt` | The redacted render of each sampled session, kept so the session can be judged after its transcript is deleted. |
 | `rulings.jsonl` | The referee's rulings; a ruling is never changed. |
 | `scores.jsonl` | Each evaluator's score per run, with the time and the plugin version. |
 | `rounds/<YYYY-MM-DDTHHMMSSZ>.json` | One report per round: counts, `failed` (the steps that failed), `paidOnly`, scores, rates and `revise` (the judge categories with at least 3 ruled disagreements on the train and dev sessions). |

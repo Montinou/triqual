@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { askModel, appendPrivate, sampleSessions } from '../cli/lib/eval-ask.mjs';
 import { acceptReference, loadReferencePrompt, proposeReference } from '../cli/lib/eval-reference.mjs';
+import { keepRenders } from '../cli/lib/eval-renders.mjs';
 import { readJsonl } from '../cli/lib/eval-store.mjs';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'cm-evref-'));
@@ -283,14 +284,37 @@ test('a session with no transcript file writes no line and counts as an error', 
   assert.deepEqual(readJsonl(join(fx.evals, 'review', 'reference.jsonl')).rows.map((r) => r.sessionId), ['s1']);
 });
 
-test('a transcript that renders empty is an error and is not sent', async () => {
-  const fx = fixture({ sessions: [{ id: 's1', project: '/home/x/alpha', text: 'a' }] });
+test('a readable transcript with no text is skipped: no call, not an error, not left, counted in empty', async () => {
+  const fx = fixture({ sessions: [{ id: 's1', project: '/home/x/alpha', text: 'a' }, { id: 's2', project: '/home/x/beta', text: 'Please add a test.' }] });
   writeFileSync(join(fx.root, '-home-x-s1', 's1.jsonl'), '');
   const { spawn, calls } = stub();
   const out = await run(fx, { spawn });
+  assert.equal(calls.length, 1, 'only the session with text is sent');
+  assert.deepEqual([out.proposed, out.errors, out.left, out.empty], [1, 0, 0, 1]);
+  assert.deepEqual(readJsonl(join(fx.evals, 'review', 'reference.jsonl')).rows.map((r) => r.sessionId), ['s2']);
+  const again = await run(fx, { spawn });
+  assert.deepEqual([again.proposed, again.errors, again.left, again.empty], [0, 0, 0, 1], 'it is counted every round');
+  assert.equal(existsSync(join(fx.evals, 'review', 'renders')), false, 'a proposal never writes a render');
+});
+
+test('a transcript that is gone, with no kept render, is an error, is not sent and stays left; a session not in the store is the same', async () => {
+  const fx = fixture({ sessions: [{ id: 's1', project: '/home/x/alpha', text: 'a' }, { id: 's2', project: '/home/x/beta', text: 'b', missing: true }] });
+  unlinkSync(join(fx.root, '-home-x-s1', 's1.jsonl'));
+  const { spawn, calls } = stub();
+  const out = await run(fx, { spawn });
   assert.equal(calls.length, 0);
-  assert.equal(out.errors, 1);
-  assert.equal(out.left, 1);
+  assert.deepEqual([out.proposed, out.errors, out.left, out.empty], [0, 2, 2, 0]);
+});
+
+test('a session whose transcript was deleted but whose render is kept is proposed from the kept text', async () => {
+  const fx = fixture({ sessions: [{ id: 's1', project: '/home/x/alpha', text: 'Please fix the parser.' }] });
+  keepRenders({ evals: fx.evals, sessions: sampleSessions({ evals: fx.evals, root: fx.root, taxonomy: TAXONOMY, home: fx.home, platform: 'linux' }) });
+  unlinkSync(join(fx.root, '-home-x-s1', 's1.jsonl'));
+  const { spawn, calls } = stub();
+  const out = await run(fx, { spawn });
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].input.includes('Please fix the parser.'), 'the stub receives the kept text');
+  assert.deepEqual([out.proposed, out.errors, out.left, out.empty], [1, 0, 0, 0]);
 });
 
 test('a session whose project is under judgeExclude is never sent and is not in left', async () => {

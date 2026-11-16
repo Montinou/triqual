@@ -5,7 +5,9 @@
 // every ruling (the owner's included). A session under a judgeExclude pattern of the taxonomy is never sent. A usage
 // limit or an unusable answer writes no ruling. A chain entry marked paid is used only with --paid. It prints counts,
 // ids and entry names, never transcript text or a secret. The last stdout line is
-// `refereed <n>: <entry> <k>[, ...]; errors <e>; left <m>`. Exit codes: 0 no disagreement is left without a ruling;
+// `refereed <n>: <entry> <k>[, ...]; errors <e>; left <m>; empty <k>`. A pair whose session has nothing to judge (a
+// readable transcript, or a kept render, with no text) is skipped: no model call, not an error, not left, counted in
+// `empty`; a transcript that is gone with no kept render is an error. Exit codes: 0 no disagreement is left without a ruling;
 // 1 some are left (an error, a credential problem, every entry limited, no sample); 2 usage (a code category included).
 // node: built-ins only. main() is exported for tests and runs only when this file is the entry point.
 import { realpathSync } from 'node:fs';
@@ -39,7 +41,10 @@ const USAGE = [
   '      when the ruling says so (an owner ruling in the file is applied too). A ruling is never changed. The credentials',
   '      come from the chain in TRIQUAL_EVAL_AUTH_FILE, else ~/.config/triqual/eval-auth.json; an entry marked "paid":',
   '      true is used only with --paid. A usage limit or an unusable answer writes no ruling.',
-  '      Last line: refereed <n>: <entry> <k>[, ...]; errors <e>; left <m>. Exit 0 when left is 0, else 1.',
+  '      A pair whose session has no user or assistant text (in its transcript or its kept render,',
+  '      <evals>/review/renders/<id>.txt) is skipped: no model call, not an error, not left. A kept render is read in',
+  '      place of a deleted transcript.',
+  '      Last line: refereed <n>: <entry> <k>[, ...]; errors <e>; left <m>; empty <k>. Exit 0 when left is 0, else 1.',
   '  triqual eval referee --help',
   '',
 ].join('\n');
@@ -124,7 +129,7 @@ export async function main(argv, {
   if (result.stop === 'auth') stderr.write('triqual eval referee: a credential source could not be read\n');
   if (result.applied > 0) stdout.write(`labels changed ${result.applied}\n`);
   const pairs = Object.entries(result.byEntry).map(([name, k]) => `${name} ${k}`).join(', ');
-  stdout.write(`refereed ${result.refereed}: ${pairs === '' ? 'none' : pairs}; errors ${result.errors}; left ${result.left}\n`);
+  stdout.write(`refereed ${result.refereed}: ${pairs === '' ? 'none' : pairs}; errors ${result.errors}; left ${result.left}; empty ${result.empty}\n`);
   return result.left > 0 ? 1 : 0;
 }
 
