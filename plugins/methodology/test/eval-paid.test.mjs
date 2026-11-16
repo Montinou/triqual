@@ -118,7 +118,7 @@ test('without --paid a paid entry is never used: the session is left, exit 1', a
   assert.equal(r.code, 1, r.err);
   assert.ok(s.calls.length > 0);
   assert.ok(s.calls.every((c) => c.key === null), 'no call carries the paid variable');
-  assert.match(r.last, /left 1$/);
+  assert.match(r.last, /left 1; empty 0$/);
   assert.ok(r.err.includes(LIMIT_NOTE), r.err);
   assert.deepEqual(readJsonl(e.judgments).rows, []);
 });
@@ -129,7 +129,7 @@ test('with --paid the session falls through to the paid entry and is judged on i
   const r = await run(e, ['--category', 'stalls', '--sessions', e.sessionsFile, '--paid'], s.spawn);
   assert.equal(r.code, 0, r.err);
   assert.equal(s.calls.at(-1).key, 'paid-1');
-  assert.equal(r.last, 'judged 1: paid-one 1; errors 0; left 0');
+  assert.equal(r.last, 'judged 1: paid-one 1; errors 0; left 0; empty 0');
   assert.deepEqual(readJsonl(e.judgments).rows.map((x) => [x.sessionId, x.result, x.auth]), [['s1', 'pass', 'paid-one']]);
 });
 
@@ -139,7 +139,7 @@ test('a chain of paid entries only, without --paid, makes no call and exits 1', 
   const r = await run(e, ['--category', 'stalls', '--sessions', e.sessionsFile], s.spawn);
   assert.equal(r.code, 1, r.err);
   assert.equal(s.calls.length, 0);
-  assert.match(r.last, /left 1$/);
+  assert.match(r.last, /left 1; empty 0$/);
   assert.deepEqual(readJsonl(e.judgments).rows, []);
   assert.equal(PAID_NOTE, 'every credential entry is paid; pass --paid');
   assert.equal(r.err.split(PAID_NOTE).length - 1, 1, `the paid note is printed once: ${r.err}`);
@@ -165,5 +165,5 @@ test('with a judgeExclude pattern, an id missing from the sessions store gets no
   const rows = readJsonl(e.judgments).rows;
   assert.ok(!rows.some((x) => x.sessionId === 'ghost'), 'no line for the missing id');
   assert.match(r.err, /ghost: not in the sessions store/);
-  assert.equal(r.last, 'judged 1: sub-two 1; errors 1; left 1');
+  assert.equal(r.last, 'judged 1: sub-two 1; errors 1; left 1; empty 0');
 });

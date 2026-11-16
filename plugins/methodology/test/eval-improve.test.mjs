@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { main } from '../cli/eval-improve.mjs';
@@ -13,7 +13,7 @@ const tmp = () => mkdtempSync(join(tmpdir(), 'cm-improve-'));
 const mode = (f) => statSync(f).mode & 0o777;
 const turn = (role, text, at) => JSON.stringify({ type: role, timestamp: at, cwd: '/home/x/proj', entrypoint: 'cli', message: { role, content: text } });
 const MODEL = 'claude-haiku-5-5';
-const KEYS = ['added', 'at', 'errors', 'failed', 'judged', 'limits', 'paidOnly', 'pluginVersion', 'proposed', 'rates', 'refereed', 'revise', 'scores'];
+const KEYS = ['added', 'at', 'empty', 'errors', 'failed', 'judged', 'kept', 'limits', 'paidOnly', 'pluginVersion', 'proposed', 'rates', 'refereed', 'revise', 'scores'];
 
 const TAXONOMY = {
   judgeExclude: [],
@@ -23,9 +23,13 @@ const TAXONOMY = {
   ],
 };
 
-function write(f, sessionId, at) {
+// The transcript's file time is `touched` (default: weeks before the round's clock, so the session is quiet).
+const OLD = new Date('2026-11-01T00:00:00Z');
+function write(f, sessionId, at, touched = OLD, endAt = at) {
   mkdirSync(join(f.root, '-home-x-proj'), { recursive: true });
-  writeFileSync(join(f.root, '-home-x-proj', `${sessionId}.jsonl`), `${turn('user', `invented task of ${sessionId}`, at)}\n${turn('assistant', 'invented reply', at)}\n`);
+  const file = join(f.root, '-home-x-proj', `${sessionId}.jsonl`);
+  writeFileSync(file, `${turn('user', `invented task of ${sessionId}`, at)}\n${turn('assistant', 'invented reply', endAt)}\n`);
+  utimesSync(file, touched, touched);
 }
 
 // s1 and s2 are sampled; n1 started after both and is not; o1 (added by a test) started before both.
@@ -87,12 +91,15 @@ async function run(f, argv, spawn, extra = {}) {
   return { code, out, err };
 }
 
+// The instant `minutes` before the clock of the next run (run() advances it by a minute first).
+const minutesBefore = (minutes) => new Date(clock + 60_000 - minutes * 60_000);
+
 const reports = (f) => {
   try { return readdirSync(join(f.evals, 'rounds')).sort(); } catch { return []; }
 };
 const reportOf = (f) => JSON.parse(readFileSync(join(f.evals, 'rounds', reports(f).at(-1)), 'utf8'));
 
-test('a first run writes one report with the thirteen keys, mode 0600, and exits 0; a second run over an older unsampled session makes no call', async () => {
+test('a first run writes one report with the fifteen keys, mode 0600, and exits 0; a second run over an older unsampled session makes no call', async () => {
   const f = fixture();
   const s = stub();
   const r = await run(f, [], s.spawn);
@@ -108,6 +115,8 @@ test('a first run writes one report with the thirteen keys, mode 0600, and exits
   assert.ok(Array.isArray(rep.rates.month) && Array.isArray(rep.rates.version));
   assert.deepEqual(Object.keys(rep.rates).sort(), ['month', 'version']);
   assert.deepEqual([rep.failed, rep.paidOnly], [[], false]);
+  assert.deepEqual([rep.kept, rep.empty], [3, 0], 'the render of s1, s2 and the drawn n1 is kept');
+  assert.ok(r.out.includes('renders: kept 3, empty 0'), r.out);
   assert.equal(rep.scores.length, 2);
   assert.deepEqual(rep.scores.map((x) => x.category).sort(), ['owner-chased-progress', 'stalls']);
   assert.deepEqual(readFileSync(f.sampleFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l).sessionId), ['s1', 's2', 'n1']);
@@ -128,6 +137,8 @@ test('a first run writes one report with the thirteen keys, mode 0600, and exits
   assert.equal(s.calls.length, before);
   assert.equal(readFileSync(f.sampleFile, 'utf8'), sample);
   assert.equal(reportOf(f).added, 0);
+  assert.deepEqual([reportOf(f).kept, reportOf(f).empty], [0, 0], 'nothing new to keep');
+  assert.ok(!again.out.includes('renders:'), 'no renders line when both numbers are zero');
 });
 
 test('--more 0 draws nothing; the steps still run', async () => {
@@ -181,6 +192,160 @@ test('a chain of paid entries only, without --paid: no call, limits false, the n
   assert.equal(rep.paidOnly, true);
   assert.ok(rep.failed.includes('review propose'), rep.failed.join());
   assert.ok(r.out.includes(`steps that returned non-zero: ${rep.failed.join(', ')}`), r.out);
+});
+
+// ---- the kept renders and the sessions with nothing to judge ----
+
+const renderFile = (f, id) => join(f.evals, 'review', 'renders', `${id}.txt`);
+
+test('a sample with one text-less session and nothing else wrong: exit 0, failed [], errors 0, empty 1, kept for the others, no call for it', async () => {
+  const f = fixture();
+  writeFileSync(join(f.root, '-home-x-proj', 's2.jsonl'), `${turn('user', [], '2026-11-11T10:00:00.000Z')}\n`);
+  utimesSync(join(f.root, '-home-x-proj', 's2.jsonl'), OLD, OLD);
+  const s = stub();
+  const r = await run(f, [], s.spawn);
+  assert.equal(r.code, 0, r.err);
+  const rep = reportOf(f);
+  assert.deepEqual([rep.failed, rep.errors, rep.empty, rep.kept], [[], 0, 1, 2]);
+  assert.deepEqual([rep.added, rep.proposed, rep.judged, rep.refereed], [1, 2, 2, 2]);
+  assert.ok(r.out.includes('renders: kept 2, empty 1'), r.out);
+  assert.equal(existsSync(renderFile(f, 's1')), true);
+  assert.equal(existsSync(renderFile(f, 'n1')), true, 'the session drawn this round is kept');
+  assert.equal(existsSync(renderFile(f, 's2')), false);
+  assert.equal(statSync(join(f.evals, 'review', 'renders')).mode & 0o777, 0o700);
+  assert.equal(mode(renderFile(f, 's1')), 0o600);
+  assert.equal(s.calls.length, 6, 'two proposals, two judgments and two rulings: none for the text-less session');
+  assert.ok(!r.out.includes('invented task'), 'no kept text is printed');
+  assert.ok(!JSON.stringify(rep).includes('invented task'), 'no kept text is in the report');
+});
+
+test('a session whose transcript is deleted after it was kept is still judged in the next round', async () => {
+  const f = fixture();
+  const s = stub();
+  assert.equal((await run(f, ['--more', '0'], s.spawn)).code, 0);
+  assert.deepEqual(readdirSync(join(f.evals, 'review', 'renders')).sort(), ['s1.txt', 's2.txt']);
+  rmSync(join(f.root, '-home-x-proj', 's1.jsonl'));
+  rmSync(join(f.evals, 'judgments'), { recursive: true });
+  const again = await run(f, ['--more', '0'], s.spawn);
+  assert.equal(again.code, 0, again.err);
+  assert.deepEqual([reportOf(f).failed, reportOf(f).errors, reportOf(f).judged], [[], 0, 2]);
+});
+
+test('a session whose render cannot be written is a failed step with the right kept, and the round goes on', async () => {
+  const f = fixture();
+  mkdirSync(renderFile(f, 's1'), { recursive: true }); // s1's render path is occupied by a directory
+  const s = stub();
+  const r = await run(f, [], s.spawn);
+  assert.equal(r.code, 3, r.err);
+  const rep = reportOf(f);
+  assert.deepEqual(rep.failed, ['keep renders']);
+  assert.deepEqual([rep.kept, rep.empty], [2, 0], 's2 and the drawn n1 were still kept');
+  assert.deepEqual([rep.added, rep.proposed, rep.judged], [1, 3, 3]);
+  assert.ok(failedLine(r.out).includes('keep renders'), r.out);
+  assert.ok(r.out.includes('renders: kept 2, empty 0'), r.out);
+});
+
+test('a session whose transcript changed within the hour is neither drawn nor kept; a later round takes it', async () => {
+  const f = fixture();
+  write(f, 'n1', '2026-11-12T10:00:00.000Z', minutesBefore(10)); // modified 10 minutes before the round
+  const s = stub();
+  const r = await run(f, [], s.spawn);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual([reportOf(f).added, reportOf(f).kept], [0, 2]);
+  assert.equal(existsSync(renderFile(f, 'n1')), false);
+  clock += 3 * 60 * 60 * 1000;
+  const later = await run(f, [], s.spawn);
+  assert.equal(later.code, 0, later.err);
+  assert.equal(reportOf(f).added, 1);
+  assert.equal(existsSync(renderFile(f, 'n1')), true);
+});
+
+test('a keepRenders that fails for every session lands keep renders in failed, the report is still written and the later steps ran', async () => {
+  const f = fixture();
+  mkdirSync(join(f.evals, 'review'), { recursive: true });
+  writeFileSync(join(f.evals, 'review', 'renders'), 'not a directory'); // the render directory cannot be created
+  const s = stub();
+  const r = await run(f, [], s.spawn);
+  assert.equal(r.code, 3, r.err);
+  assert.equal(reports(f).length, 1);
+  const rep = reportOf(f);
+  assert.deepEqual(rep.failed, ['keep renders']);
+  assert.deepEqual([rep.kept, rep.empty], [0, 0]);
+  assert.deepEqual([rep.added, rep.proposed, rep.judged], [1, 3, 3]);
+  assert.ok(failedLine(r.out).includes('keep renders'), r.out);
+});
+
+test('the steps run in order: review sample, keep renders, review propose', async () => {
+  const f = fixture();
+  mkdirSync(join(f.evals, 'review'), { recursive: true });
+  writeFileSync(join(f.evals, 'review', 'renders'), 'not a directory');
+  const s = stub();
+  const boom = async () => { throw new Error('boom'); };
+  const r = await run(f, [], s.spawn, { commands: { review: boom } });
+  assert.equal(r.code, 3, r.err);
+  assert.deepEqual(reportOf(f).failed.slice(0, 3), ['review sample', 'keep renders', 'review propose']);
+});
+
+// ---- the window of the draw: when a session went quiet, not when it started ----
+
+// A `commands.review` that records the arguments of each step and runs the real command.
+function recording() {
+  const seen = [];
+  return { seen, review: async (argv, deps) => { seen.push(argv); return (await import('../cli/eval-review.mjs')).main(argv, deps); } };
+}
+const sampleStep = (seen) => seen.find((a) => a[0] === 'sample');
+const rowsOfSample = (f) => readFileSync(f.sampleFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+
+test('a session still running at round 1 is drawn by round 2 even though round 1 drew a session that started after it', async () => {
+  const f = fixture();
+  // n1 started first and was written to 10 minutes before round 1; n2 started later and is quiet.
+  write(f, 'n1', '2026-11-12T10:00:00.000Z', minutesBefore(10), minutesBefore(10).toISOString());
+  write(f, 'n2', '2026-11-13T10:00:00.000Z');
+  const s = stub();
+  const first = await run(f, [], s.spawn);
+  assert.equal(first.code, 0, first.err);
+  assert.deepEqual(rowsOfSample(f).map((r) => r.sessionId), ['s1', 's2', 'n2'], 'round 1 draws n2 and not n1');
+  assert.equal(reportOf(f).added, 1);
+  clock += 2 * 60 * 60 * 1000;
+  const second = await run(f, [], s.spawn);
+  assert.equal(second.code, 0, second.err);
+  assert.deepEqual(rowsOfSample(f).map((r) => r.sessionId), ['s1', 's2', 'n2', 'n1'], 'round 2 draws n1');
+  assert.equal(reportOf(f).added, 1);
+  assert.ok(existsSync(renderFile(f, 'n1')), 'and keeps its render');
+});
+
+test('the round draws since the latest sampled start when no row has an at, and since the latest at minus one hour when rows have it', async () => {
+  const f = fixture();
+  const rec = recording();
+  assert.equal((await run(f, [], stub().spawn, { commands: { review: rec.review } })).code, 0);
+  assert.deepEqual(sampleStep(rec.seen), ['sample', '--more', '30', '--since', '2026-11-11T10:00:00.000Z'], 'rows with no at: the latest sampled start');
+
+  const g = fixture();
+  writeFileSync(g.sampleFile, [
+    { sessionId: 's1', project: '/home/x/proj', stratum: 'random', at: '2026-11-15T10:00:00.000Z' },
+    { sessionId: 's2', project: '/home/x/proj', stratum: 'random', at: '2026-11-15T12:30:00.000Z' },
+  ].map((r) => `${JSON.stringify(r)}\n`).join(''));
+  const rec2 = recording();
+  await run(g, [], stub().spawn, { commands: { review: rec2.review } });
+  assert.deepEqual(sampleStep(rec2.seen), ['sample', '--more', '30', '--since', '2026-11-15T11:30:00.000Z'], 'rows with at: the latest at minus one hour');
+
+  // a row with no at counts by its session's start, one with an invalid at the same way; the latest of all wins
+  const h = fixture();
+  writeFileSync(h.sampleFile, [
+    { sessionId: 's1', project: '/home/x/proj', stratum: 'random', at: '2026-11-09T10:00:00.000Z' },
+    { sessionId: 's2', project: '/home/x/proj', stratum: 'random', at: 'not a date' },
+  ].map((r) => `${JSON.stringify(r)}\n`).join(''));
+  const rec3 = recording();
+  await run(h, [], stub().spawn, { commands: { review: rec3.review } });
+  assert.deepEqual(sampleStep(rec3.seen), ['sample', '--more', '30', '--since', '2026-11-11T10:00:00.000Z']);
+});
+
+test('with no usable value at all the round makes no draw', async () => {
+  const f = fixture();
+  writeFileSync(f.sampleFile, `${JSON.stringify({ sessionId: 'ghost', project: null, stratum: 'random' })}\n`);
+  const rec = recording();
+  await run(f, [], stub().spawn, { commands: { review: rec.review } });
+  assert.equal(sampleStep(rec.seen), undefined);
 });
 
 // ---- a failed step is visible in the exit code, the summary and the report ----
@@ -255,6 +420,8 @@ test('usage: --help prints the usage and returns 0; a bad --more or an unknown a
   const help = await run(f, ['--help'], s.spawn);
   assert.equal(help.code, 0);
   assert.match(help.out, /triqual eval improve/);
+  assert.match(help.out, /keep renders/);
+  assert.match(help.out, /\bkept\b.*\bempty\b/s);
   for (const bad of [['--more'], ['--more', 'x'], ['--more', '-1'], ['--nope']]) {
     const r = await run(f, bad, s.spawn);
     assert.equal(r.code, 2, bad.join(' '));

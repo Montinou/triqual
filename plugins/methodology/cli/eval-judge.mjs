@@ -4,8 +4,12 @@
 // of the taxonomy is recorded undecided/excluded and never spawned (the exclusion comes before any credential entry is
 // chosen). A usage-limit or API-error outcome writes no line, so a later run judges that session. The sessions run one
 // at a time through the credential chain (lib/eval-auth.mjs): a limit moves every later session to the next entry.
-// The last stdout line is `judged <n>: <entry> <k>[, ...]; errors <e>; left <m>`. It prints counts, ids and entry
-// names, never transcript text or a secret. A chain entry marked paid is used only with --paid. Exit codes: 0 every session got a line; 1 some were left (an error, a
+// A session with nothing to judge (a readable transcript, or a kept render, with no user or assistant text) is skipped:
+// no model call, no line, not an error, not left. The text of a session is its kept render when there is one
+// (lib/eval-renders.mjs, never written here), else the rendering of its transcript; a transcript that is gone with no kept
+// render is an error and stays left.
+// The last stdout line is `judged <n>: <entry> <k>[, ...]; errors <e>; left <m>; empty <k>`. It prints counts, ids and entry
+// names, never transcript text or a secret. A chain entry marked paid is used only with --paid. Exit codes: 0 every session got a line or had nothing to judge; 1 some were left (an error, a
 // credential problem, every entry limited); 2 usage (a code category included).
 // node: built-ins only. main() is exported for tests and runs only when this file is the entry point.
 import { appendFileSync, chmodSync, openSync, closeSync, readFileSync, realpathSync } from 'node:fs';
@@ -14,6 +18,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { AuthError, ChainExhausted, LIMIT_NOTE, PAID_NOTE, authPath, childEnv, loadChain, usableChain, withChain } from './lib/eval-auth.mjs';
 import { ensureDir, evalsDir, transcriptsRoot } from './lib/eval-paths.mjs';
+import { sessionRender, transcriptReadable } from './lib/eval-renders.mjs';
 import { JudgePromptError, judgeSession, loadJudgePrompt, redactSecrets, spawnCapture } from './lib/eval-judge.mjs';
 import { readJsonl } from './lib/eval-store.mjs';
 import { TaxonomyError, judgeExcluded, loadLabelCategories, loadTaxonomy } from './lib/eval-taxonomy.mjs';
@@ -39,7 +44,10 @@ const USAGE = [
   '      line; the session is judged by a later run. Only category checks of kind "judge" are accepted.',
   '      A chain entry marked "paid": true in that file is used only with --paid (it spends money); without it, those',
   '      entries are left out.',
-  '      Last line: judged <n>: <entry> <k>[, ...]; errors <e>; left <m>. Exit 0 when every session got a line, else 1.',
+  '      A session whose transcript (or kept render, <evals>/review/renders/<id>.txt) holds no user or assistant text is',
+  '      skipped: no model call, not an error, not left. A kept render is judged in place of a deleted transcript.',
+  '      Last line: judged <n>: <entry> <k>[, ...]; errors <e>; left <m>; empty <k>. Exit 0 when every session got a line',
+  '      or had nothing to judge, else 1.',
   '  triqual eval judge --help',
   '',
 ].join('\n');
@@ -146,10 +154,12 @@ export async function main(argv, {
   let judged = 0;
   const usable = usableChain(chain, { paid: opts.paid === true });
   const paidOnly = chain.length > 0 && usable.length === 0;
-  const chainRun = withChain(usable, async (id, entry) => judgeSession({
-    category: opts.category, prompt, session: join(root, store.get(id).projectDir, `${id}.jsonl`), spawn,
+  const fileOf = (id) => join(root, store.get(id).projectDir, `${id}.jsonl`);
+  const chainRun = withChain(usable, async ({ id, text }, entry) => judgeSession({
+    category: opts.category, prompt, session: fileOf(id), render: text, spawn,
     env: childEnv(entry, env, { home }), cwd, bin,
   }));
+  const nothing = new Set();
   let stop = null;
 
   for (const id of ids) {
@@ -164,10 +174,12 @@ export async function main(argv, {
       if (record(id, { result: 'undecided', reason: 'excluded' })) excluded += 1;
       continue;
     }
+    const text = sessionRender(evals, { sessionId: id, file: fileOf(id) });
+    if (text.trim() === '' && transcriptReadable(fileOf(id))) { nothing.add(id); continue; }
     if (stop !== null) continue;
     let ran;
     try {
-      ran = await chainRun.run(id);
+      ran = await chainRun.run({ id, text });
     } catch (err) {
       if (err instanceof ChainExhausted) {
         stderr.write(paidOnly ? `triqual eval judge: ${PAID_NOTE}\n` : `triqual eval judge: ${LIMIT_NOTE} (tried: ${err.tried.join(', ')})\n`);
@@ -187,10 +199,10 @@ export async function main(argv, {
     if (record(id, fields)) { judged += 1; byEntry.set(entry.name, (byEntry.get(entry.name) ?? 0) + 1); }
   }
 
-  const left = ids.filter((id) => !done.has(keyOf(id))).length;
+  const left = ids.filter((id) => !done.has(keyOf(id)) && !nothing.has(id)).length;
   if (excluded > 0) stdout.write(`excluded ${excluded}\n`);
   const pairs = [...byEntry].map(([name, k]) => `${name} ${k}`).join(', ');
-  stdout.write(`judged ${judged}: ${pairs === '' ? 'none' : pairs}; errors ${errors}; left ${left}\n`);
+  stdout.write(`judged ${judged}: ${pairs === '' ? 'none' : pairs}; errors ${errors}; left ${left}; empty ${nothing.size}\n`);
   return left > 0 ? 1 : 0;
 }
 

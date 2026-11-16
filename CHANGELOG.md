@@ -3,6 +3,11 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## methodology 1.12.1
+
+- methodology: a session with nothing to judge no longer fails the round. A sample session whose transcript holds no user or assistant text is skipped by `triqual eval review propose`, `triqual eval judge` and `triqual eval referee`: no model call, not an error, not left. The last line of each gains `; empty <k>`, the round's report gains `empty`, and a round whose only problem is such sessions exits 0. `triqual eval review sample --more` no longer draws them.
+- methodology: the redacted render of each review-sample session is kept in `review/renders/<sessionId>.txt` in the evals directory (mode 0600), by a new `keep renders` step of `triqual eval improve` (report key `kept`), so a labeled session can still be judged after the host deletes its transcript. Sessions of `judgeExclude` projects are never kept (a kept render of a session that became excluded is deleted), and a session whose transcript changed within the last hour is neither drawn nor kept until a later round, so a running session is not frozen at a partial text. The draw's window is by last activity: `review sample --more --since` compares a session's last activity, each added row records the draw's time as `at`, and a round draws sessions active after the previous draw's time minus one hour, so a session that was still running waits one round and is not lost. Update the plugin; nothing to rerun.
+
 ## methodology 1.12.0
 
 - methodology: new `triqual eval improve [--more <k>] [--paid]` runs one unattended round over the review sample: it refreshes the sessions store, draws `k` (default 30) newer random sessions, proposes labels, runs the code checks and the judges, settles disagreements with a referee, scores and validates every evaluator, computes the failure rates, and writes the round's report to `rounds/<YYYY-MM-DDTHHMMSSZ>.json` in the evals directory. It exits 3 when a step after the first failed; the report names each failed step in `failed`.

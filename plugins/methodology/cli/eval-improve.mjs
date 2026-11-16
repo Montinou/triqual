@@ -1,9 +1,15 @@
 // `triqual eval improve [--more <k>] [--paid]`: one unattended round of the evals loop, every step run in-process with
 // its output captured. (1) refresh the sessions store; (2) with no review sample, stop (exit 1); else draw --more
-// random sessions that started after every sampled one (`review sample --more <k> --since <latest sampled start>`);
-// (3) `review propose --accept`; (4) `check`, then `judge` over the sample for each judge category; (5) `referee`;
-// (6) score every category (appended to <evals>/scores.jsonl as `eval score` does) and validate every judge category;
-// (7) the failure rates. It writes <evals>/rounds/<YYYY-MM-DDTHHMMSSZ>.json (0600) and prints at most 30 lines: the
+// random sessions whose last activity is after the previous draw's quiet cut-off (`review sample --more <k> --since <the
+// latest `at` of the sample's rows minus one hour>`; a row with no `at` counts by its session's start, so before any draw
+// recorded its time the cut-off is the latest sampled start; with neither, nothing is drawn). A session with nothing to
+// judge, or that may still be running, is never drawn, and one that was running is a candidate of the next round; (3) `keep renders`: the redacted render of each sample session that is not
+// under judgeExclude is kept in <evals>/review/renders/ (0600, lib/eval-renders.mjs) so the labeled set outlives the host's
+// transcript cleanup (a session whose transcript changed within the last hour may still be running: it is kept by a later
+// round; a session that became excluded loses its kept render; one session's failure fails the step, not the others); (4) `review propose --accept`; (5) `check`, then `judge` over the sample for each judge category;
+// (6) `referee`; (7) score every category (appended to <evals>/scores.jsonl as `eval score` does) and validate every judge
+// category; (8) the failure rates. A session with nothing to judge is skipped by steps 4 to 6 (not an error, not left). It
+// writes <evals>/rounds/<YYYY-MM-DDTHHMMSSZ>.json (0600) and prints at most 30 lines: the
 // counts, one line per category, the judge categories to revise and the report's path; never transcript text. Exit
 // codes: 0 done; 1 no sample, or the store or the taxonomy is unusable; 2 usage; 3 any step after the first returned
 // non-zero or threw (the report's `failed` names each, so a failed round reads differently from an idle one).
@@ -13,11 +19,12 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { LIMIT_NOTE, PAID_NOTE } from './lib/eval-auth.mjs';
-import { appendPrivate } from './lib/eval-ask.mjs';
+import { appendPrivate, sampleSessions } from './lib/eval-ask.mjs';
 import { checkVersion } from './lib/eval-checks.mjs';
 import { JudgePromptError, spawnCapture } from './lib/eval-judge.mjs';
 import { reviseList, verdictsOf } from './lib/eval-improve.mjs';
 import { ensureDir, evalsDir, transcriptsRoot } from './lib/eval-paths.mjs';
+import { QUIET_MS, keepRenders } from './lib/eval-renders.mjs';
 import { ratesTables } from './lib/eval-rates.mjs';
 import { currentVersion, scoreCategory } from './lib/eval-score.mjs';
 import { readJsonl, refreshSessions } from './lib/eval-store.mjs';
@@ -46,17 +53,28 @@ const USAGE = [
   '  triqual eval improve [--more <k>] [--paid]',
   '      One unattended round over the review sample (it needs one: "triqual eval review sample"):',
   '        1 refreshes the sessions store;',
-  '        2 draws --more <k> (default 30; 0 draws nothing) random sessions that started after every sampled one;',
-  '        3 "review propose --accept"; 4 "check", then "judge" over the sample for each judge category;',
-  '        5 "referee";',
-  '        6 scores every category (appended to <evals>/scores.jsonl) and validates every judge category;',
-  '        7 the failure rates by month and by methodology version.',
-  '      --paid is passed to steps 3, 4 and 5 (a credential entry marked "paid" is used only with it). Writes',
-  '      <evals>/rounds/<YYYY-MM-DDTHHMMSSZ>.json (0600) with at, pluginVersion, added, proposed, judged, refereed,',
+  '        2 draws --more <k> (default 30; 0 draws nothing) random sessions whose last activity is after the previous',
+  '          draw\'s quiet cut-off (the latest `at` of the sample rows minus one hour; before any draw recorded its time,',
+  '          after every sampled session\'s start); a session whose transcript holds no user or assistant text, or changed',
+  '          within the last hour, is not drawn, and one that was still running is a candidate of the next round;',
+  '        3 "keep renders": the redacted render of each sample session that is not under a judgeExclude pattern is',
+  '          kept in <evals>/review/renders/<sessionId>.txt (0600), so the session can be judged after the host deletes',
+  '          its transcript; a session with a kept render is not rendered again; a session whose transcript changed within',
+  '          the last hour (it may still be running) is kept by a later round; the kept render of a session that became',
+  '          excluded is deleted; a render that cannot be written fails the step, not the round;',
+  '        4 "review propose --accept"; 5 "check", then "judge" over the sample for each judge category;',
+  '        6 "referee";',
+  '        7 scores every category (appended to <evals>/scores.jsonl) and validates every judge category;',
+  '        8 the failure rates by month and by methodology version.',
+  '      A sample session with nothing to judge is skipped by steps 4 to 6: it is not an error and does not fail the round.',
+  '      --paid is passed to steps 4, 5 and 6 (a credential entry marked "paid" is used only with it). Writes',
+  '      <evals>/rounds/<YYYY-MM-DDTHHMMSSZ>.json (0600) with at, pluginVersion, added, kept (renders written this',
+  '      round), empty (sample sessions with nothing to judge), proposed, judged, refereed,',
   '      limits, errors, failed (the name of each step that returned non-zero or threw), paidOnly (a step found every',
   '      credential entry paid), scores, rates ({ month, version }) and revise (the judge categories with at least 3',
   '      ruled disagreements between the judge and the label over the train and dev sessions). Prints at most 30',
-  '      lines: counts, one line per category, the categories to revise and the report\'s path. Exit 0 done; 1 no',
+  '      lines: counts, a renders line (kept and empty, when either is not 0), one line per category, the categories to',
+  '      revise and the report\'s path. Exit 0 done; 1 no',
   '      sample or an unusable store; 3 any step after the first returned non-zero or threw (a limit, an error, an',
   '      unreadable credential, sessions left, a failed write).',
   '  triqual eval improve --help',
@@ -154,16 +172,29 @@ export async function main(argv, {
     if (err instanceof TaxonomyError) return fail(err.message);
     throw err;
   }
-  const sampled = new Set(before.map((r) => r.sessionId));
+  // The window of the draw is when a session went quiet: a row drawn by an earlier round carries `at` (the time of that
+  // draw) and anything active after `at` minus QUIET_MS is still a candidate; a row with no `at` counts by its session's start.
+  const byId = new Map(stored.map((s) => [s.sessionId, s]));
   let latest = null;
-  for (const s of stored) {
-    if (!sampled.has(s.sessionId) || typeof s.start !== 'string' || Number.isNaN(Date.parse(s.start))) continue;
-    if (latest === null || Date.parse(s.start) > Date.parse(latest)) latest = s.start;
+  for (const row of before) {
+    let cut = null;
+    if (typeof row.at === 'string' && !Number.isNaN(Date.parse(row.at))) cut = new Date(Date.parse(row.at) - QUIET_MS).toISOString();
+    else if (typeof byId.get(row.sessionId)?.start === 'string' && !Number.isNaN(Date.parse(byId.get(row.sessionId).start))) cut = byId.get(row.sessionId).start;
+    if (cut !== null && (latest === null || Date.parse(cut) > Date.parse(latest))) latest = cut;
   }
   if (opts.more > 0 && latest !== null) await call('review sample', cmd.review, ['sample', '--more', String(opts.more), '--since', latest], { date: true });
   const added = sampleRows().length - before.length;
 
-  // (3) the reference labels
+  // (3) the renders: kept before anything reads the sample, so a labeled session outlives its transcript
+  let kept = 0;
+  let empty = 0;
+  await call('keep renders', () => {
+    const done = keepRenders({ evals, sessions: sampleSessions({ evals, root: transcriptsRoot(env, home), taxonomy, home, platform }), now: () => new Date(clock()).getTime() });
+    ({ kept, empty } = done);
+    return done.failed > 0 ? 1 : 0;
+  }, []);
+
+  // (4) the reference labels
   const paid = opts.paid ? ['--paid'] : [];
   const propose = await call('review propose', cmd.review, ['propose', '--accept', ...paid], { date: true });
   const proposed = count(lastLine(propose.out), 'proposed');
@@ -178,7 +209,7 @@ export async function main(argv, {
   }
   const judgeIds = evaluated.map((e) => e.category).filter((c) => c.check === 'judge').map((c) => c.id);
 
-  // (4) the verdicts
+  // (5) the verdicts
   await call('check', cmd.check, []);
   let judged = 0;
   for (const id of judgeIds) {
@@ -187,12 +218,12 @@ export async function main(argv, {
     errors += count(lastLine(s.out), 'errors');
   }
 
-  // (5) the rulings
+  // (6) the rulings
   const ruled = await call('referee', cmd.referee, [...paid]);
   const refereed = count(lastLine(ruled.out), 'refereed');
   errors += count(lastLine(ruled.out), 'errors');
 
-  // (6) the scores and the validations
+  // (7) the scores and the validations
   const sample = sampleRows();
   const labels = readJsonl(join(evals, 'review', 'labels.jsonl')).rows;
   const labelCategories = loadLabelCategories(join(evals, 'label-categories.jsonl'));
@@ -216,7 +247,7 @@ export async function main(argv, {
   const limits = steps.some((s) => s.err.includes(LIMIT_NOTE));
   const paidOnly = steps.some((s) => s.err.includes(PAID_NOTE));
 
-  // (7) the rates
+  // (8) the rates
   const sessions = new Map(readJsonl(join(evals, 'sessions.jsonl')).rows.filter((r) => typeof r.sessionId === 'string').map((r) => [r.sessionId, r]));
   const categories = evaluated.map((e) => e.category);
   const tables = ratesTables({ sample, sessions, categories, verdicts });
@@ -224,10 +255,11 @@ export async function main(argv, {
 
   const revise = reviseList({ categories, sample, labelCategories, rulings: loadRulings(join(evals, 'rulings.jsonl')), verdicts });
   const file = join(evals, 'rounds', `${stamp(at)}.json`);
-  writeReport(file, { at, pluginVersion, added, proposed, judged, refereed, limits, errors, failed, paidOnly, scores, rates, revise });
+  writeReport(file, { at, pluginVersion, added, kept, empty, proposed, judged, refereed, limits, errors, failed, paidOnly, scores, rates, revise });
 
   // The summary: the lines around the categories are fixed, the category lines take what is left of MAX_LINES.
   const head = [`added ${added}, proposed ${proposed}, judged ${judged}, refereed ${refereed}, errors ${errors}, limits ${limits}`];
+  if (kept > 0 || empty > 0) head.push(`renders: kept ${kept}, empty ${empty}`);
   if (paidOnly) head.push(PAID_NOTE);
   if (failed.length > 0) head.push(`steps that returned non-zero: ${failed.join(', ')}`);
   const tail = [`revise: ${revise.length === 0 ? 'none' : revise.join(', ')}`, LABELS_NOTE, `report: ${file}`];

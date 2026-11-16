@@ -6,8 +6,9 @@ import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { askModel, appendPrivate } from './eval-ask.mjs';
 import { AuthError, ChainExhausted, childEnv, withChain } from './eval-auth.mjs';
-import { loadJudgePrompt, renderForJudge } from './eval-judge.mjs';
+import { loadJudgePrompt } from './eval-judge.mjs';
 import { ensureDir } from './eval-paths.mjs';
+import { sessionRender, transcriptReadable } from './eval-renders.mjs';
 import { withStoreLock } from './role-eval.mjs';
 import { readJsonl } from './eval-store.mjs';
 
@@ -51,8 +52,11 @@ function checked(answer, ids) {
 }
 
 // Proposes a reference line for each of `sessions` that is not excluded and has none yet (whatever prompt wrote it).
-// { proposed, byEntry: { [entry]: lines }, errors, left, stop: null | 'limit' | 'auth' }; `left` counts the sessions that
-// are not excluded and still have no line. A limit on every chain entry stops with 'limit', an unreadable credential
+// { proposed, byEntry: { [entry]: lines }, errors, left, empty, stop: null | 'limit' | 'auth' }; `left` counts the sessions
+// that are not excluded and still have no line, leaving out `empty`, the sessions with nothing to judge (a readable
+// transcript, or a kept render, with no text: skipped, no model call, not an error). A transcript that is gone with no kept
+// render is an error and stays left. The text of a session is its kept render when there is one (lib/eval-renders.mjs); this
+// function never writes a render. A limit on every chain entry stops with 'limit', an unreadable credential
 // source with 'auth'; the sessions not reached stay in `left`. A line is appended only when the file, re-read under the
 // store lock, has none for the session yet, so overlapping runs may send a session twice but never write it twice.
 export async function proposeReference({ evals, sessions, prompt, chain, spawn, env, home, cwd, bin, now = () => new Date() }) {
@@ -65,6 +69,7 @@ export async function proposeReference({ evals, sessions, prompt, chain, spawn, 
   let proposed = 0;
   let errors = 0;
   let stop = null;
+  const nothing = new Set();
   const runner = withChain(chain, async (input, entry) => askModel({
     model: prompt.model, input, schema: prompt.schema, spawn, env: childEnv(entry, env ?? {}, { home }), cwd, bin,
   }));
@@ -78,8 +83,11 @@ export async function proposeReference({ evals, sessions, prompt, chain, spawn, 
 
   for (const s of sessions) {
     if (s.excluded === true || done.has(s.sessionId)) continue;
-    const rendered = s.file === null ? '' : renderForJudge(s.file);
-    if (rendered.trim() === '') { errors += 1; continue; }
+    const rendered = sessionRender(evals, s);
+    if (rendered.trim() === '') {
+      if (transcriptReadable(s.file)) nothing.add(s.sessionId); else errors += 1;
+      continue;
+    }
     let outcome;
     try {
       outcome = await runner.run(`${prompt.body}\n\n--- session transcript ---\n${rendered}`);
@@ -98,7 +106,8 @@ export async function proposeReference({ evals, sessions, prompt, chain, spawn, 
     byEntry[outcome.entry.name] = (byEntry[outcome.entry.name] ?? 0) + 1;
     proposed += 1;
   }
-  return { proposed, byEntry, errors, left: sessions.filter((s) => s.excluded !== true && !done.has(s.sessionId)).length, stop };
+  const left = sessions.filter((s) => s.excluded !== true && !done.has(s.sessionId) && !nothing.has(s.sessionId)).length;
+  return { proposed, byEntry, errors, left, empty: nothing.size, stop };
 }
 
 // For each of `sessions` with a reference line: a label line in <evals>/review/labels.jsonl and a category line in
