@@ -37,7 +37,8 @@ or your human partner asks you to improve the evals. Without either, do not star
 node -e "Promise.all([import('./plugins/methodology/cli/lib/eval-validate.mjs'),import('./plugins/methodology/cli/lib/eval-paths.mjs'),import('node:fs'),import('node:os')]).then(([{splitOf},{evalsDir},fs,os])=>((d,j=f=>fs.readFileSync(d+f,'utf8').split('\\n').filter(Boolean).map(l=>JSON.parse(l)))=>((t)=>j('/rulings.jsonl').filter(x=>x.category===process.argv[1]).filter(x=>t.has(x.sessionId)).filter(x=>x.misleading).forEach(x=>console.log(x.misleading)))(new Set(j('/review/sample.jsonl').filter(s=>splitOf(s.sessionId,s.stratum)==='train').map(s=>s.sessionId))))(evalsDir(process.env,os.homedir())))" <id>
 ```
 
-   b. **Read the dev counts.** From the report's `scores` entry of the category, only its `dev` counts: `fn` is the
+   b. **Read the dev counts.** A category with no `scores` entry, or no `version` in it, in the report is skipped: it is
+      not rewritten, and it is never scored without `--against`. From the report's `scores` entry of the category, only its `dev` counts: `fn` is the
       failures the judge missed, `fp` the false alarms. Note too the category's `version` in the report's `scores`
       entry: that is the baseline, the version in place before the rewrite. Read nothing else about dev or test.
    c. **Rewrite** `plugins/methodology/evals/judges/<id>.md`, from those notes and counts and nothing else:
@@ -53,7 +54,9 @@ node -e "Promise.all([import('./plugins/methodology/cli/lib/eval-validate.mjs'),
       verdicts under the new prompt's hash. Pass `--paid` here too when your human partner asked for it. Exit 1 means
       sessions were left (a limit or an error): rerun once, then treat the result as it stands.
    f. **Score.** Run `triqual eval score --category <id> --against <baseline>`. Its `dev:` line is `dev: previous <balanced>
-      (<correct>/<n>), current <balanced> (<correct>/<n>): <verdict>`.
+      (<correct>/<n>), current <balanced> (<correct>/<n>): <verdict>`. Exit 2 with "the prompt did not change" means the
+      rewrite changed nothing: restore the file (3g) and record `kept: false` (3h), with `to` equal to `from` and null
+      counts.
    g. **Keep or revert.** Keep the file only when the `dev:` line ends `better`. Otherwise (`not-better`, or `first
       version`, which compares nothing) restore it with `git checkout -- plugins/methodology/evals/judges/<id>.md`.
    h. **Record.** Append one line to `<evals>/revisions.jsonl`, written with `umask 077` so the file is mode 0600:
@@ -87,5 +90,5 @@ node -e "Promise.all([import('./plugins/methodology/cli/lib/eval-validate.mjs'),
 ## Final report
 
 The report is at most 20 lines in all, one per category of `revise`: the id, kept or reverted, and the counts, `previous <balanced>
-(<correct>/<n>), current <balanced> (<correct>/<n>)`. Add one line for the failed steps of the round (step 2) and one
-for the report's path. Counts and ids only: no transcript text.
+(<correct>/<n>), current <balanced> (<correct>/<n>)`. Add one line for the failed steps of the round (step 2), one
+for the categories skipped for a missing score (3b) and one for the report's path. Counts and ids only: no transcript text.

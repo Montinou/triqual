@@ -221,3 +221,13 @@ test('it ends with a report format of at most 20 lines, one per category', () =>
   assert.match(tail, /one per category/);
   assert.match(tail, /kept or reverted/);
 });
+
+test('a category with no scores entry or no version in the report is skipped, never rewritten or scored without --against, and named in the final report', () => {
+  assert.match(flat, /a category with no `scores` entry, or no `version` in it, in the report is skipped: it is not rewritten, and it is never scored without `--against`/i);
+  const tail = flat.slice(flat.lastIndexOf('at most 20 lines'));
+  assert.match(tail, /the categories skipped for a missing score/);
+});
+
+test('exit 2 of the score step with "the prompt did not change" means the rewrite changed nothing: restored and recorded as not kept', () => {
+  assert.match(flat, /exit 2 with "the prompt did not change" means the rewrite changed nothing: restore the file \(3g\) and record `kept: false` \(3h\), with `to` equal to `from` and null counts/i);
+});
