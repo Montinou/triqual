@@ -78,6 +78,10 @@ Contract: machine-read CLI output.
 - [ ] **Step 1:** seven.
 `;
 
+// PLAN with a Test: path under each task's Role line: --worktree refuses a task with no Test: path.
+let testedAt = 0;
+const PLAN_TESTED = PLAN.replace(/^(\*\*Role:\*\* roles:tdd-implementer)$/gm, (line) => `${line}\n\n- Test: \`test/t${++testedAt}.test.mjs\``);
+
 await loadSqlite();
 
 // A clean environment: no GIT_* from a calling hook, a temp HOME, no registry or data-dir redirects.
@@ -256,48 +260,52 @@ test('task-open: with no triqual on the PATH it is an Error that says what to do
   assert.match(r.ledger().at(-1), /^Error: task-open T1 — exit 1 — triqual is not on the PATH/);
 }));
 
-test('task-open: a task already in_review or done is not moved again', () => withRig({}, (r) => {
-  open(r, 1);
+test('task-open: a task already in_review or done is not moved again', () => withRig({ planText: PLAN_TESTED }, (r) => {
+  // Both tasks open in worktrees: a task built in the main checkout runs alone, so a second one could not open beside it.
+  wtOpen(r, 1);
   ok(r.triqual('tasks', 'review', 'T1', '--plan', PLAN_NAME));
-  open(r, 2);
+  wtOpen(r, 2);
   ok(r.triqual('tasks', 'review', 'T2', '--plan', PLAN_NAME));
   ok(r.triqual('tasks', 'done', 'T2', '--commit', 'HEAD', '--plan', PLAN_NAME));
   const before = r.ledger();
   r.clearCalls();
 
   const reviewed = ok(r.run('task-open', r.plan, '1'));
-  const done = ok(r.run('task-open', r.plan, '2'));
+  // T1 is still open: the done task is run again in a worktree too, since a main-checkout task runs alone.
+  const done = ok(r.run('task-open', r.plan, '2', '--worktree'));
   assert.deepEqual(keys(reviewed), ['brief', 'report', 'base']);
-  assert.deepEqual(keys(done), ['brief', 'report', 'base']);
+  assert.deepEqual(keys(done), ['brief', 'report', 'base', 'workdir']);
   assert.equal(r.taskState(1).status, 'in_review');
   assert.equal(r.taskState(2).status, 'done');
   assert.deepEqual(r.ledger(), before);
   assert.deepEqual(r.calls().filter((c) => /^tasks (start|review|rework|done|retier) /.test(c)), [], 'a move was made');
 }));
 
-test('task-open reads the last BASE line', () => withRig({}, (r) => {
+test('task-open reads the last BASE line', () => withRig({ planText: PLAN_TESTED }, (r) => {
   const first = r.head();
   const second = r.commit('src/a.js', 'a\n');
   r.seedLedger(`BASE: T1 ${first}`, `BASE: T2 ${first}`, `BASE: T1 ${second}`);
-  assert.equal(open(r, 1).base, second);
-  assert.equal(open(r, 2).base, first);
+  assert.equal(wtOpen(r, 1).base, second);
+  assert.equal(wtOpen(r, 2).base, first);
   assert.equal(r.ledger().filter((l) => l.startsWith('BASE:')).length, 3, 'a BASE line was added');
 }));
 
 // ---- task-prep ----
 
 // A task's whole first round: open, commit one small file, prep.
-const firstRound = (r, n, extra = []) => {
-  const o = open(r, n);
-  const head = r.commit(`src/t${n}.js`, `export const t${n} = ${n};\n`);
-  const res = ok(r.run('task-prep', r.plan, String(n), ...extra));
+// `worktree`: the task is built in its worktree (the commit goes there and task-prep reviews it with --head).
+const firstRound = (r, n, extra = [], { worktree = false } = {}) => {
+  const o = worktree ? wtOpen(r, n) : open(r, n);
+  const head = worktree ? wtCommit(r, n, `src/t${n}.js`, `export const t${n} = ${n};\n`) : r.commit(`src/t${n}.js`, `export const t${n} = ${n};\n`);
+  const res = ok(r.run('task-prep', r.plan, String(n), ...(worktree ? ['--head', head] : []), ...extra));
   return { o, head, res, out: out(res) };
 };
 
-test('task-prep: first round runs review move, tier-check and the package', () => withRig({}, (r) => {
-  // No task hunters at any tier: the heavy tasks (2 to 5) print none too.
+test('task-prep: first round runs review move, tier-check and the package', () => withRig({ planText: PLAN_TESTED }, (r) => {
+  // No task hunters at any tier: the heavy tasks (2 to 5) print none too. Each task is built in its own worktree: a task built in
+  // the main checkout runs alone.
   for (const n of ['1', '2', '3', '4', '5']) {
-    const { o, head, res, out: o2 } = firstRound(r, n);
+    const { o, head, res, out: o2 } = firstRound(r, n, [], { worktree: true });
     assert.deepEqual(keys(res), ['tier', 'hunters', 'package', 'round', 'full-review'], `T${n}`);
     assert.equal(o2.tier, n === '1' ? 'standard' : 'heavy', `T${n} tier`);
     assert.equal(o2.hunters, 'none', `T${n} hunters`);
@@ -516,13 +524,13 @@ test('failures exit non-zero: a missing plan is exit 2 with no ledger line, an u
   assert.match(r.ledger()[2], /^Error: task-open T9 — exit 3 — task 9 not found/);
 }));
 
-test('failures exit non-zero: preconditions of task-prep and a refused move are exit 3 with an Error line', () => withRig({}, (r) => {
+test('failures exit non-zero: preconditions of task-prep and a refused move are exit 3 with an Error line', () => withRig({ planText: PLAN_TESTED }, (r) => {
   r.seedLedger();
   const noBase = r.run('task-prep', r.plan, '1');
   assert.equal(noBase.status, 3);
   assert.match(noBase.stderr, /no BASE recorded for T1/);
 
-  open(r, 1);
+  wtOpen(r, 1);
   const noPrep = r.run('task-prep', r.plan, '1', '--fix-round');
   assert.equal(noPrep.status, 3);
   assert.match(noPrep.stderr, /no Prep line for T1/);
@@ -532,7 +540,7 @@ test('failures exit non-zero: preconditions of task-prep and a refused move are 
   assert.match(badHead.stderr, /bad --head/);
 
   // T2 is done: the review move is refused by the ledger.
-  open(r, 2);
+  wtOpen(r, 2);
   ok(r.triqual('tasks', 'review', 'T2', '--plan', PLAN_NAME));
   ok(r.triqual('tasks', 'done', 'T2', '--commit', 'HEAD', '--plan', PLAN_NAME));
   const moved = r.run('task-prep', r.plan, '2');
@@ -1563,6 +1571,8 @@ const WT_PLAN = `# Worktree plan
 
 - [ ] **Step 1:** six.
 `;
+// WT_PLAN with a Test: path for T3 too, so that a third task can open in a worktree.
+const T3_PLAN = WT_PLAN.replace('- Create: `src/t3.js`\n', '- Create: `src/t3.js`\n- Test: `test/three.test.mjs`\n');
 const TEST_FILE = { 1: 'test/one.test.mjs', 2: 'test/two.test.mjs' };
 const PASSING_TEST = "import { test } from 'node:test';\ntest('ok', () => {});\n";
 const FAILING_TEST = "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('bad', () => { assert.equal(1, 2); });\n";
@@ -1611,7 +1621,7 @@ if (existsSync(process.env.TRIQUAL_CALL_LOG + '.fail-install')) { process.stderr
   };
 };
 
-test('two worktree tasks land in plan order and leave no worktree or temp branch', () => withRig({ planText: WT_PLAN }, (r) => {
+test('two worktree tasks land one after the other and leave no worktree or temp branch', () => withRig({ planText: WT_PLAN }, (r) => {
   startStack(r);
   const tip = r.head();
   const o1 = wtOpen(r, 1);
@@ -1658,25 +1668,22 @@ test('two worktree tasks land in plan order and leave no worktree or temp branch
   noError(r);
 }));
 
-test('a task that finished first waits: task-close refuses with exit 3 while an earlier task has not landed', () => withRig({ planText: WT_PLAN }, (r) => {
+test('a worktree task lands while an earlier task it does not depend on is still open, and the earlier one lands on top', () => withRig({ planText: WT_PLAN }, (r) => {
   startStack(r);
+  const tip = r.head();
   wtOpen(r, 1);
   wtOpen(r, 2);
   wtReview(r, 2);
-  const before = r.ledger();
-  const res = closeOf(r, 2);
-  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
-  assert.match(res.stderr, /T1/);
-  assert.deepEqual(r.ledger(), before, 'a wait writes no ledger line, no Error: line either');
-  assert.equal(res.stdout, '');
-  assert.equal(r.taskState(2).status, 'in_review');
-  assert.equal(worktrees(r).length, 3, 'a worktree was removed');
+  const c2 = out(ok(closeOf(r, 2)));
+  assert.equal(r.git('rev-parse', `${c2.sha}^`).trim(), tip, 'T2 landed on the phase tip while T1 was open');
+  assert.equal(r.taskState(1).status, 'in_progress');
+  assert.equal(r.taskState(2).status, 'done');
 
   wtReview(r, 1);
-  ok(closeOf(r, 1));
-  ok(closeOf(r, 2));
-  assert.equal(r.taskState(2).status, 'done');
-  assert.deepEqual(landedOf(r, 2).length, 1);
+  const c1 = out(ok(closeOf(r, 1)));
+  assert.equal(r.git('rev-parse', `${c1.sha}^`).trim(), c2.sha, 'T1 landed on top of T2');
+  assert.deepEqual(r.git('log', '--format=%s', `${tip}..HEAD`).trim().split('\n'), ['feat: t1', 'feat: t2']);
+  noError(r);
 }));
 
 test('a dropped earlier task does not block landing', () => withRig({ planText: WT_PLAN }, (r) => {
@@ -1690,16 +1697,15 @@ test('a dropped earlier task does not block landing', () => withRig({ planText: 
   assert.equal(r.taskState(2).status, 'done');
 }));
 
-test('without tracking an earlier task is done when its complete line is in the ledger', () => withRig({ store: false, planText: WT_PLAN }, (r) => {
+test('without tracking a later worktree task lands while an earlier one is open', () => withRig({ store: false, planText: WT_PLAN }, (r) => {
   startStack(r);
   wtOpen(r, 1);
   wtOpen(r, 2);
   wtReview(r, 2);
-  assert.equal(closeOf(r, 2).status, 3);
+  assert.equal(closeOf(r, 2).status, 0);
   wtReview(r, 1);
   ok(closeOf(r, 1));
-  ok(closeOf(r, 2));
-  assert.equal(r.ledger().filter((l) => l.startsWith('Task 2: complete')).length, 1);
+  for (const n of [1, 2]) assert.equal(r.ledger().filter((l) => l.startsWith(`Task ${n}: complete`)).length, 1, `T${n}`);
 }));
 
 test('a rerun after the landing skips it (Landed line) and finishes', () => withRig({ planText: WT_PLAN }, (r) => {
@@ -2331,46 +2337,133 @@ const mainReviewed = (r, n) => {
   return head;
 };
 
-test('a worktree task opened while a main-checkout task has an unreviewed commit is based at the last closed commit, not at that commit', () => withRig({ planText: WT_PLAN }, (r) => {
+test('task-open --worktree is refused while a task built in the main checkout is open', () => withRig({ planText: WT_PLAN }, (r) => {
   startStack(r);
-  const tip = r.head();
-  const o1 = open(r, 1);
-  assert.equal(o1.base, tip);
-  const unreviewed = r.commit('src/t1.js', 'export const t1 = 1;\n', 'feat: t1');
-  assert.notEqual(unreviewed, tip);
+  open(r, 1);
+  const res = r.run('task-open', r.plan, '2', '--worktree');
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /^T2 cannot open in a worktree while T1 is built in the main checkout, where a task runs alone: open T2 once it is closed$/m);
+  assert.equal(r.ledger().some((l) => l.startsWith('BASE: T2 ')), false, 'a BASE line was written');
+  assert.match(r.ledger().at(-1), /^Error: task-open T2 — exit 3 — /);
+  assert.equal(existsSync(wtPath(r, 2)), false, 'a worktree was made');
+  assert.equal(r.taskState(2).status, 'pending');
 
-  const o2 = wtOpen(r, 2);
-  assert.equal(o2.base, tip, 'BASE is the closed commit, not the main-checkout task commit');
-  assert.equal(wtGit(r, 2, 'rev-parse', 'HEAD').trim(), tip, 'the worktree starts at the closed commit');
-  assert.equal(existsSync(join(wtPath(r, 2), 'src', 't1.js')), false);
-  assert.ok(r.ledger().includes(`BASE: T2 ${tip}`));
-  assert.equal(r.ledger().includes(`BASE: T2 ${unreviewed}`), false);
-  assert.equal(out(ok(r.run('task-open', r.plan, '2', '--worktree'))).base, tip, 'a rerun reads the recorded BASE');
-
-  // The worktree task is reviewed on its own commits only.
-  const h2 = wtReview(r, 2);
-  const pkg = readFileSync(join(r.workspace, `review-${sha7(tip)}..${sha7(h2)}.diff`), 'utf8');
-  assert.match(pkg, /src\/t2\.js/);
-  assert.doesNotMatch(pkg, /src\/t1\.js/, "the other task's commit is in the review package");
-
-  // T1 is closed (squashed on the phase branch), then T2 lands on it: BASE is an ancestor of both and the merge base is BASE.
+  // Once T1 is closed, T2 opens at the commit T1 closed at.
+  r.commit('src/t1.js', 'export const t1 = 1;\n', 'feat: t1');
   ok(r.run('task-prep', r.plan, '1'));
   save(r, 1, 'safety-reviewer', 1, footerText('safety-reviewer'));
   save(r, 1, 'spec-reviewer', 1, footerText('spec-reviewer'));
   const c1 = out(ok(closeOf(r, 1)));
+  assert.equal(wtOpen(r, 2).base, c1.sha);
+}));
+
+test('task-open in the main checkout is refused while another task of the phase is open', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  wtOpen(r, 2);
+  const res = r.run('task-open', r.plan, '1');
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /^T1 runs in the main checkout, and a task there runs alone: T2 is open in this phase; open T1 with --worktree, or once it is closed$/m);
+  assert.equal(r.taskState(1).status, 'pending');
+  assert.equal(r.ledger().some((l) => l.startsWith('BASE: T1 ')), false, 'a BASE line was written');
+  assert.match(r.ledger().at(-1), /^Error: task-open T1 — exit 3 — /);
+
+  wtReview(r, 2);
+  ok(closeOf(r, 2));
+  assert.deepEqual(keys(ok(r.run('task-open', r.plan, '1'))), ['brief', 'report', 'base']);
+}));
+
+test('task-open names every open task, and each refusal needs the tasks it names', () => withRig({ planText: T3_PLAN }, (r) => {
+  startStack(r);
+  wtOpen(r, 1);
+  wtOpen(r, 2);
+  const res = r.run('task-open', r.plan, '3');
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /^T3 runs in the main checkout, and a task there runs alone: T1, T2 are open in this phase; open T3 with --worktree, or once it is closed$/m);
+  // A worktree task opens beside worktree tasks.
+  assert.equal(wtOpen(r, 3).workdir, wtPath(r, 3));
+}));
+
+test('a task blocked in the tracking ledger still holds its work: a main-checkout task is refused', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  wtOpen(r, 2);
+  ok(r.triqual('tasks', 'block', 'T2', 'waiting for a decision', '--plan', PLAN_NAME));
+  assert.equal(r.taskState(2).status, 'blocked');
+  const res = r.run('task-open', r.plan, '1');
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /T1 runs in the main checkout, and a task there runs alone: T2 is open in this phase/);
+}));
+
+test("a failing Test file at the earlier task's landing is undone to the tip that holds the later task, and its sequential re-run closes", () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  wtOpen(r, 1);
+  wtOpen(r, 2);
+  wtReview(r, 2);
   const c2 = out(ok(closeOf(r, 2)));
-  assert.equal(r.git('rev-parse', `${c2.sha}^`).trim(), c1.sha);
-  assert.ok(['src/t1.js', 'src/t2.js'].every((f) => tracked(r, 'HEAD').includes(f)), tracked(r, 'HEAD').join('\n'));
-  assert.equal(r.taskState(2).status, 'done');
+  wtReview(r, 1, { test: FAILING_TEST });
+  const res = closeOf(r, 1);
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.equal(r.head(), c2.sha, 'the phase branch is back at the tip that holds T2');
+  assert.deepEqual(r.ledger().slice(-3, -1), [`BASE: T1 ${c2.sha}`, 'Task 1: landing conflict — re-run sequential']);
+
+  assert.equal(open(r, 1).base, c2.sha);
+  r.commit('src/t1.js', 'export const t1 = 1;\n', 'feat: t1 again');
+  ok(r.run('task-prep', r.plan, '1'));
+  save(r, 1, 'safety-reviewer', 1, footerText('safety-reviewer'));
+  save(r, 1, 'spec-reviewer', 1, footerText('spec-reviewer'));
+  const c1 = out(ok(closeOf(r, 1)));
+  assert.equal(r.git('rev-parse', `${c1.sha}^`).trim(), c2.sha);
+}));
+
+test('a stop with the later task landed and the earlier one awaiting landing resumes and closes the earlier one', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  wtOpen(r, 1);
+  wtOpen(r, 2);
+  wtReview(r, 1);
+  wtReview(r, 2);
+  r.appendLedger('Task 1: awaiting landing');
+  const c2 = out(ok(closeOf(r, 2)));
+  const c1 = out(ok(closeOf(r, 1)));
+  assert.equal(r.git('rev-parse', `${c1.sha}^`).trim(), c2.sha);
   noError(r);
 }));
 
-test('a worktree task is based at the phase tip when the main-checkout task has no commit yet', () => withRig({ planText: WT_PLAN }, (r) => {
+test('a landing is refused while another task of the phase has a Landed line with no Tested line', () => withRig({ planText: WT_PLAN }, (r) => {
   startStack(r);
-  const tip = r.head();
-  open(r, 1);
-  assert.equal(wtOpen(r, 2).base, tip);
-  assert.equal(wtGit(r, 2, 'rev-parse', 'HEAD').trim(), tip);
+  wtOpen(r, 1);
+  wtOpen(r, 2);
+  wtReview(r, 1);
+  const landed = crashedAfterLanding(r, 1);
+  editLedger(r, (l) => !l.startsWith('Tested: T1 '));
+  wtReview(r, 2);
+  const res = closeOf(r, 2);
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /^T2 cannot land while the landing of T1 \([0-9a-f]{7}\) has no Tested: line: run task-close for T1 first$/m);
+  assert.ok(res.stderr.includes(`(${sha7(landed)})`), res.stderr);
+  assert.match(r.ledger().at(-1), /^Error: task-close T2 — exit 3 — /);
+  assert.equal(r.head(), landed, 'T2 landed');
+  assert.deepEqual(landedOf(r, 2), []);
+
+  ok(closeOf(r, 1));
+  const c2 = out(ok(closeOf(r, 2)));
+  assert.equal(r.git('rev-parse', `${c2.sha}^`).trim(), landed);
+}));
+
+test('an undone task counts as built in the main checkout until its sequential re-run closes', () => withRig({ planText: T3_PLAN }, (r) => {
+  startStack(r);
+  wtOpen(r, 1);
+  wtOpen(r, 2);
+  wtReview(r, 1, { test: FAILING_TEST });
+  assert.equal(closeOf(r, 1).status, 3, 'the landing is undone');
+  const third = r.run('task-open', r.plan, '3', '--worktree');
+  assert.equal(third.status, 3, `${third.stdout}\n${third.stderr}`);
+  assert.match(third.stderr, /T3 cannot open in a worktree while T1 is built in the main checkout/);
+  const again = r.run('task-open', r.plan, '1');
+  assert.equal(again.status, 3, `${again.stdout}\n${again.stderr}`);
+  assert.match(again.stderr, /T1 runs in the main checkout, and a task there runs alone: T2 is open/);
+
+  wtReview(r, 2);
+  ok(closeOf(r, 2));
+  ok(r.run('task-open', r.plan, '1'));
 }));
 
 test('a worktree task is based at the phase tip once the main-checkout task is closed', () => withRig({ planText: WT_PLAN }, (r) => {
@@ -2381,12 +2474,13 @@ test('a worktree task is based at the phase tip once the main-checkout task is c
   assert.equal(wtGit(r, 2, 'rev-parse', 'HEAD').trim(), c1.sha);
 }));
 
-test('a worktree task does not count as an unreviewed main-checkout task, and an earlier worktree task BASE is not reused', () => withRig({ planText: WT_PLAN.replace('- Create: `src/t3.js`\n', '- Create: `src/t3.js`\n- Test: `test/three.test.mjs`\n') }, (r) => {
+test('a worktree task does not count as an unreviewed main-checkout task, and an earlier worktree task BASE is not reused', () => withRig({ planText: T3_PLAN }, (r) => {
   startStack(r);
   const tip = r.head();
   assert.equal(wtOpen(r, 2).base, tip);
   wtCommit(r, 2, 'src/t2.js', 'export const t2 = 2;\n');
-  mainReviewed(r, 1);
+  wtOpen(r, 1);
+  wtReview(r, 1);
   const c1 = out(ok(closeOf(r, 1)));
   // T2's worktree (BASE = tip) is open with commits not on the branch, and its BASE is older than the closed T1: T3 starts at c1.
   assert.equal(wtOpen(r, 3).base, c1.sha, "an open worktree task's BASE is not a closed commit of the tip");
@@ -2427,15 +2521,15 @@ test('a second task-close right after an undone landing is refused, never closed
 test('a reopened landed worktree task is squashed from the commit before its landing, keeping the earlier task', () => withRig({ planText: WT_PLAN }, (r) => {
   startStack(r);
   const p0 = r.head();
-  open(r, 1);
+  wtOpen(r, 1);
   assert.equal(wtOpen(r, 2).base, p0, 'T2 opened while T1 ran: BASE is the phase tip before T1');
-  mainReviewed(r, 1);
+  wtReview(r, 1);
   const c1 = out(ok(closeOf(r, 1)));
   wtReview(r, 2);
   const c2 = out(ok(closeOf(r, 2)));
   assert.equal(r.git('rev-parse', `${c2.sha}^`).trim(), c1.sha);
 
-  // The Phase check failed: the main session reopens the last task (SKILL step 7) and the fix loop runs by hand.
+  // The Phase check failed: the main session reopens the task whose commit is the phase tip (SKILL step 7) and the fix loop runs by hand.
   ok(r.triqual('tasks', 'reopen', 'T2', 'Phase check failed', '--plan', r.plan));
   r.appendLedger('Task 2: reopened — Phase check failed — node --test');
   r.commit('src/t2.js', 'export const t2 = 22;\n', 'fix: t2');
@@ -2527,7 +2621,8 @@ test('a worktree task with no commits closes at the phase tip, and a rerun of th
   startStack(r);
   const tip = r.head();
   assert.equal(wtOpen(r, 2).base, tip);
-  mainReviewed(r, 1);
+  wtOpen(r, 1);
+  wtReview(r, 1);
   const c1 = out(ok(closeOf(r, 1)));
   assert.notEqual(c1.sha, tip);
 
@@ -2548,14 +2643,14 @@ test('a worktree task with no commits closes at the phase tip, and a rerun of th
 test('a reopened worktree task that made no commit is squashed from the phase tip it closed at, never folding the tasks closed since it opened', () => withRig({ planText: WT_PLAN }, (r) => {
   startStack(r);
   const p0 = r.head();
-  open(r, 1);
+  wtOpen(r, 1);
   assert.equal(wtOpen(r, 2).base, p0, 'T2 opened while T1 ran: its BASE is the phase tip before T1');
-  mainReviewed(r, 1);
+  wtReview(r, 1);
   const c1 = out(ok(closeOf(r, 1)));
   const c2 = out(ok(closeOf(r, 2)));
   assert.equal(c2.sha, c1.sha, 'T2 made no commit: it closed at the phase tip');
 
-  // The Phase check failed: the main session reopens the last task (SKILL step 7) and the fix loop runs by hand.
+  // The Phase check failed: the main session reopens the task whose commit is the phase tip (SKILL step 7) and the fix loop runs by hand.
   ok(r.triqual('tasks', 'reopen', 'T2', 'Phase check failed', '--plan', r.plan));
   r.appendLedger('Task 2: reopened — Phase check failed — node --test');
   r.commit('src/t2.js', 'export const t2 = 22;\n', 'fix: t2');

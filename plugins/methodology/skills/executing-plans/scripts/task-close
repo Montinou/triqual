@@ -32,8 +32,9 @@
 // names is the worktree's, and the close LANDS the task instead of squashing:
 //   - --head must be the tip of the task's branch: the close removes the branch, so a --head behind the tip (commits no reviewer saw
 //     come after it) is refused (exit 3);
-//   - it refuses (exit 3, and no `Error:` line: it is a wait, not a failure) while an earlier task of the phase is not `done` or
-//     `dropped` in the tracking ledger (not opted in: has no `Task <M>: complete` line);
+//   - it lands as soon as its review is clean, whatever the other tasks of the phase are doing (the order they land in is the order
+//     they close in); it refuses (exit 3) only while another task of the phase has a `Landed:` line (no undo after it) with no
+//     `Tested:` line, a landing a crash cut short: close that task first;
 //   - it skips the landing when a `Landed: T<N> <sha>` line stands (no undo has followed it); the closed head is then that sha, whatever
 //     --head says, and the reviewed-head check above is not repeated (it ran before the landing). A landing that stands is trusted
 //     only after two checks, since a crash can leave it half done: the sha must still be an ancestor of the active phase branch
@@ -66,8 +67,8 @@
 //     1 after everything is recorded, and a rerun repeats only the removal) and its branch (`git branch -D`) and checks that
 //     `git worktree list` no longer shows it; a rerun repeats only what is left.
 //
-// The wait above, and the whole landing, apply to worktree tasks only: a task closed in place (sequential, `stack.mjs squash`) is
-// closed in the order the controller runs it, as before.
+// The landing applies to worktree tasks only: a task closed in place (sequential, `stack.mjs squash`) is closed in the order the
+// controller runs it, as before (task-open lets a task built in the main checkout run alone, so no other task of its phase is open then).
 //
 // Ledger line forms this script adds to the plan's list (SKILL.md's ledger vocabulary is outside this task's files, so the form is
 // recorded here): `Tested: T<N> <sha>`.
@@ -90,7 +91,7 @@
 // after the marker of the attempt before. A stale or missing one is an Error naming it: attempt 1's counts are never reused.
 //
 // Exit codes: 0 ok, 2 usage / no such plan file / bad --head, 3 refused (linked worktree, unknown task, no BASE, commits after the last
-// Prep, a move or the squash refused, an earlier task not landed, an undone landing), 1 any other failure. A failure appends `Error: task-close T<N> — exit <code> — <cause>` to the ledger.
+// Prep, a move or the squash refused, another task's landing with no Tested: line, an undone landing), 1 any other failure. A failure appends `Error: task-close T<N> — exit <code> — <cause>` to the ledger.
 //
 // Dynamic imports only: the file has no extension, so Node may load it as CommonJS or as an ES module depending on the
 // nearest package.json.
@@ -267,11 +268,14 @@
     if (!resumed && landed === null && wtTip !== null && head !== wtTip) {
       throw new ScriptError(EXIT_REFUSED, `--head ${head.slice(0, 7)} is not the tip of ${wt.branch} (${wtTip.slice(0, 7)}): the commits after it would be thrown away with the branch; review the tip with task-prep --head, or close without --head`);
     }
-    // Landing is in plan order: a task whose turn has not come waits (exit 3, no Error line: nothing failed).
+    // A task lands as soon as its review is clean, on whatever the phase branch holds, but never on a landing whose Test files have not
+    // passed: a `Landed:` line with no `Tested:` line is a landing a crash cut short, and the close of its task finishes it first.
     if (worktreeTask && !resumed && landed === null) {
-      const waiting = common.earlierUnfinished(plan, planName, n, ledger);
-      if (waiting.length > 0) {
-        throw new ScriptError(EXIT_REFUSED, `T${n} waits for ${waiting.map((m) => `T${m}`).join(', ')}: worktree tasks land in plan order, close it again once ${waiting.length === 1 ? 'it is' : 'they are'} done or dropped`, { logged: false });
+      for (const m of common.phaseTasks(plan, n).filter((t) => t !== n)) {
+        const sha = common.lastLanded(ledger, m);
+        if (sha !== null && !common.isTested(ledger, m, sha)) {
+          throw new ScriptError(EXIT_REFUSED, `T${n} cannot land while the landing of T${m} (${sha.slice(0, 7)}) has no Tested: line: run task-close for T${m} first`);
+        }
       }
     }
     const noCommits = resumed ? resumedNoCommits : Number(common.git(['rev-list', '--count', `${base}..${head}`])) === 0;
@@ -661,7 +665,7 @@
     process.stdout.write(`sha: ${sha}\nrecord: ${said}\n`);
   } catch (e) {
     const err = e instanceof ScriptError ? e : new ScriptError(1, `${STEP}: ${e.message}`);
-    common.fail(STEP, n, err.code, err.message, err.logged ? workspace : undefined);
+    common.fail(STEP, n, err.code, err.message, workspace);
   }
 })().catch((e) => {
   process.stderr.write(`task-close: ${e.stack ?? e}\n`);

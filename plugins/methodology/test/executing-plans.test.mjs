@@ -2428,7 +2428,7 @@ test('task-open enforces the coordinator start rule through the shared earlier-t
   const open = readFileSync(join(SCRIPTS, 'task-open'), 'utf8');
   assert.match(open, /!worktree && planTask\.task\.role === 'coordinator'/, 'task-open does not look at a coordinator task');
   assert.match(open, /common\.earlierUnfinished\(/, 'task-open does not use the earlier-task check');
-  assert.match(readFileSync(join(SCRIPTS, 'task-close'), 'utf8'), /common\.earlierUnfinished\(/, 'task-close does not use the shared earlier-task check');
+  assert.doesNotMatch(readFileSync(join(SCRIPTS, 'task-close'), 'utf8'), /common\.earlierUnfinished\(/, 'task-close still waits for earlier tasks');
 });
 
 test('SKILL, prompt and role agree on who runs a coordinator task: the main session one that edits a file, the orchestrator one that edits none', () => {

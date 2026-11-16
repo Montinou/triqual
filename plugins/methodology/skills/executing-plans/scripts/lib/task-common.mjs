@@ -21,14 +21,12 @@ export const EXIT_OTHER = 1;
 export const EXIT_USAGE = 2;
 export const EXIT_REFUSED = 3;
 
-// A failed step with the exit code the script ends with. `logged: false` is a refusal that is a wait, not a failure (a task
-// that must wait for an earlier one): the script exits with its code and cause but appends no `Error:` line.
+// A failed step with the exit code the script ends with.
 export class ScriptError extends Error {
-  constructor(code, message, { logged = true } = {}) {
+  constructor(code, message) {
     super(message);
     this.name = 'ScriptError';
     this.code = code;
-    this.logged = logged;
   }
 }
 
@@ -283,8 +281,8 @@ export function landingTestTimeoutMs() {
   return Number(raw);
 }
 
-// The numbers of the tasks before T<N> in its phase (a plan with no phases is one phase of every task).
-export function earlierTasks(planFile, n) {
+// The ids (`T3`) of T<N>'s phase in plan order, T<N> included (a plan with no phases is one phase of every task).
+function phaseIds(planFile, n) {
   let phases;
   try {
     phases = readPhases(readFileSync(planFile, 'utf8'), basename(planFile).replace(/\.md$/, '')).phases;
@@ -294,16 +292,40 @@ export function earlierTasks(planFile, n) {
   }
   const phase = phases.find((p) => p.tasks.includes(`T${n}`));
   if (!phase) throw new ScriptError(EXIT_REFUSED, `T${n} is in no phase of ${planFile}`);
-  return phase.tasks.slice(0, phase.tasks.indexOf(`T${n}`)).map((id) => Number(id.slice(1)));
+  return phase.tasks;
+}
+
+// The numbers of the tasks of T<N>'s phase in plan order, T<N> included.
+export const phaseTasks = (planFile, n) => phaseIds(planFile, n).map((id) => Number(id.slice(1)));
+
+// The numbers of the tasks before T<N> in its phase.
+export function earlierTasks(planFile, n) {
+  const ids = phaseIds(planFile, n);
+  return ids.slice(0, ids.indexOf(`T${n}`)).map((id) => Number(id.slice(1)));
 }
 
 // The earlier tasks of T<N>'s phase that are neither done nor dropped: in the tracking ledger when the repo is opted in, else those
-// with no `Task <M>: complete` line. A worktree task's landing and a coordinator task's start both wait for this list to be empty.
+// with no `Task <M>: complete` line. A coordinator task's start waits for this list to be empty.
 export function earlierUnfinished(plan, planName, n, ledger) {
   const statuses = taskStatuses(planName);
   return earlierTasks(plan, n).filter((m) => (statuses
     ? !['done', 'dropped'].includes(statuses[`T${m}`])
     : !ledger.some((l) => l.startsWith(`Task ${m}: complete (commits `))));
+}
+
+// The other tasks of T<N>'s phase, in plan order, that have a `BASE: T<M>` line and are started and not closed, each as { n, inPlace }:
+// in the tracking ledger `in_progress`, `in_review` or `blocked` (a blocked task still holds its work), else (not opted in) with no
+// `Task <M>: complete (commits ` line. `inPlace` is true for a task built in the main checkout: it has no landing that stands and no
+// worktree branch (an undone task, whose worktree is gone, is in place until its sequential re-run closes). A task in the main
+// checkout runs alone: task-open refuses to open any task of the phase beside one, and refuses a main-checkout task beside any open one.
+export function openTasks(planFile, planName, n, ledger) {
+  const statuses = taskStatuses(planName);
+  const stem = planName.replace(/\.md$/, '');
+  return phaseTasks(planFile, n)
+    .filter((m) => m !== n && lastBase(ledger, m) !== null && (statuses
+      ? ['in_progress', 'in_review', 'blocked'].includes(statuses[`T${m}`])
+      : !ledger.some((l) => l.startsWith(`Task ${m}: complete (commits `))))
+    .map((m) => ({ n: m, inPlace: lastLanded(ledger, m) === null && commitOf(`refs/heads/wt/${stem}-t${m}`) === null }));
 }
 
 // The tier of the last `Tier: T<N> <tier>` / `Tier raised: T<N> <from> → <to>` line of the task, else null.
