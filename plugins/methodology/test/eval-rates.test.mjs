@@ -114,6 +114,16 @@ test('the command prints both tables and exits 0: a bucket of five shows a share
   assert.doesNotMatch(oct[0], /%/);
   assert.ok(r.out.split('\n').some((l) => l.includes('unknown') && l.includes('1/2')));
   assert.equal(r.err, '');
+  assert.ok(!r.out.includes('no verdicts under the current version'), r.out);
+});
+
+test('a category with no verdict under the current version gets one line and no table row', async () => {
+  const f = fixture();
+  writeFileSync(join(f.evals, 'judgments', 'owner-chased-progress.jsonl'), `${JSON.stringify({ sessionId: 's0', category: 'owner-chased-progress', result: 'fail', promptHash: 'old' })}\n`);
+  const r = await run([], f.env);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.out.split('\n').filter((l) => l.includes('no verdicts')), ['owner-chased-progress: no verdicts under the current version']);
+  assert.ok(!r.out.split('\n').some((l) => l.startsWith('owner-chased-progress ') && l.includes('2026-')), r.out);
 });
 
 test('--help, an unknown argument, and the dispatcher', async () => {

@@ -13,7 +13,7 @@ const tmp = () => mkdtempSync(join(tmpdir(), 'cm-improve-'));
 const mode = (f) => statSync(f).mode & 0o777;
 const turn = (role, text, at) => JSON.stringify({ type: role, timestamp: at, cwd: '/home/x/proj', entrypoint: 'cli', message: { role, content: text } });
 const MODEL = 'claude-haiku-5-5';
-const KEYS = ['added', 'at', 'errors', 'judged', 'limits', 'pluginVersion', 'proposed', 'rates', 'refereed', 'revise', 'scores'];
+const KEYS = ['added', 'at', 'errors', 'failed', 'judged', 'limits', 'paidOnly', 'pluginVersion', 'proposed', 'rates', 'refereed', 'revise', 'scores'];
 
 const TAXONOMY = {
   judgeExclude: [],
@@ -76,12 +76,12 @@ function stub({ limited = () => false } = {}) {
 }
 
 let clock = Date.parse('2026-11-16T12:00:00Z');
-async function run(f, argv, spawn) {
+async function run(f, argv, spawn, extra = {}) {
   let out = '';
   let err = '';
   clock += 60_000;
   const code = await main(argv, {
-    env: f.env, spawn, judgesDir: f.judges, referencePrompt: f.reference, refereePrompt: f.referee, platform: 'linux', pluginVersion: '9.9.9',
+    env: f.env, spawn, judgesDir: f.judges, referencePrompt: f.reference, refereePrompt: f.referee, platform: 'linux', pluginVersion: '9.9.9', ...extra,
     now: () => new Date(clock), stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } },
   });
   return { code, out, err };
@@ -92,7 +92,7 @@ const reports = (f) => {
 };
 const reportOf = (f) => JSON.parse(readFileSync(join(f.evals, 'rounds', reports(f).at(-1)), 'utf8'));
 
-test('a first run writes one report with the eleven keys, mode 0600, and exits 0; a second run over an older unsampled session makes no call', async () => {
+test('a first run writes one report with the thirteen keys, mode 0600, and exits 0; a second run over an older unsampled session makes no call', async () => {
   const f = fixture();
   const s = stub();
   const r = await run(f, [], s.spawn);
@@ -104,7 +104,10 @@ test('a first run writes one report with the eleven keys, mode 0600, and exits 0
   const rep = JSON.parse(readFileSync(file, 'utf8'));
   assert.deepEqual(Object.keys(rep).sort(), KEYS);
   assert.deepEqual([rep.added, rep.proposed, rep.judged, rep.refereed, rep.errors, rep.limits, rep.pluginVersion], [1, 3, 3, 3, 0, false, '9.9.9']);
-  assert.ok(Array.isArray(rep.scores) && Array.isArray(rep.rates) && Array.isArray(rep.revise));
+  assert.ok(Array.isArray(rep.scores) && Array.isArray(rep.revise));
+  assert.ok(Array.isArray(rep.rates.month) && Array.isArray(rep.rates.version));
+  assert.deepEqual(Object.keys(rep.rates).sort(), ['month', 'version']);
+  assert.deepEqual([rep.failed, rep.paidOnly], [[], false]);
   assert.equal(rep.scores.length, 2);
   assert.deepEqual(rep.scores.map((x) => x.category).sort(), ['owner-chased-progress', 'stalls']);
   assert.deepEqual(readFileSync(f.sampleFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l).sessionId), ['s1', 's2', 'n1']);
@@ -144,7 +147,7 @@ test('a stub that returns a limit on every call gives exit 3, limits true, and a
   assert.equal(r.code, 3, r.err);
   const rep = reportOf(f);
   assert.equal(rep.limits, true);
-  assert.ok(Array.isArray(rep.scores) && Array.isArray(rep.rates));
+  assert.ok(Array.isArray(rep.scores) && Array.isArray(rep.rates.month) && Array.isArray(rep.rates.version));
   assert.equal(rep.proposed, 0);
 });
 
@@ -174,6 +177,66 @@ test('a chain of paid entries only, without --paid: no call, limits false, the n
   assert.equal(s.calls.length, 0);
   assert.equal(reportOf(f).limits, false);
   assert.ok(r.out.includes(PAID_NOTE), r.out);
+  const rep = reportOf(f);
+  assert.equal(rep.paidOnly, true);
+  assert.ok(rep.failed.includes('review propose'), rep.failed.join());
+  assert.ok(r.out.includes(`steps that returned non-zero: ${rep.failed.join(', ')}`), r.out);
+});
+
+// ---- a failed step is visible in the exit code, the summary and the report ----
+
+const failedLine = (out) => out.split('\n').find((l) => l.startsWith('steps that returned non-zero')) ?? '';
+const dirAt = (p) => mkdirSync(p, { recursive: true });
+
+test('a sample step that returns non-zero: exit 3, failed and the summary name it, the report exists, later steps ran', async () => {
+  const f = fixture();
+  dirAt(`${f.sampleFile}.${process.pid}.tmp`); // the draw cannot write its temp file: it returns 1
+  const s = stub();
+  const r = await run(f, [], s.spawn);
+  assert.equal(r.code, 3, r.err);
+  assert.equal(reports(f).length, 1);
+  const rep = reportOf(f);
+  assert.deepEqual(rep.failed, ['review sample']);
+  assert.equal(rep.paidOnly, false);
+  assert.equal(rep.added, 0);
+  assert.ok(failedLine(r.out).includes('review sample'), r.out);
+  assert.deepEqual([rep.proposed, rep.judged, rep.refereed], [2, 2, 2]);
+  assert.equal(rep.scores.length, 2);
+});
+
+test('a sample step that throws: exit 3, failed and the summary name it, the report exists, later steps ran', async () => {
+  const f = fixture();
+  const s = stub();
+  const r = await run(f, [], s.spawn, { commands: { review: async (argv, deps) => { if (argv[0] === 'sample') throw new Error('boom'); return (await import('../cli/eval-review.mjs')).main(argv, deps); } } });
+  assert.equal(r.code, 3, r.err);
+  assert.equal(reports(f).length, 1);
+  const rep = reportOf(f);
+  assert.deepEqual(rep.failed, ['review sample']);
+  assert.ok(failedLine(r.out).includes('review sample'), r.out);
+  assert.deepEqual([rep.added, rep.proposed, rep.judged], [0, 2, 2]);
+});
+
+test('a validate that fails is in failed, the summary and the exit code', async () => {
+  const f = fixture();
+  dirAt(join(f.evals, 'validation.json')); // validation.json cannot be rewritten
+  const s = stub();
+  const r = await run(f, [], s.spawn);
+  assert.equal(r.code, 3, r.err);
+  assert.deepEqual(reportOf(f).failed, ['validate stalls']);
+  assert.ok(failedLine(r.out).includes('validate stalls'), r.out);
+});
+
+test('a scores append that throws is in failed and the report is still written with every score', async () => {
+  const f = fixture();
+  dirAt(join(f.evals, 'scores.jsonl')); // the append throws
+  const s = stub();
+  const r = await run(f, [], s.spawn);
+  assert.equal(r.code, 3, r.err);
+  assert.equal(reports(f).length, 1);
+  const rep = reportOf(f);
+  assert.deepEqual(rep.failed, ['score stalls', 'score owner-chased-progress']);
+  assert.equal(rep.scores.length, 2);
+  assert.ok(failedLine(r.out).includes('score stalls'), r.out);
 });
 
 test('no sample: exit 1, a message naming the sample command, no report', async () => {

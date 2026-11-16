@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { checkVersion } from './lib/eval-checks.mjs';
 import { JudgePromptError, spawnCapture } from './lib/eval-judge.mjs';
+import { verdictsOf } from './lib/eval-improve.mjs';
 import { evalsDir } from './lib/eval-paths.mjs';
 import { ratesTables } from './lib/eval-rates.mjs';
 import { currentVersion } from './lib/eval-score.mjs';
@@ -28,22 +29,14 @@ const USAGE = [
   '      sessions of the review sample with a pass or fail verdict under the category\'s current version: by month of',
   '      the session start (YYYY-MM) and by methodology version ("unknown" when the session has none). Each row is',
   '      category, bucket, n, fail/n and, from 5 sessions, the failure share with its 90% Wilson interval; a bucket',
-  '      under 5 sessions shows fail/n and no share. Exit 0 when done.',
+  '      under 5 sessions shows fail/n and no share. A category with no such session gets one line after the tables:',
+  '      "<id>: no verdicts under the current version". Exit 0 when done.',
   '  triqual eval rates --help',
   '',
 ].join('\n');
 
 const clip = (s) => (s.length > 40 ? `${s.slice(0, 40)}...` : s);
 const pct = (x) => `${(x * 100).toFixed(1)}%`;
-
-// sessionId -> result of the last line of `version` for `category`.
-function verdictsOf(judgments, category, version) {
-  const out = new Map();
-  for (const j of judgments) {
-    if (j?.promptHash === version && (j.category === undefined || j.category === category) && typeof j.sessionId === 'string') out.set(j.sessionId, j.result);
-  }
-  return out;
-}
 
 function table(title, label, rows) {
   const out = [title, `${'category'.padEnd(28)} ${label.padEnd(10)} ${'n'.padStart(4)} ${'fail/n'.padStart(7)} ${'share'.padStart(7)}  90% interval`];
@@ -90,6 +83,8 @@ export async function main(argv, {
 
   const { month, version: byVersion } = ratesTables({ sample, sessions, categories, verdicts });
   const out = [...table('failure rate by month', 'month', month), '', ...table('failure rate by methodology version', 'version', byVersion)];
+  const counted = new Set(month.map((r) => r.category));
+  for (const c of categories) if (!counted.has(c.id)) out.push(`${c.id}: no verdicts under the current version`);
   stdout.write(`${out.join('\n')}\n`);
   return 0;
 }
