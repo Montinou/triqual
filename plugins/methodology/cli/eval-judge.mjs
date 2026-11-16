@@ -13,7 +13,6 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { AuthError, ChainExhausted, authPath, childEnv, loadChain, withChain } from './lib/eval-auth.mjs';
-import { brandDir } from './lib/brand.mjs';
 import { ensureDir, evalsDir, transcriptsRoot } from './lib/eval-paths.mjs';
 import { JudgePromptError, judgeSession, loadJudgePrompt, redactSecrets, spawnCapture } from './lib/eval-judge.mjs';
 import { readJsonl } from './lib/eval-store.mjs';
@@ -33,9 +32,9 @@ const USAGE = [
   '      Judges each session of <file> (JSONL with sessionId, or one id per line) with the judge prompt of the',
   '      category (plugins/methodology/evals/judges/<id>.md, front matter model: <full model id>) and appends',
   '      { sessionId, category, result, promptHash, model, auth, at } to <evals>/judgments/<id>.jsonl, once per',
-  '      session and prompt hash. A session under a judgeExclude pattern of the taxonomy (TRIQUAL_TAXONOMY_FILE, else',
-  '      ~/.config/triqual/taxonomy.json) is recorded undecided/excluded and never sent to a model. Transcript text is',
-  '      redacted for secrets before it is sent. The model credentials come from the chain in TRIQUAL_EVAL_AUTH_FILE,',
+  '      session and prompt hash. A session under a judgeExclude pattern of the taxonomy (<evals>/taxonomy.json) is',
+  '      recorded undecided/excluded and never sent to a model. Transcript text is redacted for secrets before it is',
+  '      sent. The model credentials come from the chain in TRIQUAL_EVAL_AUTH_FILE,',
   '      else ~/.config/triqual/eval-auth.json (no file: the ambient login). A usage limit or an API error writes no',
   '      line; the session is judged by a later run. Only category checks of kind "judge" are accepted.',
   '      Last line: judged <n>: <entry> <k>[, ...]; errors <e>; left <m>. Exit 0 when every session got a line, else 1.',
@@ -72,8 +71,6 @@ function readIds(file) {
   return ids;
 }
 
-const taxonomyPath = (env, home) => env.TRIQUAL_TAXONOMY_FILE || join(brandDir(env.XDG_CONFIG_HOME || join(home, '.config')), 'taxonomy.json');
-
 function appendLine(file, row) {
   appendFileSync(file, `${JSON.stringify(row)}\n`, { mode: 0o600 });
   chmodSync(file, 0o600);
@@ -95,7 +92,7 @@ export async function main(argv, {
   const evals = evalsDir(env, home);
   let taxonomy;
   try {
-    taxonomy = loadTaxonomy(taxonomyPath(env, home), { labels: loadLabelCategories(join(evals, 'label-categories.jsonl')) });
+    taxonomy = loadTaxonomy(join(evals, 'taxonomy.json'), { labels: loadLabelCategories(join(evals, 'label-categories.jsonl')) });
   } catch (err) {
     if (err instanceof TaxonomyError) return fail(err.message);
     throw err;

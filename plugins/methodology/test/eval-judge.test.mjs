@@ -255,8 +255,7 @@ function fixture({ dir = tmp(), exclude = [], sessions = ['s1', 's2'], projects 
   }
   writeFileSync(join(evals, 'sessions.jsonl'), `${stored.join('\n')}\n`);
   writeFileSync(join(evals, 'label-categories.jsonl'), ['a', 'b', 'c'].map((id) => JSON.stringify({ sessionId: id, categories: ['stalls'] })).join('\n'));
-  const taxonomy = join(dir, 'taxonomy.json');
-  writeFileSync(taxonomy, JSON.stringify({
+  writeFileSync(join(evals, 'taxonomy.json'), JSON.stringify({
     judgeExclude: exclude,
     categories: [
       { id: 'stalls', name: 'Stalls', definition: 'd', examples: ['a', 'b', 'c'], check: 'judge' },
@@ -271,7 +270,7 @@ function fixture({ dir = tmp(), exclude = [], sessions = ['s1', 's2'], projects 
   const sessionsFile = join(dir, 'ids.jsonl');
   writeFileSync(sessionsFile, `${sessions.map((id) => JSON.stringify({ sessionId: id })).join('\n')}\n`);
   const env = {
-    HOME: home, PATH: process.env.PATH, TRIQUAL_EVALS_DIR: evals, TRIQUAL_TRANSCRIPTS_DIR: root, TRIQUAL_TAXONOMY_FILE: taxonomy,
+    HOME: home, PATH: process.env.PATH, TRIQUAL_EVALS_DIR: evals, TRIQUAL_TRANSCRIPTS_DIR: root,
     TRIQUAL_CLAUDE_BIN: bin, FAKE_LOG: log, TRIQUAL_EVAL_AUTH_FILE: join(dir, 'eval-auth.json'),
   };
   if (mode) env.FAKE_MODE = mode;
@@ -311,6 +310,21 @@ test('pass and fail are recorded once per prompt hash', async () => {
   writeFileSync(join(e.judges, 'stalls.md'), `---\nmodel: ${MODEL}\n---\nAnother wording.\n`);
   await run(e, ['--category', 'stalls', '--sessions', e.sessionsFile]);
   assert.equal(lines(e).length, 4);
+});
+
+test('the taxonomy is read from <evals>/taxonomy.json, not from the config dir', async () => {
+  const e = fixture();
+  // a decoy under the temp HOME's config dir that would make the category a code check if it were read
+  const decoyDir = join(e.env.HOME, '.config', 'triqual');
+  mkdirSync(decoyDir, { recursive: true });
+  writeFileSync(join(decoyDir, 'taxonomy.json'), JSON.stringify({
+    judgeExclude: [],
+    categories: [{ id: 'stalls', name: 'Stalls', definition: 'd', examples: ['a', 'b', 'c'], check: 'code' }],
+  }));
+  assert.ok(!('TRIQUAL_TAXONOMY_FILE' in e.env));
+  const r = await run(e, ['--category', 'stalls', '--sessions', e.sessionsFile]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.lines.at(-1), 'judged 2: ambient 2; errors 0; left 0');
 });
 
 test('the judge runs in an empty directory under the evals dir with the lean flags', async () => {

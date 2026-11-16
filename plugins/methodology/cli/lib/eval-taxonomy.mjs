@@ -1,4 +1,4 @@
-// The failure taxonomy of the evals (<config>/taxonomy.json), the per-session category labels
+// The failure taxonomy of the evals (<evals>/taxonomy.json), the per-session category labels
 // (<evals>/label-categories.jsonl) and the client-data exclusion that gates what reaches a judge. node: built-ins only.
 import { readFileSync } from 'node:fs';
 import { readJsonl } from './eval-store.mjs';
