@@ -70,3 +70,16 @@ export function judgeExcluded(project, patterns, { home, platform } = {}) {
     return p !== '' && (path === p || path.startsWith(p === '/' ? '/' : `${p}/`));
   });
 }
+
+// Map keyed `sessionId + '\0' + category` of the rulings in <evals>/rulings.jsonl (the referee's and the owner's). The
+// first line of a key wins; a missing file is an empty map; a line without a string sessionId, a string category and a
+// boolean present is skipped.
+export function loadRulings(file) {
+  const out = new Map();
+  for (const r of readJsonl(file).rows) {
+    if (typeof r.sessionId !== 'string' || typeof r.category !== 'string' || typeof r.present !== 'boolean') continue;
+    const key = `${r.sessionId}\0${r.category}`;
+    if (!out.has(key)) out.set(key, r);
+  }
+  return out;
+}
