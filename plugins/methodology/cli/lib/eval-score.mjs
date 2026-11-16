@@ -13,14 +13,20 @@ export function currentVersion(category, { judgesDir, version } = {}) {
   return version ?? checkVersion();
 }
 
-// The promptHash of the last line, in file order, whose promptHash is not `current`; null when there is none.
-export function previousVersion(judgments, current) {
+// The promptHashes other than `current`, the one with the most recent line first, then the next most recent, and so on.
+function otherVersions(judgments, current) {
+  const out = [];
   const rows = [...(judgments ?? [])];
   for (let i = rows.length - 1; i >= 0; i -= 1) {
     const h = rows[i]?.promptHash;
-    if (typeof h === 'string' && h !== current) return h;
+    if (typeof h === 'string' && h !== current && !out.includes(h)) out.push(h);
   }
-  return null;
+  return out;
+}
+
+// The promptHash of the last line, in file order, whose promptHash is not `current`; null when there is none.
+export function previousVersion(judgments, current) {
+  return otherVersions(judgments, current)[0] ?? null;
 }
 
 const cut = (r) => ({ tp: r.tp, fn: r.fn, tn: r.tn, fp: r.fp, undecided: r.undecided, tpr: r.tpr, tnr: r.tnr, tprCI: r.tprCI, tnrCI: r.tnrCI });
@@ -49,21 +55,24 @@ export function scoreCategory({ category, sample, labels, labelCategories, judgm
   const dev = cut(split('dev'));
   const test = { ...cut(split('test')), usable: split('test').usable };
 
-  const prevVersion = previousVersion(rows, version);
+  // The previous version is the most recent other version that has dev sessions to compare on; none: the first version.
   let previous = null;
   let verdict = 'first';
-  if (prevVersion !== null) {
+  const after = verdicts(rows, id, version);
+  for (const prevVersion of otherVersions(rows, version)) {
     const before = verdicts(rows, id, prevVersion);
-    const after = verdicts(rows, id, version);
-    // The dev sessions with a pass or fail verdict under both versions: the only ones the two are compared on.
+    // The labeled dev sessions with a pass or fail verdict under both versions: the only ones the two are compared on.
     const both = (sample ?? []).filter((r) => splitOf(r.sessionId, r.stratum) === 'dev' && decided(before.get(r.sessionId)) && decided(after.get(r.sessionId)));
     const prev = validateCategory({ ...base, sample: both, promptHash: prevVersion, split: 'dev' });
     const cur = validateCategory({ ...base, sample: both, promptHash: version, split: 'dev' });
-    previous = { version: prevVersion, n: cur.tp + cur.fn + cur.tn + cur.fp, previous: counts(prev), current: counts(cur) };
+    const n = cur.tp + cur.fn + cur.tn + cur.fp;
+    if (n === 0) continue;
+    previous = { version: prevVersion, n, previous: counts(prev), current: counts(cur) };
     const a = previous.previous.balanced;
     const b = previous.current.balanced;
     const better = a === null || b === null ? cur.tp + cur.tn > prev.tp + prev.tn : b > a;
     verdict = better ? 'better' : 'not-better';
+    break;
   }
   return { category: id, check: category.check, version, train, dev, test, previous, verdict };
 }

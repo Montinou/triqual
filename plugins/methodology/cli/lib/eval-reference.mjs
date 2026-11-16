@@ -110,24 +110,27 @@ export function acceptReference({ evals, sessions, now = () => new Date() }) {
   const labelFile = join(evals, 'review', 'labels.jsonl');
   const catFile = join(evals, 'label-categories.jsonl');
   const labeled = new Set(readJsonl(labelFile).rows.map((r) => r.sessionId));
-  const categorized = new Set(readJsonl(catFile).rows.map((r) => r.sessionId));
   const at = new Date(now()).toISOString();
   let labels = 0;
   let categories = 0;
-  for (const { sessionId } of sessions) {
-    const ref = refs.get(sessionId);
-    if (ref === undefined) continue;
-    if (!labeled.has(sessionId)) {
-      appendPrivate(labelFile, { sessionId, label: ref.label, note: `auto: ${ref.reason}`, at });
-      labeled.add(sessionId);
-      labels += 1;
+  // The category file is read and appended under the lock applyRulings holds while it rewrites it, so the two never interleave.
+  return withStoreLock(`${catFile}.lock`, () => {
+    const categorized = new Set(readJsonl(catFile).rows.map((r) => r.sessionId));
+    for (const { sessionId } of sessions) {
+      const ref = refs.get(sessionId);
+      if (ref === undefined) continue;
+      if (!labeled.has(sessionId)) {
+        appendPrivate(labelFile, { sessionId, label: ref.label, note: `auto: ${ref.reason}`, at });
+        labeled.add(sessionId);
+        labels += 1;
+      }
+      if (!categorized.has(sessionId)) {
+        const present = isObject(ref.categories) ? Object.entries(ref.categories).filter(([, c]) => c?.present === true).map(([id]) => id) : [];
+        appendPrivate(catFile, { sessionId, categories: present });
+        categorized.add(sessionId);
+        categories += 1;
+      }
     }
-    if (!categorized.has(sessionId)) {
-      const present = isObject(ref.categories) ? Object.entries(ref.categories).filter(([, c]) => c?.present === true).map(([id]) => id) : [];
-      appendPrivate(catFile, { sessionId, categories: present });
-      categorized.add(sessionId);
-      categories += 1;
-    }
-  }
-  return { labels, categories };
+    return { labels, categories };
+  });
 }

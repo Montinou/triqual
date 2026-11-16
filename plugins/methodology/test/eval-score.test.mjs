@@ -162,6 +162,69 @@ test('a train session and a test session that differ between versions do not cha
   assert.equal('positives' in withExtra.dev, false);
 });
 
+// Three versions: explicit judgment lines in file order, over dev sessions (labeled, positive or not) and a train one.
+function build3(specs, judgments) {
+  const sample = []; const labels = []; const labelCategories = new Map();
+  for (const s of specs) {
+    sample.push({ sessionId: s.id, stratum: s.stratum ?? 'random' });
+    labels.push({ sessionId: s.id });
+    labelCategories.set(s.id, s.positive ? [CAT.id] : []);
+  }
+  return { category: CAT, sample, labels, labelCategories, judgments: judgments.map(([id, version, result]) => ({ sessionId: id, category: CAT.id, result, promptHash: version })), version: 'v2' };
+}
+
+test('the most recent other version judged only on train sessions is skipped: the comparison uses the older version with sessions', () => {
+  reset();
+  const a = dev(true, undefined, undefined); const b = dev(false, undefined, undefined);
+  const t = { id: trainIds[0], positive: true, stratum: 'cost' };
+  const r = scoreCategory(build3([a, b, t], [
+    [a.id, 'v0', 'pass'], [b.id, 'v0', 'pass'],
+    [t.id, 'v1', 'fail'], // the latest other version: train only
+    [a.id, 'v2', 'fail'], [b.id, 'v2', 'pass'],
+  ]));
+  assert.equal(r.previous.version, 'v0');
+  assert.equal(r.previous.n, 2);
+  assert.deepEqual(r.previous.previous, { tp: 0, fn: 1, tn: 1, fp: 0, balanced: 0.5 });
+  assert.deepEqual(r.previous.current, { tp: 1, fn: 0, tn: 1, fp: 0, balanced: 1 });
+  assert.equal(r.verdict, 'better');
+});
+
+test('the most recent other version with only undecided dev verdicts is skipped for an older one with decided verdicts', () => {
+  reset();
+  const a = dev(true, undefined, undefined); const b = dev(false, undefined, undefined);
+  const r = scoreCategory(build3([a, b], [
+    [a.id, 'v0', 'fail'], [b.id, 'v0', 'pass'],
+    [a.id, 'v1', 'undecided'], [b.id, 'v1', 'undecided'],
+    [a.id, 'v2', 'fail'], [b.id, 'v2', 'pass'],
+  ]));
+  assert.equal(r.previous.version, 'v0');
+  assert.ok(r.previous.n > 0);
+  assert.equal(r.verdict, 'not-better');
+});
+
+test('no other version shares a decided labeled dev session with the current one: previous is null and the verdict is first', () => {
+  reset();
+  const a = dev(true, undefined, undefined); const b = dev(false, undefined, undefined);
+  const t = { id: trainIds[0], positive: false, stratum: 'cost' };
+  const r = scoreCategory(build3([a, b, t], [
+    [t.id, 'v0', 'pass'], // train only
+    [a.id, 'v1', 'undecided'], // undecided on dev
+    [a.id, 'v2', 'fail'], [b.id, 'v2', 'pass'],
+  ]));
+  assert.equal(r.previous, null);
+  assert.equal(r.verdict, 'first');
+});
+
+test('a dev session that is not labeled does not make a version comparable', () => {
+  reset();
+  const a = dev(true, undefined, undefined); const b = dev(false, undefined, undefined);
+  const input = build3([a, b], [[a.id, 'v1', 'fail'], [a.id, 'v2', 'fail'], [b.id, 'v2', 'pass']]);
+  input.labels = input.labels.filter((l) => l.sessionId !== a.id);
+  const r = scoreCategory(input);
+  assert.equal(r.previous, null);
+  assert.equal(r.verdict, 'first');
+});
+
 test('previousVersion is the hash of the last differing line, not the first', () => {
   const j = (h) => ({ sessionId: 'x', promptHash: h });
   assert.equal(previousVersion([j('v1'), j('v2'), j('cur'), j('cur')], 'cur'), 'v2');
