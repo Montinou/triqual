@@ -3,6 +3,10 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## methodology 1.12.2
+
+- methodology: the SessionStart `evals:` lines (judges below the bar, failed steps) are now given only to a session whose working directory is inside a checkout of this repository (a directory holding `plugins/methodology/evals/judges`, not under `~/.claude/plugins` or `~/.codex`). Before, every session on the machine got them, in every project and harness, and sessions elsewhere ran the improving-evals round in the plugin marketplace clone and collided with the session that had the round. The hook reads the session's `cwd` from its stdin payload (the Codex and Grok bridge passes it through). The `methodology:improving-evals` skill now says to run only in a checkout of this repository and to stop when another session already has the round (its `evals/<report name>` branch exists or an `eval.mjs judge` process for the round is running). Update the plugin; nothing to rerun.
+
 ## methodology 1.12.1
 
 - methodology: a session with nothing to judge no longer fails the round. A sample session whose transcript holds no user or assistant text is skipped by `triqual eval review propose`, `triqual eval judge` and `triqual eval referee`: no model call, not an error, not left. The last line of each gains `; empty <k>`, the round's report gains `empty`, and a round whose only problem is such sessions exits 0. `triqual eval review sample --more` no longer draws them.
