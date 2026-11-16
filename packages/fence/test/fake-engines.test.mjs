@@ -154,7 +154,9 @@ test('remove-launcher makes the PRE command (imported from hosts/commands.mjs) e
     installFake(s.home, 'remove-launcher');
     assert.equal(fs.existsSync(s.paths.watchdog), false);
     const r = spawnSync('/bin/sh', ['-c', PRE(host)], { input: PAYLOAD, encoding: 'utf8', env: { HOME: s.home, PATH: '/usr/bin:/bin' }, timeout: SPAWN_TIMEOUT_MS });
-    assert.equal(r.error, undefined, String(r.error));
+    // With no launcher the command exits without reading its stdin, so the payload write can lose the race and end in
+    // EPIPE; the exit status and stderr are complete either way, and they are what this test is about.
+    assert.ok(r.error === undefined || r.error.code === 'EPIPE', String(r.error));
     assert.equal(r.status, 2);
     assert.equal(r.stdout, '');
     assert.match(r.stderr, /fence denied this call: its launcher failed or is missing\./);
