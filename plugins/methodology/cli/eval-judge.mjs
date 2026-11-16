@@ -12,7 +12,7 @@ import { appendFileSync, chmodSync, openSync, closeSync, readFileSync, realpathS
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { AuthError, ChainExhausted, LIMIT_NOTE, authPath, childEnv, loadChain, usableChain, withChain } from './lib/eval-auth.mjs';
+import { AuthError, ChainExhausted, LIMIT_NOTE, PAID_NOTE, authPath, childEnv, loadChain, usableChain, withChain } from './lib/eval-auth.mjs';
 import { ensureDir, evalsDir, transcriptsRoot } from './lib/eval-paths.mjs';
 import { JudgePromptError, judgeSession, loadJudgePrompt, redactSecrets, spawnCapture } from './lib/eval-judge.mjs';
 import { readJsonl } from './lib/eval-store.mjs';
@@ -144,7 +144,9 @@ export async function main(argv, {
   let excluded = 0;
   let errors = 0;
   let judged = 0;
-  const chainRun = withChain(usableChain(chain, { paid: opts.paid === true }), async (id, entry) => judgeSession({
+  const usable = usableChain(chain, { paid: opts.paid === true });
+  const paidOnly = chain.length > 0 && usable.length === 0;
+  const chainRun = withChain(usable, async (id, entry) => judgeSession({
     category: opts.category, prompt, session: join(root, store.get(id).projectDir, `${id}.jsonl`), spawn,
     env: childEnv(entry, env, { home }), cwd, bin,
   }));
@@ -167,7 +169,11 @@ export async function main(argv, {
     try {
       ran = await chainRun.run(id);
     } catch (err) {
-      if (err instanceof ChainExhausted) { stderr.write(`triqual eval judge: ${LIMIT_NOTE} (tried: ${err.tried.join(', ')})\n`); stop = 'limit'; continue; }
+      if (err instanceof ChainExhausted) {
+        stderr.write(paidOnly ? `triqual eval judge: ${PAID_NOTE}\n` : `triqual eval judge: ${LIMIT_NOTE} (tried: ${err.tried.join(', ')})\n`);
+        stop = 'limit';
+        continue;
+      }
       if (err instanceof AuthError) { stderr.write(`triqual eval judge: ${err.message}\n`); stop = 'auth'; continue; }
       throw err;
     }

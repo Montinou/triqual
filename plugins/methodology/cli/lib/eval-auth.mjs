@@ -21,6 +21,8 @@ export class ChainExhausted extends Error {
 }
 
 export const LIMIT_NOTE = 'every credential entry hit a usage limit';
+// A chain whose entries are all paid, run without --paid: nothing is tried, so it is not a usage limit.
+export const PAID_NOTE = 'every credential entry is paid; pass --paid';
 
 export const CREDENTIAL_VARS = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL'];
 // Everything a child must not inherit: the credentials, the provider selectors and the arm marker.

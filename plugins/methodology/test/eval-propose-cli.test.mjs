@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { main } from '../cli/eval-review.mjs';
-import { LIMIT_NOTE } from '../cli/lib/eval-auth.mjs';
+import { LIMIT_NOTE, PAID_NOTE } from '../cli/lib/eval-auth.mjs';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'cm-evprop-'));
 const mode = (f) => statSync(f).mode & 0o777;
@@ -126,6 +126,20 @@ test('a paid chain entry is used only with --paid: the limit note goes to stderr
     assert.equal(p.code, 0, p.err);
     assert.equal(lastLine(p.out), 'proposed 2: api 2; errors 0; left 0');
     assert.equal(second.calls[1].env.ANTHROPIC_API_KEY, 'api-tok');
+  } finally { rmSync(f.base, { recursive: true, force: true }); }
+});
+
+test('a chain of paid entries only, without --paid, says so, makes no call and exits 1', async () => {
+  const f = fixture();
+  try {
+    writeFileSync(f.env.TRIQUAL_EVAL_AUTH_FILE, JSON.stringify({ chain: [{ name: 'api', env: { ANTHROPIC_API_KEY: 'api-tok' }, paid: true }] }));
+    const s = stub();
+    const r = await run(f, ['propose'], s);
+    assert.equal(r.code, 1);
+    assert.equal(s.calls.length, 0);
+    assert.equal(lastLine(r.out), 'proposed 0: none; errors 0; left 2');
+    assert.equal(r.err.split(PAID_NOTE).length - 1, 1, r.err);
+    assert.ok(!r.err.includes(LIMIT_NOTE), r.err);
   } finally { rmSync(f.base, { recursive: true, force: true }); }
 });
 

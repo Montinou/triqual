@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { main } from '../cli/eval-judge.mjs';
-import { AuthError, isLimit, loadChain, usableChain, LIMIT_NOTE } from '../cli/lib/eval-auth.mjs';
+import { AuthError, isLimit, loadChain, usableChain, LIMIT_NOTE, PAID_NOTE } from '../cli/lib/eval-auth.mjs';
 import { readJsonl } from '../cli/lib/eval-store.mjs';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'cm-evpaid-'));
@@ -141,6 +141,10 @@ test('a chain of paid entries only, without --paid, makes no call and exits 1', 
   assert.equal(s.calls.length, 0);
   assert.match(r.last, /left 1$/);
   assert.deepEqual(readJsonl(e.judgments).rows, []);
+  assert.equal(PAID_NOTE, 'every credential entry is paid; pass --paid');
+  assert.equal(r.err.split(PAID_NOTE).length - 1, 1, `the paid note is printed once: ${r.err}`);
+  assert.ok(!r.err.includes(LIMIT_NOTE), `a paid-only chain is not a usage limit: ${r.err}`);
+  assert.ok(!r.err.includes('tried:'), r.err);
 });
 
 test('--paid takes no value and is listed in the usage', async () => {

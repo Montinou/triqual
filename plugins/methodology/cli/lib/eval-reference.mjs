@@ -3,10 +3,14 @@
 // proposals into the label files that nothing else has written. A session under the taxonomy's judgeExclude is never
 // sent. node: built-ins only.
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { chmodSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { hostname } from 'node:os';
+import { dirname, join } from 'node:path';
 import { askModel, appendPrivate } from './eval-ask.mjs';
 import { AuthError, ChainExhausted, childEnv, withChain } from './eval-auth.mjs';
 import { loadJudgePrompt, renderForJudge } from './eval-judge.mjs';
+import { ensureDir } from './eval-paths.mjs';
+import { withStoreLock } from './role-eval.mjs';
 import { readJsonl } from './eval-store.mjs';
 
 const REASON_CHARS = 400;
@@ -48,46 +52,86 @@ function checked(answer, ids) {
   return { label: answer.label, reason: answer.reason.slice(0, REASON_CHARS), categories };
 }
 
+const processAlive = (pid) => {
+  try { process.kill(pid, 0); return true; } catch (err) { return err?.code === 'EPERM'; }
+};
+
+// Takes the run marker `<file>.run` (`<pid> <host>`): false when a live process holds it, a marker whose process is gone
+// is taken over. The test-and-set is one critical section under the store lock; the marker, not the lock, spans the run,
+// because withStoreLock holds only for a synchronous function.
+function takeRun(file) {
+  ensureDir(dirname(file));
+  const marker = `${file}.run`;
+  return withStoreLock(`${file}.lock`, () => {
+    let pid = NaN;
+    try { pid = Number.parseInt(readFileSync(marker, 'utf8'), 10); } catch { /* no marker */ }
+    if (Number.isInteger(pid) && processAlive(pid)) return false;
+    writeFileSync(marker, `${process.pid} ${hostname()}\n`, { mode: 0o600 });
+    chmodSync(marker, 0o600);
+    return true;
+  });
+}
+
+function releaseRun(file) {
+  const marker = `${file}.run`;
+  try {
+    if (Number.parseInt(readFileSync(marker, 'utf8'), 10) === process.pid) unlinkSync(marker);
+  } catch { /* already gone */ }
+}
+
 // Proposes a reference line for each of `sessions` that is not excluded and has none yet (whatever prompt wrote it).
-// { proposed, byEntry: { [entry]: lines }, errors, left, stop: null | 'limit' | 'auth' }; `left` counts the sessions that
-// are not excluded and still have no line. A limit on every chain entry stops with 'limit', an unreadable credential
-// source with 'auth'; the sessions not reached stay in `left`.
+// { proposed, byEntry: { [entry]: lines }, errors, left, stop: null | 'limit' | 'auth' | 'busy' }; `left` counts the
+// sessions that are not excluded and still have no line. A limit on every chain entry stops with 'limit', an unreadable
+// credential source with 'auth'; the sessions not reached stay in `left`. One run at a time per evals directory: while
+// another run is in progress this one returns at once with 'busy' and proposes nothing. A line is appended only when the
+// file, re-read under the store lock, has none for the session yet.
 export async function proposeReference({ evals, sessions, prompt, chain, spawn, env, home, cwd, bin, now = () => new Date() }) {
   const file = join(evals, 'review', 'reference.jsonl');
-  const done = new Set(readJsonl(file).rows.filter((r) => typeof r.sessionId === 'string').map((r) => r.sessionId));
-  const ids = Object.keys(prompt.schema.properties.categories.properties);
-  const byEntry = {};
-  let proposed = 0;
-  let errors = 0;
-  let stop = null;
-  const runner = withChain(chain, async (input, entry) => askModel({
-    model: prompt.model, input, schema: prompt.schema, spawn, env: childEnv(entry, env ?? {}, { home }), cwd, bin,
-  }));
-
-  for (const s of sessions) {
-    if (s.excluded === true || done.has(s.sessionId)) continue;
-    const rendered = s.file === null ? '' : renderForJudge(s.file);
-    if (rendered.trim() === '') { errors += 1; continue; }
-    let outcome;
-    try {
-      outcome = await runner.run(`${prompt.body}\n\n--- session transcript ---\n${rendered}`);
-    } catch (err) {
-      if (err instanceof ChainExhausted) { stop = 'limit'; break; }
-      if (err instanceof AuthError) { stop = 'auth'; break; }
-      throw err;
-    }
-    const row = outcome.result.answer === undefined ? null : checked(outcome.result.answer, ids);
-    if (row === null) { errors += 1; continue; }
-    appendPrivate(file, {
-      sessionId: s.sessionId, label: row.label, reason: row.reason, categories: row.categories,
-      promptHash: prompt.hash, model: prompt.model, auth: outcome.entry.name, at: new Date(now()).toISOString(),
+  const readDone = () => new Set(readJsonl(file).rows.filter((r) => typeof r.sessionId === 'string').map((r) => r.sessionId));
+  const leftOf = (done) => sessions.filter((s) => s.excluded !== true && !done.has(s.sessionId)).length;
+  if (!takeRun(file)) return { proposed: 0, byEntry: {}, errors: 0, left: leftOf(readDone()), stop: 'busy' };
+  try {
+    const done = readDone();
+    const ids = Object.keys(prompt.schema.properties.categories.properties);
+    const byEntry = {};
+    let proposed = 0;
+    let errors = 0;
+    let stop = null;
+    const runner = withChain(chain, async (input, entry) => askModel({
+      model: prompt.model, input, schema: prompt.schema, spawn, env: childEnv(entry, env ?? {}, { home }), cwd, bin,
+    }));
+    // Appends the line unless the file, re-read under the lock, has one for the session already.
+    const record = (row) => withStoreLock(`${file}.lock`, () => {
+      const had = readDone().has(row.sessionId);
+      if (!had) appendPrivate(file, row);
+      done.add(row.sessionId);
+      return !had;
     });
-    done.add(s.sessionId);
-    byEntry[outcome.entry.name] = (byEntry[outcome.entry.name] ?? 0) + 1;
-    proposed += 1;
-  }
-  const left = sessions.filter((s) => s.excluded !== true && !done.has(s.sessionId)).length;
-  return { proposed, byEntry, errors, left, stop };
+
+    for (const s of sessions) {
+      if (s.excluded === true || done.has(s.sessionId)) continue;
+      const rendered = s.file === null ? '' : renderForJudge(s.file);
+      if (rendered.trim() === '') { errors += 1; continue; }
+      let outcome;
+      try {
+        outcome = await runner.run(`${prompt.body}\n\n--- session transcript ---\n${rendered}`);
+      } catch (err) {
+        if (err instanceof ChainExhausted) { stop = 'limit'; break; }
+        if (err instanceof AuthError) { stop = 'auth'; break; }
+        throw err;
+      }
+      const row = outcome.result.answer === undefined ? null : checked(outcome.result.answer, ids);
+      if (row === null) { errors += 1; continue; }
+      const written = record({
+        sessionId: s.sessionId, label: row.label, reason: row.reason, categories: row.categories,
+        promptHash: prompt.hash, model: prompt.model, auth: outcome.entry.name, at: new Date(now()).toISOString(),
+      });
+      if (!written) continue;
+      byEntry[outcome.entry.name] = (byEntry[outcome.entry.name] ?? 0) + 1;
+      proposed += 1;
+    }
+    return { proposed, byEntry, errors, left: leftOf(done), stop };
+  } finally { releaseRun(file); }
 }
 
 // For each of `sessions` with a reference line: a label line in <evals>/review/labels.jsonl and a category line in

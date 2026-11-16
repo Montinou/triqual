@@ -140,7 +140,7 @@ test('askModel reads the last result of an array, and maps limit, error and miss
   const err = stub(() => ({ is_error: true, result: 'boom' }));
   assert.deepEqual(await askModel({ model: 'm-1', input: 'x', schema: {}, spawn: err.spawn }), { error: 'boom' });
   const none = stub(() => ({ result: 'text only' }));
-  assert.deepEqual(await askModel({ model: 'm-1', input: 'x', schema: {}, spawn: none.spawn }), { answer: { error: 'no valid structured output' } });
+  assert.deepEqual(await askModel({ model: 'm-1', input: 'x', schema: {}, spawn: none.spawn }), { error: 'no valid structured output' });
   const junk = async () => ({ code: 0, stdout: 'not json' });
   assert.deepEqual(await askModel({ model: 'm-1', input: 'x', schema: {}, spawn: junk }), { error: 'unparseable output' });
   const thrown = async () => { throw new Error('nope'); };
@@ -395,4 +395,57 @@ test('acceptReference skips a session with no reference line', () => {
   const fx = fixture();
   const sessions = sampleSessions({ evals: fx.evals, root: fx.root, taxonomy: TAXONOMY, home: fx.home, platform: 'linux' });
   assert.deepEqual(acceptReference({ evals: fx.evals, sessions, now: NOW }), { labels: 0, categories: 0 });
+});
+
+test('a missing structured output is one error for the session, nothing is written', async () => {
+  const fx = fixture();
+  const none = stub(() => ({ result: 'text only' }));
+  const r = await run(fx, { spawn: none.spawn });
+  assert.equal(r.proposed, 0);
+  assert.equal(r.errors, 3);
+  assert.equal(r.left, 3);
+  assert.deepEqual(readJsonl(join(fx.evals, 'review', 'reference.jsonl')).rows, []);
+});
+
+test('two overlapping runs over one evals directory send each session once and write one line each', async () => {
+  const fx = fixture();
+  const calls = [];
+  const spawn = async (bin, args, opts) => {
+    calls.push(opts.input);
+    await new Promise((res) => setTimeout(res, 5));
+    return { code: 0, stdout: JSON.stringify({ type: 'result', is_error: false, structured_output: validAnswer() }), stderr: '' };
+  };
+  const [a, b] = await Promise.all([run(fx, { spawn }), run(fx, { spawn })]);
+  assert.equal(calls.length, 3, 'each session is sent once');
+  assert.equal(a.proposed + b.proposed, 3);
+  const rows = readJsonl(join(fx.evals, 'review', 'reference.jsonl')).rows;
+  assert.deepEqual(rows.map((r) => r.sessionId).sort(), ['s1', 's2', 's3']);
+  const busy = a.proposed === 0 ? a : b;
+  assert.equal(busy.stop, 'busy');
+  // the run lock is released: a later run goes through and has nothing left to send
+  const again = await run(fx, { spawn });
+  assert.equal(again.proposed, 0);
+  assert.equal(again.stop, null);
+  assert.equal(calls.length, 3);
+});
+
+test('a run lock left by a dead process does not block a run', async () => {
+  const fx = fixture();
+  writeFileSync(join(fx.evals, 'review', 'reference.jsonl.run'), '2147483646 somehost\n');
+  const ok = stub();
+  const r = await run(fx, { spawn: ok.spawn });
+  assert.equal(r.proposed, 3);
+});
+
+test('a row is not appended twice when another writer added it after the done set was read', async () => {
+  const fx = fixture({ sessions: [{ id: 's1', project: '/home/x/alpha', text: 'Please fix the parser.' }] });
+  const file = join(fx.evals, 'review', 'reference.jsonl');
+  const spawn = async () => {
+    writeFileSync(file, `${JSON.stringify({ sessionId: 's1', label: 'good', reason: 'x', categories: {}, promptHash: 'other' })}\n`);
+    return { code: 0, stdout: JSON.stringify({ type: 'result', is_error: false, structured_output: validAnswer() }), stderr: '' };
+  };
+  const r = await run(fx, { spawn });
+  assert.equal(r.proposed, 0);
+  assert.equal(lines(file).length, 1);
+  assert.equal(r.left, 0);
 });

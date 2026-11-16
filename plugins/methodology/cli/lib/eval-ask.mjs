@@ -19,7 +19,7 @@ function parseResult(stdout) {
 }
 
 // One model call. { answer: object } | { limit: true } | { error: string }. `answer` is the structured output of the
-// final result, else { error: 'no valid structured output' }. `spawn(bin, args, { input, env, cwd })` resolves
+// final result; without one the outcome is { error: 'no valid structured output' }. `spawn(bin, args, { input, env, cwd })` resolves
 // { code, stdout, stderr }; stdout alone is parsed.
 export async function askModel({ model, input, schema, spawn = spawnCapture, env, cwd, bin = 'claude' }) {
   const args = ['-p', '--no-session-persistence', '--model', model, '--output-format', 'json', '--json-schema', JSON.stringify(schema),
@@ -32,7 +32,7 @@ export async function askModel({ model, input, schema, spawn = spawnCapture, env
   if (result.is_error === true) return { error: String(result.result ?? '').slice(0, ERROR_CHARS) };
   const so = result.structured_output;
   if (so !== null && typeof so === 'object' && !Array.isArray(so)) return { answer: so };
-  return { answer: { error: 'no valid structured output' } };
+  return { error: 'no valid structured output' };
 }
 
 // The review sample (<evals>/review/sample.jsonl) in its order, each with its transcript file (from the sessions store

@@ -19,7 +19,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { AuthError, LIMIT_NOTE, authPath, loadChain, usableChain } from './lib/eval-auth.mjs';
+import { AuthError, LIMIT_NOTE, PAID_NOTE, authPath, loadChain, usableChain } from './lib/eval-auth.mjs';
 import { sampleSessions } from './lib/eval-ask.mjs';
 import { JudgePromptError, spawnCapture } from './lib/eval-judge.mjs';
 import { ensureDir, evalsDir, transcriptsRoot } from './lib/eval-paths.mjs';
@@ -174,10 +174,13 @@ export async function main(argv, {
     let taxonomy;
     let prompt;
     let chain;
+    let paidOnly = false;
     try {
       taxonomy = loadTaxonomy(join(evals, 'taxonomy.json'), { labels: loadLabelCategories(join(evals, 'label-categories.jsonl')) });
       prompt = loadReferencePrompt(referencePrompt, taxonomy);
-      chain = usableChain(loadChain(authPath(env, home)), { paid: opts.paid === true });
+      const loaded = loadChain(authPath(env, home));
+      chain = usableChain(loaded, { paid: opts.paid === true });
+      paidOnly = loaded.length > 0 && chain.length === 0;
     } catch (err) {
       if (err instanceof TaxonomyError || err instanceof JudgePromptError || err instanceof AuthError) return fail(err.message);
       throw err;
@@ -187,7 +190,8 @@ export async function main(argv, {
     const cwd = join(evals, 'judge-cwd');
     ensureDir(cwd);
     const result = await proposeReference({ evals, sessions, prompt, chain, spawn, env, home, cwd, bin: env.TRIQUAL_CLAUDE_BIN || 'claude', now: clock });
-    if (result.stop === 'limit') stderr.write(`triqual eval review: ${LIMIT_NOTE}\n`);
+    if (result.stop === 'limit') stderr.write(`triqual eval review: ${paidOnly ? PAID_NOTE : LIMIT_NOTE}\n`);
+    if (result.stop === 'busy') stderr.write('triqual eval review: another propose run holds the reference file; nothing was proposed\n');
     if (result.stop === 'auth') stderr.write('triqual eval review: a credential source could not be read\n');
     if (opts.accept === true) {
       const a = acceptReference({ evals, sessions, now: clock });
