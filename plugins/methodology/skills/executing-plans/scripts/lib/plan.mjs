@@ -26,17 +26,19 @@ const DEPENDS = /^\*\*Depends on:\*\*(.*)$/;
 const SKILLS = /^\*\*Skills:\*\*(.*)$/;
 const ROLE = /^\*\*Role:\*\*(.*)$/;
 const TIER = /^\*\*Tier:\*\*(.*)$/;
+const LANE = /^\*\*Lane:\*\*(.*)$/;
 const PREFIX = /^\*\*Branch prefix:\*\*\s*(.+)$/;
 const SENSITIVE = /^\*\*Sensitive paths:\*\*\s*(.*)$/;
 const TEST_PATHS = /^\*\*Test paths:\*\*\s*(.*)$/;
 const LANDING_TEST = /^\*\*Landing test:\*\*\s*(.*)$/;
-const PHASE_FIELD = /^\*\*(Slice|Branch|Parent|PR title|Stands alone because|Phase check|Validate):\*\*\s*(.*)$/;
+const PHASE_FIELD = /^\*\*(Slice|Branch|Parent|PR title|Stands alone because|Sequential because|Phase check|Validate):\*\*\s*(.*)$/;
 const FIELD_KEYS = {
   Slice: 'slice',
   Branch: 'branch',
   Parent: 'parentRaw',
   'PR title': 'prTitle',
   'Stands alone because': 'standsAlone',
+  'Sequential because': 'sequentialBecause',
   'Phase check': 'phaseCheck',
   Validate: 'validateRaw',
 };
@@ -100,11 +102,12 @@ function scan(text) {
   return { lines, total: all.length };
 }
 
-// Tasks of a plan: [{ id, title, deps, skills, role, tier, files, start, end }]. `files` is { create, modify, test }, the
+// Tasks of a plan: [{ id, title, deps, skills, role, tier, lane, files, start, end }]. `files` is { create, modify, test }, the
 // paths of the task's own `- Create:` / `- Modify:` / `- Test:` lines outside fences (three empty arrays without any). `start` is the 1-based line of the
 // `### Task N:` heading and `end` the last line of the task: the line before the next heading of level 1 to 3 outside
 // a fence (a `### ` heading that is no task, or a `## After Merge`), else the last line of the plan. `tier` is null when
-// the task declares none; a value outside TIERS throws.
+// the task declares none; a value outside TIERS throws. `lane` is the trimmed value of the task's `**Lane:**` line, null
+// without one or with an empty value.
 export function readTasks(text) {
   const { lines, total } = scan(text);
   const tasks = [];
@@ -120,7 +123,7 @@ export function readTasks(text) {
       const id = `T${Number(h[1])}`;
       if (seen.has(id)) throw new PlanError(`duplicate task ${id} in plan`);
       seen.add(id);
-      current = { id, title: h[2].trim(), deps: [], skills: [], role: null, tier: null, files: { create: [], modify: [], test: [] }, start: no, end: total };
+      current = { id, title: h[2].trim(), deps: [], skills: [], role: null, tier: null, lane: null, files: { create: [], modify: [], test: [] }, start: no, end: total };
       tasks.push(current);
       continue;
     }
@@ -144,7 +147,10 @@ export function readTasks(text) {
         throw new PlanError(`${current.id}: unknown tier "${tier}" (expected ${TIERS.join(', ')})`);
       }
       current.tier = tier;
+      continue;
     }
+    const l = LANE.exec(line);
+    if (l) current.lane = l[1].trim() || null;
   }
   return tasks;
 }
@@ -155,21 +161,42 @@ function branchOf(value) {
   return ticked ? ticked[1].trim() : (value.trim().split(/\s+/)[0] ?? '');
 }
 
-// The parent of `phase` ({ kind, value }) from its `**Parent:**` value, or the linear default when it has none. A
-// branch naming a phase of the same plan is that phase; a phase reference must name an earlier phase.
+// The parent of `phase` ({ kind, value }) and its `parents` (phase numbers) from its `**Parent:**` value, or the linear
+// default when it has none. The value is split on commas and each element read as `branchOf` reads a value; one element
+// is a plain parent. A branch naming a phase of the same plan is that phase; a phase reference must name an earlier
+// phase. A list names earlier phases only, each once; `parent` is the resolution of its first element.
 function resolveParent(phase, phases) {
   const where = `phase ${phase.n}`;
   const raw = phase.parentRaw;
-  if (raw === null) return phase.n === 1 ? { kind: 'trunk', value: null } : { kind: 'phase', value: `P${phase.n - 1}` };
-  if (raw === '') throw new PlanError(`${where} has an empty **Parent:**`);
-  if (raw === TRUNK) return { kind: 'trunk', value: null };
-  const ref = PHASE_REF.exec(raw);
-  const own = ref ? Number(ref[1]) : phases.find((p) => p.branch === raw)?.n;
-  if (own === undefined) return { kind: 'branch', value: raw };
-  if (own < 1 || own >= phase.n) {
-    throw new PlanError(`${where} **Parent:** "${raw}" must name an earlier phase (P1 to P${phase.n - 1}), "trunk" or a branch`);
+  if (raw === null) {
+    return phase.n === 1
+      ? { parent: { kind: 'trunk', value: null }, parents: [] }
+      : { parent: { kind: 'phase', value: `P${phase.n - 1}` }, parents: [phase.n - 1] };
   }
-  return { kind: 'phase', value: `P${own}` };
+  // Only the part before a `(` is the list: a note in parentheses may hold commas of its own.
+  const elements = raw.split('(')[0].split(',').map((el) => branchOf(el)).filter(Boolean);
+  if (elements.length === 0) throw new PlanError(`${where} has an empty **Parent:**`);
+  const resolved = elements.map((el) => {
+    if (el === TRUNK) return { parent: { kind: 'trunk', value: null }, own: null };
+    const ref = PHASE_REF.exec(el);
+    const own = ref ? Number(ref[1]) : phases.find((p) => p.branch === el)?.n;
+    if (own === undefined) return { parent: { kind: 'branch', value: el }, own: null };
+    if (own < 1 || own >= phase.n) {
+      throw new PlanError(`${where} **Parent:** "${el}" must name an earlier phase (P1 to P${phase.n - 1}), "trunk" or a branch`);
+    }
+    return { parent: { kind: 'phase', value: `P${own}` }, own };
+  });
+  if (resolved.length > 1) {
+    if (resolved.some((r) => r.own === null)) {
+      throw new PlanError(`${where} **Parent:** "${raw}" mixes phases with trunk or a branch: a list names earlier phases only`);
+    }
+    const seen = new Set();
+    for (const { own } of resolved) {
+      if (seen.has(own)) throw new PlanError(`${where} **Parent:** "${raw}" names P${own} twice`);
+      seen.add(own);
+    }
+  }
+  return { parent: resolved[0].parent, parents: resolved.filter((r) => r.own !== null).map((r) => r.own) };
 }
 
 // The `validate` of `phase` from its `**Validate:**` value: null when the line is absent or says `none`, else
@@ -201,10 +228,15 @@ function resolveLandingTest(value) {
 }
 
 // Phases of a plan: { branchPrefix, sensitivePaths, testPaths, forest, phases: [{ n, title, slice, branch, parent,
-// parentDeclared, prTitle, standsAlone, phaseCheck, validate, tasks }], landingTest }, `tasks` being task ids. `parent` is where the phase
+// parents, parentDeclared, prTitle, standsAlone, sequentialBecause, phaseCheck, validate, tasks }], landingTest }, `tasks`
+// being task ids. `parent` is where the phase
 // branches from: { kind: 'trunk', value: null }, { kind: 'phase', value: 'P<k>' } (k below the phase's own number) or
 // { kind: 'branch', value: <branch> }; without a `**Parent:**` line phase 1 is on the trunk and phase N on P<N-1>.
-// `parentDeclared` tells whether the line was there, and `forest` whether some parent differs from that default.
+// `parents` holds the phase numbers the phase starts from, in written order: [] for the trunk and for a branch that is no
+// phase of the plan, [n-1] without a `**Parent:**` line (phase 1: []), several for a join (`**Parent:** P1, P2`; `parent`
+// is then the first one's resolution). `sequentialBecause` is the phase's `**Sequential because:**` value or null.
+// `parentDeclared` tells whether the line was there, and `forest` whether some parent differs from that default or a phase
+// has two or more parents.
 // `validate` is null or { workflow, compare } (see resolveValidate) and `landingTest` the command of the header's `**Landing test:**` (before the first `## ` or `### Task` heading) or null. Heading and field lines inside fenced code blocks are not read. A
 // plan with no `**Branch prefix:**` line was written before phases existed (or has no `## Phase` heading): it is one
 // implicit phase `<planStem>/01-plan` holding every task, and any `## Phase` heading in it is ignored.
@@ -237,7 +269,7 @@ export function readPhases(text, planStem) {
     } else if ((m = PHASE_HEADING.exec(line))) {
       current = {
         n: Number(m[1]), title: m[2].trim(), slice: null, branch: null, parentRaw: null, prTitle: null,
-        standsAlone: null, phaseCheck: null, validateRaw: null, tasks: [], sawTask: false,
+        standsAlone: null, sequentialBecause: null, phaseCheck: null, validateRaw: null, tasks: [], sawTask: false,
       };
       phases.push(current);
     } else if (line.startsWith('## ')) {
@@ -252,7 +284,7 @@ export function readPhases(text, planStem) {
         current.sawTask = true;
       }
     } else if (current && !current.sawTask && (m = PHASE_FIELD.exec(line))) {
-      current[FIELD_KEYS[m[1]]] = m[1] === 'Branch' || m[1] === 'Parent' ? branchOf(m[2]) : m[2].trim();
+      current[FIELD_KEYS[m[1]]] = m[1] === 'Branch' ? branchOf(m[2]) : m[2].trim();
     }
   }
   const sensitivePaths = sensitive ?? [];
@@ -269,7 +301,7 @@ export function readPhases(text, planStem) {
       landingTest,
       phases: [{
         n: 1, title, slice: null, branch: `${planStem}/01-plan`, parent: { kind: 'trunk', value: null },
-        parentDeclared: false, prTitle: title, standsAlone: null, phaseCheck: UNPHASED_CHECK, validate: null, tasks: all,
+        parents: [], parentDeclared: false, prTitle: title, standsAlone: null, sequentialBecause: null, phaseCheck: UNPHASED_CHECK, validate: null, tasks: all,
       }],
     };
   }
@@ -292,13 +324,13 @@ export function readPhases(text, planStem) {
   }
   let forest = false;
   for (const phase of phases) {
-    phase.parent = resolveParent(phase, phases);
+    Object.assign(phase, resolveParent(phase, phases));
     phase.parentDeclared = phase.parentRaw !== null;
     delete phase.parentRaw;
     phase.validate = resolveValidate(phase);
     delete phase.validateRaw;
     const def = phase.n === 1 ? null : `P${phase.n - 1}`;
-    if (phase.parent.value !== def || phase.parent.kind !== (def ? 'phase' : 'trunk')) forest = true;
+    if (phase.parent.value !== def || phase.parent.kind !== (def ? 'phase' : 'trunk') || phase.parents.length > 1) forest = true;
   }
   return { branchPrefix: prefix, sensitivePaths, testPaths: tests, forest, landingTest, phases };
 }

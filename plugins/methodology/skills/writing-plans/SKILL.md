@@ -37,6 +37,17 @@ Before defining tasks, map out which files will be created or modified and what 
 
 This structure informs the task decomposition. Each task should produce self-contained changes that make sense independently.
 
+## Parallel layout
+
+Lay the plan out from its dependency graph before writing any phase, so that work that does not wait on other work runs beside it:
+
+1. **File map.** List every file the plan creates, modifies or tests, and give each one owner task. Two tasks that edit one file share it: they are one lane, or one runs after the other.
+2. **Edges.** A task depends on another only for a consumed interface (a name, signature, format or command the other task produces), a real ordering need (a rollout step after the task it rolls out) or a shared file; a test that pins a hash or a byte budget of a file shares that file. Write every edge as `**Depends on:**`; plan order, habit and caution are not edges.
+3. **Interfaces first.** When several pieces wait on shared names or formats, a short first phase fixes them so the rest fans out.
+4. **Phases.** Draw the phases from the slices' dependencies. A phase needs an earlier phase when one of its tasks depends on a task there or lists a path that phase lists; its frontier is the phases it needs minus those that are an ancestor of another phase it needs. Every phase writes `**Parent:**` equal to its frontier (`trunk` when it needs none). Where work converges the phase is a join, `**Parent:** P<k>, P<m>`, and a plan ends in one phase.
+5. **Lanes.** Inside each phase, lay the tasks out in lanes (see Lanes under Phases), or write `**Sequential because:**` with the fact that forces one chain.
+6. **Check.** Run `triqual plan lanes <draft>`: it prints each violation with its fix, and it exits 0 before the self-review. Its plan `parallelism` and `criticalPath` go into the progress entry that registers the plan.
+
 ## Phases
 
 A plan is a sequence of phases. Each phase is one pull request, built from atomic tasks. Map each phase to a delivery slice of the spec (its `## Delivery Slices`): the slice's reason to stand alone, refined with the real files, becomes the phase's. A spec without slices is one phase. Write each phase as:
@@ -45,7 +56,7 @@ A plan is a sequence of phases. Each phase is one pull request, built from atomi
 ## Phase <N>: <name>
 **Slice:** S<n>
 **Branch:** <prefix>/<NN>-<phase-slug>
-**Parent:** <P<k> | trunk | branch>
+**Parent:** <P<k>[, P<m>…] | trunk | branch>
 **PR title:** <conventional title>
 **Stands alone because:** <the slice's reason, refined with real files>
 **Phase check:** `<command>` → <expected>
@@ -56,7 +67,7 @@ A plan is a sequence of phases. Each phase is one pull request, built from atomi
 
 Its `### Task <M>: …` blocks follow, and no other `###` heading appears inside a phase.
 
-- **Parent and Validate:** both lines are optional. Without `**Parent:**` a phase branches from the previous phase (the first from the trunk); `**Parent:**` names an earlier phase `P<k>`, `trunk` or a branch, and phases that are not ancestor and descendant form a forest, so their `Files` must be disjoint (see Self-Review). `**Validate:**` names the workflow that validates the phase, with an optional `compare=` command, or `none`. To write many near-identical plans from one template, see [references/plan-generate.md](references/plan-generate.md); to check a forest for file collisions, see [references/collisions.md](references/collisions.md).
+- **Parent and Validate:** every phase writes `**Parent:**`, equal to its frontier (see Parallel layout): `trunk` when it needs no earlier phase, `P<k>` for one, `P<k>, P<m>` for a join, or a branch of another plan. In a plan written before this rule, a phase without the line branches from the previous phase (the first from the trunk). Phases that are not ancestor and descendant form a forest, so their `Files` must be disjoint (see Self-Review); a join is a descendant of each of its parents. `**Validate:**` is optional: it names the workflow that validates the phase, with an optional `compare=` command, or `none`. To write many near-identical plans from one template, see [references/plan-generate.md](references/plan-generate.md); to check a forest for file collisions, see [references/collisions.md](references/collisions.md).
 - **Numbering and order:** task numbers are global across phases (T1…Tn). Each task belongs to exactly one phase, and its `**Depends on:**` names only tasks in the same or an earlier phase.
 - **One commit per task:** a task's work is exactly one commit on the phase branch, and its single Commit step gives the conventional message.
 - **Lanes:** plan every phase in parallel lanes first. A lane is a chain of tasks, named by a letter on each task's `**Lane:** <letter>` line, that one agent runs start to finish while the other lanes run beside it. The rule:
@@ -216,7 +227,7 @@ git commit -m "feat: add specific feature"
 
 The lines under the heading follow the task ledger's plan format:
 - `**Tier:**` names the task's tier (see Task Tiers); it is the first line. A `heavy` task puts its one-line reason on the plain-text line directly under it.
-- `**Lane:**` names the task's lane as one letter (see Phases, Lanes). Tasks of one lane share the letter and chain through `**Depends on:**`; the closing task takes a lane of its own and depends on every lane. A phase with `**Sequential because:**` writes no `**Lane:**` lines. The plan parser ignores the line, so task ids and dependencies read as they do without it.
+- `**Lane:**` names the task's lane as one letter (see Phases, Lanes). Tasks of one lane share the letter and chain through `**Depends on:**`; the closing task takes a lane of its own and depends on every lane. A phase with `**Sequential because:**` writes no `**Lane:**` lines. `triqual plan lanes` reads it to check the lanes; task ids and dependencies read as they do without it.
 - `**Depends on:**` lists the tasks that must be done first, as `T1, T3`; omit the line when a task has none, or write `Depends on: none`, which reads the same.
 - `**Skills:**` lists the vault skills the task needs. When headjack is installed, run `triqual suggest "<the task's text>" --json` per task and keep the fitting `suggestions[].slug` values. On a non-zero exit from `triqual suggest` (exit 3: headjack is not installed), on empty output, or when `triqual` is not on `PATH` (`command -v triqual` fails, or exit 127), omit the line silently.
 - `**Role:**` names the task's role (see Task Roles). A `roles:complex-implementer` task puts its reason, the live-state migration or the change across systems that one brief cannot describe, on the plain-text line directly under it. Reason lines never start with `**`.
@@ -265,7 +276,7 @@ After writing the complete plan, look at the spec with fresh eyes and check the 
 
 **7. Tiers:** Does every task carry a `**Tier:**` (all or none)? Is each tier the one the rubric gives for what the task touches, with no task tiered lower than its content justifies? Is every `coordinator` task `light` and every `roles:complex-implementer` task `heavy`? Does every `heavy` task have its reason line under `**Tier:**`, and every `roles:complex-implementer` task its reason line under `**Role:**`, each naming a criterion the rubric gives? Is every task that touches a sensitive path (the default set plus the header's `**Sensitive paths:**`) or whose diff will have more than 1000 code lines `heavy`? Is any task left at the default light that matches a heavy trigger, and does every `standard` task have its one-line reason under `**Tier:**`? Is any eval, fixture, dataset or test-only task tiered above light without a sensitive path or a heavy criterion? When more than 50% of the plan's tasks are `heavy` in a plan of at least 5 tasks, re-check each tier, since heavy review costs the most and registering the plan prints a warning.
 
-**8. Lanes:** Does every phase either split into lanes or carry `**Sequential because:**` with a real reason? In a laned phase, are the lanes' `Files` disjoint, is there no `Depends on` across lanes, do the tasks of each lane chain, does every task meant to run beside others have one exact node `Test:` file (unless the plan header has a `**Landing test:**` line), and does a closing task depend on every lane as the milestone? Is any phase marked sequential that two lanes could carry?
+**8. Lanes:** Does every phase either split into lanes or carry `**Sequential because:**` with a real reason? In a laned phase, are the lanes' `Files` disjoint, is there no `Depends on` across lanes, do the tasks of each lane chain, does every task meant to run beside others have one exact node `Test:` file (unless the plan header has a `**Landing test:**` line), and does a closing task depend on every lane as the milestone? Is any phase marked sequential that two lanes could carry? For each `Depends on`, each `**Sequential because:**` and each `**Parent:**`: is the dependency real (a consumed interface, a real ordering need or a shared file), is one missing, and would splitting one file or fixing one interface first let two pieces run side by side? Does `triqual plan lanes <draft>` exit 0?
 
 **9. Forest:** In a plan whose phases are not all in one chain, are incomparable phases' `Files` disjoint? Run `triqual plan check-collisions <plan.md…>` ([references/collisions.md](references/collisions.md)) and fix every COLLISION.
 
@@ -275,7 +286,7 @@ If you find issues, fix them inline. No need to re-review — just fix and move 
 
 ## Plan Audit
 
-After the self-review, dispatch `roles:final-adversarial-reviewer` with `../brainstorming/spec-document-reviewer-prompt.md` on the plan and its spec: the adversarial audit runs on every plan, and no other reviewer takes its place. The audit checks the tiers both ways: a task tiered lower than its content justifies by the Task Tiers rubric is a finding, and so is a task tiered higher than the rubric justifies. A `heavy` task, or a `roles:complex-implementer` task, whose reason line is missing or does not match the rubric's criteria for it is a finding too. The audit also flags unrequested complexity and over-tiering as findings. The shared audit prompt stays as it is, so write both tier checks and this instruction into your dispatch message to the auditor.
+After the self-review, dispatch `roles:final-adversarial-reviewer` with `../brainstorming/spec-document-reviewer-prompt.md` on the plan and its spec: the adversarial audit runs on every plan, and no other reviewer takes its place. The audit checks the tiers both ways: a task tiered lower than its content justifies by the Task Tiers rubric is a finding, and so is a task tiered higher than the rubric justifies. A `heavy` task, or a `roles:complex-implementer` task, whose reason line is missing or does not match the rubric's criteria for it is a finding too. The audit also flags unrequested complexity and over-tiering as findings. The shared audit prompt holds the serial-order check but not these, so write both tier checks and this instruction into your dispatch message to the auditor. Write the layout check into that message too: for each `Depends on`, each `**Sequential because:**` and each `**Parent:**`, the auditor asks whether the dependency is real, whether one is missing, and whether splitting one file or fixing one interface first would let two pieces run side by side; a layout that is serial without a dependency is a finding.
 
 Fix the findings in the plan. Name, in your message to your human partner, each finding you did not fix and why.
 

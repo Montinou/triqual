@@ -10,6 +10,9 @@
 // descendant, and with --diff `OUTSIDE <node> <path>` per file the node's commits change beyond its Files (compared as
 // `git diff --name-only <base>...<head>` in the cwd's repo, <base> the node's parent branch, else the first of main, master
 // that exists). Exit 0 clean, 1 any COLLISION, OUTSIDE, glob or unreadable plan, 2 bad arguments or an unreadable file.
+// `triqual plan lanes <plan.md> [--json]` (lib/plan-lanes.mjs): per phase `P<n> tasks <t> lanes <l> critical <c> parallelism
+// <x.xx>` (and ` sequential: <reason>`), then the plan's line, then `<code>: <message>` per violation of the lanes, parents
+// and dependencies; --json prints the object. Exit 0 clean, 1 any violation, 2 bad arguments or a file that is not a plan.
 // Importing this module runs nothing.
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
@@ -19,6 +22,7 @@ import { parseArgs } from 'node:util';
 import { writeAtomic } from '../lib/fsx.mjs';
 import { PlanError, readPhases, readTasks, validatePlanForRegistration } from '../lib/plan.mjs';
 import { checkCollisions, diffOutside, nodesFromPlans } from '../lib/plan-collisions.mjs';
+import { planLanes } from '../lib/plan-lanes.mjs';
 import { render } from '../lib/plan-template.mjs';
 
 const USAGE = `usage: triqual plan generate --template <file.md> --data <file.json> --out <dir> [--replace]
@@ -30,6 +34,10 @@ const COLLISIONS_USAGE = `usage: triqual plan check-collisions <plan.md…> [--d
   Compares the Files of the phases that are not ancestor and descendant: nodes=<n> incomparable pairs=<p> collisions=<c>,
   COLLISION <a> <b> <paths>. --diff <node> <head> adds OUTSIDE <node> <path> for each file changed from the node's parent
   branch (else main or master) to <head>, run in the current repository, that the node does not list. Exit 1 on any.`;
+
+const LANES_USAGE = `usage: triqual plan lanes <plan.md> [--json]
+  Checks the lanes, parents and dependencies of a plan's phases and prints each phase's critical path and parallelism, then the plan's,
+  then one line per violation with its fix. --json prints the object. Exit 1 on any violation.`;
 
 class UsageError extends Error {}
 
@@ -160,14 +168,46 @@ function checkCollisionsCommand(rest) {
   return result.collisions.length > 0 || outside.length > 0 ? 1 : 0;
 }
 
+function lanesCommand(rest) {
+  let parsed;
+  try {
+    parsed = parseArgs({ args: rest, options: { json: { type: 'boolean' } }, allowPositionals: true });
+  } catch (err) {
+    throw new UsageError(err.message);
+  }
+  if (parsed.positionals.length !== 1) throw new UsageError('give one plan file');
+  const [file] = parsed.positionals;
+  const text = readInput(file, 'plan');
+  let result;
+  try {
+    result = planLanes(text, basename(file).replace(/\.md$/, ''));
+  } catch (err) {
+    if (!(err instanceof PlanError)) throw err;
+    process.stderr.write(`${file}: ${err.message}\n`);
+    return 2;
+  }
+  if (parsed.values.json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } else {
+    const lines = [
+      ...result.phaseRows.map((r) => `P${r.n} tasks ${r.tasks} lanes ${r.lanes} critical ${r.criticalPath} parallelism ${r.parallelism.toFixed(2)}${r.sequential ? ` sequential: ${r.reason}` : ''}`),
+      `plan tasks ${result.tasks} phases ${result.phases} critical ${result.criticalPath} parallelism ${result.parallelism.toFixed(2)} runnerOnly ${result.runnerOnly}`,
+      ...result.violations.map((v) => `${v.code}: ${v.message}`),
+    ];
+    process.stdout.write(`${lines.join('\n')}\n`);
+  }
+  return result.violations.length > 0 ? 1 : 0;
+}
+
 export function main(argv) {
   if (argv.some((a) => a === '--help' || a === '-h')) {
-    process.stdout.write(`${USAGE}\n${COLLISIONS_USAGE}\n`);
+    process.stdout.write(`${USAGE}\n${COLLISIONS_USAGE}\n${LANES_USAGE}\n`);
     return 0;
   }
   try {
     const [sub, ...rest] = argv;
     if (sub === 'check-collisions') return checkCollisionsCommand(rest);
+    if (sub === 'lanes') return lanesCommand(rest);
     if (sub !== 'generate') throw new UsageError(sub === undefined ? '' : `unknown subcommand "${sub}"`);
     let parsed;
     try {
@@ -184,7 +224,7 @@ export function main(argv) {
     return generate({ template, data, out, replace: Boolean(replace) });
   } catch (err) {
     if (!(err instanceof UsageError)) throw err;
-    process.stderr.write(`${err.message ? `${err.message}\n` : ''}${argv[0] === 'check-collisions' ? COLLISIONS_USAGE : USAGE}\n`);
+    process.stderr.write(`${err.message ? `${err.message}\n` : ''}${argv[0] === 'check-collisions' ? COLLISIONS_USAGE : argv[0] === 'lanes' ? LANES_USAGE : USAGE}\n`);
     return 2;
   }
 }

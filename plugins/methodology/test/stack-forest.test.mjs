@@ -102,6 +102,8 @@ const rig = ({ withGh = true, plan = PHASED } = {}) => {
   };
 };
 
+const JOIN = FOREST.replace('**Parent:** P1\n**Branch:** demo/03-extra', '**Parent:** P1, P2\n**Branch:** demo/03-extra');
+
 const withRig = (opts, fn) => {
   const r = rig(opts);
   try {
@@ -520,5 +522,22 @@ test('status --tree prints the phases as a tree', () => {
     const res = r.run(['status', r.plan, '--tree']);
     assert.equal(res.status, 0, res.stderr);
     assert.equal(res.stdout, 'main\n  P1 demo/01-core [pending]\n    P2 demo/02-edge [pending]\n');
+  });
+});
+
+test('init refuses a plan with a join and writes no state', () => {
+  assert.deepEqual(parsePhases(JOIN, PLAN_REL).phases.map((p) => p.parents), [[], [], [1, 2]]);
+  withRig({ withGh: false, plan: JOIN }, (r) => {
+    const res = r.run(['init', r.plan, '--mode', 'local']);
+    assert.equal(res.status, 3, res.stderr);
+    assert.match(res.stderr, /^stack: joins need a methodology version that runs concurrent phases$/m);
+    assert.equal(existsSync(r.statePath), false);
+  });
+});
+test('init on an existing state refuses a plan that became a join', () => {
+  withRig({ withGh: false, plan: FOREST }, (r) => {
+    r.json(r.run(['init', r.plan, '--mode', 'local'])); r.setPlan(JOIN);
+    const res = r.run(['init', r.plan]);
+    assert.equal(res.status, 3, res.stderr); assert.match(res.stderr, /joins need a methodology version that runs concurrent phases/);
   });
 });

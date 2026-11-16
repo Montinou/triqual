@@ -226,3 +226,15 @@ test('brainstorming ends an architectural spec by invoking writing-plans only', 
   assert.doesNotMatch(text, new RegExp(`execution method|\\bnative\\b|${['subagent', 'driven', 'development'].join('-')}`, 'i'));
   assert.match(text, /Spec written/);
 });
+
+test('brainstorming slices carry Depends on and state independent slices as parallel', () => {
+  assert.deepEqual(lacks(BRAIN, ['**Depends on:** the earlier slices it needs, as `S<k>, …`, or `none`.',
+    'only for a real need', 'Slices with no dependency between them are stated as parallel']), []);
+  const five = read(BRAIN).split('\n').find((l) => l.startsWith('5. **Modularity:**'));
+  assert.match(five, /serial without a dependency/);
+  assert.match(five, /earlier slices/);
+});
+test('the spec audit flags a slice or phase order that is serial without a dependency', () => {
+  const rows = read('brainstorming/spec-document-reviewer-prompt.md').split('\n');
+  for (const name of ['Modularity', 'Phases']) assert.match(rows.find((l) => l.trimStart().startsWith(`| ${name} |`)), /serial without a dependency/);
+});

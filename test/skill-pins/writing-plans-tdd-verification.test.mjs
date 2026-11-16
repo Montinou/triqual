@@ -13,6 +13,7 @@ const flat = (path) => read(path).replace(/\s+/g, ' ');
 const TDD = 'test-driven-development/SKILL.md';
 const GOOD = 'test-driven-development/writing-good-tests.md';
 const VERIFY = 'verification-before-completion/SKILL.md';
+const PLANS = 'writing-plans/SKILL.md';
 // Skills the 1.0 set retires or moves out; nothing in these skills may point at one.
 const RETIRED = ['methodology:writing-skills', 'methodology:requesting-code-review', 'methodology:receiving-code-review', `methodology:${['subagent', 'driven', 'development'].join('-')}`, 'methodology:using-git-worktrees', 'methodology:dispatching-parallel-agents', 'superpowers:'];
 
@@ -71,4 +72,30 @@ test('the rewritten skills point at no retired skill', () => {
     for (const gone of RETIRED) assert.ok(!text.includes(gone), `${file} still points at ${gone}`);
   }
   assert.deepEqual(readdirSync(join(SKILLS, 'test-driven-development')).sort(), ['SKILL.md', 'writing-good-tests.md']);
+});
+
+test('writing-plans lays the plan out from its dependency graph before its phases', () => {
+  const text = read(PLANS);
+  assert.ok(text.indexOf('\n## Parallel layout\n') > text.indexOf('\n## File Structure\n'));
+  assert.ok(text.indexOf('\n## Parallel layout\n') < text.indexOf('\n## Phases\n'));
+  for (const phrase of ['give each one owner task', 'a consumed interface', 'a real ordering need', 'a shared file', 'every edge as `**Depends on:**`',
+    'a short first phase fixes them', '`**Parent:**` equal to its frontier', 'a plan ends in one phase', 'Run `triqual plan lanes <draft>`',
+    'plan `parallelism` and `criticalPath` go into the progress entry that registers the plan']) assert.ok(flat(PLANS).includes(phrase), phrase);
+});
+test('every phase writes Parent, and Parent may name a join', () => {
+  for (const phrase of ['**Parent:** <P<k>[, P<m>…] | trunk | branch>', 'every phase writes `**Parent:**`, equal to its frontier', '`P<k>, P<m>` for a join',
+    'a join is a descendant of each of its parents']) assert.ok(flat(PLANS).includes(phrase), phrase);
+  assert.ok(!flat(PLANS).includes('both lines are optional'));
+});
+test('the Lane line is read by triqual plan lanes', () => {
+  assert.ok(flat(PLANS).includes('`triqual plan lanes` reads it to check the lanes'));
+  assert.ok(!flat(PLANS).includes('The plan parser ignores the line'));
+});
+test('Self-Review 8 and the Plan Audit ask whether each dependency is real', () => {
+  const item = read(PLANS).split('\n').find((l) => l.startsWith('**8. Lanes:**'));
+  assert.match(item, /is the dependency real[^?]*is one missing[^?]*splitting one file or fixing one interface first/);
+  assert.match(item, /`triqual plan lanes <draft>` exit 0/);
+  assert.ok(flat(PLANS).includes('a layout that is serial without a dependency is a finding'));
+  assert.ok(flat(PLANS).includes('The shared audit prompt holds the serial-order check'));
+  assert.ok(!flat(PLANS).includes('The shared audit prompt stays as it is'));
 });

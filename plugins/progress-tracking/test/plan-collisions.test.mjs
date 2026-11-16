@@ -196,3 +196,14 @@ test('--diff: a rename whose old path is not in the node Files is an OUTSIDE lin
   assert.equal(r.status, 1, r.stdout + r.stderr);
   assert.deepEqual(r.stdout.trimEnd().split('\n'), ['nodes=1 incomparable pairs=0 collisions=0', 'OUTSIDE solo#P1 src/old.mjs']);
 });
+
+test('a join is a descendant of each of its parents: no collision with either chain', () => {
+  const join = planText('join', [{ files: [['a.mjs']] }, { parent: 'trunk', files: [['b.mjs']] }, { parent: 'P1, P2', files: [['a.mjs', 'b.mjs']] }]);
+  const nodes = nodesFromPlans([{ stem: 'join', text: join }]);
+  assert.deepEqual([nodes[2].parentId, nodes[2].parentIds], ['join#P1', ['join#P1', 'join#P2']]);
+  assert.deepEqual(checkCollisions(nodes), { pairs: 1, collisions: [] });
+});
+test('two parents of a join that share a path still collide', () => {
+  const join = planText('join', [{ files: [['a.mjs']] }, { parent: 'trunk', files: [['a.mjs']] }, { parent: 'P1, P2', files: [['c.mjs']] }]);
+  assert.deepEqual(checkCollisions(nodesFromPlans([{ stem: 'join', text: join }])).collisions, [{ a: 'join#P1', b: 'join#P2', shared: ['a.mjs'] }]);
+});

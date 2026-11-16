@@ -529,8 +529,10 @@ test('a **Lane:** line leaves task ids and dependencies unchanged in the plan pa
     '**Role:** roles:tdd-implementer',
     '',
   ].join('\n');
-  const strip = ({ start, end, ...rest }) => rest;
+  const strip = ({ start, end, lane, ...rest }) => rest;
   const withLanes = readTasks(plan(true));
+  assert.deepEqual(withLanes.map((t) => t.lane), ['A', 'B', 'C']);
+  assert.deepEqual(readTasks(plan(false)).map((t) => t.lane), [null, null, null]);
   assert.deepEqual(withLanes.map((t) => t.id), readTasks(plan(false)).map((t) => t.id));
   assert.deepEqual(withLanes.map(strip), readTasks(plan(false)).map(strip));
   assert.equal(withLanes.length, 3);

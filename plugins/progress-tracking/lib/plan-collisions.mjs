@@ -5,9 +5,10 @@ import { readPhases, readTasks } from './plan.mjs';
 
 const GLOB = /[*{]/;
 
-// The nodes of `plans` ([{ stem, text }]): [{ id: '<stem>#P<n>', branch, parentId|null, parentBranch|null, paths }]. A
-// phase on the trunk has no parent; a phase parent is the node of the same plan; a branch parent is the node of any
-// plan whose branch is that branch, and no parent node when none has it. `parentBranch` is the raw `**Parent:**` branch
+// The nodes of `plans` ([{ stem, text }]): [{ id: '<stem>#P<n>', branch, parentId|null, parentIds, parentBranch|null,
+// paths }]. A phase on the trunk has no parent; a phase parent is the node of the same plan; a branch parent is the node
+// of any plan whose branch is that branch, and no parent node when none has it. `parentIds` holds every resolved parent
+// (a join has several, one `<stem>#P<k>` per phase parent); `parentId` is the first of them, or null. `parentBranch` is the raw `**Parent:**` branch
 // (null unless the parent is a branch), kept so a parent outside the given plans is still the base of a diff.
 export function nodesFromPlans(plans) {
   const nodes = [];
@@ -17,24 +18,35 @@ export function nodesFromPlans(plans) {
     for (const phase of readPhases(text, stem).phases) {
       const paths = new Set();
       for (const id of phase.tasks) for (const list of Object.values(tasks.get(id).files)) for (const p of list) paths.add(p);
-      nodes.push({ id: `${stem}#P${phase.n}`, branch: phase.branch, parentId: null, parentBranch: null, paths: [...paths] });
-      parents.push({ stem, parent: phase.parent });
+      nodes.push({ id: `${stem}#P${phase.n}`, branch: phase.branch, parentId: null, parentIds: [], parentBranch: null, paths: [...paths] });
+      parents.push({ stem, parent: phase.parent, phaseParents: phase.parents });
     }
   }
   nodes.forEach((node, i) => {
-    const { stem, parent } = parents[i];
-    if (parent.kind === 'phase') node.parentId = `${stem}#${parent.value}`;
+    const { stem, parent, phaseParents } = parents[i];
+    if (phaseParents.length > 1) {
+      node.parentIds = phaseParents.map((k) => `${stem}#P${k}`);
+      node.parentId = node.parentIds[0];
+    } else if (parent.kind === 'phase') node.parentId = `${stem}#${parent.value}`;
     else if (parent.kind === 'branch') {
       node.parentId = nodes.find((n) => n.branch === parent.value)?.id ?? null;
       node.parentBranch = parent.value;
     }
+    if (node.parentIds.length === 0 && node.parentId) node.parentIds = [node.parentId];
   });
   return nodes;
 }
 
 function ancestorsOf(node, byId) {
   const seen = new Set();
-  for (let id = node.parentId; id && !seen.has(id) && byId.has(id); id = byId.get(id).parentId) seen.add(id);
+  const walk = (ids) => {
+    for (const id of ids) {
+      if (seen.has(id) || !byId.has(id)) continue;
+      seen.add(id);
+      walk(byId.get(id).parentIds);
+    }
+  };
+  walk(node.parentIds);
   return seen;
 }
 

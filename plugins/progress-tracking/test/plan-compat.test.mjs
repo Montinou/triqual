@@ -11,7 +11,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..', '..');
 const PLUGINS = join(ROOT, 'plugins');
 const RECORDED = JSON.parse(readFileSync(join(HERE, 'fixtures', 'plan-compat.json'), 'utf8'));
-const NEW_KEYS = new Set(['forest', 'landingTest', 'parent', 'parentDeclared', 'validate', 'files']);
+const NEW_KEYS = new Set(['forest', 'landingTest', 'parent', 'parentDeclared', 'validate', 'files', 'parents', 'sequentialBecause', 'lane']);
 
 const walk = (dir) => readdirSync(dir).sort().flatMap((name) => {
   const path = join(dir, name);

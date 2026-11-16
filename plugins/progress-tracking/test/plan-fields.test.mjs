@@ -214,3 +214,52 @@ test("a Files line of the next task is not this task's", () => {
 test('a task without Files has three empty arrays', () => {
   assert.deepEqual(filesOf('# Demo\n\n### Task 1: A\n\n**Depends on:** none\n'), [{ create: [], modify: [], test: [] }]);
 });
+
+const parentsOf = (text) => readPhases(text, 'demo').phases.map((p) => p.parents);
+test('parents follow the Parent line: default, trunk, phase, branch', () => {
+  assert.deepEqual(parentsOf(plan(3)), [[], [1], [2]]);
+  assert.deepEqual(parentsOf(plan(4, { 2: 'trunk', 3: 'P1', 4: '`other/03-x`' })), [[], [], [1], []]);
+  assert.deepEqual(parentsOf(plan(3, { 3: '`demo/01-part`' })), [[], [1], [1]]);
+  assert.deepEqual(readPhases('# Solo\n\n### Task 1: A\n', 'solo').phases[0].parents, []);
+});
+test('P1, P2 is a join: parents [1, 2], parent stays P1, forest true', () => {
+  const r = readPhases(plan(3, { 2: 'trunk', 3: 'P1, P2' }), 'demo');
+  assert.deepEqual(r.phases.map((p) => p.parents), [[], [], [1, 2]]);
+  assert.deepEqual(r.phases[2].parent, phase('P1'));
+  assert.equal(r.forest, true);
+  assert.deepEqual(parentsOf(plan(3, { 2: 'trunk', 3: 'P1, `demo/02-part`' }))[2], [1, 2]);
+});
+test('a join whose first parent is the previous phase is still a forest', () => {
+  const r = readPhases(plan(3, { 3: 'P2, P1' }), 'demo');
+  assert.deepEqual([r.phases[2].parents, r.phases[2].parent, r.forest], [[2, 1], phase('P2'), true]);
+});
+test('a join written with backticks or a trailing note reads the same', () => {          // Review Focus 1
+  assert.deepEqual(parentsOf(plan(3, { 2: 'trunk', 3: '`P1`, `P2`' }))[2], [1, 2]);
+  assert.deepEqual(parentsOf(plan(3, { 2: 'trunk', 3: 'P1, P2 (core and api)' }))[2], [1, 2]);
+});
+test('a Parent list errors name the phase', () => {
+  const p3 = (v) => () => readPhases(plan(3, { 3: v }), 'demo');
+  throwsPlan(p3('P1, trunk'), /^phase 3 \*\*Parent:\*\* "P1, trunk" mixes phases with trunk or a branch/); throwsPlan(p3('P1, `other/03-x`'), /phase 3.*mixes phases/);
+  throwsPlan(p3('P1, P1'), /^phase 3 \*\*Parent:\*\* "P1, P1" names P1 twice$/);
+  throwsPlan(p3('P1, P3'), /phase 3 \*\*Parent:\*\* "P3" must name an earlier phase/); throwsPlan(p3('P1, P7'), /"P7" must name an earlier phase/);
+});
+test('Sequential because is a phase field and Lane a task field', () => {
+  const text = plan(2).replace('**PR title:** Part 1', '**PR title:** Part 1\n**Sequential because:** one shared file')
+    .replace('### Task 2: Do 2\n', '### Task 2: Do 2\n**Lane:** B\n');
+  assert.deepEqual(readPhases(text, 'demo').phases.map((p) => p.sequentialBecause), ['one shared file', null]);
+  assert.deepEqual(readTasks(text).map((t) => t.lane), [null, 'B']);
+});
+test('Lane and Sequential because inside a code fence are not read', () => {             // Review Focus 2
+  const text = plan(2).replace('**PR title:** Part 1', '**PR title:** Part 1\n\n```\n**Sequential because:** x\n```')
+    .replace('### Task 2: Do 2\n', '### Task 2: Do 2\n```\n**Lane:** B\n```\n');
+  assert.equal(readPhases(text, 'demo').phases[0].sequentialBecause, null);
+  assert.equal(readTasks(text)[1].lane, null);
+});
+test('a parenthetical note after the Parent value is not read as list elements', () => {
+  const p1 = readPhases(plan(3, { 2: 'trunk', 3: 'P1 (core, api)' }), 'demo').phases[2];
+  assert.deepEqual([p1.parent, p1.parents], [phase('P1'), [1]]);
+  const branch = readPhases(plan(2, { 2: 'feature/base (shared, see notes)' }), 'demo').phases[1];
+  assert.deepEqual([branch.parent, branch.parents], [{ kind: 'branch', value: 'feature/base' }, []]);
+  assert.deepEqual(parentsOf(plan(3, { 2: 'trunk', 3: '`P1`, `P2`' }))[2], [1, 2]);
+  assert.deepEqual(parentsOf(plan(3, { 2: 'trunk', 3: 'P1, P2 (core and api)' }))[2], [1, 2]);
+});
