@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sessionSignals } from '../cli/lib/eval-sessions.mjs';
@@ -230,4 +230,44 @@ test('review sample --more passes over a candidate whose transcript changed 10 m
   assert.match((await run(f, ['sample', '--more', '20', '--seed', '1'])).out, /Added 4 of 20/);
   age(join(f.root, '-w', 'g1.jsonl'));
   assert.match((await run(f, ['sample', '--more', '20', '--seed', '1'])).out, /Added 1 of 20/);
+});
+
+test('moreRandom with since compares the last activity: end when there is one, else start', () => {
+  const at = (id, start, end) => ({ ...sess(id, start), ...(end === undefined ? {} : { end }) });
+  const sessions = [
+    at('long', '2026-11-10T08:00:00.000Z', '2026-11-16T09:00:00.000Z'), // started before, ended after: a candidate
+    at('over', '2026-11-10T08:00:00.000Z', '2026-11-12T09:00:00.000Z'), // ended before: not
+    at('noend', '2026-11-17T08:00:00.000Z'),                            // no end: its start
+    at('noend-early', '2026-11-12T08:00:00.000Z'),
+    at('nullend', '2026-11-17T08:00:00.000Z', null),                    // a null end is no end
+    at('later', '2026-11-17T08:00:00.000Z', '2026-11-17T09:00:00.000Z'),
+  ];
+  const ids = (since) => moreRandom(sessions, [], 10, 1, { root: ROOT, since }).map((r) => r.sessionId).sort();
+  assert.deepEqual(ids('2026-11-16'), ['later', 'long', 'noend', 'nullend']);
+  assert.deepEqual(ids('2026-11-16T09:00:00.000Z'), ['later', 'long', 'noend', 'nullend']);
+  assert.deepEqual(ids('2026-11-16T09:00:00.001Z'), ['later', 'noend', 'nullend']);
+});
+
+test('moreRandom stamps `at` on each added row when given, and on none otherwise', () => {
+  const sessions = [sess('a', '2026-11-16T08:00:00.000Z'), sess('b', '2026-11-16T09:00:00.000Z')];
+  const stamped = moreRandom(sessions, [], 10, 1, { root: ROOT, at: '2026-11-18T00:00:00.000Z' });
+  assert.deepEqual(stamped.map((r) => r.at), ['2026-11-18T00:00:00.000Z', '2026-11-18T00:00:00.000Z']);
+  assert.ok(moreRandom(sessions, [], 10, 1, { root: ROOT }).every((r) => !('at' in r)));
+});
+
+test('review sample --more stamps every added row with the command\'s now and leaves the existing rows as they were', async () => {
+  const f = mixedFixture();
+  const r = await run(f, ['sample', '--more', '3', '--seed', '2']);
+  assert.equal(r.code, 0, r.err);
+  const text = readFileSync(join(f.evals, 'review', 'sample.jsonl'), 'utf8');
+  assert.ok(text.startsWith(f.existing), 'the existing rows are byte for byte unchanged');
+  const added = text.slice(f.existing.length).trim().split('\n').map((l) => JSON.parse(l));
+  assert.equal(added.length, 3);
+  assert.ok(added.every((x) => x.at === '2026-11-18T00:00:00.000Z'), JSON.stringify(added.map((x) => x.at)));
+  assert.ok(f.existing.trim().split('\n').every((l) => !('at' in JSON.parse(l))));
+  // the first stratified draw stays without it
+  const g = mixedFixture();
+  rmSync(join(g.evals, 'review', 'sample.jsonl'));
+  assert.equal((await run(g, ['sample', '--n', '4', '--seed', '2'])).code, 0);
+  assert.ok(readFileSync(join(g.evals, 'review', 'sample.jsonl'), 'utf8').trim().split('\n').every((l) => !('at' in JSON.parse(l))));
 });

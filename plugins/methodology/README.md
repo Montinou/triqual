@@ -410,7 +410,7 @@ skills now belong to Headjack (`headjack:writing-skills`, `headjack:skill-finder
 `~/.local/share/triqual/evals`; its files are mode 0600. A round does these steps in order:
 
 1. refresh the sessions store;
-2. draw `--more <k>` (default 30; 0 draws none) random sessions that started after every sampled one (a session whose transcript holds no user or assistant text, or changed within the last hour, is never drawn);
+2. draw `--more <k>` (default 30; 0 draws none) random sessions whose last activity is after the previous draw's cut-off (`review sample --more --since` compares a session's last activity, not its start; each added row records the draw's time as `at`, and the next round's cut-off is that time minus one hour, or the latest sampled start for rows without `at`). A session whose transcript holds no user or assistant text, or changed within the last hour, is not drawn, and one that was still running is drawn by the next round;
 3. keep the redacted render of each sampled session (`keep renders`);
 4. propose a label and failure categories for each sampled session and accept them where there is none (`review propose --accept`);
 5. run the code checks (`check`), then each judge over the sample (`judge`);

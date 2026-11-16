@@ -1,7 +1,9 @@
 // `triqual eval improve [--more <k>] [--paid]`: one unattended round of the evals loop, every step run in-process with
 // its output captured. (1) refresh the sessions store; (2) with no review sample, stop (exit 1); else draw --more
-// random sessions that started after every sampled one (`review sample --more <k> --since <latest sampled start>`; a
-// session with nothing to judge, or that may still be running, is never drawn); (3) `keep renders`: the redacted render of each sample session that is not
+// random sessions whose last activity is after the previous draw's quiet cut-off (`review sample --more <k> --since <the
+// latest `at` of the sample's rows minus one hour>`; a row with no `at` counts by its session's start, so before any draw
+// recorded its time the cut-off is the latest sampled start; with neither, nothing is drawn). A session with nothing to
+// judge, or that may still be running, is never drawn, and one that was running is a candidate of the next round; (3) `keep renders`: the redacted render of each sample session that is not
 // under judgeExclude is kept in <evals>/review/renders/ (0600, lib/eval-renders.mjs) so the labeled set outlives the host's
 // transcript cleanup (a session whose transcript changed within the last hour may still be running: it is kept by a later
 // round; a session that became excluded loses its kept render; one session's failure fails the step, not the others); (4) `review propose --accept`; (5) `check`, then `judge` over the sample for each judge category;
@@ -22,7 +24,7 @@ import { checkVersion } from './lib/eval-checks.mjs';
 import { JudgePromptError, spawnCapture } from './lib/eval-judge.mjs';
 import { reviseList, verdictsOf } from './lib/eval-improve.mjs';
 import { ensureDir, evalsDir, transcriptsRoot } from './lib/eval-paths.mjs';
-import { keepRenders } from './lib/eval-renders.mjs';
+import { QUIET_MS, keepRenders } from './lib/eval-renders.mjs';
 import { ratesTables } from './lib/eval-rates.mjs';
 import { currentVersion, scoreCategory } from './lib/eval-score.mjs';
 import { readJsonl, refreshSessions } from './lib/eval-store.mjs';
@@ -51,8 +53,10 @@ const USAGE = [
   '  triqual eval improve [--more <k>] [--paid]',
   '      One unattended round over the review sample (it needs one: "triqual eval review sample"):',
   '        1 refreshes the sessions store;',
-  '        2 draws --more <k> (default 30; 0 draws nothing) random sessions that started after every sampled one (a',
-  '          session whose transcript holds no user or assistant text, or changed within the last hour, is never drawn);',
+  '        2 draws --more <k> (default 30; 0 draws nothing) random sessions whose last activity is after the previous',
+  '          draw\'s quiet cut-off (the latest `at` of the sample rows minus one hour; before any draw recorded its time,',
+  '          after every sampled session\'s start); a session whose transcript holds no user or assistant text, or changed',
+  '          within the last hour, is not drawn, and one that was still running is a candidate of the next round;',
   '        3 "keep renders": the redacted render of each sample session that is not under a judgeExclude pattern is',
   '          kept in <evals>/review/renders/<sessionId>.txt (0600), so the session can be judged after the host deletes',
   '          its transcript; a session with a kept render is not rendered again; a session whose transcript changed within',
@@ -168,11 +172,15 @@ export async function main(argv, {
     if (err instanceof TaxonomyError) return fail(err.message);
     throw err;
   }
-  const sampled = new Set(before.map((r) => r.sessionId));
+  // The window of the draw is when a session went quiet: a row drawn by an earlier round carries `at` (the time of that
+  // draw) and anything active after `at` minus QUIET_MS is still a candidate; a row with no `at` counts by its session's start.
+  const byId = new Map(stored.map((s) => [s.sessionId, s]));
   let latest = null;
-  for (const s of stored) {
-    if (!sampled.has(s.sessionId) || typeof s.start !== 'string' || Number.isNaN(Date.parse(s.start))) continue;
-    if (latest === null || Date.parse(s.start) > Date.parse(latest)) latest = s.start;
+  for (const row of before) {
+    let cut = null;
+    if (typeof row.at === 'string' && !Number.isNaN(Date.parse(row.at))) cut = new Date(Date.parse(row.at) - QUIET_MS).toISOString();
+    else if (typeof byId.get(row.sessionId)?.start === 'string' && !Number.isNaN(Date.parse(byId.get(row.sessionId).start))) cut = byId.get(row.sessionId).start;
+    if (cut !== null && (latest === null || Date.parse(cut) > Date.parse(latest))) latest = cut;
   }
   if (opts.more > 0 && latest !== null) await call('review sample', cmd.review, ['sample', '--more', String(opts.more), '--since', latest], { date: true });
   const added = sampleRows().length - before.length;

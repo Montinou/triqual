@@ -5,8 +5,9 @@
 // (lib/eval-serve.mjs, 127.0.0.1 only, Host and Origin checked) over that sample, appends the labels to
 // <evals>/review/labels.jsonl, prints its plain URL, and runs until SIGINT or SIGTERM. A random per-run value is embedded in the
 // served page and required on every label POST; it is never printed. `sample --more <k> [--since <day | ISO timestamp>]` appends k more random-stratum
-// rows (sessions not yet in the sample) to the existing sample, keeping its rows and order; it needs a sample and takes
-// no --n or --force. A candidate with nothing to judge (an unreadable transcript, or one with no user or assistant text) or
+// rows (sessions not yet in the sample) to the existing sample, keeping its rows and order; each added row carries `at`,
+// the time of the draw (an ISO timestamp, the same for the whole draw); it needs a sample and takes no --n or --force.
+// --since compares a session's last activity (its end), not its start. A candidate with nothing to judge (an unreadable transcript, or one with no user or assistant text) or
 // that may still be running (its transcript was modified within the last hour) is passed over and the draw goes on, so k rows are added when enough candidates are usable. It prints counts, ids and paths, never transcript text. Exit codes: 0 done; 1 the store could not be updated, a sample exists (no --force), there is
 // no sample to serve, or the server could not start; 2 usage.
 // `propose [--accept] [--paid]` has a model read each sample session (lib/eval-reference.mjs: the redacted rendering, never the
@@ -53,7 +54,8 @@ const USAGE = [
   '      existing sample.jsonl, keeping its rows; fewer when fewer sessions are left. A session whose transcript is',
   '      unreadable, holds no user or assistant text, or was modified within the last hour (it may still be running) is',
   '      passed over, not added. Needs a sample; no --n or --force.',
-  '      --since <YYYY-MM-DD | ISO timestamp> keeps only sessions that started at or after it; it needs --more.',
+  '      --since <YYYY-MM-DD | ISO timestamp> keeps only sessions whose last activity is at or after it; it needs --more.',
+  '      Each added row carries `at`, the time of the draw.',
   '  triqual eval review serve [--port <n>]',
   '      Serves the sample on http://127.0.0.1:<port>/ (a free port when --port is absent or 0) and appends the',
   '      good/bad labels to <evals>/review/labels.jsonl. Binds to 127.0.0.1 only, checks the Host and Origin',
@@ -153,7 +155,7 @@ export async function main(argv, {
       // A candidate whose transcript is unreadable, was modified within the last hour (the session may still be running:
       // its text is partial) or reads but renders no text is passed over; a later draw can take it.
       const usable = ({ file }) => transcriptQuiet(file, now.getTime()) && renderForJudge(file).trim() !== '';
-      const added = moreRandom(sessions, existing, Number(opts.more), seed, { root: transcriptsRoot(env, home), since, usable });
+      const added = moreRandom(sessions, existing, Number(opts.more), seed, { root: transcriptsRoot(env, home), since, usable, at: now.toISOString() });
       try {
         writeSample(sampleFile, [...existing, ...added], { force: true });
       } catch (err) {
