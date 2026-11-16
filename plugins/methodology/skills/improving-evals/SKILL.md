@@ -1,0 +1,88 @@
+---
+name: improving-evals
+description: Use when the session start has an `evals` line that says to run methodology:improving-evals, or your human partner asks to improve the evals or a failure judge. Runs one improvement round, rewrites each judge prompt a round flags from the train split's notes, keeps a rewrite only when the dev score says `better`, and ships what it kept.
+---
+
+# Improving Evals
+
+## Overview
+
+A judge prompt is revised from what it got wrong on the train split and kept only when it measures better on the dev
+split. The test split is never read to change anything. A rewrite is a candidate until the dev line says otherwise.
+
+`<evals>` below is `$TRIQUAL_EVALS_DIR`, else `$XDG_DATA_HOME/triqual/evals`, else `~/.local/share/triqual/evals`. Run commands from the repository root.
+
+## When to use
+
+The SessionStart output carries a line `evals: <n> judge(s) below the bar (<ids>): run methodology:improving-evals`,
+or your human partner asks you to improve the evals. Without either, do not start.
+
+## The round
+
+1. **Get a report.** Run `triqual eval improve`. When the newest file of `<evals>/rounds/` is under a day old, read it
+   instead and run nothing. Pass `--paid` only when your human partner asked for it: a credential entry marked paid
+   spends money and is used only with the flag. The report is `<evals>/rounds/<YYYY-MM-DDTHHMMSSZ>.json`; its file
+   name is the round's id.
+2. **Read what failed.** When the report's `failed` is not empty, name those steps in the final report to your human
+   partner (`review sample`, `review propose`, `check`, `judge <id>`, `referee`, `score <id>`, `validate <id>`), and
+   say so when `paidOnly` is true. A round with failed steps still has a usable `revise`, built from what exists:
+   continue with it. Exit code 3 of `triqual eval improve` means the same.
+3. **For each category id of `revise`, once**, do 3a to 3h on one round branch (`evals/<round id>`, made once,
+   before the first category). An empty `revise` ends the round: report it.
+
+   a. **Read the notes.** The `misleading` notes of that category's rulings, on train sessions only. This command
+      lists them; run it with the category id in place of `<id>`, and never open `rulings.jsonl` any other way:
+
+```sh
+node -e "Promise.all([import('./plugins/methodology/cli/lib/eval-validate.mjs'),import('./plugins/methodology/cli/lib/eval-paths.mjs'),import('node:fs'),import('node:os')]).then(([{splitOf},{evalsDir},fs,os])=>((d,j=f=>fs.readFileSync(d+f,'utf8').split('\\n').filter(Boolean).map(l=>JSON.parse(l)))=>((t)=>j('/rulings.jsonl').filter(x=>x.category===process.argv[1]).filter(x=>t.has(x.sessionId)).filter(x=>x.misleading).forEach(x=>console.log(x.misleading)))(new Set(j('/review/sample.jsonl').filter(s=>splitOf(s.sessionId,s.stratum)==='train').map(s=>s.sessionId))))(evalsDir(process.env,os.homedir())))" <id>
+```
+
+   b. **Read the dev counts.** From the report's `scores` entry of the category, only its `dev` counts: `fn` is the
+      failures the judge missed, `fp` the false alarms. Read nothing else about dev or test.
+   c. **Rewrite** `plugins/methodology/evals/judges/<id>.md`, from those notes and counts and nothing else:
+      - the FAIL conditions as a checklist;
+      - the look-alikes that are not the failure, under PASS;
+      - the easy-to-miss kinds of the failure, under FAIL;
+      - invented examples only, and nothing copied from a session;
+      - one failure per prompt;
+      - the `model:` line unchanged, unless the change is the model (then the full model id, never an alias).
+   d. **Test the prompt.** Run `node --test plugins/methodology/test/eval-checks.test.mjs`. A failure is a defect of the
+      rewrite: fix the prompt, or revert it (3g).
+   e. **Judge the sample.** Run `triqual eval judge --category <id> --sessions <evals>/review/sample.jsonl`. It records
+      verdicts under the new prompt's hash. Pass `--paid` here too when your human partner asked for it. Exit 1 means
+      sessions were left (a limit or an error): rerun once, then treat the result as it stands.
+   f. **Score.** Run `triqual eval score --category <id>`. Its `dev:` line is `dev: previous <balanced>
+      (<correct>/<n>), current <balanced> (<correct>/<n>): <verdict>`.
+   g. **Keep or revert.** Keep the file only when the `dev:` line ends `better`. Otherwise (`not-better`, or `first
+      version`, which compares nothing) restore it with `git checkout -- plugins/methodology/evals/judges/<id>.md`.
+   h. **Record.** Append one line to `<evals>/revisions.jsonl`, written with `umask 077` so the file is mode 0600:
+      `{ at, round, category, from, to, kept, n, previous, current }`. `at` is the time now (ISO 8601), `round` is the
+      report's file name, `category` is the id, `kept` is true or false. `from`, `to`, `n`, `previous` and `current`
+      come from the `previous` block of the category's last line in `<evals>/scores.jsonl` (read that block and nothing
+      else of the line): `from` is `previous.version` (the prompt hash before the rewrite), `to` is the line's own
+      `version` (the hash after it), and `n`, `previous` and `current` are `previous.n`, `previous.previous` and
+      `previous.current`. A line with no `previous` block (`dev: first version`) gives `from` null, `n` 0, and null
+      `previous` and `current`. Then write the progress entry with both versions' counts, kept or reverted.
+4. **Ship what was kept**, once for the whole round. On the round branch make one commit per kept category, with this
+   in the body: `dev: previous <balanced> (<correct>/<n>), current <balanced> (<correct>/<n>)`. Then make one bump
+   commit of `methodology`'s `version`, as the repository's release rule says, so the installed copy changes: it is the
+   last commit of the branch, and no category commit bumps. Push the branch, open one pull request, make one merge
+   under the repository's own merge rule, then do one plugin update, `claude plugin update methodology@triqual`. When
+   no category was kept, there is no branch to ship: nothing is committed, pushed or merged.
+5. **Report** to your human partner in the format below.
+
+## Rules
+
+- never open a test-split session or a ruling about one
+- never ask the owner to rule on a case
+- one attempt per category per round
+- a rewrite is a candidate, never an improvement until measured
+- a change to a skill, role or rule is released and measured by the next rounds' `triqual eval rates`, and a controlled comparison is an experiment
+- the merge, under the repository's own merge rule, is part of this skill's job: your human partner pre-authorised merges in this repository, so a merge is not a stop here
+- stop only for a denial by policy, a human-only decision, or a failure you cannot explain
+
+## Final report
+
+The report is at most 20 lines in all, one per category of `revise`: the id, kept or reverted, and the counts, `previous <balanced>
+(<correct>/<n>), current <balanced> (<correct>/<n>)`. Add one line for the failed steps of the round (step 2) and one
+for the report's path. Counts and ids only: no transcript text.
