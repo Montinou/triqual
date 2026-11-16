@@ -49,6 +49,13 @@ test('the using-methodology entry gives its trigger, the evals: line', () => {
   assert.match(line, /when an `evals:` line asks/);
 });
 
+test('the skill runs only in a checkout of this repository and leaves a round another session has', () => {
+  assert.match(flat, /working directory is a checkout of this repository/);
+  assert.match(flat, /Never run the skill from another project, from the plugin cache or from a marketplace clone/);
+  assert.match(flat, /`evals\/<report name>` already exists/);
+  assert.match(flat, /`eval\.mjs judge` process for the round is already running, another session has the round: stop and say so/);
+});
+
 test('the steps come in the specified order', () => {
   const order = [
     'run methodology:improving-evals',

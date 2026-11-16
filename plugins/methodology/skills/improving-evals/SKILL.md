@@ -17,6 +17,11 @@ split. The test split is never read to change anything. A rewrite is a candidate
 The SessionStart output carries a line `evals: <n> judge(s) below the bar (<ids>): run methodology:improving-evals`,
 or your human partner asks you to improve the evals. Without either, do not start.
 
+The session's working directory is a checkout of this repository. Never run the skill from another project, from the
+plugin cache or from a marketplace clone (`~/.claude/plugins`, `~/.codex`): those are copies the plugin manager owns.
+When the round's branch `evals/<report name>` already exists, or an `eval.mjs judge` process for the round is
+already running, another session has the round: stop and say so.
+
 ## The round
 
 1. **Get a report.** Run `triqual eval improve`. When the newest file of `<evals>/rounds/` is under a day old, read it

@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { evalsNotice } from '../cli/lib/eval-notice.mjs';
+import { spawnSync } from 'node:child_process';
+import { evalsCheckout, evalsNotice } from '../cli/lib/eval-notice.mjs';
 import { sessionContext } from '../cli/drift.mjs';
 
 const PLUGIN_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -134,53 +135,145 @@ test('no argument at all gives null instead of throwing', () => {
   assert.equal(evalsNotice({}), null);
 });
 
-function sessionHome() {
-  const home = mkdtempSync(join(tmpdir(), 'cm-notice-home-'));
-  mkdirSync(join(home, '.claude'), { recursive: true });
-  mkdirSync(join(home, '.local', 'bin'), { recursive: true });
-  writeFileSync(join(home, '.local', 'bin', 'triqual.mjs'), '// The `triqual` shim.\n');
-  return home;
+const JUDGES = join('plugins', 'methodology', 'evals', 'judges');
+const LINE = 'evals: 1 judge(s) below the bar (x): run methodology:improving-evals';
+const FAILED_LINE = (evals) => `evals: the last round had failed steps (propose): see ${join(evals, 'rounds', R2)}`;
+
+// A temp tree: <base>/home (with .claude and the CLI shim), <base>/repo (a checkout), <base>/other (not a checkout),
+// <base>/evals/rounds. fn gets { home, evals, repo, other, base }.
+function withTree(fn) {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'cm-checkout-')));
+  try {
+    const home = join(base, 'home');
+    mkdirSync(join(home, '.claude'), { recursive: true });
+    mkdirSync(join(home, '.local', 'bin'), { recursive: true });
+    writeFileSync(join(home, '.local', 'bin', 'triqual.mjs'), '// The `triqual` shim.\n');
+    const repo = join(base, 'repo');
+    mkdirSync(join(repo, JUDGES), { recursive: true });
+    mkdirSync(join(repo, 'plugins', 'methodology', 'cli'), { recursive: true });
+    const other = join(base, 'other');
+    mkdirSync(other);
+    const evals = join(base, 'evals');
+    mkdirSync(join(evals, 'rounds'), { recursive: true });
+    return fn({ home, evals, repo, other, base });
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
 }
 
-test('sessionContext contains the notice line once when the fixture report has a judge to revise', () => {
-  withEvals((evals) => {
-    report(evals, R1, { revise: ['x'] });
-    const home = sessionHome();
-    try {
-      const out = sessionContext({ home, pluginRoot: PLUGIN_ROOT, source: 'resume', harness: null, env: { TRIQUAL_EVALS_DIR: evals } });
-      const line = 'evals: 1 judge(s) below the bar (x): run methodology:improving-evals';
-      assert.ok(out.includes(line));
-      assert.equal(out.split(line).length, 2);
-    } finally {
-      rmSync(home, { recursive: true, force: true });
+test('evalsCheckout gives the root for the root itself and for a nested directory', () => {
+  withTree(({ home, repo }) => {
+    assert.equal(evalsCheckout(repo, home), repo);
+    assert.equal(evalsCheckout(join(repo, 'plugins', 'methodology', 'cli'), home), repo);
+  });
+});
+
+test('evalsCheckout gives null for a directory outside any checkout', () => {
+  withTree(({ home, other, base }) => {
+    assert.equal(evalsCheckout(other, home), null);
+    assert.equal(evalsCheckout(base, home), null);
+  });
+});
+
+test('evalsCheckout gives null for a tree under the harness plugin directories of the home', () => {
+  withTree(({ home }) => {
+    for (const parts of [['.claude', 'plugins', 'marketplaces', 'x'], ['.claude', 'plugins', 'cache', 'x', 'y'], ['.codex', '.tmp', 'marketplaces', 'x']]) {
+      const root = join(home, ...parts);
+      mkdirSync(join(root, JUDGES), { recursive: true });
+      mkdirSync(join(root, 'plugins', 'methodology', 'cli'), { recursive: true });
+      assert.equal(evalsCheckout(root, home), null, root);
+      assert.equal(evalsCheckout(join(root, 'plugins', 'methodology', 'cli'), home), null, root);
     }
   });
 });
 
-test('sessionContext adds the line for a harness too', () => {
-  withEvals((evals) => {
-    report(evals, R1, { revise: ['x'] });
-    const home = sessionHome();
-    try {
-      const out = sessionContext({ home, pluginRoot: PLUGIN_ROOT, source: 'resume', harness: 'codex', env: { TRIQUAL_EVALS_DIR: evals } });
-      assert.ok(out.includes('evals: 1 judge(s) below the bar (x)'));
-    } finally {
-      rmSync(home, { recursive: true, force: true });
+test('evalsCheckout is not defeated by a symlinked home', () => {
+  withTree(({ home, base }) => {
+    const link = join(base, 'home-link');
+    symlinkSync(home, link);
+    const root = join(home, '.claude', 'plugins', 'marketplaces', 'x');
+    mkdirSync(join(root, JUDGES), { recursive: true });
+    assert.equal(evalsCheckout(root, link), null);
+    assert.equal(evalsCheckout(join(link, '.claude', 'plugins', 'marketplaces', 'x'), home), null);
+  });
+});
+
+test('evalsCheckout gives null for a non-string and for a path that does not exist', () => {
+  withTree(({ home, base }) => {
+    for (const dir of [undefined, null, 3, {}, ['a'], '']) assert.equal(evalsCheckout(dir, home), null);
+    assert.equal(evalsCheckout(join(base, 'missing', 'dir'), home), null);
+    assert.equal(evalsCheckout(join(base, 'repo'), undefined), join(base, 'repo'));
+  });
+});
+
+const context = ({ home, evals }, extra) => sessionContext({ home, pluginRoot: PLUGIN_ROOT, source: 'resume', env: { TRIQUAL_EVALS_DIR: evals }, ...extra });
+
+test('sessionContext contains the notice line once when cwd is inside a checkout', () => {
+  withTree((t) => {
+    report(t.evals, R1, { revise: ['x'] });
+    for (const harness of [null, 'codex']) {
+      for (const cwd of [t.repo, join(t.repo, 'plugins', 'methodology', 'cli')]) {
+        const out = context(t, { harness, cwd });
+        assert.ok(out.includes(LINE));
+        assert.equal(out.split(LINE).length, 2);
+      }
+    }
+  });
+});
+
+test('sessionContext has no evals text when cwd is another directory, absent or inside a plugin directory', () => {
+  withTree((t) => {
+    report(t.evals, R1, { revise: ['x'] });
+    const cache = join(t.home, '.claude', 'plugins', 'marketplaces', 'triqual');
+    const codex = join(t.home, '.codex', '.tmp', 'marketplaces', 'triqual');
+    for (const root of [cache, codex]) mkdirSync(join(root, JUDGES), { recursive: true });
+    for (const harness of [null, 'codex']) {
+      for (const cwd of [t.other, undefined, null, cache, codex, join(t.base, 'missing')]) {
+        const out = context(t, { harness, cwd });
+        assert.ok(!/evals:/.test(out ?? ''), `${harness} ${cwd}`);
+      }
+    }
+  });
+});
+
+test('the failed-steps line is gated the same way', () => {
+  withTree((t) => {
+    report(t.evals, R2, { failed: ['propose'], revise: [] });
+    assert.ok(context(t, { cwd: t.repo }).includes(FAILED_LINE(t.evals)));
+    assert.ok(context(t, { harness: 'codex', cwd: t.repo }).includes(FAILED_LINE(t.evals)));
+    for (const cwd of [t.other, undefined]) {
+      assert.ok(!/evals:/.test(context(t, { cwd }) ?? ''));
+      assert.ok(!/evals:/.test(context(t, { harness: 'codex', cwd }) ?? ''));
     }
   });
 });
 
 test('sessionContext with nothing to revise has no evals line and equals the output for a missing directory', () => {
-  withEvals((evals, base) => {
-    report(evals, R1, { revise: [] });
-    const home = sessionHome();
-    try {
-      const call = (dir) => sessionContext({ home, pluginRoot: PLUGIN_ROOT, source: 'startup', harness: null, env: { TRIQUAL_EVALS_DIR: dir } });
-      const withReport = call(evals);
-      assert.ok(!/^evals:/m.test(withReport ?? ''));
-      assert.equal(withReport, call(join(base, 'does-not-exist')));
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-    }
+  withTree((t) => {
+    report(t.evals, R1, { revise: [] });
+    const withReport = context(t, { source: 'startup', cwd: t.repo });
+    assert.ok(!/^evals:/m.test(withReport ?? ''));
+    assert.equal(withReport, context({ ...t, evals: join(t.base, 'does-not-exist') }, { source: 'startup', cwd: t.repo }));
+  });
+});
+
+test('the entry point reads cwd from the stdin payload: the line in a checkout, none elsewhere', () => {
+  withTree((t) => {
+    report(t.evals, R1, { revise: ['x'] });
+    const { CLAUDE_PLUGIN_DATA: _, XDG_CONFIG_HOME: __, ...env } = process.env;
+    const run = (input, args = []) => {
+      const r = spawnSync(process.execPath, [join(PLUGIN_ROOT, 'cli', 'drift.mjs'), ...args], {
+        env: { ...env, HOME: t.home, TRIQUAL_EVALS_DIR: t.evals }, input, encoding: 'utf8', cwd: t.other,
+      });
+      assert.equal(r.status, 0, r.stderr);
+      return r.stdout === '' ? '' : JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
+    };
+    assert.ok(run(JSON.stringify({ source: 'resume', cwd: t.repo })).includes(LINE));
+    assert.ok(run(JSON.stringify({ source: 'resume', cwd: t.repo }), ['--harness', 'codex']).includes(LINE));
+    assert.ok(!/^evals:/m.test(run(JSON.stringify({ source: 'resume', cwd: t.other }))));
+    assert.ok(!/^evals:/m.test(run(JSON.stringify({ source: 'resume', cwd: t.other }), ['--harness', 'codex'])));
+    // No cwd in the payload (or no payload): the process's own working directory decides; it is not a checkout here.
+    assert.ok(!/^evals:/m.test(run(JSON.stringify({ source: 'resume' }))));
+    assert.ok(!/^evals:/m.test(run(''))); // startup: the skill's own text mentions `evals:`, mid-line
   });
 });

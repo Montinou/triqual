@@ -453,7 +453,9 @@ money. Commands use it only with `--paid`; without the flag those entries are le
 
 When the newest report has a judge in `revise` that no line of `revisions.jsonl` names for that round, or has failed
 steps, the SessionStart hook adds `evals: <n> judge(s) below the bar (<ids>): run methodology:improving-evals` or
-`evals: the last round had failed steps (<names>): see <report path>`. The skill `methodology:improving-evals` takes
+`evals: the last round had failed steps (<names>): see <report path>`, in every harness but only when the session's
+working directory is inside a checkout of this repository (a copy under `~/.claude/plugins` or `~/.codex` does not
+count). The skill `methodology:improving-evals` takes
 it from there: it rewrites each flagged judge prompt from the train split's notes, scores it, and keeps the rewrite
 only when its dev score is strictly better than the previous version's; otherwise the file is restored. It ships what
 it kept as one pull request.
