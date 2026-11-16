@@ -3,6 +3,13 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## methodology 1.11.0
+
+- methodology: new `triqual eval judge --category <id> --sessions <file>` runs one session judge over the listed sessions. The judge prompts are `evals/judges/<id>.md` (front matter `model: <full model id>`, one failure each); the model call goes through `claude -p` with the credential chain of the owner's `eval-auth.json`, the transcript rendered for the judge passes through `redactSecrets`, and a usage limit writes no verdict.
+- methodology: new `triqual eval validate --category <id> [--split dev|test]` measures a judge against the owner's labels (TPR and TNR with Wilson 90% intervals) and writes `validation.json`; a judge is usable with at least 15 positives and 15 negatives and both lower bounds at 0.7 or more. A prompt that names a dev or test session is refused.
+- methodology: the failure taxonomy is the owner's file `taxonomy.json` in the evals data directory (`~/.local/share/triqual/evals/`, or `TRIQUAL_EVALS_DIR`), no longer a file of the repository. The repository ships a judge prompt for each of its `judge` categories (`broke-standing-instruction`, `unverified-claim`, `unchecked-premise`, `heavier-than-needed`, `stopped-early`, `harmful-side-effect`) with invented examples, and the code check `owner-chased-progress` (`cli/lib/eval-checks.mjs`).
+- Update the plugin; nothing to rerun. A judge is trusted only after `triqual eval validate` reports it usable.
+
 ## methodology 1.10.0
 
 - methodology: new `triqual eval` command, the start of the evals and A/B work. `triqual eval` dispatches to `cli/eval-<name>.mjs` and lists each with its summary, so a later subcommand needs no edit to the dispatcher. The shim lists `eval` (its `--help` is forwarded from methodology 1.10.0).

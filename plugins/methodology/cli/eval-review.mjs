@@ -4,7 +4,9 @@
 // rows per stratum and the seed; an existing sample is kept unless --force. `serve` starts the loopback review page
 // (lib/eval-serve.mjs, 127.0.0.1 only, Host and Origin checked) over that sample, appends the labels to
 // <evals>/review/labels.jsonl, prints its plain URL, and runs until SIGINT or SIGTERM. A random per-run value is embedded in the
-// served page and required on every label POST; it is never printed. It prints counts, ids and paths, never transcript text. Exit codes: 0 done; 1 the store could not be updated, a sample exists (no --force), there is
+// served page and required on every label POST; it is never printed. `sample --more <k>` appends k more random-stratum
+// rows (sessions not yet in the sample) to the existing sample, keeping its rows and order; it needs a sample and takes
+// no --n or --force. It prints counts, ids and paths, never transcript text. Exit codes: 0 done; 1 the store could not be updated, a sample exists (no --force), there is
 // no sample to serve, or the server could not start; 2 usage.
 // node: built-ins only. main() is exported for tests and runs only when this file is the entry point.
 import { randomBytes } from 'node:crypto';
@@ -13,8 +15,8 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { evalsDir, transcriptsRoot } from './lib/eval-paths.mjs';
-import { drawSample, SampleExists, writeSample } from './lib/eval-sample.mjs';
-import { refreshSessions } from './lib/eval-store.mjs';
+import { drawSample, moreRandom, SampleExists, writeSample } from './lib/eval-sample.mjs';
+import { readJsonl, refreshSessions } from './lib/eval-store.mjs';
 import { startServer } from './lib/eval-serve.mjs';
 
 export const SUMMARY = 'draw the stratified review sample (sample) and serve the local labeling page (serve)';
@@ -31,6 +33,9 @@ const USAGE = [
   '      by highest cost, the rest by outlier score (stop-hook blocks, idle cache rewrites, turns). The same --seed',
   '      draws the same sample; without it the seed is the current epoch second, and it is printed. An existing',
   '      sample is kept unless --force. Prints the rows per stratum, never message content.',
+  '  triqual eval review sample --more <k> [--seed <int>]',
+  '      Appends k more random-stratum rows (interactive sessions not yet in the sample, seeded like --seed above) to the',
+  '      existing sample.jsonl, keeping its rows; fewer when fewer sessions are left. Needs a sample; no --n or --force.',
   '  triqual eval review serve [--port <n>]',
   '      Serves the sample on http://127.0.0.1:<port>/ (a free port when --port is absent or 0) and appends the',
   '      good/bad labels to <evals>/review/labels.jsonl. Binds to 127.0.0.1 only, checks the Host and Origin',
@@ -77,8 +82,35 @@ export async function main(argv, { env = process.env, stdout = process.stdout, s
   const sampleFile = join(dir, 'sample.jsonl');
 
   if (sub === 'sample') {
-    const { opts, error } = parse(rest, { n: 'value', seed: 'value', force: 'bool' });
+    const { opts, error } = parse(rest, { n: 'value', seed: 'value', force: 'bool', more: 'value' });
     if (error) return usage(error);
+    if (opts.more !== undefined) {
+      if (opts.n !== undefined || opts.force === true) return usage('--more takes no --n or --force');
+      if (!/^\d+$/.test(opts.more) || !Number.isSafeInteger(Number(opts.more)) || Number(opts.more) < 1) return usage('--more needs a positive integer');
+      if (opts.seed !== undefined && !/^\d+$/.test(opts.seed)) return usage('--seed needs a non-negative integer');
+      const existing = readJsonl(sampleFile).rows.filter((r) => typeof r.sessionId === 'string');
+      if (existing.length === 0) {
+        stderr.write(`triqual eval review: no sample at ${sampleFile}; run "triqual eval review sample" first\n`);
+        return 1;
+      }
+      const seed = opts.seed === undefined ? Math.floor(now.getTime() / 1000) : Number(opts.seed);
+      let sessions;
+      try {
+        sessions = refreshSessions({ root: transcriptsRoot(env, home), file: join(evalsDir(env, home), 'sessions.jsonl'), prices: PRICES, now }).sessions;
+      } catch (err) {
+        stderr.write(`triqual eval review: the sessions store could not be updated: ${err?.code ?? err?.message ?? 'error'}\n`);
+        return 1;
+      }
+      const added = moreRandom(sessions, existing, Number(opts.more), seed, { root: transcriptsRoot(env, home) });
+      try {
+        writeSample(sampleFile, [...existing, ...added], { force: true });
+      } catch (err) {
+        stderr.write(`triqual eval review: the sample could not be written: ${err?.code ?? err?.message ?? 'error'}\n`);
+        return 1;
+      }
+      stdout.write(`Added ${added.length} of ${opts.more} random row(s), seed ${seed}; the sample has ${existing.length + added.length}\nWritten to ${sampleFile}\n`);
+      return 0;
+    }
     const n = opts.n === undefined ? DEFAULT_N : Number(opts.n);
     if (!/^\d+$/.test(String(opts.n ?? DEFAULT_N)) || !Number.isSafeInteger(n) || n < 1) return usage('--n needs a positive integer');
     if (opts.seed !== undefined && !/^\d+$/.test(opts.seed)) return usage('--seed needs a non-negative integer');
