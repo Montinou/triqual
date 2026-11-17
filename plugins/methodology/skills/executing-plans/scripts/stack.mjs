@@ -9,10 +9,12 @@
 //   path PLAN_FILE                                                      print the state file's path
 //   status PLAN_FILE [--tree]                                           print the state (JSON), PR states refreshed; --tree: the phases as a tree
 //                                                                       (each phase also prints `ready` and `base`, keys never written to the file)
-//   phase PLAN_FILE N                                                   check out phase N's branch, mark it active
+//   phase PLAN_FILE N                                                   check out phase N's branch, mark it active; while another phase
+//                                                                       holds the main checkout, build it in <root>/.claude/worktrees/
+//                                                                       <plan stem>-p<N> (a second line `workdir: <path>`)
 //   squash PLAN_FILE BASE [--phase N]                                   fold BASE..HEAD into one commit, print its sha; runs in
 //                                                                       phase N's workdir (default: the only active phase)
-//   done PLAN_FILE N                                                    mark phase N done
+//   done PLAN_FILE N                                                    mark phase N done (its worktree removed, its branch kept)
 //   submit PLAN_FILE N [--open]                                         reconcile gh stack, submit, fill phase N's PR
 //   push PLAN_FILE N                                                    push a submitted phase, refresh its PR body
 //                                                                       (a `prs` plan: plain git push and gh pr create, no gh stack)
@@ -26,8 +28,8 @@
 // mutation and the write only; no git command that touches a worktree, no push and no gh call runs inside it.
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { PlanError, readPhases } from './lib/plan.mjs';
@@ -231,10 +233,12 @@ export function writeState(path, state) {
 
 const sleepMs = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-// A waiter that finds the lock directory older than STALE_LOCK_MS renames it away (one atomic renameSync: only one waiter
-// wins it), says so on stderr and removes it; true when this waiter took it over, false when another did or the
-// directory renamed was a live lock another waiter had just made (it is put back).
-function takeOverStaleLock(lock) {
+// A waiter that judged the lock directory stale (`seen`: the stat it judged by) renames it away (one atomic renameSync: only
+// one waiter wins it). When the directory it moved is the one it judged (same inode and mtime) it says so on stderr and removes it
+// (true). Otherwise another waiter had already taken that lock over and made a fresh one, which this rename has just moved: the
+// waiter puts nothing back (a rename over the lock path would replace a lock a third contender made meanwhile), removes the moved
+// directory (an empty marker nobody reads: a lock owner releases by the path and the inode it made) and goes on waiting (false).
+export function takeOverStaleLock(lock, seen) {
   const stale = `${lock}.stale.${process.pid}.${randomBytes(4).toString('hex')}`;
   try {
     renameSync(lock, stale);
@@ -242,49 +246,52 @@ function takeOverStaleLock(lock) {
     if (e.code === 'ENOENT') return false;
     throw e;
   }
-  const age = Date.now() - statSync(stale).mtimeMs;
-  if (age <= STALE_LOCK_MS) {
-    // The lock this waiter saw as stale was already taken over and made again by another waiter: give it back.
-    try {
-      renameSync(stale, lock);
-    } catch {
-      rmSync(stale, { recursive: true, force: true });
-    }
-    return false;
-  }
-  process.stderr.write(`stack: taking over a stale state lock (${Math.round(age / 1000)} s old): ${lock}\n`);
+  const moved = statSync(stale);
+  const judged = moved.ino === seen.ino && moved.mtimeMs === seen.mtimeMs;
+  if (judged) process.stderr.write(`stack: taking over a stale state lock (${Math.round((Date.now() - seen.mtimeMs) / 1000)} s old): ${lock}\n`);
   rmSync(stale, { recursive: true, force: true });
-  return true;
+  return judged;
 }
 
+// Takes the lock directory; returns the inode of the one it made, which releaseLock checks.
 function acquireLock(lock) {
   mkdirSync(dirname(lock), { recursive: true });
   for (;;) {
     try {
       mkdirSync(lock);
-      return;
+      return statSync(lock).ino;
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
     }
-    let mtime;
+    let seen;
     try {
-      mtime = statSync(lock).mtimeMs;
+      seen = statSync(lock);
     } catch (e) {
       if (e.code === 'ENOENT') continue;
       throw e;
     }
-    if (Date.now() - mtime > STALE_LOCK_MS && takeOverStaleLock(lock)) continue;
+    if (Date.now() - seen.mtimeMs > STALE_LOCK_MS && takeOverStaleLock(lock, seen)) continue;
     sleepMs(LOCK_POLL_MS);
+  }
+}
+
+// Removes the lock only while it is the directory this process made: one a waiter moved away is not another owner's to remove.
+function releaseLock(lock, ino) {
+  try {
+    if (statSync(lock).ino === ino) rmSync(lock, { recursive: true, force: true });
+  } catch (e) {
+    if (e.code !== 'ENOENT') throw e;
   }
 }
 
 // The one way the state is written: take the lock, re-read the state (null when there is none), mutate it, write it,
 // release the lock (also when mutate throws). `mutate(state)` changes the object it is given, or returns a state to write
-// instead, or returns false to write nothing; it reads and changes the state object only, so it runs no git command that
-// touches a worktree, no install, no push and no gh call. Returns the state as written (or as found).
+// instead, or returns false to write nothing; it reads and changes the state object only (and may run a read-only `git worktree
+// list`), so it runs no git command that touches a worktree, no install, no push and no gh call. Returns the state as written
+// (or as found).
 export function updateState(ctx, mutate) {
   const lock = `${ctx.path}.lock`;
-  acquireLock(lock);
+  const ino = acquireLock(lock);
   try {
     const current = readState(ctx.path);
     const result = mutate(current);
@@ -293,7 +300,7 @@ export function updateState(ctx, mutate) {
     writeState(ctx.path, next);
     return next;
   } finally {
-    rmSync(lock, { recursive: true, force: true });
+    releaseLock(lock, ino);
   }
 }
 
@@ -589,13 +596,14 @@ function cmdPath(args) {
 
 // The phases as a tree under the trunk, two spaces per depth, a phase under the phase it starts from (its parent in a
 // `prs` state, the previous phase in a `stack` one; the trunk or a named branch is the root).
-function renderTree(state) {
+function renderTree(state, root) {
   const parentOf = (phase) =>
     layoutOf(state) === 'prs' ? state.phases.find((p) => p.branch === phase.parent) : state.phases.find((p) => p.n === phase.n - 1);
   const lines = [state.trunk];
   const walk = (parent, depth) => {
     for (const phase of state.phases.filter((p) => parentOf(p) === parent)) {
-      lines.push(`${'  '.repeat(depth)}P${phase.n} ${phase.branch} [${phase.state}${phase.pr === null ? '' : ` #${phase.pr}`}]`);
+      const where = phase.state === 'active' && phase.workdir ? ` ${relative(root, phase.workdir)}` : '';
+      lines.push(`${'  '.repeat(depth)}P${phase.n} ${phase.branch} [${phase.state}${phase.pr === null ? '' : ` #${phase.pr}`}]${where}`);
       walk(phase, depth + 1);
     }
   };
@@ -626,7 +634,7 @@ function cmdStatus(args) {
       });
     }
   }
-  if (tree) return out(renderTree(shown));
+  if (tree) return out(renderTree(shown, ctx.root));
   // `ready` and `base` are printed, never written to the file.
   const ready = readyPhases(shown);
   const phases = shown.phases.map((phase) => {
@@ -659,9 +667,10 @@ function phaseOf(state, value, usage) {
   return phase ?? fail(EXIT_USAGE, `no phase ${value}: the plan has phases 1-${state.phases.length}`);
 }
 
-// Clean means tracked files only: untracked files never block phase or squash.
+// Clean means tracked files only: untracked files never block phase or squash. --no-optional-locks: a read-only check never takes
+// the index lock another command of the same checkout (a phase's branch switch) may be holding.
 function requireCleanTree(cwd) {
-  if (git(['status', '--porcelain', '--untracked-files=no'], { cwd })) {
+  if (git(['--no-optional-locks', 'status', '--porcelain', '--untracked-files=no'], { cwd })) {
     fail(EXIT_REFUSED, 'the working tree is not clean: commit or stash the changes to tracked files first');
   }
 }
@@ -740,6 +749,70 @@ function refuseStrandedHead(cwd, state) {
   );
 }
 
+// --- phase worktrees --------------------------------------------------------------------------------------------
+
+const WORKTREES_IGNORE = '.claude/worktrees/';
+// How a phase's dependencies are installed, by its lockfile (the table of task-open --worktree).
+const LOCKFILES = [
+  ['package-lock.json', ['npm', 'ci']],
+  ['pnpm-lock.yaml', ['pnpm', 'install', '--frozen-lockfile']],
+  ['yarn.lock', ['yarn', 'install', '--frozen-lockfile']],
+];
+
+// A phase worktree sits at <main root>/.claude/worktrees/<plan stem>-p<N>, on the phase's own branch.
+const phaseWorktree = (root, planFile, n) => join(root, '.claude', 'worktrees', `${basename(planFile, '.md')}-p${n}`);
+
+// The worktrees `git worktree list --porcelain` shows, [{ path, branch }] (branch null when detached); one whose directory is gone is left out.
+function worktreeList(cwd) {
+  return git(['worktree', 'list', '--porcelain'], { cwd })
+    .split('\n\n')
+    .map((block) => {
+      const lines = block.split('\n');
+      const path = lines.find((l) => l.startsWith('worktree '))?.slice('worktree '.length);
+      const ref = lines.find((l) => l.startsWith('branch refs/heads/'));
+      return { path, branch: ref ? ref.slice('branch refs/heads/'.length) : null };
+    })
+    .filter((w) => w.path && existsSync(w.path));
+}
+
+// Whether a worktree is registered at `path` on `branch`.
+const inWorktree = (cwd, path, branch) => worktreeList(cwd).some((w) => w.path === path && w.branch === branch);
+
+// `.claude/worktrees/` goes into the repository's info/exclude once.
+function excludeWorktrees(cwd) {
+  const file = git(['rev-parse', '--path-format=absolute', '--git-path', 'info/exclude'], { cwd });
+  const text = existsSync(file) ? readFileSync(file, 'utf8') : '';
+  if (text.split('\n').includes(WORKTREES_IGNORE)) return;
+  mkdirSync(dirname(file), { recursive: true });
+  appendFileSync(file, `${text === '' || text.endsWith('\n') ? '' : '\n'}${WORKTREES_IGNORE}\n`);
+}
+
+// Installs a phase worktree's dependencies by its lockfile; a marker in the worktree's git dir makes a re-entry install again
+// only after a failed install. A failure is exit 1 with the install's first stderr line.
+function installDependencies(path) {
+  const marker = join(git(['rev-parse', '--path-format=absolute', '--git-dir'], { cwd: path }), 'triqual-installed');
+  const lockfile = LOCKFILES.find(([name]) => existsSync(join(path, name)));
+  if (!lockfile || existsSync(marker)) return;
+  const [command, ...commandArgs] = lockfile[1];
+  const res = spawnSync(command, commandArgs, { cwd: path, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+  const cause = res.error ? res.error.message : res.stderr;
+  if (res.error || res.status !== 0) {
+    fail(1, `${lockfile[1].join(' ')}: ${String(cause).split('\n').map((l) => l.trim()).find((l) => l !== '') ?? `exited ${res.status}`}`);
+  }
+  writeFileSync(marker, `${lockfile[1].join(' ')}\n`);
+}
+
+// The checkout that has a phase's branch checked out (a worktree path, the main root for the main checkout), or null.
+const checkoutOf = (cwd, branch) => worktreeList(cwd).find((w) => w.branch === branch)?.path ?? null;
+
+// The other phase that holds the main checkout: active with no worktree.
+const holdingMain = (state, n) => state.phases.find((p) => p.n !== n && p.state === 'active' && !p.workdir);
+
+// Enters phase N, in the order that keeps the state lock off every git command that touches a worktree: (1) read the state, run
+// the parent checks and decide whether the phase needs a worktree; (2) outside the lock, create the branch and the worktree, or
+// run the main checkout's read-only checks; (3) one updateState makes the checkout choice from the state it re-reads and records
+// `active` and `workdir` in the same write; (4) outside the lock, switch the main checkout to the branch, or install the worktree's
+// dependencies.
 function cmdPhase(args) {
   const usage = 'usage: stack.mjs phase PLAN_FILE N';
   const ctx = context(args[0]);
@@ -749,7 +822,6 @@ function cmdPhase(args) {
   if (!ENTERABLE.includes(phase.state)) {
     fail(EXIT_REFUSED, `phase ${phase.n} is ${phase.state}: its commits are final, it is not entered again`);
   }
-  requireCleanTree(ctx.cwd);
   const prs = layoutOf(state) === 'prs';
   const allowed = state.mode === 'local' ? STARTED_AFTER.local : STARTED_AFTER.github;
   for (const prev of parentsOf(state, phase)) {
@@ -759,27 +831,71 @@ function cmdPhase(args) {
   }
   // The time is read before any write: a TRIQUAL_NOW that is no time leaves the branch and the state as they were.
   const at = nowIso();
-
-  // The branch is switched to or created outside updateState: a git command that touches the worktree never runs under the lock.
+  const path = phaseWorktree(ctx.root, ctx.planFile, phase.n);
   const remoteRef = state.remote ? `refs/remotes/${state.remote}/${branch}` : null;
+  const hasBranch = revParse(`refs/heads/${branch}`, { cwd: ctx.cwd }) !== null;
+  const remoteOnly = !hasBranch && remoteRef !== null && revParse(remoteRef, { cwd: ctx.cwd }) !== null;
+
+  // 1. A phase is in its worktree when one is registered at the path on the phase's branch, whether or not the state records it
+  // (a crash between `worktree add` and the state write leaves exactly that). Otherwise it needs one when another phase holds the
+  // main checkout, or when its recorded worktree is gone.
+  const inItsWorktree = hasBranch && inWorktree(ctx.cwd, path, branch);
+  const needsWorktree = !inItsWorktree && (Boolean(phase.workdir) || holdingMain(state, phase.n) !== undefined);
+
+  // 2. Outside the lock.
   let created = null;
-  if (revParse(`refs/heads/${branch}`, { cwd: ctx.cwd })) {
-    git(['switch', '--quiet', branch], { cwd: ctx.cwd });
-  } else if (remoteRef && revParse(remoteRef, { cwd: ctx.cwd })) {
-    // Review Focus 3: a branch on the remote only (a resumed run elsewhere) is checked out tracking it.
-    git(['switch', '--quiet', '-c', branch, '--track', remoteRef], { cwd: ctx.cwd });
+  if (needsWorktree) {
+    if (!hasBranch) {
+      if (remoteOnly) {
+        git(['branch', '--quiet', '--track', branch, remoteRef], { cwd: ctx.cwd });
+      } else {
+        created = startPoint(ctx.cwd, state, phase.n);
+        git(['branch', '--quiet', '--no-track', branch, created], { cwd: ctx.cwd });
+      }
+    }
+    // A recorded worktree that is gone (no directory, or no longer registered): prune the leftover, add it again from the branch.
+    if (phase.workdir) git(['worktree', 'prune'], { cwd: ctx.cwd });
+    excludeWorktrees(ctx.cwd);
+    git(['worktree', 'add', '--quiet', path, branch], { cwd: ctx.cwd });
+  } else if (inItsWorktree) {
+    requireCleanTree(path);
   } else {
-    if (prs ? phase.parent === state.trunk : phase.n === 1) refuseStrandedHead(ctx.cwd, state);
-    created = startPoint(ctx.cwd, state, phase.n);
-    git(['switch', '--quiet', '--no-track', '-c', branch, created], { cwd: ctx.cwd });
+    requireCleanTree(ctx.cwd);
+    if (!hasBranch && !remoteOnly) {
+      if (prs ? phase.parent === state.trunk : phase.n === 1) refuseStrandedHead(ctx.cwd, state);
+      created = startPoint(ctx.cwd, state, phase.n);
+    }
   }
-  updateState(ctx, (fresh) => {
+
+  // 3. One write: the checkout is chosen from the state re-read under the lock and recorded in it.
+  const next = updateState(ctx, (fresh) => {
     const entry = fresh.phases.find((p) => p.n === phase.n);
+    if (inWorktree(ctx.cwd, path, branch)) {
+      entry.workdir = path;
+    } else {
+      const holder = holdingMain(fresh, phase.n);
+      if (holder) fail(EXIT_REFUSED, `phase ${holder.n} holds the main checkout: run phase ${phase.n} again`);
+    }
     if (entry.state === 'pending') entry.startedAt = at;
     entry.state = 'active';
     // A v2 phase records the commit its own work starts after (a v1 branch can be restacked by gh stack: it keeps the computed floor).
     if (prs && created && !entry.base) entry.base = created;
   });
+
+  // 4. Outside the lock.
+  if (next.phases.find((p) => p.n === phase.n).workdir) {
+    installDependencies(path);
+    out(branch);
+    return out(`workdir: ${path}`);
+  }
+  if (hasBranch) {
+    git(['switch', '--quiet', branch], { cwd: ctx.cwd });
+  } else if (remoteOnly) {
+    // Review Focus 3: a branch on the remote only (a resumed run elsewhere) is checked out tracking it.
+    git(['switch', '--quiet', '-c', branch, '--track', remoteRef], { cwd: ctx.cwd });
+  } else {
+    git(['switch', '--quiet', '--no-track', '-c', branch, created], { cwd: ctx.cwd });
+  }
   return out(branch);
 }
 
@@ -875,6 +991,17 @@ function cmdDone(args) {
     fail(EXIT_REFUSED, `phase ${phase.n} is ${phase.state}: only an active phase is marked done`);
   }
   if (phase.state === 'active') {
+    // A phase built in a worktree: it is removed as removeWorktree (lib/task-common.mjs) does, outside the lock and before the
+    // state write. A tracked file changed there is refused with nothing written; untracked files go with the worktree; the branch stays.
+    if (phase.workdir && worktreeList(ctx.cwd).some((w) => w.path === phase.workdir)) {
+      if (git(['--no-optional-locks', 'status', '--porcelain', '--untracked-files=no'], { cwd: phase.workdir })) {
+        fail(
+          EXIT_REFUSED,
+          `phase ${phase.n}'s worktree ${phase.workdir} has uncommitted changes to tracked files: commit or discard them, then run done again`,
+        );
+      }
+      git(['worktree', 'remove', '--force', phase.workdir], { cwd: ctx.cwd });
+    }
     updateState(ctx, (fresh) => {
       const entry = fresh.phases.find((p) => p.n === phase.n);
       if (entry.state !== 'active') return false;
@@ -991,7 +1118,14 @@ function currentBranch(cwd) {
 function prepareGithub(ctx, state, phase) {
   const { cwd } = ctx;
   if (!state.remote) fail(EXIT_REFUSED, 'the state records no remote: switch with stack mode local, or run stack mode github');
-  requireCleanTree(cwd);
+  // The `prs` layout checks the checkout where the phase's branch is checked out (none when it is checked out nowhere); the `stack`
+  // layout moves HEAD in the main checkout, so it checks that one.
+  if (layoutOf(state) === 'prs') {
+    const holder = checkoutOf(cwd, branchOf(phase));
+    if (holder) requireCleanTree(holder);
+  } else {
+    requireCleanTree(cwd);
+  }
   // --repo on pr edit: with several remotes or a default repo set to an upstream, a bare number may name another repo's PR.
   const slug = githubSlug(state.remote, cwd);
   if (!slug) fail(EXIT_REFUSED, `remote "${state.remote}" is no longer a GitHub remote: switch with stack mode local`);
