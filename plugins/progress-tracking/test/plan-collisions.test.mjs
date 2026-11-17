@@ -207,3 +207,45 @@ test('two parents of a join that share a path still collide', () => {
   const join = planText('join', [{ files: [['a.mjs']] }, { parent: 'trunk', files: [['a.mjs']] }, { parent: 'P1, P2', files: [['c.mjs']] }]);
   assert.deepEqual(checkCollisions(nodesFromPlans([{ stem: 'join', text: join }])).collisions, [{ a: 'join#P1', b: 'join#P2', shared: ['a.mjs'] }]);
 });
+
+// A repo for a join: P1 adds a.mjs, P2 adds b.mjs, P3 merges both and then adds c.mjs.
+function joinRepo(t) {
+  const text = planText('join', [{ files: [['a.mjs']] }, { parent: 'trunk', files: [['b.mjs']] }, { parent: 'P1, P2', files: [['c.mjs']] }]);
+  const s = setup(t, { 'join.md': text });
+  git(s.dir, 'init', '-q', '-b', 'main');
+  writeFileSync(join(s.dir, 'README'), 'x\n');
+  git(s.dir, 'add', 'README');
+  git(s.dir, 'commit', '-q', '-m', 'base');
+  for (const [branch, file] of [['join/01-x', 'a.mjs'], ['join/02-x', 'b.mjs']]) {
+    git(s.dir, 'checkout', '-q', '-b', branch, 'main');
+    writeFileSync(join(s.dir, file), `${file}\n`);
+    git(s.dir, 'add', file);
+    git(s.dir, 'commit', '-q', '-m', file);
+  }
+  git(s.dir, 'checkout', '-q', '-b', 'join/03-x', 'join/01-x');
+  git(s.dir, 'merge', '-q', '--no-ff', '-m', 'join', 'join/02-x');
+  writeFileSync(join(s.dir, 'c.mjs'), 'c\n');
+  git(s.dir, 'add', 'c.mjs');
+  git(s.dir, 'commit', '-q', '-m', 'c');
+  return s;
+}
+
+test('--diff on a join reads its changes from the join commit', (t) => {
+  const s = joinRepo(t);
+  const r = s.run('--diff', 'join#P3', 'join/03-x');
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(r.stdout, 'nodes=3 incomparable pairs=1 collisions=0\n');
+  writeFileSync(join(s.dir, 'stray.mjs'), 's\n');
+  git(s.dir, 'add', 'stray.mjs');
+  git(s.dir, 'commit', '-q', '-m', 'outside');
+  const bad = s.run('--diff', 'join#P3', 'join/03-x');
+  assert.equal(bad.status, 1);
+  assert.deepEqual(bad.stdout.trimEnd().split('\n'), ['nodes=3 incomparable pairs=1 collisions=0', 'OUTSIDE join#P3 stray.mjs']);
+});
+
+test('--diff on a join head with no join commit is a usage error', (t) => {
+  const s = joinRepo(t);
+  const r = s.run('--diff', 'join#P3', 'join/01-x');
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /--diff join#P3: no join commit between /);
+});

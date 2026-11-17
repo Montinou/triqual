@@ -161,6 +161,16 @@ function branchOf(value) {
   return ticked ? ticked[1].trim() : (value.trim().split(/\s+/)[0] ?? '');
 }
 
+// The part of a `**Parent:**` value before its first `(` that is outside backticks (a backticked branch may hold one).
+function listBeforeNote(raw) {
+  let ticked = false;
+  for (let i = 0; i < raw.length; i += 1) {
+    if (raw[i] === '`') ticked = !ticked;
+    else if (raw[i] === '(' && !ticked) return raw.slice(0, i);
+  }
+  return raw;
+}
+
 // The parent of `phase` ({ kind, value }) and its `parents` (phase numbers) from its `**Parent:**` value, or the linear
 // default when it has none. The value is split on commas and each element read as `branchOf` reads a value; one element
 // is a plain parent. A branch naming a phase of the same plan is that phase; a phase reference must name an earlier
@@ -173,8 +183,8 @@ function resolveParent(phase, phases) {
       ? { parent: { kind: 'trunk', value: null }, parents: [] }
       : { parent: { kind: 'phase', value: `P${phase.n - 1}` }, parents: [phase.n - 1] };
   }
-  // Only the part before a `(` is the list: a note in parentheses may hold commas of its own.
-  const elements = raw.split('(')[0].split(',').map((el) => branchOf(el)).filter(Boolean);
+  // Only the part before a `(` outside backticks is the list: a note in parentheses may hold commas of its own.
+  const elements = listBeforeNote(raw).split(',').map((el) => branchOf(el)).filter(Boolean);
   if (elements.length === 0) throw new PlanError(`${where} has an empty **Parent:**`);
   const resolved = elements.map((el) => {
     if (el === TRUNK) return { parent: { kind: 'trunk', value: null }, own: null };
