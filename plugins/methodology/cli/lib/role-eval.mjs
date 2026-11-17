@@ -26,8 +26,9 @@ export function storePath(env, home) {
 // also hashes its attempt (1, then +1 after each reopen), so a re-review is stored; every other kind ignores `attempt`,
 // which keeps the keys of the lines stored before v 2 as they were. An escape hashes its `ref` in place of the task, so
 // it is stored once per plan and ref; the ref is trimmed and drops one leading `#`, so `#128` and `128` are one escape.
+// A plan-review has no task: the plan's basename stands in its place, so a plan has one record.
 export function recordKey({ commonDir, plan, task, kind, attempt, ref }) {
-  const id = kind === 'escape' ? String(ref ?? '').trim().replace(/^#/, '') : task;
+  const id = kind === 'escape' ? String(ref ?? '').trim().replace(/^#/, '') : kind === 'plan-review' ? basename(plan) : task;
   const base = `${commonDir}\0${basename(plan)}\0${id}\0${kind}`;
   return createHash('sha256').update(kind === 'task-review' ? `${base}\0${attempt}` : base).digest('hex');
 }
@@ -36,9 +37,10 @@ export function recordKey({ commonDir, plan, task, kind, attempt, ref }) {
 
 const PROVIDERS = ['claude', 'codex'];
 // v 1 kinds (safety-shadow, hunters) and v 2 kinds (task-review, final-escapes); a line's `v` must match its kind.
-// v 2 also has `escape`: a defect that reached trunk after the plan merged.
-const KINDS = ['safety-shadow', 'hunters', 'task-review', 'final-escapes', 'escape'];
-const V2_KINDS = ['task-review', 'final-escapes', 'escape'];
+// v 2 also has `escape` (a defect that reached trunk after the plan merged) and `plan-review` (one per plan: what the
+// plan review found and how parallel the plan is).
+const KINDS = ['safety-shadow', 'hunters', 'task-review', 'final-escapes', 'escape', 'plan-review'];
+const V2_KINDS = ['task-review', 'final-escapes', 'escape', 'plan-review'];
 export const TIERS = Object.freeze(['heavy', 'standard', 'light']);
 // The top-level keys each kind may carry; any other key is rejected by name.
 const V1_KEYS = ['v', 'at', 'provider', 'task', 'kind', 'gate', 'shadow', 'hunters', 'budget'];
@@ -49,11 +51,17 @@ const TASK_REVIEW_KEYS = [
 const FINAL_ESCAPES_KEYS = ['v', 'at', 'provider', 'task', 'kind', 'escapes'];
 // An escape names no provider; `plan` is the plan file's base name, which `record` sets from --plan.
 const ESCAPE_KEYS = ['v', 'at', 'kind', 'plan', 'source', 'ref', 'task', 'tier', 'note'];
-const ALL_KEYS = [...new Set([...V1_KEYS, ...TASK_REVIEW_KEYS, ...FINAL_ESCAPES_KEYS, ...ESCAPE_KEYS])];
+// A plan-review names no provider and no task; its `plan` is the plan file's base name.
+const PLAN_REVIEW_KEYS = [
+  'v', 'at', 'kind', 'plan', 'arm', 'tasks', 'phases', 'parallelism', 'runnerOnly', 'auditFindings', 'plannerUsd',
+];
+const ALL_KEYS = [...new Set([...V1_KEYS, ...TASK_REVIEW_KEYS, ...FINAL_ESCAPES_KEYS, ...ESCAPE_KEYS, ...PLAN_REVIEW_KEYS])];
 export const ESCAPE_SOURCES = Object.freeze(['post-merge-fix', 'red-ci', 'bug-report']);
 // A commit sha (7 to 40 hex) or a PR number (optionally `#`).
 const REF = /^([0-9a-f]{7,40}|#?[0-9]{1,9})$/;
 const PLAN_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+// An experiment arm: `<name>/<name>`, lowercase.
+const ARM = /^[a-z0-9-]+\/[a-z0-9-]+$/;
 const NOTE_MAX = 200;
 // Kinds `record` no longer accepts: the safety shadow was retired (roles 0.3.0). validateRecord still accepts them, so
 // the lines stored before stay valid and the summary keeps reporting them.
@@ -254,17 +262,35 @@ function validateEscape(obj) {
   if (obj.note !== undefined && (typeof obj.note !== 'string' || obj.note.length > NOTE_MAX || /[\r\n]/.test(obj.note))) fail('note');
 }
 
+function validatePlanReview(obj) {
+  if (typeof obj.plan !== 'string' || !PLAN_NAME.test(obj.plan)) fail('plan');
+  if (obj.arm !== null && (typeof obj.arm !== 'string' || !ARM.test(obj.arm))) fail('arm');
+  for (const key of ['tasks', 'phases', 'runnerOnly']) count(obj, key, '');
+  if (typeof obj.parallelism !== 'number' || !Number.isFinite(obj.parallelism) || obj.parallelism < 1) fail('parallelism');
+  const findings = object(obj.auditFindings, 'auditFindings');
+  noUnknown(findings, SEVERITIES, 'auditFindings');
+  for (const s of SEVERITIES) count(findings, s, 'auditFindings');
+  if (obj.plannerUsd !== null && (typeof obj.plannerUsd !== 'number' || !Number.isFinite(obj.plannerUsd) || obj.plannerUsd < 0)) {
+    fail('plannerUsd');
+  }
+}
+
 function check(obj) {
   object(obj, '$');
   noUnknown(obj, ALL_KEYS, '');
   if (obj.v !== 1 && obj.v !== 2) fail('v');
   if (typeof obj.at !== 'string' || !AT.test(obj.at) || Number.isNaN(Date.parse(obj.at))) fail('at');
-  if (obj.kind !== 'escape' && !PROVIDERS.includes(obj.provider)) fail('provider');
+  if (obj.kind !== 'escape' && obj.kind !== 'plan-review' && !PROVIDERS.includes(obj.provider)) fail('provider');
   if (!KINDS.includes(obj.kind)) fail('kind');
   if (V2_KINDS.includes(obj.kind) !== (obj.v === 2)) fail('v');
   if (obj.kind === 'escape') {
     noUnknown(obj, ESCAPE_KEYS, '');
     validateEscape(obj);
+    return;
+  }
+  if (obj.kind === 'plan-review') {
+    noUnknown(obj, PLAN_REVIEW_KEYS, '');
+    validatePlanReview(obj);
     return;
   }
   if (typeof obj.task !== 'string' || !TASK.test(obj.task)) fail('task');
@@ -533,12 +559,12 @@ function readRecords(text, since, onRecord) {
 }
 
 // The per-provider summary: shadow agreement (the records stored before that kind was retired), hunters per category
-// (from `hunters` and `task-review` records) and the budget. A `final-escapes` or `escape` record names no provider
-// here (escapes show in summarizeByTier).
+// (from `hunters` and `task-review` records) and the budget. A `final-escapes`, `escape` or `plan-review` record
+// names no provider here (escapes show in summarizeByTier; a plan-review is in neither summary).
 export function summarize(text, { since } = {}) {
   const providers = {};
   const skipped = readRecords(text, since, (record) => {
-    if (record.kind === 'final-escapes' || record.kind === 'escape') return;
+    if (record.kind === 'final-escapes' || record.kind === 'escape' || record.kind === 'plan-review') return;
     const p = providers[record.provider] ??= emptyProvider();
     if (record.kind === 'safety-shadow') addShadow(p, record);
     else addHunters(p, record);
@@ -585,7 +611,7 @@ export function summarizeByTier(text, { since } = {}) {
       for (const escape of record.escapes) tiers[escape.tier].escapes += 1;
       return;
     }
-    if (record.kind !== 'task-review') return;
+    if (record.kind !== 'task-review') return; // a plan-review (or a v 1 record) is not a task review
     const t = tiers[record.tier];
     if (record.attempt === 1) {
       t.tasks += 1;

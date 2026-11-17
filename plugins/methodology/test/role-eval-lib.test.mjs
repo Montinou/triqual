@@ -905,3 +905,107 @@ test('formatTierSummary prints the tiers, rates as percentages and null as n/a',
   assert.equal(empty.includes('null'), false);
   assert.equal(empty.includes('NaN'), false);
 });
+
+// ---- the plan-review kind ---------------------------------------------------------------------------------------
+
+// One record per plan: what the plan review found and how parallel the plan is. No provider; counts only.
+const planReviewRecord = (over = {}) => ({
+  v: 2, at: '2026-11-17T10:00:00Z', kind: 'plan-review', plan: '2026-11-17-example-plan.md', arm: 'alpha/beta-1',
+  tasks: 12, phases: 3, parallelism: 1.5, runnerOnly: 2, auditFindings: { critical: 0, important: 2, minor: 1 },
+  plannerUsd: 0.42, ...over,
+});
+
+test('a fixture plan-review record validates', () => {
+  assert.deepEqual(validateRecord(planReviewRecord()), { ok: true });
+  // arm and plannerUsd may be null; zero counts and a parallelism of exactly 1 are valid.
+  assert.deepEqual(validateRecord(planReviewRecord({
+    arm: null, plannerUsd: null, tasks: 0, phases: 0, parallelism: 1, runnerOnly: 0,
+    auditFindings: { critical: 0, important: 0, minor: 0 },
+  })), { ok: true });
+  assert.deepEqual(validateRecord(planReviewRecord({ plannerUsd: 0 })), { ok: true });
+});
+
+test('old records stay valid next to the plan-review kind', () => {
+  assert.deepEqual(validateRecord(shadowRecord()), { ok: true });
+  assert.deepEqual(validateRecord(huntersRecord()), { ok: true });
+  assert.deepEqual(validateRecord(taskReviewRecord()), { ok: true });
+  assert.deepEqual(validateRecord(escapesRecord()), { ok: true });
+  assert.deepEqual(validateRecord({
+    v: 2, at: '2026-09-06T10:00:00Z', kind: 'escape', plan: 'p.md', source: 'red-ci', ref: '#12',
+  }), { ok: true });
+});
+
+test('parallelism 0.5 is rejected (field parallelism)', () => {
+  assert.deepEqual(validateRecord(planReviewRecord({ parallelism: 0.5 })), { ok: false, field: 'parallelism' });
+});
+
+test('an unknown auditFindings key is rejected', () => {
+  assert.deepEqual(
+    validateRecord(planReviewRecord({ auditFindings: { critical: 0, important: 0, minor: 0, major: 1 } })),
+    { ok: false, field: 'auditFindings.major' },
+  );
+});
+
+test('plan-review field rules: each bad field is named', () => {
+  const cases = [
+    ['v 1', { v: 1 }, 'v'],
+    ['a provider', { provider: 'claude' }, 'provider'],
+    ['a task', { task: 'T1' }, 'task'],
+    ['an unknown key', { extra: 1 }, 'extra'],
+    ['no plan name', { plan: 'a/b.md' }, 'plan'],
+    ['plan not a string', { plan: 7 }, 'plan'],
+    ['arm with no slash', { arm: 'alpha' }, 'arm'],
+    ['arm with uppercase', { arm: 'Alpha/beta' }, 'arm'],
+    ['arm not a string', { arm: 3 }, 'arm'],
+    ['negative tasks', { tasks: -1 }, 'tasks'],
+    ['fractional phases', { phases: 1.5 }, 'phases'],
+    ['runnerOnly a string', { runnerOnly: '2' }, 'runnerOnly'],
+    ['parallelism NaN', { parallelism: NaN }, 'parallelism'],
+    ['parallelism a string', { parallelism: '2' }, 'parallelism'],
+    ['plannerUsd negative', { plannerUsd: -0.01 }, 'plannerUsd'],
+    ['plannerUsd Infinity', { plannerUsd: Infinity }, 'plannerUsd'],
+    ['auditFindings not an object', { auditFindings: 3 }, 'auditFindings'],
+    ['auditFindings count negative', { auditFindings: { critical: -1, important: 0, minor: 0 } }, 'auditFindings.critical'],
+    ['auditFindings count missing', { auditFindings: { critical: 0, important: 0 } }, 'auditFindings.minor'],
+  ];
+  for (const [name, over, field] of cases) {
+    assert.deepEqual(validateRecord(planReviewRecord(over)), { ok: false, field }, name);
+  }
+  for (const key of ['arm', 'tasks', 'phases', 'parallelism', 'runnerOnly', 'auditFindings', 'plannerUsd', 'plan']) {
+    const r = planReviewRecord();
+    delete r[key];
+    assert.deepEqual(validateRecord(r), { ok: false, field: key }, `missing ${key}`);
+  }
+});
+
+test('recordKey of two plan-reviews of one plan is equal', () => {
+  const base = { commonDir: '/r/.git', plan: '/r/docs/plans/p.md', kind: 'plan-review' };
+  const key = recordKey(base);
+  assert.match(key, /^[0-9a-f]{64}$/);
+  // The task part of the key is the plan argument, so the other arguments do not move it.
+  assert.equal(recordKey({ ...base, task: 'T3', attempt: 2, ref: '#1' }), key);
+  assert.equal(recordKey({ ...base, plan: '/elsewhere/p.md' }), key);
+  assert.equal(key, createHash('sha256').update('/r/.git\0p.md\0p.md\0plan-review').digest('hex'));
+  // Another plan, repo or kind is another key.
+  assert.notEqual(recordKey({ ...base, plan: '/r/docs/plans/q.md' }), key);
+  assert.notEqual(recordKey({ ...base, commonDir: '/other/.git' }), key);
+  assert.notEqual(recordKey({ ...base, kind: 'final-escapes' }), key);
+});
+
+test('summaries ignore plan-review lines', () => {
+  const line = rec({ ...planReviewRecord(), key: 'k-pr' });
+  const before = summarize(TIER_STORE, {});
+  const withLine = summarize(`${TIER_STORE}${line}\n`, {});
+  assert.deepEqual(withLine, before);
+  assert.deepEqual(summarizeByTier(`${TIER_STORE}${line}\n`, {}), summarizeByTier(TIER_STORE, {}));
+  assert.equal(formatSummary(withLine), formatSummary(before));
+  // A store of plan-reviews alone names no provider and counts no tier.
+  const only = summarize(`${line}\n`, {});
+  assert.deepEqual(only, { providers: {}, skipped: { malformed: [], otherVersion: 0, duplicateKey: 0 } });
+  assert.match(formatSummary(only), /^No records in the window/);
+  const tiers = summarizeByTier(`${line}\n`, {});
+  assert.deepEqual(tiers, summarizeByTier('', {}));
+  assert.equal(formatTierSummary(tiers), formatTierSummary(summarizeByTier('', {})));
+  // A plan-review is valid, so it is not reported as malformed.
+  assert.deepEqual(only.skipped.malformed, []);
+});
