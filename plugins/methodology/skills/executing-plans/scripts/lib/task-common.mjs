@@ -1,5 +1,7 @@
-// What task-open, task-prep and task-close share: the workspace and its ledger, the failure contract, the tracking calls and the plan's
-// tasks. Plain Node, node: built-ins and the plan reader next to it only.
+// What task-open, task-prep and task-close share: the workspace and its ledger, the failure contract, the tracking calls, the plan's
+// tasks and the checkout of each task's phase (`phaseOfTask`: a phase built in its own worktree has its HEAD, index and tree there, so
+// every git read and write of a task is made in that `workdir`). Plain Node, node: built-ins, the plan reader and the stack script
+// (its state reader) next to it only.
 //
 // Failure contract (every script of the thin controller): exit 0 ok, 2 usage, 3 refused precondition, 1 any other
 // failure; the one-line cause goes to stderr and, once the plan's workspace exists, `Error: <step> T<N> — exit <code> —
@@ -10,6 +12,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PlanError, readPhases, readTasks } from './plan.mjs';
+import { readState, statePath, workdirOf } from '../stack.mjs';
 
 import { TIERS } from './plan.mjs';
 
@@ -79,15 +82,16 @@ export function git(args, options = {}) {
   return res.stdout.trim();
 }
 
-// The commit a revision names, or null when it names none. `--end-of-options`: a revision that starts with `-` is never an option.
-export function commitOf(revision) {
-  const res = exec('git', ['rev-parse', '--verify', '--quiet', '--end-of-options', `${revision}^{commit}`]);
+// The commit a revision names, or null when it names none, read in `cwd` (default: where the script runs). `--end-of-options`: a revision
+// that starts with `-` is never an option.
+export function commitOf(revision, { cwd } = {}) {
+  const res = exec('git', ['rev-parse', '--verify', '--quiet', '--end-of-options', `${revision}^{commit}`], { cwd });
   return res.status === 0 ? res.stdout.trim() : null;
 }
 
-// Whether commit `ancestor` is reachable from `descendant` (a commit is its own ancestor). Anything but git's yes (0) or no (1) is a failure.
-export function isAncestor(ancestor, descendant) {
-  const res = exec('git', ['merge-base', '--is-ancestor', '--end-of-options', ancestor, descendant]);
+// Whether commit `ancestor` is reachable from `descendant` (a commit is its own ancestor), in `cwd`. Anything but git's yes (0) or no (1) is a failure.
+export function isAncestor(ancestor, descendant, { cwd } = {}) {
+  const res = exec('git', ['merge-base', '--is-ancestor', '--end-of-options', ancestor, descendant], { cwd });
   if (res.status === 0) return true;
   if (res.status === 1) return false;
   throw new ScriptError(EXIT_OTHER, `git merge-base --is-ancestor: ${firstLine(res.stderr) || `exited ${res.status}`}`);
@@ -290,22 +294,6 @@ export const shellQuote = (text) => `'${String(text).replaceAll("'", "'\\''")}'`
 // The command line of a Landing test: its `{files}` replaced by the Test paths, each one shell word (`sh -c` runs the result).
 export const landingCommand = (landingTest, tests) => landingTest.replace('{files}', () => tests.map(shellQuote).join(' '));
 
-// The branch of the stack's active phase (the one `stack.mjs squash` closes on): a worktree task lands there and nowhere else.
-export function activePhaseBranch(plan) {
-  const res = runScript('stack.mjs', ['path', plan]);
-  if (res.status !== 0) throw scriptError('stack.mjs path', res);
-  const file = res.stdout.trim();
-  let state;
-  try {
-    state = JSON.parse(readFileSync(file, 'utf8'));
-  } catch (e) {
-    throw new ScriptError(e.code === 'ENOENT' ? EXIT_REFUSED : EXIT_OTHER, e.code === 'ENOENT' ? `no stack state at ${file}: run stack init first` : `${file} is not readable JSON`);
-  }
-  const active = (state.phases ?? []).find((p) => p.state === 'active');
-  if (!active) throw new ScriptError(EXIT_REFUSED, "no phase is active: a worktree task lands on the active phase's branch");
-  return active.branch;
-}
-
 // How long the landing's `node --test` may run before it counts as a failure: the TRIQUAL_LANDING_TEST_TIMEOUT_MS environment
 // variable, else this default (milliseconds).
 export const DEFAULT_LANDING_TEST_TIMEOUT_MS = 600000;
@@ -316,8 +304,8 @@ export function landingTestTimeoutMs() {
   return Number(raw);
 }
 
-// The ids (`T3`) of T<N>'s phase in plan order, T<N> included (a plan with no phases is one phase of every task).
-function phaseIds(planFile, n) {
+// The plan phase that holds T<N> ({ n, branch, tasks, ... } from the shared reader; a plan with no phases is one phase of every task).
+function planPhaseOf(planFile, n) {
   let phases;
   try {
     phases = readPhases(readFileSync(planFile, 'utf8'), basename(planFile).replace(/\.md$/, '')).phases;
@@ -327,8 +315,11 @@ function phaseIds(planFile, n) {
   }
   const phase = phases.find((p) => p.tasks.includes(`T${n}`));
   if (!phase) throw new ScriptError(EXIT_REFUSED, `T${n} is in no phase of ${planFile}`);
-  return phase.tasks;
+  return phase;
 }
+
+// The ids (`T3`) of T<N>'s phase in plan order, T<N> included.
+const phaseIds = (planFile, n) => planPhaseOf(planFile, n).tasks;
 
 // The numbers of the tasks of T<N>'s phase in plan order, T<N> included.
 export const phaseTasks = (planFile, n) => phaseIds(planFile, n).map((id) => Number(id.slice(1)));
@@ -337,6 +328,39 @@ export const phaseTasks = (planFile, n) => phaseIds(planFile, n).map((id) => Num
 export function earlierTasks(planFile, n) {
   const ids = phaseIds(planFile, n);
   return ids.slice(0, ids.indexOf(`T${n}`)).map((id) => Number(id.slice(1)));
+}
+
+// The plan phase that holds T<N> and its entry in the stack state, as { n, branch, state, workdir }: `state` is the phase's state
+// ('pending', 'active', 'done', ...) and `workdir` the checkout it is built in (`workdirOf`: its own worktree when the state records one,
+// else the main checkout's toplevel). Null when the plan has no stack state: the scripts then act on the main checkout, as before. The state
+// is read from the main checkout's toplevel; a StackError of the reader keeps its exit code.
+export function phaseOfTask(planFile, n) {
+  const k = planPhaseOf(planFile, n).n;
+  const root = git(['rev-parse', '--show-toplevel']);
+  const file = statePath(root, planFile);
+  let state;
+  try {
+    state = readState(file);
+  } catch (e) {
+    if (e?.name === 'StackError') throw new ScriptError(e.code, e.message);
+    throw e;
+  }
+  if (state === null) return null;
+  const entry = (state.phases ?? []).find((p) => p.n === k);
+  if (!entry) throw new ScriptError(EXIT_REFUSED, `${file} has no phase P${k}: T${n} is in P${k} of ${planFile}`);
+  return { n: k, branch: entry.branch, state: entry.state, workdir: workdirOf(root, entry) };
+}
+
+// The branch a worktree task of T<N>'s phase lands on: that phase's branch, and only while the phase is active.
+export function phaseBranchOf(planFile, n) {
+  const phase = phaseOfTask(planFile, n);
+  const file = statePath(git(['rev-parse', '--show-toplevel']), planFile);
+  if (phase === null) throw new ScriptError(EXIT_REFUSED, `no stack state at ${file}: run stack init first`);
+  if (phase.state === 'active') return phase.branch;
+  if (!readState(file).phases.some((p) => p.state === 'active')) {
+    throw new ScriptError(EXIT_REFUSED, "no phase is active: a worktree task lands on the active phase's branch");
+  }
+  throw new ScriptError(EXIT_REFUSED, `T${n}'s phase P${phase.n} is ${phase.state}: a worktree task lands only on its own active phase's branch`);
 }
 
 // The earlier tasks of T<N>'s phase that are neither done nor dropped: in the tracking ledger when the repo is opted in, else those
@@ -455,16 +479,17 @@ export function excludeWorktrees() {
   appendFileSync(file, `${text === '' || text.endsWith('\n') ? '' : '\n'}${WORKTREES_IGNORE}\n`);
 }
 
-// The commit a worktree task opens at: the last CLOSED commit of the main checkout's branch. HEAD is closed unless a task built in the
-// main checkout has commits on it that no close has squashed yet (nobody has reviewed them): then it is that task's BASE (the phase tip
-// when the task opened, a closed commit by the same rule). Worktree tasks are not main-checkout tasks (their commits are not on
-// HEAD), and a task that is done, dropped or has landed has nothing unreviewed on HEAD. When several tasks qualify, the one whose BASE
-// is the oldest wins (the most commits `BASE..HEAD`).
-export function worktreeBase(planName, n, ledger) {
-  const head = git(['rev-parse', 'HEAD']);
+// The commit a worktree task opens at: the last CLOSED commit of the phase's branch, read as HEAD of `cwd` (the phase's checkout: its own
+// worktree, else the main checkout). HEAD is closed unless a task built in that checkout has commits on it that no close has squashed yet
+// (nobody has reviewed them): then it is that task's BASE (the phase tip when the task opened, a closed commit by the same rule). Only the
+// tasks in `tasks` (T<N>'s phase) count as such a task: another phase's task builds in its own checkout, and its commits are not on this
+// HEAD. Worktree tasks are not main-checkout tasks (their commits are not on HEAD), and a task that is done, dropped or has landed has
+// nothing unreviewed on HEAD. When several tasks qualify, the one whose BASE is the oldest wins (the most commits `BASE..HEAD`).
+export function worktreeBase(planName, n, ledger, { cwd, tasks } = {}) {
+  const head = git(['rev-parse', 'HEAD'], { cwd });
   const statuses = taskStatuses(planName);
   const stem = planName.replace(/\.md$/, '');
-  const others = [...new Set(ledger.flatMap((l) => { const m = /^BASE: T(\d+) /.exec(l); return m && Number(m[1]) !== n ? [Number(m[1])] : []; }))];
+  const others = [...new Set(ledger.flatMap((l) => { const m = /^BASE: T(\d+) /.exec(l); return m && Number(m[1]) !== n && (tasks === undefined || tasks.includes(Number(m[1]))) ? [Number(m[1])] : []; }))];
   const open = others.filter((m) => !(statuses
     ? ['done', 'dropped'].includes(statuses[`T${m}`])
     : ledger.some((l) => l.startsWith(`Task ${m}: complete (commits `)))
@@ -472,9 +497,9 @@ export function worktreeBase(planName, n, ledger) {
     && commitOf(`refs/heads/wt/${stem}-t${m}`) === null);
   let closed = { base: head, count: 0 };
   for (const m of open) {
-    const base = commitOf(lastBase(ledger, m));
-    if (base === null || !isAncestor(base, head)) continue;
-    const count = Number(git(['rev-list', '--count', `${base}..${head}`]));
+    const base = commitOf(lastBase(ledger, m), { cwd });
+    if (base === null || !isAncestor(base, head, { cwd })) continue;
+    const count = Number(git(['rev-list', '--count', `${base}..${head}`], { cwd }));
     if (count > closed.count) closed = { base, count };
   }
   return closed.base;

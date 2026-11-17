@@ -6,10 +6,14 @@
 // Prints, in this order:
 //   brief: <workspace>/task-<N>-brief.md   (written)
 //   report: <workspace>/task-<N>-report.md (the implementer's report file; not created)
-//   base: <sha>                            (the LAST `BASE: T<N> <sha>` ledger line; recorded from HEAD when there is none; for a
-//                                           --worktree task from the last CLOSED commit of HEAD's branch, so a main-checkout
-//                                           task's unreviewed commits are never its base)
-//   workdir: <path>                        (only with --worktree: the task's worktree)
+//   base: <sha>                            (the LAST `BASE: T<N> <sha>` ledger line; recorded from HEAD of the task's phase checkout when
+//                                           there is none; for a --worktree task from the last CLOSED commit of that HEAD's branch, so a
+//                                           task built in the phase checkout never has its unreviewed commits as another task's base)
+//   workdir: <path>                        (with --worktree: the task's worktree; without it, only when the task's phase is built in a
+//                                           phase worktree of its own, not the main checkout: that path, where the implementer works and commits)
+//
+// The task's phase checkout is where the stack state puts its phase (`workdir` of the phase entry: its own worktree, else the main
+// checkout; no stack state: the main checkout). HEAD is read there, never in another phase's checkout.
 //
 // Right after BASE the ledger gets `Opened: T<N> <time>` (UTC, to the second; TRIQUAL_NOW, when set, is the time written) unless the
 // task's last `Opened:`/`Closed:` line is an `Opened:` one: a rerun, and the sequential re-run of an undone landing, add none, and the
@@ -43,16 +47,17 @@
 // A task built in the main checkout runs alone. The other tasks of the phase that have a BASE line and are started and not closed (in the
 // tracking ledger `in_progress`, `in_review` or `blocked`; not opted in: no `Task <M>: complete` line) are its open tasks. A task opened
 // without --worktree is refused (exit 3, nothing written) while one is open; a task opened with --worktree is refused while an open task
-// is built in the main checkout, and while an undone one is open (an undone task has no worktree and no landing until its sequential re-run closes).
+// is built in the main checkout, and while an undone one is open (an undone task has no worktree and no landing until its sequential re-run closes:
+// "T<n> cannot open in a worktree while T<m> is undone and waits for its sequential re-run").
 //
 // Exit codes: 0 ok, 2 usage / no such plan file / malformed plan / TRIQUAL_NOW not an ISO time, 3 refused (linked worktree, unknown task, a started task
-// with no BASE line, a blocked task, a coordinator task with an earlier task open, a task opened in the main checkout beside an open one, a worktree task opened beside one built in the main checkout, a move the ledger refuses), 1 any other failure. A failure appends `Error: task-open T<N> — exit <code> — <cause>` to the ledger.
+// with no BASE line, a blocked task, a coordinator task with an earlier task open, a task opened in the main checkout beside an open one, a worktree task opened beside one built in the main checkout, a worktree task opened beside an undone one that waits for its sequential re-run, a move the ledger refuses), 1 any other failure. A failure appends `Error: task-open T<N> — exit <code> — <cause>` to the ledger.
 //
 // Dynamic imports only: the file has no extension, so Node may load it as CommonJS or as an ES module depending on the
 // nearest package.json.
 (async () => {
   const { existsSync, realpathSync, writeFileSync } = await import('node:fs');
-  const { basename, dirname, join } = await import('node:path');
+  const { basename, dirname, join, resolve } = await import('node:path');
   const { pathToFileURL } = await import('node:url');
   const common = await import(pathToFileURL(join(dirname(realpathSync(process.argv[1])), 'lib', 'task-common.mjs')).href);
   const { ScriptError, EXIT_USAGE, EXIT_REFUSED } = common;
@@ -91,6 +96,9 @@
     }
 
     const planName = basename(plan);
+    // The checkout of the task's phase: its own worktree when the stack state records one, else the main checkout (no state: as before).
+    const phase = common.phaseOfTask(plan, n);
+    const inPhase = phase ? { cwd: phase.workdir } : {};
     // A coordinator task works in the main checkout and starts like a batch task: its BASE is HEAD and its close squashes BASE..HEAD, so an
     // earlier task still open there would have its unreviewed commits absorbed (or its review package hold the coordinator's commit).
     if (!worktree && planTask.task.role === 'coordinator') {
@@ -128,7 +136,9 @@
     if (state && STARTABLE.includes(state.status)) common.taskMove('start', n, plan);
     // BASE goes in before the brief: a brief that fails must not leave the rerun to take a later HEAD.
     if (base === null) {
-      base = worktree ? common.worktreeBase(planName, n, common.ledgerLines(workspace)) : common.git(['rev-parse', 'HEAD']);
+      base = worktree
+        ? common.worktreeBase(planName, n, common.ledgerLines(workspace), { ...inPhase, tasks: common.phaseTasks(plan, n) })
+        : common.git(['rev-parse', 'HEAD'], inPhase);
       common.appendLedger(workspace, `BASE: T${n} ${base}`);
     }
     if (common.lastTimeLine(common.ledgerLines(workspace), n) !== 'Opened') common.appendLedger(workspace, `Opened: T${n} ${at}`);
@@ -137,7 +147,8 @@
       common.appendLedger(workspace, common.RERUN_LINE(n));
     }
 
-    let workdir = null;
+    // A task built in place in a phase worktree: its implementer works and commits there, so the path is printed.
+    let workdir = !worktree && phase && resolve(phase.workdir) !== resolve(common.git(['rev-parse', '--show-toplevel'])) ? phase.workdir : null;
     if (worktree) {
       const wt = common.worktreeOf(planName, n);
       common.excludeWorktrees();
