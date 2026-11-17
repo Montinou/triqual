@@ -1,6 +1,6 @@
 # roles
 
-Nine role agents for executing a plan. Each is a Claude Code subagent: one Markdown file in
+Ten role agents for executing a plan. Each is a Claude Code subagent: one Markdown file in
 `agents/` whose frontmatter pins the model, the reasoning effort and the tools the agent may not
 use. Dispatch one by its agent type, `roles:<name>`. The dispatch passes no model, because the
 agent's definition carries it.
@@ -25,6 +25,7 @@ Only `phase-orchestrator` can dispatch subagents; `Agent` is in every other role
 | `roles:final-adversarial-reviewer` | `opus` | low | Agent, Edit, Write, NotebookEdit | One adversarial review of a whole branch before merge. Hunts correctness and security defects across task boundaries, triages deferred and parked findings, and gives a merge verdict. |
 | `roles:hunter` | `claude-haiku-5-5` | medium | Agent, Edit, NotebookEdit | Hunts for defects in one diff package for one category (correctness, security, spec-drift or state) and writes its candidates to a single file. Finds and reports; never fixes and never grades severity. |
 | `roles:phase-orchestrator` | `sonnet` | medium | Edit, NotebookEdit | Runs one phase of a plan by following `methodology:executing-plans` for that phase only: dispatches the other roles, never edits product code, ends on any stop with `BLOCKED: <stop> — <details>` and returns a summary of at most 20 lines (phase status, task commits, rulings, open minors, errors and fallbacks). The only role that may dispatch agents. One runs for each running phase, so several run at once, each in its phase's checkout. |
+| `roles:planner` | `opus` | medium | Agent | Drafts one implementation plan from a spec by following `methodology:writing-plans`, lanes first, and writes the draft with its self-review to the draft path. Checks the layout with `triqual plan lanes <draft>` before it returns. Never runs the audit and never registers the plan. |
 
 The reviewers `safety-reviewer`, `spec-reviewer` and `final-adversarial-reviewer` cannot edit or
 write files. The `hunter` and `brief-writer` can write (each writes one output file) but cannot
@@ -45,6 +46,7 @@ Found by searching `roles:<name>` in `plugins/methodology/skills`:
 | `final-adversarial-reviewer` | `executing-plans`, `brainstorming` (spec audit), `writing-plans` (plan audit) |
 | `hunter` | none since 2026-11-12; kept for A/B tests |
 | `phase-orchestrator` | `executing-plans`: one per running phase, several at once from methodology 1.13.0 (one per phase from methodology 1.3.0) |
+| `planner` | `writing-plans`: drafts the plan out of the main session |
 
 A plan's task `**Role:**` line is `roles:tdd-implementer` (the default when the line is
 missing), `roles:complex-implementer` or `coordinator`. `roles:review-fixer` is still read in plans

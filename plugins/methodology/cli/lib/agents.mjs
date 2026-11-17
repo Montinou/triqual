@@ -22,7 +22,7 @@ export const CODEX_READONLY_REVIEWERS = false;
 // roles (hunters, briefs, the safety gate); Terra 6.1 for every role that writes code or judges it, at low effort for the
 // implementer and the fixer (who work from a brief) and high for the spec gate and the complex implementer; Astra, at low effort, is
 // reserved for the single whole-branch adversarial review. The phase orchestrator, which dispatches the other roles and
-// judges nothing itself, runs on Terra 6.1 at medium effort.
+// judges nothing itself, runs on Terra 6.1 at medium effort. The planner, which drafts a plan, runs on Terra 6.1 at high effort.
 const CODEX_ROLE_ROUTING = Object.freeze({
   'brief-writer': { model: 'gpt-6-luna', effort: 'medium' },
   'safety-reviewer': { model: 'gpt-6-luna', effort: 'medium' },
@@ -33,6 +33,7 @@ const CODEX_ROLE_ROUTING = Object.freeze({
   'complex-implementer': { model: 'gpt-6.1-terra', effort: 'high' },
   'final-adversarial-reviewer': { model: 'gpt-6-astra', effort: 'low' },
   'phase-orchestrator': { model: 'gpt-6.1-terra', effort: 'medium' },
+  planner: { model: 'gpt-6.1-terra', effort: 'high' },
 });
 
 // The Codex model of a shipped role (`hunter` -> `gpt-6-luna`), or null for a role with no routing entry.

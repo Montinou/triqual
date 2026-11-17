@@ -18,7 +18,10 @@
 //     task, reviewed by hand, is checked only when it ran task-prep);
 //   - the ledger: BASE, the effective tier, `Skipped:` lines, `Round 2: T<N> — light items`, the last `Budget: hunters <tier
 //     count> → <used> for T<N>` line of the attempt, and this attempt's `Task <N>:` fix round, parked and blocked lines (an attempt runs from the task's previous
-//     `Task <N>: complete` line; `attempt` is 1 + the number of earlier ones);
+//     `Task <N>: complete` line; `attempt` is 1 + the number of earlier ones), and this attempt's `Arm: T<N> <role> <experiment>/<arm> <model>
+//     <effort>` lines (one per experiment arm a role ran under), which become the record's `arms: [{ role, experiment, arm, model, effort }]`
+//     in ledger order (none: no `arms` key; another task's `Arm:` lines and an earlier attempt's are not copied; a line that would not
+//     validate is left out with one stderr warning, never a failure);
 //   - the saved reviewer outputs `<workspace>/task-<N>-<role>-r<R>.md`, parsed with lib/footer.mjs: the gate
 //     (safety-reviewer) and the spec reviewer, of the lowest round saved for each role. Heavy and standard tasks need both;
 //     a light task needs the gate, and the spec reviewer only when its Round 2 had light items; after `Skipped: hunters and
@@ -115,7 +118,7 @@
   const common = await load('lib', 'task-common.mjs');
   const { FooterError, parseFooter, candidateIds } = await load('lib', 'footer.mjs');
   const { codexRoleModel } = await load('..', '..', '..', 'cli', 'lib', 'agents.mjs');
-  const { validateRecord, TIERS, CATEGORIES } = await load('..', '..', '..', 'cli', 'lib', 'role-eval.mjs');
+  const { validateRecord, validArm, TIERS, CATEGORIES } = await load('..', '..', '..', 'cli', 'lib', 'role-eval.mjs');
   const { ScriptError, EXIT_OTHER, EXIT_USAGE, EXIT_REFUSED } = common;
 
   const STEP = 'task-close';
@@ -429,6 +432,17 @@
     const stray = [...verdicts.keys()].find((id) => !known.has(id));
     if (stray !== undefined) throw new ScriptError(EXIT_OTHER, `the spec reviewer's footer names candidate ${stray}, which no hunter file has`);
 
+    // The experiment arms this attempt's roles ran under: `Arm: T<N> <role> <experiment>/<arm> <model> <effort>` lines of the window.
+    // A line that would not validate (an effort outside the allowed set, a name outside the experiment rule) is left out with
+    // a warning on stderr: the ledger is append-only, so a close never fails over an arm.
+    const arms = window.flatMap((l) => {
+      const m = new RegExp(`^Arm: T${n} (\\S+) ([^\\s/]+)/([^\\s/]+) (\\S+) (\\S+)\\s*$`).exec(l);
+      if (!m) return [];
+      const arm = { role: m[1], experiment: m[2], arm: m[3], model: m[4], effort: m[5] };
+      if (validArm(arm)) return [arm];
+      process.stderr.write(`task-close: left out the invalid line "${l.trim()}" from the record's arms\n`);
+      return [];
+    });
     const record = {
       v: 2,
       at: common.now(),
@@ -446,6 +460,7 @@
       fixRounds: count(`Task ${n}: fix round `),
       blocked: count(`Task ${n}: blocked at fix round `) > 0,
       coordinator: planTask.task.role === 'coordinator',
+      ...(arms.length > 0 ? { arms } : {}),
     };
     const valid = validateRecord(record);
     if (!valid.ok) throw new ScriptError(EXIT_OTHER, `the task-review record is invalid: field ${valid.field}`);

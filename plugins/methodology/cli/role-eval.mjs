@@ -1,9 +1,10 @@
 // `triqual role-eval record --plan <plan file> <json-file>` and `triqual role-eval summary [--by-tier] [--since YYYY-MM-DD]
 // [--json]`: the command line of the role-eval store (lib/role-eval.mjs; spec 5 and U7). `record` validates a record
-// (hunters, task-review, final-escapes or escape), derives its idempotency key and appends it under the store lock;
+// (hunters, task-review, final-escapes, escape or plan-review), derives its idempotency key and appends it under the store lock;
 // `summary` reports the store per provider, or per review tier with --by-tier (post-merge escapes included). An escape
 // with a task and no tier takes the task's effective tier from `triqual tasks export --json` when that resolves. A record of a retired kind (safety-shadow) is
-// refused; the lines of that kind already stored are still summarized.
+// refused; the lines of that kind already stored are still summarized. `escapes scan [--since YYYY-MM-DD]` finds the
+// post-merge escapes of closed tasks in git and CI (lib/escape-scan.mjs) and appends each once.
 // Exit codes: 0 written, already recorded, or a summary (also of an empty or missing store); 2 usage, a retired kind,
 // a schema error, a bad JSON file or no git repository (the message names a field, never a value); 1 a write or lock
 // failure.
@@ -11,8 +12,9 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { scanEscapes } from './lib/escape-scan.mjs';
 import {
   RETIRED_KINDS, TIERS, appendRecord, formatSummary, formatTierSummary, recordKey, storePath, summarize, summarizeByTier,
   validateRecord,
@@ -20,12 +22,15 @@ import {
 
 const GIT_TIMEOUT_MS = 10000;
 const TASKS_TIMEOUT_MS = 10000;
+const SCAN_TIMEOUT_MS = 30000;
+const SCAN_BUFFER = 64 * 1024 * 1024;
+const STAMPED_KINDS = ['task-review', 'final-escapes', 'escape', 'plan-review'];
 const SINCE = /^\d{4}-\d{2}-\d{2}$/;
 
 const USAGE = [
   'usage:',
   '  triqual role-eval record --plan <plan file> <json-file>',
-  '      Validate the record in <json-file> (kind hunters, task-review, final-escapes or escape) and append it to',
+  '      Validate the record in <json-file> (kind hunters, task-review, final-escapes, escape or plan-review) and append it to',
   '      the store once (the key comes from the repo, the plan\'s file name, the task, the kind and, for a task-review,',
   '      its attempt: attempt 2 of a task is stored, a repeated attempt is a no-op). The safety-shadow kind is retired:',
   '      record refuses it. Exits 0 when written or already recorded, 2 on a bad or retired record or usage, 1 on a',
@@ -34,6 +39,7 @@ const USAGE = [
   '      {"v": 2, "at": "<ISO time>", "kind": "escape", "source": "post-merge-fix|red-ci|bug-report", "ref": "<sha or PR>",',
   '       "task": "T<n>" (optional), "tier": "heavy|standard|light" (optional), "note": "<200 chars max>" (optional)}',
   '      With a task and no tier, the tier is the task\'s effective tier from the ledger when it resolves.',
+  '      A task-review, final-escapes, escape or plan-review record gets its "plan" field from --plan (the plan\'s base name).',
   '  triqual role-eval summary [--since YYYY-MM-DD] [--json]',
   '      Per provider: hunter right and new rates (from hunters and task-review records), and the safety-shadow',
   '      agreement of the records stored before that kind was retired, from the records at or after --since.',
@@ -41,6 +47,11 @@ const USAGE = [
   '      Per review tier (heavy, standard, light): task reviews, raised, hunter confirmed rate, spec confirmed per',
   '      task, fix rounds per task, blocked, and final-review escapes per task; then the post-merge escapes per tier',
   '      (unattributed without a tier) and per plan, from the records at or after --since.',
+  '  triqual role-eval escapes scan [--since YYYY-MM-DD]',
+  '      Find the post-merge escapes of this repo\'s closed tasks and append each once: a fix( or fix: commit on the',
+  '      default branch within 14 days after a task closed that touches one of its files (post-merge-fix), a commit that',
+  '      reverts one of its commits (revert), and a failing default-branch CI run within 14 days after a finished plan\'s',
+  '      last task closed (red-ci, from gh; without gh it is skipped with one stderr line). Prints the count of new records.',
   '  triqual role-eval --help',
   '',
 ].join('\n');
@@ -127,11 +138,12 @@ function record(args, { env, cwd, stdout, stderr }) {
   // A fixed kind name, never a value from the file.
   const retired = RETIRED_KINDS.find((kind) => obj !== null && typeof obj === 'object' && obj.kind === kind);
   if (retired !== undefined) {
-    stderr.write(`triqual role-eval: the ${retired} kind is retired: record a hunters, task-review, final-escapes or escape record\n`);
+    stderr.write(`triqual role-eval: the ${retired} kind is retired: record a hunters, task-review, final-escapes, escape or plan-review record\n`);
     return 2;
   }
   const escape = obj !== null && typeof obj === 'object' && obj.kind === 'escape';
-  if (escape) obj.plan = basename(plan);
+  // These kinds carry the plan's base name, taken from --plan (the same name that feeds the key), never from the file.
+  if (obj !== null && typeof obj === 'object' && STAMPED_KINDS.includes(obj.kind)) obj.plan = basename(plan);
   const verdict = validateRecord(obj);
   if (!verdict.ok) {
     stderr.write(`triqual role-eval: invalid record: field ${verdict.field}\n`);
@@ -189,6 +201,86 @@ function summary(args, { env, stdout, stderr }) {
   return 0;
 }
 
+// `escapes scan [--since YYYY-MM-DD]`: scanEscapes over this repo's tracking snapshot (`triqual tasks export --json
+// --all`), each escape appended once under the store lock. Prints `<n> new`: counts only, never a commit message.
+function escapes(args, { env, cwd, stdout, stderr }) {
+  const usage = (message) => { stderr.write(`triqual role-eval: ${message}\n${USAGE}`); return 2; };
+  const [sub, ...rest] = args;
+  if (sub !== 'scan') return usage(sub === undefined ? 'escapes needs a subcommand (scan)' : 'unknown escapes subcommand');
+  const parsed = parseArgs(rest, { valued: ['--since'], boolean: [] });
+  if (parsed.error) return usage(parsed.error);
+  if (parsed.positional.length > 0) return usage('escapes scan takes no argument');
+  const since = parsed.flags['--since'];
+  if (since !== undefined && !realDay(since)) return usage('--since needs a calendar date, YYYY-MM-DD');
+
+  const commonDir = gitCommonDir(cwd, env);
+  if (commonDir === null) {
+    stderr.write('triqual role-eval: escapes scan must run inside a git repository\n');
+    return 2;
+  }
+  const exec = (command) => (argv, opts = {}) => execFileSync(command, argv, {
+    cwd: opts.cwd ?? cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: SCAN_TIMEOUT_MS, maxBuffer: SCAN_BUFFER,
+  });
+  const git = exec('git');
+  const repo = realpathSync(git(['rev-parse', '--show-toplevel']).trim());
+
+  // This repo's snapshot: the one whose root is this checkout or the main checkout of its worktrees.
+  const exported = spawnSync('triqual', ['tasks', 'export', '--json', '--all'], {
+    cwd: repo, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: TASKS_TIMEOUT_MS, maxBuffer: SCAN_BUFFER,
+  });
+  let snapshots;
+  try {
+    if (exported.status !== 0) throw new Error('export failed');
+    snapshots = JSON.parse(exported.stdout);
+  } catch {
+    stderr.write('triqual role-eval: cannot read the task ledgers (triqual tasks export --json --all failed)\n');
+    return 1;
+  }
+  const roots = new Set([repo, dirname(commonDir)]);
+  const real = (path) => { try { return realpathSync(path); } catch { return path; } };
+  const plans = (Array.isArray(snapshots) ? snapshots : [])
+    .filter((snap) => typeof snap?.repo?.root === 'string' && roots.has(real(snap.repo.root)))
+    .flatMap((snap) => (Array.isArray(snap.plans) ? snap.plans : []));
+
+  const runGh = exec('gh');
+  let warned = false;
+  const gh = (argv, opts) => {
+    try {
+      return runGh(argv, opts);
+    } catch (err) {
+      if (!warned) {
+        warned = true;
+        stderr.write(`triqual role-eval: gh ${err?.code === 'ENOENT' ? 'is not installed' : 'failed'}: red CI skipped\n`);
+      }
+      throw err;
+    }
+  };
+  let found;
+  try {
+    found = scanEscapes({ repo, plans, git, gh, since });
+  } catch {
+    stderr.write('triqual role-eval: cannot scan the repository history\n');
+    return 1;
+  }
+
+  const store = storePath(env, env.HOME || homedir());
+  let fresh = 0;
+  try {
+    const made = mkdirSync(store.dir, { recursive: true, mode: 0o700 });
+    let created = made !== undefined;
+    for (const record of found.filter((r) => validateRecord(r).ok)) {
+      const key = recordKey({ commonDir, plan: record.plan, kind: 'escape', ref: record.ref });
+      if (appendRecord(store.file, record, { key, isDefault: store.isDefault, created }) === 'written') fresh += 1;
+      created = false;
+    }
+  } catch (err) {
+    stderr.write(`triqual role-eval: cannot write the store (${errorCode(err)})\n`);
+    return 1;
+  }
+  stdout.write(`${fresh} new\n`);
+  return 0;
+}
+
 // Runs one command and returns its exit code. `argv` excludes node and the script; every dependency is injected so a
 // test never touches the real environment, streams or working directory.
 export function main(argv, { env = process.env, stdout = process.stdout, stderr = process.stderr, cwd = process.cwd() } = {}) {
@@ -199,6 +291,7 @@ export function main(argv, { env = process.env, stdout = process.stdout, stderr 
   }
   if (command === 'record') return record(rest, { env, cwd, stdout, stderr });
   if (command === 'summary') return summary(rest, { env, stdout, stderr });
+  if (command === 'escapes') return escapes(rest, { env, cwd, stdout, stderr });
   stderr.write(`triqual role-eval: ${command === undefined ? 'missing command' : `unknown command ${command.length > 40 ? `${command.slice(0, 40)}...` : command}`}\n${USAGE}`);
   return 2;
 }

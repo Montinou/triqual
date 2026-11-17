@@ -27,6 +27,7 @@ const ROLE_NAMES = [
   'final-adversarial-reviewer',
   'hunter',
   'phase-orchestrator',
+  'planner',
   'review-fixer',
   'safety-reviewer',
   'spec-reviewer',
@@ -84,7 +85,7 @@ const readToml = (text) => {
 
 const ROLE_TEXT = (front, body = 'Body.\n') => `---\n${front}\n---\n\n${body}`;
 
-test('parses the nine shipped roles', () => {
+test('parses the ten shipped roles', () => {
   const roles = shippedRoles();
   assert.deepEqual(roles.map((role) => role.name), ROLE_NAMES);
   const byName = Object.fromEntries(roles.map((role) => [role.name, role]));
@@ -152,6 +153,7 @@ test('codexAgentToml assigns a model and effort by task difficulty for each ship
     'complex-implementer': { model: 'gpt-6.1-terra', effort: 'high' },
     'final-adversarial-reviewer': { model: 'gpt-6-astra', effort: 'low' },
     'phase-orchestrator': { model: 'gpt-6.1-terra', effort: 'medium' },
+    planner: { model: 'gpt-6.1-terra', effort: 'high' },
   };
   assert.deepEqual(shippedRoles().map((role) => role.name).sort(), Object.keys(expected).sort());
   for (const role of shippedRoles()) {
