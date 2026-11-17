@@ -197,3 +197,66 @@ test('an experiments file the report refuses leaves empty eval datasets and a wa
   assert.deepEqual(JSON.parse(readFileSync(join(out, 'eval_report.json'), 'utf8')), []);
   assert.deepEqual(JSON.parse(readFileSync(join(out, 'eval_sessions.json'), 'utf8')), []);
 });
+
+// Subagent transcripts under a temp transcripts dir; each spec is { project, name, at, description, model, input, output }.
+const subagentFixture = (specs, { days = 1, extraEnv = {} } = {}) => {
+  const home = mkdtempSync(join(tmpdir(), 'audit-collect-'));
+  for (const s of specs) {
+    const dir = join(home, 'transcripts', s.project, 's1', 'subagents');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `agent-${s.name}.jsonl`), `${JSON.stringify({
+      type: 'assistant', timestamp: s.at, requestId: `r-${s.name}`,
+      message: { id: `m-${s.name}`, role: 'assistant', model: s.model, usage: { input_tokens: s.input ?? 0, output_tokens: s.output, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } },
+    })}\n`);
+    writeFileSync(join(dir, `agent-${s.name}.meta.json`), JSON.stringify({ agentType: s.agentType, description: s.description }));
+  }
+  const out = join(home, 'out');
+  const r = spawnSync('node', [SCRIPT, '--out', out, '--days', String(days)], {
+    env: { ...process.env, HOME: home, ROLE_EVAL_FILE: join(home, 'none.jsonl'), TRIQUAL_TRANSCRIPTS_DIR: join(home, 'transcripts'), ...extraEnv },
+    encoding: 'utf8',
+  });
+  return { home, out, r, rows: () => JSON.parse(readFileSync(join(out, 'cost_per_task.json'), 'utf8')) };
+};
+
+test('collector writes cost_per_task joined by description', () => {
+  const now = new Date().toISOString();
+  // Opus 5.5 lists at $4/M input and $20/M output. T3 tdd-implementer: 50k in + 75k out = $0.20 + $1.50 = $1.70;
+  // T3 spec-reviewer: 25k out = $0.50; the unrelated subagent has no task in its description.
+  const { r, rows } = subagentFixture([
+    { project: '-x-triqual', name: 'impl', at: now, model: 'claude-opus-5-5', input: 50_000, output: 75_000, agentType: 'roles:tdd-implementer', description: 'T3 tdd-implementer' },
+    { project: '-x-triqual', name: 'spec', at: now, model: 'claude-opus-5-5', output: 25_000, agentType: 'roles:spec-reviewer', description: 'T3 spec-reviewer' },
+    { project: '-x-triqual', name: 'other', at: now, model: 'claude-haiku-5-5', output: 10_000, agentType: 'roles:hunter', description: 'unrelated search' },
+  ]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(rows(), [
+    { window: 'late', project: '-x-triqual', task: 'T3', role: 'spec-reviewer', runs: 1, usd: 0.5 },
+    { window: 'late', project: '-x-triqual', task: 'T3', role: 'tdd-implementer', runs: 1, usd: 1.7 },
+  ]);
+});
+
+test('cost_per_task sums the runs of a task and role per window, in the projects the collector reads only', () => {
+  const now = new Date().toISOString();
+  const yesterday = new Date(Date.now() - 864e5).toISOString();
+  const old = '2020-01-01T00:00:00.000Z';
+  const base = { model: 'claude-opus-5-5', agentType: 'roles:tdd-implementer', description: 'T7 tdd-implementer' };
+  const { r, rows } = subagentFixture([
+    { ...base, project: '-x-triqual', name: 'a', at: now, output: 10_000 },
+    { ...base, project: '-x-triqual', name: 'b', at: now, output: 15_000 },
+    { ...base, project: '-x-triqual', name: 'c', at: yesterday, output: 5_000 },
+    { ...base, project: '-x-triqual', name: 'd', at: old, output: 99_000 },
+    { ...base, project: '-x-elsewhere', name: 'e', at: now, output: 99_000 },
+  ]);
+  assert.equal(r.status, 0, r.stderr);
+  // late: 25k out = $0.50 over 2 runs; early: 5k out = $0.10; the 2020 run and the other project are left out
+  assert.deepEqual(rows(), [
+    { window: 'early', project: '-x-triqual', task: 'T7', role: 'tdd-implementer', runs: 1, usd: 0.1 },
+    { window: 'late', project: '-x-triqual', task: 'T7', role: 'tdd-implementer', runs: 2, usd: 0.5 },
+  ]);
+});
+
+test('cost_per_task is an empty dataset, and nothing on stderr, when there are no transcripts', () => {
+  const { r, rows } = subagentFixture([]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(rows(), []);
+  assert.equal(r.stderr, '');
+});

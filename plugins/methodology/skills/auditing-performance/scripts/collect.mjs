@@ -2,10 +2,11 @@
 // Collects the numbers of a performance audit of the triqual plugins into one JSON file per dataset, read-only:
 // `node collect.mjs --out <dir> [--days 10] [--project triqual] [--hooks]`. Late window = the last --days UTC days
 // (today included); early window = the --days before it. Datasets (arrays of row objects, written to <out>/<name>.json):
-// cost_by_role, controller_sessions, latency, tier_by_day, escapes, hunter_yield, eval_report, eval_sessions, hooks (with --hooks).
+// cost_by_role, controller_sessions, latency, tier_by_day, escapes, hunter_yield, eval_report, eval_sessions, cost_per_task, hooks (with --hooks).
 // eval_sessions is `triqual eval sessions --json --since <early window start>` (the sessions of both windows; it refreshes the
 // evals sessions store, so it runs first); eval_report is `triqual eval report --json` on that store (its rows, one per
-// experiment and arm). A command
+// experiment and arm). cost_per_task is the USD of the subagents described `T<N> <role>` (subagentTaskCosts), one row per window,
+// project, task and role. A command
 // that fails leaves its dataset empty and a line on stderr. USD is an ESTIMATE at
 // cli/lib/prices.json. It prints counts and role names, never message content. Exit 0 done, 2 usage.
 import { readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
@@ -14,6 +15,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { storePath } from '../../../cli/lib/role-eval.mjs';
+import { subagentTaskCosts } from '../../../cli/lib/eval-tasks.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pluginsRoot = join(here, '..', '..', '..', '..');
@@ -153,6 +155,13 @@ const evalJson = (name, sub) => {
 const SESSION_KEYS = ['sessionId', 'project', 'start', 'usd', 'turns', 'ctxPeak', 'compactions', 'idleRewrites', 'stopHookBlocks', 'arm', 'contaminated'];
 write('eval_sessions', (evalJson('eval_sessions', ['sessions', '--since', windows.early.since])?.sessions ?? []).map((s) => Object.fromEntries(SESSION_KEYS.map((k) => [k, s[k] ?? null]))));
 write('eval_report', (evalJson('eval_report', ['report'])?.experiments ?? []).flatMap((e) => e.rows));
+
+// The subagents named after their task, per window: a run counts in the window its first message falls in. subagentTaskCosts
+// reads what it can and leaves out what it cannot (it never throws), so an unreadable source gives an empty dataset.
+const taskRows = ['early', 'late'].flatMap((window) => subagentTaskCosts(root, { since: `${windows[window].since}T00:00:00.000Z`, until: `${windows[window].until}T23:59:59.999Z` })
+  .filter((c) => c.project.includes(project))
+  .map((c) => ({ window, project: c.project, task: c.task, role: c.role, runs: c.runs, usd: round(c.usd) })));
+write('cost_per_task', taskRows);
 
 if (args.includes('--hooks')) {
   const time = (cmd, plugin, input = '') => {
