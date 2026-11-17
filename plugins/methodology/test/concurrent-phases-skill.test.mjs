@@ -81,7 +81,7 @@ test('the phase review reads the recorded base and the phase tip, never the main
   assert.ok(eight.includes('`base` of `node scripts/stack.mjs status PLAN_FILE`'), 'step 8 does not read the recorded base');
   const prompt = flat(read('final-review-prompt.md'));
   assert.doesNotMatch(prompt, /previous phase's branch tip/, 'PHASE_RANGE still says the previous phase branch tip');
-  assert.ok(prompt.includes("the phase's recorded `base` (`node scripts/stack.mjs status PLAN_FILE`) to its branch tip"), 'PHASE_RANGE lacks the recorded base');
+  assert.ok(prompt.includes("its `base` as `node scripts/stack.mjs status PLAN_FILE` prints it, to its branch tip"), 'PHASE_RANGE lacks the base as status prints it');
 });
 
 test("phase close removes only the closing phase's own task worktrees", () => {
@@ -133,4 +133,17 @@ test('the task-open exit-3 list names the worktree refusal beside an undone task
 
 test('the forest line names a join of several parents', () => {
   assert.ok(flat(SKILL).includes(', or a join of several)'), 'Forest does not name a join');
+});
+
+const HEAD_RULE =
+  'When the phase is built in a phase worktree, every `HEAD` written in a `tier-check` or `review-package` command is the phase worktree\'s commit, passed as a sha (`git -C <workdir> rev-parse HEAD`), never the word `HEAD`.';
+
+test('step 7 tells the orchestrator that HEAD in a tier-check or review-package command is the phase worktree sha', () => {
+  const step7 = flat(section(SKILL, '### 7. End the phase'));
+  assert.ok(step7.includes(HEAD_RULE), 'step 7 lacks the HEAD rule for a phase worktree');
+});
+
+test("step 7's worktree removal is limited to the tasks of this phase", () => {
+  const step7 = flat(section(SKILL, '### 7. End the phase'));
+  assert.ok(step7.includes('with N a task of this phase'), 'step 7 does not limit the removal loop to this phase\'s tasks');
 });

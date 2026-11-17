@@ -94,3 +94,13 @@ test('no edited file names the concurrent phases reference as a backticked path 
     assert.doesNotMatch(text, /`[^`]*concurrent-phases\.md`|\]\([^)]*concurrent-phases\.md/, file);
   }
 });
+
+test('the orchestrator prompt says HEAD in a tier-check or review-package command is the phase worktree sha', () => {
+  const text = flat(ORCHESTRATOR);
+  assert.ok(
+    text.includes(
+      'When the phase is built in a phase worktree, every `HEAD` written in a `tier-check` or `review-package` command is the phase worktree\'s commit, passed as a sha (`git -C <workdir> rev-parse HEAD`), never the word `HEAD`.',
+    ),
+    'the prompt lacks the HEAD rule for a phase worktree',
+  );
+});

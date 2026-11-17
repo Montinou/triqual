@@ -913,11 +913,12 @@ test('the skill carries no credit footer (NOTICE and the READMEs carry the credi
   assert.doesNotMatch(text, /Forked from/);
 });
 
-test('worktrees: detect isolation, native tool first, git fallback, baseline check and cleanup at finish', () => {
+test('worktrees: detect isolation, no worktree for the run (a clone of its own), baseline check and cleanup at finish', () => {
   const text = flat(section(skill(), '## Worktrees'));
-  for (const phrase of ['git rev-parse --path-format=absolute --git-dir --git-common-dir', 'Native tool first', 'Git fallback', 'git check-ignore -q <location>', 'git worktree add', 'baseline', 'methodology:finishing-branch']) {
+  for (const phrase of ['git rev-parse --path-format=absolute --git-dir --git-common-dir', 'makes a linked worktree, which the plan\'s scripts refuse', 'Own clone', 'one clone per running plan', 'baseline', 'methodology:finishing-branch']) {
     assert.ok(text.includes(phrase), `the Worktrees section does not say ${phrase}`);
   }
+  assert.ok(!text.includes('git worktree add'), 'the Worktrees section still tells the run to create a worktree');
 });
 
 // ---- fence cooperation (design U9) ----

@@ -2,7 +2,7 @@
 
 Read this when more than one phase is ready, or a phase becomes ready while another is running. The Process, The Thin Controller and steps 7 and 8 stay the rules of each phase; this section says how several phases run at the same time.
 
-**Ready.** A phase is ready when it is pending and every parent of it is submitted (in local mode, `done`). `node scripts/stack.mjs status PLAN_FILE` prints `"ready": true` for it, and `"base"` for a phase that has started (the commit its range begins at). A plan of one chain has one ready phase at a time, so it runs as before; phases that share a parent, or a phase and a branch of the forest, can be ready together.
+**Ready.** A phase is ready when it is pending and every parent of it is submitted (in local mode, `done`). `node scripts/stack.mjs status PLAN_FILE` prints `"ready": true` for it, and `"base"`, the commit the phase's range begins at, computed for every phase; `state` tells whether a phase has started. A plan of one chain has one ready phase at a time, so it runs as before; phases that share a parent, or a phase and a branch of the forest, can be ready together.
 
 **Start.** The main session runs `node scripts/stack.mjs phase PLAN_FILE N` once for each ready phase, one after another, each after the previous one has returned, never two at once: the calls move HEAD and the stack state of the main checkout, and the first phase started holds it. A phase started while another holds the main checkout prints `workdir:` and is built in its own phase worktree. The main session dispatches orchestrators only then: one `roles:phase-orchestrator` per phase, all in one message, in the background, each with its `[PHASE_WORKDIR]`: the `workdir:` line of its `phase` call, the main checkout when it printed none.
 
