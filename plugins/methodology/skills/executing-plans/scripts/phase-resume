@@ -142,9 +142,31 @@
           return `Fix the failure in <workspace>/phase-${n}-report.md on ${phase.branch} with a plain commit, ${stackCmd('push', n)}, then ledger "Validation fix: P${n} <sha> — <finding>".`;
         }
       }
-      if (phases.some((p) => p.n === n + 1)) {
-        return phase.validate && !localDone ? `P${n} is validated: start the next phase with ${stackCmd('phase', n + 1)}.` : `P${n} is submitted: start the next phase with ${stackCmd('phase', n + 1)}.`;
+      const verb = phase.validate && !localDone ? 'validated' : 'submitted';
+      if (stackState?.phases) {
+        // With a stack state the phases to start come from it: the pending ones whose every parent has started. A done phase counted
+        // as submitted here (a Phase complete line, or local mode) has started, whatever the state file says.
+        const view = localDone ? { ...stackState, phases: stackState.phases.map((p) => (p.n === n ? { ...p, state: 'submitted' } : p)) } : stackState;
+        const ready = stack.readyPhases(view);
+        if (ready.length === 1) return `P${n} is ${verb}: start the next phase with ${stackCmd('phase', ready[0])}.`;
+        if (ready.length > 1) {
+          const cmds = ready.map((k) => stackCmd('phase', k));
+          return `P${n} is ${verb}: start the ready phases with ${cmds.slice(0, -1).join(', ')} and ${cmds.at(-1)}.`;
+        }
+        const pending = view.phases.filter((p) => p.state === 'pending').sort((a, b) => a.n - b.n);
+        if (pending.length > 0) {
+          // The same states stack.mjs lets a child start after (its STARTED_AFTER, which it does not export).
+          const startedStates = view.mode === 'local' ? ['done', 'submitted', 'ready', 'merged'] : ['submitted', 'ready', 'merged'];
+          const waits = stack.parentsOf(view, pending[0]).filter((p) => !startedStates.includes(p.state)).map((p) => `P${p.n}`);
+          return `P${n} is ${verb}: no phase is ready yet; P${pending[0].n} waits for ${waits.join(', ')}.`;
+        }
+        // Nothing is pending: the top phase is the last one no phase names as a parent.
+        const parentNs = new Set(view.phases.flatMap((p) => stack.parentsOf(view, p).map((q) => q.n)));
+        const top = Math.max(...view.phases.filter((p) => !parentNs.has(p.n)).map((p) => p.n));
+        if (n !== top) return `P${n} is ${verb}: every phase has started; the plan ends with P${top}.`;
+        return `P${n} is the last phase and is submitted: ${view.phases.length > 1 ? 'run the seams review of the plan, then ' : ''}${stackCmd('submit', n, '--open')}.`;
       }
+      if (phases.some((p) => p.n === n + 1)) return `P${n} is ${verb}: start the next phase with ${stackCmd('phase', n + 1)}.`;
       return `P${n} is the last phase and is submitted: ${phases.length > 1 ? 'run the seams review of the plan, then ' : ''}${stackCmd('submit', n, '--open')}.`;
     })();
 
