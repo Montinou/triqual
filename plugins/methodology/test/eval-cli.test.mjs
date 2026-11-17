@@ -160,3 +160,28 @@ test('eval.mjs run as a script lists its subcommands and exits 2 on an unknown o
   assert.match(help.stdout, /review/);
   assert.equal(spawnSync(process.execPath, [join(CLI, 'eval.mjs'), 'nope'], { encoding: 'utf8' }).status, 2);
 });
+
+test('a hyphenated subcommand file is listed and dispatched', async () => {
+  const f = fixture(0);
+  try {
+    const help = await run(f, ['--help']);
+    assert.equal(help.code, 0, help.err);
+    assert.match(help.out, /^\s+plan-review\s+\S/m);
+    const r = await run(f, ['plan-review', '--help']);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /plan-review/);
+  } finally { rmSync(f.base, { recursive: true, force: true }); }
+});
+
+test('a name with an uppercase letter, a leading or a doubled hyphen is unknown (exit 2)', async () => {
+  const f = fixture(0);
+  try {
+    assert.equal((await run(f, ['plan-review', '--help'])).code, 0);
+    for (const sub of ['Plan-review', 'plan-Review', '-plan', '-plan-review', 'plan--review', 'plan-']) {
+      const r = await run(f, [sub]);
+      assert.equal(r.code, 2, `${sub}: ${r.out}`);
+      assert.match(r.err, /unknown/);
+      assert.equal(r.out, '');
+    }
+  } finally { rmSync(f.base, { recursive: true, force: true }); }
+});
