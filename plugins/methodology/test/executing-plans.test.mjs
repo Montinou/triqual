@@ -947,7 +947,7 @@ test('the denial rule is in the orchestrator and in every dispatch template', ()
 
 test('every role agent definition carries the denial rule and says how it asks the human', () => {
   const files = readdirSync(AGENTS).filter((n) => n.endsWith('.md'));
-  assert.equal(files.length, 9, files.join(', '));
+  assert.equal(files.length, 10, files.join(', '));
   for (const file of files) {
     const agent = flat(readFileSync(join(AGENTS, file), 'utf8'));
     assert.ok(agent.includes(DENIAL_RULE), `${file} lacks the denial rule`);
