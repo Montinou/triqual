@@ -68,6 +68,7 @@ A plan is a sequence of phases. Each phase is one pull request, built from atomi
 Its `### Task <M>: …` blocks follow, and no other `###` heading appears inside a phase.
 
 - **Parent and Validate:** every phase writes `**Parent:**`, equal to its frontier (see Parallel layout): `trunk` when it needs no earlier phase, `P<k>` for one, `P<k>, P<m>` for a join, or a branch of another plan. In a plan written before this rule, a phase without the line branches from the previous phase (the first from the trunk). Phases that are not ancestor and descendant form a forest, so their `Files` must be disjoint (see Self-Review); a join is a descendant of each of its parents. `**Validate:**` is optional: it names the workflow that validates the phase, with an optional `compare=` command, or `none`. To write many near-identical plans from one template, see [references/plan-generate.md](references/plan-generate.md); to check a forest for file collisions, see [references/collisions.md](references/collisions.md).
+- **Phase check:** a `**Phase check:**` is a command over named test files: the `Test:` files of the phase's tasks and the tests that pin what the phase changes, one file per `node --test` (or the project's runner given files), never the project's whole-suite command; the whole suite is CI's.
 - **Numbering and order:** task numbers are global across phases (T1…Tn). Each task belongs to exactly one phase, and its `**Depends on:**` names only tasks in the same or an earlier phase.
 - **One commit per task:** a task's work is exactly one commit on the phase branch, and its single Commit step gives the conventional message.
 - **Lanes:** plan every phase in parallel lanes first. A lane is a chain of tasks, named by a letter on each task's `**Lane:** <letter>` line, that one agent runs start to finish while the other lanes run beside it. The rule:
@@ -258,9 +259,19 @@ decide nothing ("TBD", "handle edge cases", "add appropriate validation",
 "write tests for the above", a type or function no task defines) are the
 opposite failure, and the self-review catches both.
 
+## Planner Dispatch
+
+The plan draft is written by `roles:planner`, a subagent that follows this skill, lanes first. After `triqual tasks paths --json`, the Scope Check and the file map, with the spec path and the draft path (see Save plans to) at hand:
+
+1. Run `triqual eval arm --kind role --key <plan file name> --role planner`, where `<plan file name>` is the base name of the draft. It prints `none`, or `<experiment>/<arm> <model> <effort>`.
+2. Dispatch `roles:planner` with description `planner <plan file name>`, giving it the spec path, the repository and the draft path. Pass the arm's `model` and `effort` only when a line other than `none` came back; on `none`, or when `triqual` is missing or the command fails, dispatch with the role's own settings.
+3. The planner's draft then goes through the existing step 6 check of Parallel layout: run `triqual plan lanes <draft>` and require exit 0 before the self-review. When it does not exit 0, fix the draft or send the planner back with the violations.
+
+The planner writes only the draft. What stays with the main session: the self-review, the plan audit, the fixes, the registration and the review by your human partner. The planner self-reviews its own draft before it returns and runs none of the rest of that list, and it writes no tracking entry.
+
 ## Self-Review
 
-After writing the complete plan, look at the spec with fresh eyes and check the plan against it. This is a checklist you run yourself — not a subagent dispatch.
+After the planner returns the complete plan, look at the spec with fresh eyes and check the plan against it. This is a checklist you run yourself — not a subagent dispatch.
 
 **1. Spec coverage:** Skim each section/requirement in the spec. Can you point to a task that implements it? List any gaps.
 
@@ -272,7 +283,7 @@ After writing the complete plan, look at the spec with fresh eyes and check the 
 
 **5. Proportion:** Compare the plan's length to the spec's. A plan several times longer than the spec it implements is a transcript of the program, not a plan. If code blocks are most of the document, replace bodies with signatures, test names and assertions, and check that each step is still unambiguous.
 
-**6. Phases:** Does each phase map to a slice of the spec? Does any task depend on a later phase? Does every phase have a branch, a PR title, a Phase check and a task that commits? Is anything that needs the merged trunk a task instead of an `## After Merge` item?
+**6. Phases:** Does each phase map to a slice of the spec? Does any task depend on a later phase? Does every phase have a branch, a PR title, a Phase check and a task that commits? Does every Phase check run named test files, and never the whole suite? Is anything that needs the merged trunk a task instead of an `## After Merge` item?
 
 **7. Tiers:** Does every task carry a `**Tier:**` (all or none)? Is each tier the one the rubric gives for what the task touches, with no task tiered lower than its content justifies? Is every `coordinator` task `light` and every `roles:complex-implementer` task `heavy`? Does every `heavy` task have its reason line under `**Tier:**`, and every `roles:complex-implementer` task its reason line under `**Role:**`, each naming a criterion the rubric gives? Is every task that touches a sensitive path (the default set plus the header's `**Sensitive paths:**`) or whose diff will have more than 1000 code lines `heavy`? Is any task left at the default light that matches a heavy trigger, and does every `standard` task have its one-line reason under `**Tier:**`? Is any eval, fixture, dataset or test-only task tiered above light without a sensitive path or a heavy criterion? When more than 50% of the plan's tasks are `heavy` in a plan of at least 5 tasks, re-check each tier, since heavy review costs the most and registering the plan prints a warning.
 
@@ -286,7 +297,9 @@ If you find issues, fix them inline. No need to re-review — just fix and move 
 
 ## Plan Audit
 
-After the self-review, dispatch `roles:final-adversarial-reviewer` with `../brainstorming/spec-document-reviewer-prompt.md` on the plan and its spec: the adversarial audit runs on every plan, and no other reviewer takes its place. The audit checks the tiers both ways: a task tiered lower than its content justifies by the Task Tiers rubric is a finding, and so is a task tiered higher than the rubric justifies. A `heavy` task, or a `roles:complex-implementer` task, whose reason line is missing or does not match the rubric's criteria for it is a finding too. The audit also flags unrequested complexity and over-tiering as findings. The shared audit prompt holds the serial-order check but not these, so write both tier checks and this instruction into your dispatch message to the auditor. Write the layout check into that message too: for each `Depends on`, each `**Sequential because:**` and each `**Parent:**`, the auditor asks whether the dependency is real, whether one is missing, and whether splitting one file or fixing one interface first would let two pieces run side by side; a layout that is serial without a dependency is a finding.
+After the self-review, dispatch `roles:final-adversarial-reviewer` with `../brainstorming/spec-document-reviewer-prompt.md` on the plan and its spec: the adversarial audit runs on every plan, and no other reviewer takes its place. The audit checks the tiers both ways: a task tiered lower than its content justifies by the Task Tiers rubric is a finding, and so is a task tiered higher than the rubric justifies. A `heavy` task, or a `roles:complex-implementer` task, whose reason line is missing or does not match the rubric's criteria for it is a finding too. The audit also flags unrequested complexity and over-tiering as findings. The shared audit prompt holds the serial-order check but not these, so write both tier checks and this instruction into your dispatch message to the auditor. Write the layout check into that message too: for each `Depends on`, each `**Sequential because:**` and each `**Parent:**`, the auditor asks whether the dependency is real, whether one is missing, and whether splitting one file or fixing one interface first would let two pieces run side by side; a layout that is serial without a dependency is a finding. Write the Phase check rule into it too: a Phase check that runs the whole suite is a finding.
+
+Right after the audit returns, and before you fix its findings, record the planner's outcome, so the record measures the planner's draft: run `triqual eval plan-review --plan <draft> --audit <c>,<i>,<m> [--arm <experiment>/<arm>]`, with the audit's critical, important and minor finding counts. Pass `--arm <experiment>/<arm>` only when the arm lookup printed an arm; omit it when the lookup printed `none`, failed, or `triqual` was missing. A second run for the same plan prints `already recorded`.
 
 Fix the findings in the plan. Name, in your message to your human partner, each finding you did not fix and why.
 

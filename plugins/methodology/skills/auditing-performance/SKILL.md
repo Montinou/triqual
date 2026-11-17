@@ -24,8 +24,8 @@ listed as unverified.
    node <this skill's directory>/scripts/collect.mjs --out <scratchpad>/data --days 10 --hooks
    ```
 
-   It writes `cost_by_role`, `controller_sessions`, `latency`, `tier_by_day`, `escapes`, `hunter_yield` and `hooks`
-   as JSON. Cross-check once: its `cost_by_role` totals per period equal `triqual cost --since .. --until .. --project ..`.
+   It writes `cost_by_role`, `controller_sessions`, `latency`, `tier_by_day`, `escapes`, `hunter_yield`, `eval_report`,
+   `eval_sessions` and `hooks` as JSON. Cross-check once: its `cost_by_role` totals per period equal `triqual cost --since .. --until .. --project ..`.
    A mismatch is a bug in the script: fix it before reporting. Then check that every model in the transcripts has a
    row in `cli/lib/prices.json` and that its prices match the current list: a model missing there is dropped from
    every total without a warning. For the machine-wide view, run it again with `--project -` (every project directory
@@ -40,6 +40,7 @@ listed as unverified.
    - **Hunter yield by tier and category.** Important and critical findings per 100 runs, and precision. A category
      that yields almost nothing important is a candidate to drop; test it as an A/B, never by assumption.
    - **Hooks.** Blocking hooks against the node floor; anything async is CPU, not latency.
+   - **Experiments**, the `eval_report` and `eval_sessions` datasets (see the eval step below).
    - **Escapes**, the `escapes` dataset: what the phase and final reviews caught that the task reviews did not, per
      task reviewed, by window, tier and severity (`triqual role-eval summary --by-tier` gives the all-time totals).
      This is the evidence for or against lighter task review.
@@ -51,6 +52,19 @@ listed as unverified.
    (small) or add it to the plan as a task (larger). Update **Standing gaps** below: remove what is now measured, add
    what is new. Do not leave a gap only in the report.
 7. **Record.** In a repository with strict tracking, add the progress entry for the run (`triqual tracking add`).
+
+## The eval step
+
+The collector writes the experiments as two datasets: it runs `triqual eval sessions --json` first, from the start of the
+early window (the sessions of both windows: `sessionId`, `project`, `start`, `usd`, `turns`, `ctxPeak`, `compactions`,
+`idleRewrites`, `stopHookBlocks`, `arm`, `contaminated`; it refreshes the sessions store), then
+`triqual eval report --json` (the rows, one per experiment and arm, each with its `experiment`), which scores that
+refreshed store. Run `triqual eval report --json` once yourself to read
+which experiments are active. A command that failed leaves its dataset empty and a line on stderr: say so in the
+report instead of reading an empty dataset as no experiments. Upload both datasets to the existing audit dashboard
+with the others, and give the report a section per active experiment: its arms, units counted and excluded, healthy
+rate, cost median, the difference with the control and the verdict, each tied to its `eval_report` rows, with the
+`eval_sessions` rows behind them.
 
 ## Role calibration
 

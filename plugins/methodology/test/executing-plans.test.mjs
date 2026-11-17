@@ -169,6 +169,12 @@ test('the phase review sends no hunters: the reviewer runs with no candidates, a
   assert.ok(records.includes('`final-escapes` record') && !records.includes('`hunters`'), 'the phase review still writes a hunters record');
 });
 
+test('a whole-suite Phase check is a plan defect', () => {
+  const check = flat(section(skill(), '### 7. End the phase')).split('- **Phase check.**')[1].split('- **A submitted phase')[0];
+  assert.ok(check.includes('A `**Phase check:**` that is the project\'s whole-suite command is a plan defect'), 'step 7 does not call a whole-suite Phase check a plan defect');
+  assert.ok(check.includes('the main session ledgers a `Ruling:`') && check.includes('runs the `Test:` files of the phase\'s tasks instead'), 'step 7 does not ledger a Ruling and run the Test: files instead');
+});
+
 test('the default Phase check is the union of the phase\'s Test: paths, run focused', () => {
   const check = flat(section(skill(), '### 7. End the phase')).split('- **Phase check.**')[1].split('- **A submitted phase')[0];
   assert.ok(check.includes('the union of the phase\'s `Test:` paths'), 'the Phase check default does not name the union of the phase\'s Test: paths');
@@ -247,7 +253,7 @@ test('no hunter is dispatched anywhere: the phase review, the final review promp
   assert.doesNotMatch(records, /records `hunters` and `final-escapes`/, 'records.md still says a phase review writes a hunters record');
   assert.ok(records.includes('**The phase review** records `final-escapes` with `task: "P<n>"`'), 'records.md does not say the phase review records only final-escapes');
   const phaseRecords = records.slice(records.indexOf('**The phase review** records'));
-  assert.doesNotMatch(phaseRecords, /"category": "|"kind": "hunters"/, 'the Records section still has a phase hunters record example');
+  assert.doesNotMatch(phaseRecords, /"category": "(correctness|security|spec-drift|state)"|"kind": "hunters"/, 'the Records section still has a phase hunters record example');
   assert.doesNotMatch(flat(read(`${EP}/references/example.md`)), /\b[1-4] (correctness )?hunters?\b/, 'example.md still shows a hunter');
 });
 
@@ -2513,4 +2519,39 @@ test('a worktree task: task-prep takes the branch tip without --head, a no-commi
   assert.ok(one.includes('a blocked task, a coordinator task while an earlier task of its phase is not done or dropped'), 'step 1 does not list the new exit-3 refusals');
   assert.match(readFileSync(join(SCRIPTS, 'task-open'), 'utf8'), /const STARTABLE = \['pending'\];/, 'task-open still starts a blocked task');
   assert.match(readFileSync(join(SCRIPTS, 'task-prep'), 'utf8'), /refs\/heads\/\$\{common\.worktreeOf\(planName, n\)\.branch\}/, 'task-prep does not read the worktree branch');
+});
+
+test('SKILL.md names triqual eval arm and the Arm: ledger line', () => {
+  const dispatch = flat(section(skill(), '## Role Dispatch'));
+  for (const line of [
+    '`triqual eval arm --kind role --plan <plan file name> --task T<N> --role <role>`',
+    'never from a phase or task worktree',
+    'pass its model and effort on the dispatch',
+    'the one exception to "pass no model"',
+    '`Arm: T<N> <role> <experiment>/<arm> <model> <effort>`',
+    'Every dispatch\'s description is `T<N> <role>`',
+    '`none`, or when `triqual` is missing or the command fails, dispatch unchanged',
+    'objective signals only',
+  ]) assert.ok(dispatch.includes(line), `Role Dispatch lacks: ${line}`);
+  assert.ok(flat(read(`${EP}/references/ledger-vocabulary.md`)).includes('`Arm: T<N> <role> <experiment>/<arm> <model> <effort>`'), 'the ledger vocabulary lacks the Arm: line');
+  const rules = flat(readFileSync(join(SKILLS, '..', 'rules', 'global.md'), 'utf8'));
+  assert.ok(rules.includes('pass no model: the role\'s definition carries it, except a model and effort that an active `triqual eval arm` line names'), 'global.md lacks the exception');
+});
+
+test('orchestrator prompt names the T<N> <role> description', () => {
+  const prompt = flat(read(`${EP}/orchestrator-prompt.md`));
+  for (const line of [
+    'has the description `T<N> <role>`',
+    '`triqual eval arm --kind role --plan [PLAN_FILE] --task T<N> --role <role>`',
+    '`Arm: T<N> <role> <experiment>/<arm> <model> <effort>`',
+    'from the main checkout',
+  ]) assert.ok(prompt.includes(line), `the orchestrator prompt lacks: ${line}`);
+  assert.ok(prompt.includes('description: "Run phase P<n> of the plan"'), 'the orchestrator\'s own description changed');
+});
+
+test('final-review prompt asks for task, category and summary', () => {
+  const prompt = flat(read(`${EP}/final-review-prompt.md`));
+  for (const line of ['`task`', '`category` (one short kebab-case word', '`summary` (at most 200 characters']) assert.ok(prompt.includes(line), `the final-review prompt lacks: ${line}`);
+  const records = flat(read(`${EP}/references/records.md`));
+  assert.ok(records.includes('"category": "') && records.includes('"summary": "'), 'records.md does not show category and summary');
 });

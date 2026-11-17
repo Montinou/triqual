@@ -26,14 +26,15 @@ const MAX_BYTES = 87040;
 // `ledger-vocabulary` was edited once more on 2026-11-16 (parallel plans B, phase 1 fix round 1): the `Rerun:` line, so its hash follows it.
 // `setup`, `ledger-vocabulary`, `worktrees`, `final-review` and `parallel-tasks` were edited on 2026-11-16 (parallel plans C): phase worktrees, joins and the `Serial: P<n>` line, so their hashes follow that text.
 // `worktrees` was edited once more on 2026-11-17 (parallel plans C, final fix round 1): steps 2 and 3 point to a clone of its own, not a worktree, so its hash follows that text.
+// `records` and `ledger-vocabulary` were edited on 2026-11-17 (evals experiments T33): the escape task, category and summary, and the `Arm:` line, so their hashes follow that text.
 // `setup` was edited on 2026-11-10 (looser review tiers): the tier rubric's light allowance, standard reasons, the
 // 1000-line heavy limit and the eval, fixture and dataset test paths, so its hash follows that text.
 // `setup`, `records` and `example` were edited again on 2026-11-12 (hunters disabled): no hunter skip rule in `setup`, no
 // phase `hunters` record in `records`, and no hunter in the worked `example`, so their hashes follow that text.
 const REFERENCES = [
   ['setup', '## Setup', '51bc3a449722c74cc7bc0fb6ac18956e27c1b26f563765d5440fd9da12916497'],
-  ['records', '## Records', '60286438e7fa3cd555bf252984293a7dfdc3b0d8ccc1848685be56fc3b2726ab'],
-  ['ledger-vocabulary', '## Ledger vocabulary', '78fefa1c13179a0ee974174ceac323c910e9e09d94c91defa97a8a810b24ee48'],
+  ['records', '## Records', 'dac13854ef822a68ca7e2a19d608eb66bc0204f62577870a39bff8035239bfc1'],
+  ['ledger-vocabulary', '## Ledger vocabulary', '3cbf1aac8a03034617ea515d71a13cf5c341dba72b48e317c6b40c5c874d3da2'],
   ['worktrees', '## Worktrees', '2dbcb950bdc7acb9d538d1e058e9f8f30b44d67ff224c27cc0a82ea10d821b45'],
   ['final-review', '## Final Review', 'b254407ad950af4ebd137befab8de091eacb29d1ab4b0942a9d27f6d1a7020d8'],
   ['example', '## Example', 'bca99f052e60ce47c544f813315c1e04b94149adb5c3178980845bb7d61430ce'],

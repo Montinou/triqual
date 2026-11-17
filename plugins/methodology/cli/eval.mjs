@@ -1,4 +1,4 @@
-// `triqual eval <sub> ...`: the dispatcher of the evals commands. `<sub>` (lowercase letters only) runs
+// `triqual eval <sub> ...`: the dispatcher of the evals commands. `<sub>` (lowercase words joined by single hyphens) runs
 // cli/eval-<sub>.mjs's exported main(argv, deps) with the arguments after it; `triqual eval`, `--help`, `-h` and `help`
 // list every eval-*.mjs with its exported SUMMARY. A later subcommand needs no edit here: dropping eval-<name>.mjs
 // next to this file is enough. Exit codes: the subcommand's; 0 for the list; 2 for an unknown subcommand; 1 when a
@@ -9,8 +9,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SUB = /^[a-z]+$/;
-const FILE = /^eval-([a-z]+)\.mjs$/;
+const SUB = /^[a-z]+(?:-[a-z]+)*$/;
+const FILE = /^eval-([a-z]+(?:-[a-z]+)*)\.mjs$/;
 
 const subcommands = () => readdirSync(HERE).map((f) => FILE.exec(f)?.[1]).filter(Boolean).sort();
 const load = (sub) => import(pathToFileURL(join(HERE, `eval-${sub}.mjs`)).href);

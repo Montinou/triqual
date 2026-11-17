@@ -1,12 +1,14 @@
 // The experiment report of the evals: per-session guardrail verdicts scored by the experiment's frozen evaluator
 // snapshot, the arm rows (rate, cost, difference with the control) and the five non-inferiority verdicts.
 // node: built-ins only.
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { loadJudgePrompt } from './eval-judge.mjs';
+import { planUnits } from './eval-plans.mjs';
 import { bootstrapMedian, bootstrapMedianDiff, median, newcombe, requiredN, wilson } from './eval-stats.mjs';
 import { judgeExcluded } from './eval-taxonomy.mjs';
+import { planDescriptives, taskUnits } from './eval-tasks.mjs';
 
 // The smallest arm the verdicts accept, whatever the required sample size says.
 export const MIN_N = 30;
@@ -34,20 +36,24 @@ export async function loadSnapshot(dir) {
 // is undecided or has no judgment, else "healthy". A code category runs the snapshot's frozen check on `session.file`
 // (the transcript); when that is undecided (the transcript is gone, the store outlives the 30-day cleanup) it takes the
 // last line of judgments[category] for the session recorded under the snapshot's check version, else it stays
-// undecided. A judge category reads the last line of judgments[category] for the
-// session and the snapshot's prompt hash; with none, or for a session whose project is under the snapshot's judgeExclude
-// (an unknown project counts as excluded), it has no judgment.
-export function sessionVerdict(session, snapshot, judgments, { home, platform } = {}) {
+// undecided. A decided result (pass or fail) of a session with no line of that version is handed to `onCode({ sessionId,
+// category, result, promptHash })`, so the caller can store it before the transcript is cleaned up. A judge category
+// reads the last line of judgments[category] for the session and the snapshot's prompt hash; with none, or for a
+// session whose project is under the snapshot's judgeExclude (an unknown project counts as excluded), it has no judgment.
+export function sessionVerdict(session, snapshot, judgments, { home, platform, onCode } = {}) {
   let undecided = false;
   for (const c of snapshot.categories) {
     let result;
     if (c.check === 'code') {
       const { CHECKS, runCheck } = snapshot.checks;
       result = Object.hasOwn(CHECKS, c.id) ? runCheck(c.id, {}, session.file ?? '', CHECKS) : 'undecided';
-      if (result === 'undecided' && typeof snapshot.checks.checkVersion === 'function') {
-        const version = snapshot.checks.checkVersion();
-        const kept = (judgments?.[c.id] ?? []).filter((r) => r.sessionId === session.sessionId && r.promptHash === version);
-        if (kept.length > 0) result = kept[kept.length - 1].result;
+      const version = typeof snapshot.checks.checkVersion === 'function' ? snapshot.checks.checkVersion() : null;
+      const lines = version === null ? [] : (judgments?.[c.id] ?? []).filter((r) => r.sessionId === session.sessionId && r.promptHash === version);
+      if (result === 'undecided') {
+        if (lines.length > 0) result = lines[lines.length - 1].result;
+      } else if (version !== null && lines.length === 0 && typeof onCode === 'function') {
+        // A verdict computed while the transcript is still there: handed to the caller to store, once per session and version.
+        onCode({ sessionId: session.sessionId, category: c.id, result, promptHash: version });
       }
     } else if (judgeExcluded(session.project ?? null, snapshot.judgeExclude, { home, platform })) {
       result = 'undecided';
@@ -105,10 +111,12 @@ function perProject(group) {
 // The rows of `experiment` over `units`: [control row, arm row]. A unit is { arm (the arm name), contaminated, verdict
 // ("healthy" | "unhealthy" | "undecided"), cost, project, models, parallelism? }; a unit of another arm is ignored,
 // contaminated and undecided units are excluded from n and counted in `excluded`. A row is { experiment, kind, arm,
-// control, n, excluded, rate, rateCI, costMedian, costCI, perProject, models, d, dCI, c, cCI, required, verdict }: d is
-// the healthy-rate difference arm - control (Newcombe interval), c the median difference of the experiment's objective
-// (cost, or parallelism) with its bootstrap interval, required the sample size for the control's rate and the margin.
-// The control row carries null from d on. Every statistic of an empty group is null, never NaN.
+// control, n, excluded, rate, rateCI, costMedian, costCI, perProject, models, parallelismMedian, parallelismCI, d, dCI,
+// c, cCI, p, pCI, required, verdict }: d is the healthy-rate difference arm - control (Newcombe interval), c the cost
+// median difference with its bootstrap interval, required the sample size for the control's rate and the margin. With
+// objective "parallelism" the rows also hold the median parallelism and its interval, and the arm row p, the median
+// parallelism difference arm - control with its bootstrap interval (null for a cost experiment, whose parallelism fields
+// are all null). The control row carries null from d on. Every statistic of an empty group is null, never NaN.
 export function buildRows(units, experiment) {
   const margin = experiment.margin;
   const parallel = experiment.objective === 'parallelism';
@@ -126,8 +134,8 @@ export function buildRows(units, experiment) {
       },
     }];
   }));
-  const metric = (u) => (parallel ? u.parallelism : u.cost);
-  const values = (name) => groups.get(name).counted.map(metric).filter(finite);
+  const costs = (name) => groups.get(name).counted.map((u) => u.cost).filter(finite);
+  const parallelisms = (name) => groups.get(name).counted.map((u) => u.parallelism).filter(finite);
   const control = groups.get(experiment.control).counted;
   const controlStats = summarize(control);
   const kControl = control.filter((u) => u.verdict === 'healthy').length;
@@ -144,23 +152,28 @@ export function buildRows(units, experiment) {
       excluded: g.excluded,
       perProject: perProject(g.counted),
       models: [...new Set(g.own.flatMap((u) => (Array.isArray(u.models) ? u.models : [])))].sort(),
-      d: null, dCI: null, c: null, cCI: null, required: null, verdict: null,
+      // A cost experiment has no parallelism figures; a parallelism one shows them on every row, whatever the sample size.
+      parallelismMedian: parallel ? median(parallelisms(name)) : null,
+      parallelismCI: parallel ? bootstrapMedian(parallelisms(name)) : null,
+      d: null, dCI: null, c: null, cCI: null, p: null, pCI: null, required: null, verdict: null,
     };
     if (isControl) return row;
     const k = g.counted.filter((u) => u.verdict === 'healthy').length;
     const diff = newcombe(k, g.counted.length, kControl, control.length);
-    const shift = bootstrapMedianDiff(values(name), values(experiment.control));
+    const shift = bootstrapMedianDiff(costs(name), costs(experiment.control));
+    const spread = parallel ? bootstrapMedianDiff(parallelisms(name), parallelisms(experiment.control)) : null;
     row.required = controlStats.rate === null ? null : requiredN(controlStats.rate, margin);
     if (diff !== null) { row.d = diff.d; row.dCI = [diff.lower, diff.upper]; }
     if (shift !== null) { row.c = shift.c; row.cCI = [shift.lower, shift.upper]; }
+    if (spread !== null) { row.p = spread.c; row.pCI = [spread.lower, spread.upper]; }
     row.verdict = verdict({
       nArm: row.n,
       nControl: controlStats.n,
       required: row.required,
       lower: diff?.lower ?? null,
       upper: diff?.upper ?? null,
-      cUpper: parallel ? null : shift?.upper ?? null,
-      pLower: parallel ? shift?.lower ?? null : null,
+      cUpper: shift?.upper ?? null,
+      pLower: spread?.lower ?? null,
       margin,
       objective: experiment.objective,
     });
@@ -173,7 +186,7 @@ export function buildRows(units, experiment) {
 // is not scored; a session whose stored entrypoint is not the interactive one is no unit at all. `file(session)` is its transcript path. The store keeps no arm on a contaminated session (its records
 // disagree), so its arm is read from `armRecords` (the parsed lines of <evals>/session-arms.jsonl): the one arm of this
 // experiment its records name; none, or two different arms of it, and the session cannot be placed and is left out.
-export function sessionUnits({ sessions, experiment, snapshot, judgments, file, home, platform, armRecords = [] }) {
+export function sessionUnits({ sessions, experiment, snapshot, judgments, file, home, platform, armRecords = [], onCode }) {
   const prefix = `${experiment.id}/`;
   const units = [];
   for (const s of sessions) {
@@ -194,11 +207,51 @@ export function sessionUnits({ sessions, experiment, snapshot, judgments, file, 
     units.push({
       arm,
       contaminated,
-      verdict: contaminated ? null : sessionVerdict({ sessionId: s.sessionId, project: s.project ?? null, file: file(s) }, snapshot, judgments, { home, platform }),
+      verdict: contaminated ? null : sessionVerdict({ sessionId: s.sessionId, project: s.project ?? null, file: file(s) }, snapshot, judgments, { home, platform, onCode }),
       cost: finite(s.usd) ? s.usd : null,
       project: s.project ?? null,
       models: Object.keys(isObject(s.models) ? s.models : {}).sort(),
     });
+  }
+  return units;
+}
+
+// The rows of a role experiment: [control row, arm row] over its units. An experiment of the planner is scored per plan
+// (planUnits over the `plan-review` records, the rows with their parallelism figures and, per arm, the descriptive
+// cleanTaskRate and wallClockHours from `snapshots`, the parsed `triqual tasks export --json --all`); any other role per
+// task (taskUnits over `assignments`, the parsed role-assignments.jsonl, the clean-task rate as the healthy rate and the
+// subagent cost of the task under `root` as the cost). `records` are the valid records of the role-eval store.
+export function roleRows({ experiment, records, assignments, root, snapshots }) {
+  if (Object.values(experiment.arms)[0]?.role === 'planner') {
+    const units = planUnits(records, experiment);
+    return planDescriptives(buildRows(units, experiment), units, { records, snapshots });
+  }
+  return buildRows(taskUnits({ experiment, assignments, records, root }), experiment);
+}
+
+// The units of a skill experiment: one per case of the suite run each arm wrote, <evalsDir>/skill-runs/<id>/<arm>.json as
+// `triqual eval skills` writes it ({ experiment, arm, at, auth, units: [{ caseId, pass, usd }] }). A case passed is
+// "healthy", failed "unhealthy"; a case whose `pass` is neither a boolean is "undecided", never counted. The cost of a unit
+// is its usd. A suite run holds no project or model, so a unit has none; an arm with no file (or one that cannot be read)
+// has no units. An arm name that is not a plain file name is skipped.
+export function skillUnits({ evalsDir, experiment }) {
+  const units = [];
+  for (const arm of Object.keys(isObject(experiment.arms) ? experiment.arms : {})) {
+    if (arm !== basename(arm) || arm.startsWith('.')) continue;
+    const file = join(evalsDir, 'skill-runs', experiment.id, `${arm}.json`);
+    if (!existsSync(file)) continue;
+    let doc;
+    try { doc = JSON.parse(readFileSync(file, 'utf8')); } catch { continue; }
+    for (const u of Array.isArray(doc?.units) ? doc.units : []) {
+      units.push({
+        arm,
+        contaminated: false,
+        verdict: u?.pass === true ? 'healthy' : u?.pass === false ? 'unhealthy' : 'undecided',
+        cost: finite(u?.usd) ? u.usd : null,
+        project: null,
+        models: [],
+      });
+    }
   }
   return units;
 }

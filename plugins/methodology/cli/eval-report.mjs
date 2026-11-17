@@ -3,19 +3,27 @@
 // and the non-inferiority verdict. A session experiment is scored by its frozen evaluator snapshot
 // (<evals>/snapshots/<hash>/), never by the live taxonomy or checks. `--json` prints
 // { experiments: [{ id, kind, status, margin, evaluators, rows }] }, the row format later role and skill rows share; the
-// text form prints the same rows. Role and skill experiments have no rows yet. Prints counts, ids, model names and
-// project names, never transcript text. Exit codes: 0 done; 1 a snapshot or the store that cannot be read; 2 usage, an
+// text form prints the same rows. A role experiment that is not paused has rows too: a planner experiment per plan
+// (the parallelism figures, cleanTaskRate, wallClockHours), any other role per task (clean-task rate, cost per task),
+// from the role-eval store, <evals>/role-assignments.jsonl and the subagent transcripts. A skill experiment has one row per arm
+// from the suite runs of `triqual eval skills` (<evals>/skill-runs/<id>/<arm>.json), a case being a unit (pass = healthy, usd = cost). Prints counts, ids, model names and project names, never transcript text. It also stores, once per session and
+// check version, the code verdict it computes for an assigned session whose transcript is still there
+// (<evals>/judgments/<category>.jsonl, the line `triqual eval check` writes). Exit codes: 0 done; 1 a snapshot or the store that cannot be read; 2 usage, an
 // invalid experiments file or an unknown experiment id.
 // node: built-ins only. main() is exported for tests and runs only when this file is the entry point.
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { ASSIGNMENTS_FILE } from './eval-arm.mjs';
 import { SESSION_ARMS_FILE } from './lib/eval-arms.mjs';
+import { appendPrivate } from './lib/eval-ask.mjs';
 import { loadExperiments, validateExperiments } from './lib/eval-experiments.mjs';
-import { evalsDir, experimentsPath, transcriptsRoot } from './lib/eval-paths.mjs';
-import { buildRows, loadSnapshot, sessionUnits } from './lib/eval-report.mjs';
+import { ensureDir, evalsDir, experimentsPath, transcriptsRoot } from './lib/eval-paths.mjs';
+import { buildRows, loadSnapshot, roleRows, sessionUnits, skillUnits } from './lib/eval-report.mjs';
 import { readJsonl } from './lib/eval-store.mjs';
+import { loadRoleRecords, taskSnapshots } from './lib/eval-tasks.mjs';
+import { storePath, withStoreLock } from './lib/role-eval.mjs';
 
 export const SUMMARY = 'report the experiments: arm rows and non-inferiority verdicts (report)';
 
@@ -25,7 +33,8 @@ const USAGE = [
   '      For each experiment of the experiments file (or the one named), prints a row per arm: units counted (excluded:',
   '      contaminated, undecided), healthy rate with its 90% interval, cost median, the difference with the control and',
   '      the verdict (insufficient data, worse, propose, non-inferior, not cheaper, inconclusive). A session experiment is',
-  '      scored by its frozen evaluator snapshot. --json prints { experiments: [{ id, kind, status, margin, evaluators,',
+  '      scored by its frozen evaluator snapshot; a role experiment that is not paused is scored per plan (planner) or per',
+  '      task (clean-task rate, cost per task). --json prints { experiments: [{ id, kind, status, margin, evaluators,',
   '      rows }] }.',
   '  triqual eval report --help',
   '',
@@ -56,6 +65,8 @@ function textOf(e) {
   for (const r of e.rows) {
     lines.push(`  ${r.arm}${r.control ? ' (control)' : ''}  n ${r.n}  excluded: contaminated ${r.excluded.contaminated}, undecided ${r.excluded.undecided}`);
     lines.push(`    healthy ${pct(r.rate)} ${pair(r.rateCI, pct)}  cost median ${num(r.costMedian)} ${pair(r.costCI, num)}  models ${r.models.join(', ') || '-'}`);
+    if (r.parallelismMedian !== null) lines.push(`    parallelism median ${num(r.parallelismMedian)} ${pair(r.parallelismCI, num)}${r.control ? '' : `  p ${num(r.p)} ${pair(r.pCI, num)}`}`);
+    if (Object.hasOwn(r, 'cleanTaskRate')) lines.push(`    clean-task rate ${pct(r.cleanTaskRate)}  wall-clock hours ${num(r.wallClockHours)}`);
     if (!r.control) {
       lines.push(`    d ${num(r.d)} ${pair(r.dCI, num)}  c ${num(r.c)} ${pair(r.cCI, num)}  required ${r.required ?? '-'}  verdict: ${r.verdict}`);
     }
@@ -67,7 +78,7 @@ function textOf(e) {
 }
 
 export async function main(argv, {
-  env = process.env, stdout = process.stdout, stderr = process.stderr, platform = process.platform,
+  env = process.env, stdout = process.stdout, stderr = process.stderr, platform = process.platform, now = () => new Date(),
 } = {}) {
   const usage = (m) => { stderr.write(`triqual eval report: ${m}\n${USAGE}`); return 2; };
   const refuse = (m) => { stderr.write(`triqual eval report: ${m}\n`); return 2; };
@@ -96,6 +107,9 @@ export async function main(argv, {
   let sessions = null;
   let judgments = null;
   let armRecords = null;
+  let roleRecords = null;
+  let assignments = null;
+  let snapshots = null;
   const root = transcriptsRoot(env, home);
   for (const e of chosen) {
     let rows = [];
@@ -113,11 +127,40 @@ export async function main(argv, {
       for (const c of snapshot.categories) {
         if (!Object.hasOwn(judgments, c.id)) judgments[c.id] = readJsonl(join(evals, 'judgments', `${c.id}.jsonl`)).rows;
       }
+      // The code verdict of an assigned session is stored while its transcript is still there (the sessions store
+      // outlives the 30-day cleanup): one line per session and check version, as `triqual eval check` writes it, so a
+      // second report run, or one after the cleanup, scores the same session.
+      const onCode = ({ sessionId, category, result, promptHash }) => {
+        if (result === 'undecided') return;
+        const file = join(evals, 'judgments', `${category}.jsonl`);
+        try {
+          ensureDir(join(evals, 'judgments'));
+          withStoreLock(`${file}.lock`, () => {
+            const rows = readJsonl(file).rows;
+            if (rows.some((r) => r.sessionId === sessionId && r.promptHash === promptHash)) return;
+            const line = { sessionId, category, result, promptHash, model: null, auth: 'code', at: new Date(now()).toISOString() };
+            appendPrivate(file, line);
+            judgments[category] = [...rows, line];
+          });
+        } catch { /* storing is a convenience: a store that cannot be written never stops the report */ }
+      };
       const units = sessionUnits({
-        sessions, experiment: e, snapshot, judgments, home, platform, armRecords,
+        sessions, experiment: e, snapshot, judgments, home, platform, armRecords, onCode,
         file: (s) => (typeof s.projectDir === 'string' ? join(root, s.projectDir, `${s.sessionId}.jsonl`) : null),
       });
       rows = buildRows(units, e);
+    }
+    // A role experiment that has started (it is not paused): its planner or task rows.
+    if (e.kind === 'role' && e.status !== 'paused') {
+      roleRecords ??= loadRoleRecords(storePath(env, home).file);
+      assignments ??= readJsonl(join(evals, ASSIGNMENTS_FILE)).rows;
+      if (Object.values(e.arms)[0]?.role === 'planner') snapshots ??= taskSnapshots(env);
+      rows = roleRows({ experiment: e, records: roleRecords, assignments, root, snapshots });
+    }
+    // A skill experiment has rows once a suite run of its arms is written (`triqual eval skills`).
+    if (e.kind === 'skill') {
+      const units = skillUnits({ evalsDir: evals, experiment: e });
+      if (units.length > 0) rows = buildRows(units, e);
     }
     out.push({ id: e.id, kind: e.kind, status: e.status, margin: e.margin, evaluators: e.evaluators ?? null, rows });
   }

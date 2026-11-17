@@ -15,11 +15,11 @@ description: Use when implementation is complete, all tests pass, and you need t
 
 **Scripts:** every stack command in this skill is `node ../executing-plans/scripts/stack.mjs <command> PLAN_FILE` (the commands are `path`, `status`, `mode` and `submit`), with PLAN_FILE the path of the plan just executed. The path is relative to this skill's folder: run it by its absolute path under the plugin's `skills/executing-plans/scripts/`. The script is not executable, so every call goes through `node`.
 
-**Stacked plan:** first find out whether the plan ran as a stack. Run `node ../executing-plans/scripts/stack.mjs path PLAN_FILE`, with PLAN_FILE the plan just executed: it prints the path of the stack's state file, `<repo root>/.methodology/stack/<plan file stem>.json`. When that file exists, the plan is a stack of phase branches: read the phases from `node ../executing-plans/scripts/stack.mjs status PLAN_FILE`, take the phase with the highest `n` (the top phase), check out the top branch (that phase's `branch`) on a clean tree, then run the suite there; the top branch holds every phase's commits, so a suite run on a lower phase proves less than the whole. With no state file, the current menu below applies unchanged (a plan run before stacked execution) and the suite runs on the current branch.
+**Stacked plan:** first find out whether the plan ran as a stack. Run `node ../executing-plans/scripts/stack.mjs path PLAN_FILE`, with PLAN_FILE the plan just executed: it prints the path of the stack's state file, `<repo root>/.methodology/stack/<plan file stem>.json`. When that file exists, the plan is a stack of phase branches: read the phases from `node ../executing-plans/scripts/stack.mjs status PLAN_FILE`, take the phase with the highest `n` (the top phase), check out the top branch (that phase's `branch`) on a clean tree, then run each phase's `**Phase check:**` command there, read from the plan, one after another; the top branch holds every phase's commits, so a check run on a lower phase proves less than the whole. With no state file, the current menu below applies unchanged (a plan run before stacked execution) and the verification below runs on the current branch.
 
-Run the project's full test suite (`npm test` / `cargo test` / `pytest` / `go test ./...`).
+**Verification:** run the tests of the change, never the project's whole-suite command (`npm test`, bare `pytest`, `cargo test`, `go test ./...`). With a stacked plan these are the Phase check commands above. With no plan they are the test files that cover the range: the changed test files and the tests of the changed modules, found from `git diff --name-only <base>..HEAD`, one file per runner command. The local-merge paths verify the merged result the same way. The whole suite is CI's, on the pull request; a branch merged locally with no CI says so in the report instead of running it.
 
-**If tests fail**, report the failures and stop — the menu comes after a green suite:
+**If the tests fail**, report the failures and stop — the menu comes after the change's tests pass:
 
 ```
 Tests failing (<N> failures). Must fix before completing:
@@ -27,7 +27,7 @@ Tests failing (<N> failures). Must fix before completing:
 [Show failures]
 ```
 
-**If tests pass:** continue to Step 2.
+**If the tests pass:** continue to Step 2.
 
 ## Step 2: Close the Plan
 
@@ -153,7 +153,7 @@ A refusal that names fence, a policy or a protected path, or that you cannot exp
 
 Fence is a policy harness that denies calls under protected paths. It is detected when `command -v fence` finds it and `fence version` exits 0 (two plain commands, one after the other; the `Fence:` line of the workspace ledger, while the workspace exists, answers the same). Without fence nothing in this section applies.
 
-With fence detected, a local merge to a protected branch is a human step. The base branch (the trunk) is protected, and so is any branch your human partner names as protected. That covers Option 1, the stack's local Option 1 (Stacked plan: local mode) and the trunk fast-forward of "After a stack merge": you do not run the `checkout`, `pull`, `merge` or `merge --ff-only` on `<MAIN_ROOT>` yourself. Print those commands as plain commands with the real branch names, ask the human to run them, and go on to what follows the merge (the suite on the merged result, the cleanup) only after they answer that they did. Option 2 (push and open a PR) is unchanged.
+With fence detected, a local merge to a protected branch is a human step. The base branch (the trunk) is protected, and so is any branch your human partner names as protected. That covers Option 1, the stack's local Option 1 (Stacked plan: local mode) and the trunk fast-forward of "After a stack merge": you do not run the `checkout`, `pull`, `merge` or `merge --ff-only` on `<MAIN_ROOT>` yourself. Print those commands as plain commands with the real branch names, ask the human to run them, and go on to what follows the merge (the tests of the change on the merged result, the cleanup) only after they answer that they did. Option 2 (push and open a PR) is unchanged.
 ### Option 1: Merge Locally
 
 First get the main repo root: `GIT_COMMON` (Step 3) is the git dir shared by every worktree, so its parent is the main checkout.
@@ -171,13 +171,13 @@ git -C <MAIN_ROOT> pull
 git -C <MAIN_ROOT> merge <feature-branch>
 ```
 
-Verify the merged result with the project's test command run in `<MAIN_ROOT>`: give the command that path in its own option or argument (`npm test --prefix <MAIN_ROOT>`, `cargo test --manifest-path <MAIN_ROOT>/Cargo.toml`, `pytest <MAIN_ROOT>`, `go test -C <MAIN_ROOT> ./...`), never chained behind a directory change.
+Verify the merged result with the same tests of the change (Step 1: the Phase checks, or the range's test files), run on `<MAIN_ROOT>`: give the runner that path in its own option or argument (`node --test <MAIN_ROOT>/<test file>`, `cargo test --manifest-path <MAIN_ROOT>/Cargo.toml <test name>`, `pytest <MAIN_ROOT>/<test file>`, `go test -C <MAIN_ROOT> <package>`), never chained behind a directory change.
 
-If tests fail on the merged result: stop, leave the worktree and branch in
+If the tests fail on the merged result: stop, leave the worktree and branch in
 place, and investigate — nothing has been pushed, so the merge is local
 and recoverable.
 
-Once the merged result is green: clean up the worktree (Step 7), then
+Once the tests pass on the merged result: clean up the worktree (Step 7), then
 delete the branch:
 
 ```bash
@@ -211,7 +211,7 @@ Report: "Keeping branch <name>. Worktree preserved at <path>."
 
 ### Stacked plan: local mode
 
-**Option 1, merge the stack locally:** on the main repo root (the `MAIN_ROOT` of Option 1 above), run `git -C <MAIN_ROOT> checkout <trunk>` (the `trunk` in the state, which `status` below prints), then `git -C <MAIN_ROOT> merge --ff-only <top branch>`, then run the suite on the merged result in `<MAIN_ROOT>`, as Option 1 does. If the fast-forward is refused (the trunk moved), stop: nothing is merged and nothing is pushed; report it. If the suite fails, stop and investigate with the worktree and branches in place. Once it is green, go to "After a stack merge" below.
+**Option 1, merge the stack locally:** on the main repo root (the `MAIN_ROOT` of Option 1 above), run `git -C <MAIN_ROOT> checkout <trunk>` (the `trunk` in the state, which `status` below prints), then `git -C <MAIN_ROOT> merge --ff-only <top branch>`, then run the tests of the change on the merged result in `<MAIN_ROOT>`, as Option 1 does. If the fast-forward is refused (the trunk moved), stop: nothing is merged and nothing is pushed; report it. If they fail, stop and investigate with the worktree and branches in place. Once they pass, go to "After a stack merge" below.
 
 **Option 2, push and open as stacked PRs:** run `node ../executing-plans/scripts/stack.mjs mode PLAN_FILE github` (exit 3 names the check that failed: report it and stop, nothing is pushed), then `node ../executing-plans/scripts/stack.mjs submit PLAN_FILE <N>` for each phase still `done`, in order, from the lowest `n` to the top one (after a mid-run fallback to local mode, the earlier phases are already `submitted` and `submit` refuses them, exit 3), then mark the PRs ready with `--open`: `node ../executing-plans/scripts/stack.mjs submit PLAN_FILE <top N> --open`. Your human partner's choice authorizes the push of this plan's phase branches and the draft PRs. Keep the worktree, report the PR numbers it prints, and leave the state file; the After Merge checklist stays in the closing entry and status `Next` (Step 2).
 
@@ -339,7 +339,7 @@ the worktree.
 
 | Excuse | Reality |
 |--------|---------|
-| "Tests passed earlier this session" | Run the suite on the tree you are about to integrate. A green run only proves the tree it ran on. |
+| "Tests passed earlier this session" | Run the change's tests on the tree you are about to integrate. A passing run only proves the tree it ran on. |
 | "They obviously want it merged" | Integration is your human partner's decision. Present the menu and wait. |
 | "They seem done with this feature — I'll offer to discard it" | The menu is complete as written. Discard happens only when your human partner asks for it in so many words. |
 | "'Yeah, get rid of it' counts as confirmation" | Only the typed word `discard` authorizes deletion. |

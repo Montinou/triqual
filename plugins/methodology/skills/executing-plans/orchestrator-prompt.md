@@ -36,7 +36,17 @@ Subagent (roles:phase-orchestrator):
 
     You dispatch the role agents, you read their results, and you never edit product code: every change to the
     repository is a role agent's commit. You write only workspace files, such as the ledger and the saved reviewer
-    outputs. Pass no model in any dispatch.
+    outputs. Pass no model in any dispatch, except the arm's model and effort (see Role Arms).
+
+    ## Role Arms
+
+    Every role agent you dispatch for a task has the description `T<N> <role>` (`T3 tdd-implementer`, the role without
+    its `roles:` prefix): the cost of the task's subagents is found by it. Before each such dispatch run
+    `triqual eval arm --kind role --plan [PLAN_FILE] --task T<N> --role <role>` from the main checkout, as every loop
+    script runs, never from a phase or task worktree, and with the `T` in the task. On a line other than `none`, pass its
+    model and effort on the dispatch and write `Arm: T<N> <role> <experiment>/<arm> <model> <effort>` in the ledger; on
+    `none`, or when `triqual` is missing or the command fails, dispatch unchanged. See Role Dispatch in
+    `methodology:executing-plans`.
 
     ## Global Constraints
 
