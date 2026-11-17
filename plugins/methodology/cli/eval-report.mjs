@@ -3,7 +3,7 @@
 // and the non-inferiority verdict. A session experiment is scored by its frozen evaluator snapshot
 // (<evals>/snapshots/<hash>/), never by the live taxonomy or checks. `--json` prints
 // { experiments: [{ id, kind, status, margin, evaluators, rows }] }, the row format later role and skill rows share; the
-// text form prints the same rows. A role experiment that is not paused has rows too: a planner experiment per plan
+// text form prints the same rows. A role experiment that was started (paused or not) has rows too: a planner experiment per plan
 // (the parallelism figures, cleanTaskRate, wallClockHours), any other role per task (clean-task rate, cost per task),
 // from the role-eval store, <evals>/role-assignments.jsonl and the subagent transcripts. A skill experiment has one row per arm
 // from the suite runs of `triqual eval skills` (<evals>/skill-runs/<id>/<arm>.json), a case being a unit (pass = healthy, usd = cost). Prints counts, ids, model names and project names, never transcript text. It also stores, once per session and
@@ -33,7 +33,7 @@ const USAGE = [
   '      For each experiment of the experiments file (or the one named), prints a row per arm: units counted (excluded:',
   '      contaminated, undecided), healthy rate with its 90% interval, cost median, the difference with the control and',
   '      the verdict (insufficient data, worse, propose, non-inferior, not cheaper, inconclusive). A session experiment is',
-  '      scored by its frozen evaluator snapshot; a role experiment that is not paused is scored per plan (planner) or per',
+  '      scored by its frozen evaluator snapshot; a role experiment that was started is scored per plan (planner) or per',
   '      task (clean-task rate, cost per task). --json prints { experiments: [{ id, kind, status, margin, evaluators,',
   '      rows }] }.',
   '  triqual eval report --help',
@@ -150,8 +150,9 @@ export async function main(argv, {
       });
       rows = buildRows(units, e);
     }
-    // A role experiment that has started (it is not paused): its planner or task rows.
-    if (e.kind === 'role' && e.status !== 'paused') {
+    // A role experiment that was started (it has evaluators, as a session experiment does), paused or not: its planner
+    // or task rows.
+    if (e.kind === 'role' && typeof e.evaluators === 'string' && e.evaluators !== '') {
       roleRecords ??= loadRoleRecords(storePath(env, home).file);
       assignments ??= readJsonl(join(evals, ASSIGNMENTS_FILE)).rows;
       if (Object.values(e.arms)[0]?.role === 'planner') snapshots ??= taskSnapshots(env);

@@ -158,6 +158,7 @@ test('Step 1 runs the suite on the top branch of a stack, and keeps the current 
   mustHave(rule, [`\`${STACK} path PLAN_FILE\``, 'state file', 'the highest `n`', 'top branch', '`**Phase check:**`'], 'the Step 1 stack rule');
   assert.match(rule, /no state file[^.]*(current|menu below)/i, 'a plan with no state file does not keep the current menu');
   assert.match(rule, /on a clean tree, then run each phase's `\*\*Phase check:\*\*` command there/i, 'the Phase checks do not run on the top branch, on a clean tree');
+  assert.match(rule, /a phase with no `\*\*Phase check:\*\*` line[^.]*`Test:` (files|paths) of its tasks/i, 'a phase with no Phase check line gets no check');
 });
 
 const table = () => text().split('\n').find((l) => l.startsWith('| "Tests passed earlier this session"'));

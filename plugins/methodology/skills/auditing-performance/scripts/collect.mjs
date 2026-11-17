@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-// Collects the numbers of a performance audit of the triqual plugins into one JSON file per dataset, read-only:
+// Collects the numbers of a performance audit of the triqual plugins into one JSON file per dataset. It reads the
+// stores and transcripts and writes only <out>, except that the eval_sessions step refreshes the evals sessions store:
 // `node collect.mjs --out <dir> [--days 10] [--project triqual] [--hooks]`. Late window = the last --days UTC days
 // (today included); early window = the --days before it. Datasets (arrays of row objects, written to <out>/<name>.json):
 // cost_by_role, controller_sessions, latency, tier_by_day, escapes, hunter_yield, eval_report, eval_sessions, cost_per_task, hooks (with --hooks).
-// eval_sessions is `triqual eval sessions --json --since <early window start>` (the sessions of both windows; it refreshes the
+// eval_sessions is `triqual eval sessions --json --since <early window start>` (the sessions of both windows in the --project directories; it refreshes the
 // evals sessions store, so it runs first); eval_report is `triqual eval report --json` on that store (its rows, one per
 // experiment and arm). cost_per_task is the USD of the subagents described `T<N> <role>` (subagentTaskCosts), one row per window,
 // project, task and role. A command
@@ -153,7 +154,8 @@ const evalJson = (name, sub) => {
 };
 // `sessions` goes first: it refreshes the sessions store, and `report` scores that store as it stands.
 const SESSION_KEYS = ['sessionId', 'project', 'start', 'usd', 'turns', 'ctxPeak', 'compactions', 'idleRewrites', 'stopHookBlocks', 'arm', 'contaminated'];
-write('eval_sessions', (evalJson('eval_sessions', ['sessions', '--since', windows.early.since])?.sessions ?? []).map((s) => Object.fromEntries(SESSION_KEYS.map((k) => [k, s[k] ?? null]))));
+// The store holds every project on the machine; the dataset keeps the --project ones, by directory name as the transcripts above are.
+write('eval_sessions', (evalJson('eval_sessions', ['sessions', '--since', windows.early.since])?.sessions ?? []).filter((s) => typeof s.projectDir === 'string' && s.projectDir.includes(project)).map((s) => Object.fromEntries(SESSION_KEYS.map((k) => [k, s[k] ?? null]))));
 write('eval_report', (evalJson('eval_report', ['report'])?.experiments ?? []).flatMap((e) => e.rows));
 
 // The subagents named after their task, per window: a run counts in the window its first message falls in. subagentTaskCosts

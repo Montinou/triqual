@@ -2,11 +2,15 @@
 // Shape: { "experiments": [{ id, kind, status, start, control, arms: { <arm>: payload }, margin, objective, evaluators }] }.
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { ARM_PART, EFFORTS, MODEL, ROLE_NAME } from './role-eval.mjs';
 
 export const KINDS = ['session', 'role', 'skill'];
 export const STATUSES = ['active', 'paused', 'done'];
 export const OBJECTIVES = ['cost', 'parallelism'];
 export const DEFAULT_MARGIN = 0.10;
+// The role-eval record rules for an experiment id, an arm name, a role and a model and effort: one definition, so an
+// experiment `start` accepts is one its `eval plan-review --arm` and task-review records accept.
+export { ARM_PART, EFFORTS, MODEL, ROLE_NAME };
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
@@ -37,16 +41,20 @@ export function validateExperiments(list) {
   for (let i = 0; i < list.length; i += 1) {
     const e = list[i];
     if (!isObject(e)) return { ok: false, field: `experiments.${i}` };
+    if (typeof e.id !== 'string' || !ARM_PART.test(e.id)) return bad(i, 'id');
     if (!KINDS.includes(e.kind)) return bad(i, 'kind');
     if (!STATUSES.includes(e.status)) return bad(i, 'status');
     if (!OBJECTIVES.includes(e.objective ?? 'cost')) return bad(i, 'objective');
     if (!isObject(e.arms) || Object.keys(e.arms).length !== 2) return bad(i, 'arms');
     if (typeof e.control !== 'string' || !Object.hasOwn(e.arms, e.control)) return bad(i, 'control');
+    if (!Object.keys(e.arms).every((name) => ARM_PART.test(name))) return bad(i, 'arms');
     const m = e.margin ?? DEFAULT_MARGIN;
     if (typeof m !== 'number' || !(m > 0 && m < 1)) return bad(i, 'margin');
     if (e.kind === 'role') {
-      const roles = Object.values(e.arms).map((p) => (isObject(p) ? p.role : undefined));
-      if (typeof roles[0] !== 'string' || roles[0] === '' || roles[0] !== roles[1]) return bad(i, 'arms');
+      const payloads = Object.values(e.arms);
+      if (!payloads.every((p) => isObject(p) && typeof p.role === 'string' && ROLE_NAME.test(p.role)
+        && typeof p.model === 'string' && MODEL.test(p.model) && EFFORTS.includes(p.effort))) return bad(i, 'arms');
+      if (payloads[0].role !== payloads[1].role) return bad(i, 'arms');
     }
     if (e.status === 'active') {
       if (typeof e.evaluators !== 'string' || e.evaluators === '') return bad(i, 'evaluators');

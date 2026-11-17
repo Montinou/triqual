@@ -62,20 +62,20 @@ const REF = /^([0-9a-f]{7,40}|#?[0-9]{1,9})$/;
 const PLAN_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 // An experiment id and an arm name: lowercase letters, digits and `-`. A plan-review's `arm` is `<experiment>/<arm>`; a
 // task-review's `arms` entries carry the two halves apart, under the same rule.
-const ARM_PART = /^[a-z0-9-]+$/;
+export const ARM_PART = /^[a-z0-9-]+$/;
 const armName = (value) => value.split('/').length === 2 && value.split('/').every((part) => ARM_PART.test(part));
 const NOTE_MAX = 200;
 // A final-escapes entry's optional category (a short slug) and summary (one line); a task-review arm's role and effort.
 const ESCAPE_CATEGORY = /^[a-z][a-z0-9-]{0,39}$/;
-const ROLE_NAME = /^[a-z-]+$/;
-const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+export const ROLE_NAME = /^[a-z-]+$/;
+export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 // Kinds `record` no longer accepts: the safety shadow was retired (roles 0.3.0). validateRecord still accepts them, so
 // the lines stored before stay valid and the summary keeps reporting them.
 export const RETIRED_KINDS = Object.freeze(['safety-shadow']);
 export const CATEGORIES = ['correctness', 'security', 'spec-drift', 'state'];
 const SEVERITIES = ['critical', 'important', 'minor'];
 const TASK = /^(T[0-9]+|P[0-9]+|final)$/;
-const MODEL = /^(sonnet|opus|haiku|claude-[a-z0-9-]+|gpt-[0-9.]+-[a-z]+)$/;
+export const MODEL = /^(sonnet|opus|haiku|claude-[a-z0-9-]+|gpt-[0-9.]+-[a-z]+)$/;
 const AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 const ITEM_COUNT = 6;
 // A key name goes into the answer only when it is a plain identifier: it is a name, never a value, but an odd one

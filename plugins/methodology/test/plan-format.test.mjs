@@ -579,6 +579,7 @@ test('writing-plans names the planner dispatch and the arm lookup', () => {
   assert.ok(text.includes('triqual eval arm --kind role --key <plan file name> --role planner'), 'writing-plans does not run the arm lookup for the planner');
   assert.ok(text.includes('`roles:planner`'), 'writing-plans does not dispatch roles:planner');
   assert.ok(text.includes('planner <plan file name>'), 'writing-plans does not give the planner dispatch its description');
+  assert.ok(text.includes('with its `.md`'), 'writing-plans does not say the planner description carries the .md, which plannerUsd matches');
   assert.match(text, /`model` and `effort`[^.]*other than `none`/, 'writing-plans does not pass the arm model and effort only for a line other than none');
   assert.match(text, /planner's draft[^.]*triqual plan lanes/, 'the planner draft does not go through the lanes check');
 });

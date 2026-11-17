@@ -11,7 +11,7 @@ const exp = (over = {}) => ({
 });
 const roleExp = (id, role, over = {}) => exp({
   id, kind: 'role',
-  arms: { a: { role, model: 'm1', effort: 'low' }, b: { role, model: 'm2', effort: 'high' } }, ...over,
+  arms: { a: { role, model: 'sonnet', effort: 'low' }, b: { role, model: 'opus', effort: 'high' } }, ...over,
 });
 
 test('a valid experiment passes', () => {
@@ -136,4 +136,47 @@ test('margin defaults to 0.10 when absent', () => {
   const { margin, ...rest } = exp();
   writeFileSync(file, JSON.stringify({ experiments: [rest] }));
   assert.equal(loadExperiments(file)[0].margin, 0.1);
+});
+
+test('rejects an experiment id outside the role-eval rule', () => {
+  for (const id of ['planner-Opus', 'a_b', '', 'a/b', 5]) {
+    assert.deepEqual(validateExperiments([exp({ id })]), { ok: false, field: 'experiments.0.id' }, String(id));
+  }
+});
+
+test('rejects an arm name outside the role-eval rule', () => {
+  assert.deepEqual(validateExperiments([exp({ control: 'a', arms: { a: {}, opus_5: {} } })]), { ok: false, field: 'experiments.0.arms' });
+  assert.deepEqual(validateExperiments([exp({ control: 'a', arms: { a: {}, 'Opus': {} } })]), { ok: false, field: 'experiments.0.arms' });
+});
+
+test('a role arm needs a bare role, a model and an effort the role-eval records accept', () => {
+  const withArm = (patch) => {
+    const e = roleExp('r1', 'planner');
+    e.arms.b = { ...e.arms.b, ...patch };
+    return [e];
+  };
+  const bad = { ok: false, field: 'experiments.0.arms' };
+  const both = (patch) => { const e = roleExp('r1', 'planner'); e.arms.a = { ...e.arms.a, ...patch }; e.arms.b = { ...e.arms.b, ...patch }; return [e]; };
+  assert.deepEqual(validateExperiments(both({ role: 'roles:planner' })), bad);
+  assert.deepEqual(validateExperiments(both({ role: 'Planner' })), bad);
+  assert.deepEqual(validateExperiments(withArm({ model: undefined })), bad);
+  assert.deepEqual(validateExperiments(withArm({ model: 'Opus 5' })), bad);
+  assert.deepEqual(validateExperiments(withArm({ effort: undefined })), bad);
+  assert.deepEqual(validateExperiments(withArm({ effort: 'extreme' })), bad);
+  assert.deepEqual(validateExperiments([roleExp('r1', 'tdd-implementer')]), { ok: true });
+  for (const effort of ['low', 'medium', 'high', 'xhigh', 'max']) {
+    assert.deepEqual(validateExperiments(withArm({ effort })), { ok: true }, effort);
+  }
+  for (const model of ['opus', 'sonnet', 'haiku', 'claude-opus-5', 'gpt-5-codex']) {
+    assert.deepEqual(validateExperiments(withArm({ model })), { ok: true }, model);
+  }
+});
+
+test('the experiment rules are the role-eval record rules', async () => {
+  const { ARM_PART, ROLE_NAME, MODEL, EFFORTS } = await import('../cli/lib/role-eval.mjs');
+  const m = await import('../cli/lib/eval-experiments.mjs');
+  assert.equal(m.ARM_PART, ARM_PART);
+  assert.equal(m.ROLE_NAME, ROLE_NAME);
+  assert.equal(m.MODEL, MODEL);
+  assert.equal(m.EFFORTS, EFFORTS);
 });
