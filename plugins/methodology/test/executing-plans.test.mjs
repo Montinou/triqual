@@ -169,6 +169,12 @@ test('the phase review sends no hunters: the reviewer runs with no candidates, a
   assert.ok(records.includes('`final-escapes` record') && !records.includes('`hunters`'), 'the phase review still writes a hunters record');
 });
 
+test('a whole-suite Phase check is a plan defect', () => {
+  const check = flat(section(skill(), '### 7. End the phase')).split('- **Phase check.**')[1].split('- **A submitted phase')[0];
+  assert.ok(check.includes('A `**Phase check:**` that is the project\'s whole-suite command is a plan defect'), 'step 7 does not call a whole-suite Phase check a plan defect');
+  assert.ok(check.includes('the main session ledgers a `Ruling:`') && check.includes('runs the `Test:` files of the phase\'s tasks instead'), 'step 7 does not ledger a Ruling and run the Test: files instead');
+});
+
 test('the default Phase check is the union of the phase\'s Test: paths, run focused', () => {
   const check = flat(section(skill(), '### 7. End the phase')).split('- **Phase check.**')[1].split('- **A submitted phase')[0];
   assert.ok(check.includes('the union of the phase\'s `Test:` paths'), 'the Phase check default does not name the union of the phase\'s Test: paths');

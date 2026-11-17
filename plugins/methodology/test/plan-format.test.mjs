@@ -143,6 +143,17 @@ test('Task Right-Sizing is one commit', () => {
   assert.ok(section(PLANS, '## Task Right-Sizing').join('\n').includes('one commit'));
 });
 
+test('a Phase check names test files, never the whole-suite command', () => {
+  const phases = section(PLANS, '## Phases').join(' ');
+  for (const phrase of ['a `**Phase check:**` is a command over named test files', 'the `Test:` files of the phase\'s tasks', 'the tests that pin what the phase changes', 'one file per `node --test`', 'never the project\'s whole-suite command']) {
+    assert.ok(phases.includes(phrase), `## Phases does not say "${phrase}"`);
+  }
+  const item = section(PLANS, '## Self-Review').find((line) => line.startsWith('**6. Phases:**'));
+  assert.ok(item.includes('Does every Phase check run named test files, and never the whole suite?'), 'Self-Review item 6 does not ask for a Phase check over named test files');
+  const audit = section(PLANS, '## Plan Audit').join(' ');
+  assert.ok(audit.includes('a Phase check that runs the whole suite is a finding'), 'the Plan Audit does not tell the auditor that a whole-suite Phase check is a finding');
+});
+
 test('plan self-review checks phases', () => {
   const item = section(PLANS, '## Self-Review').find((line) => line.startsWith('**6. Phases:**'));
   assert.ok(item, 'the plan Self-Review has no **6. Phases:** item');

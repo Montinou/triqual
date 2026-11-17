@@ -155,9 +155,22 @@ test('Step 1 runs the suite on the top branch of a stack, and keeps the current 
   const step = section('## Step 1: Verify Tests');
   const rule = block('**Stacked plan:**');
   assert.ok(step.some((l) => l.startsWith('**Stacked plan:**')), 'the stack rule is not inside Step 1');
-  mustHave(rule, [`\`${STACK} path PLAN_FILE\``, 'state file', 'the highest `n`', 'top branch', 'the suite'], 'the Step 1 stack rule');
+  mustHave(rule, [`\`${STACK} path PLAN_FILE\``, 'state file', 'the highest `n`', 'top branch', '`**Phase check:**`'], 'the Step 1 stack rule');
   assert.match(rule, /no state file[^.]*(current|menu below)/i, 'a plan with no state file does not keep the current menu');
-  assert.match(rule, /check(s|ing)? out the top branch[^.]*before[^.]*suite|top branch[^.]*then[^.]*suite|on a clean tree, then run the suite/i, 'the suite does not run on the top branch');
+  assert.match(rule, /on a clean tree, then run each phase's `\*\*Phase check:\*\*` command there/i, 'the Phase checks do not run on the top branch, on a clean tree');
+});
+
+const table = () => text().split('\n').find((l) => l.startsWith('| "Tests passed earlier this session"'));
+test('the finish verifies with the tests of the change, never the whole suite', () => {
+  const step = section('## Step 1: Verify Tests').join(' ');
+  mustHave(step, ['`**Phase check:**`', 'top branch', '`git diff --name-only <base>..HEAD`', 'the changed test files', 'the tests of the changed modules', 'never the project\'s whole-suite command', 'whole suite is CI\'s', 'says so in the report'], 'Step 1');
+  for (const command of ['`npm test`', 'bare `pytest`', '`cargo test`', '`go test ./...`']) mustHave(step, [command], 'the whole-suite commands Step 1 forbids');
+  const all = text();
+  for (const gone of [/run the project's full test suite/i, /run the suite/i, /the suite (on|runs)/i, /green suite/i, /\ba green run\b/i, /the full test suite/i]) {
+    assert.doesNotMatch(all, gone, `the skill still tells the finish to run the whole suite: ${gone}`);
+  }
+  assert.doesNotMatch(all, /npm test --prefix/, 'the merged-result check still runs npm test');
+  mustHave(table(), ['Run the change\'s tests on the tree you are about to integrate.'], 'the red-flags row');
 });
 
 test('the GitHub stack menu has two options and merge-now never picks the PR or the method', () => {
@@ -212,7 +225,7 @@ test('the local stack menu has three options: ff-only merge, push as stacked PRs
   assert.match(options[0], /^1\. Merge the stack into <trunk> locally/i);
   assert.match(options[1], /^2\. Push and open it as stacked PRs/i);
   assert.match(options[2], /^3\. Keep as is/i);
-  mustHave(section('### Stacked plan: local mode').join(' '), ['`git -C <MAIN_ROOT> merge --ff-only <top branch>`', 'the suite'], 'the local merge');
+  mustHave(section('### Stacked plan: local mode').join(' '), ['`git -C <MAIN_ROOT> merge --ff-only <top branch>`', 'the tests of the change'], 'the local merge');
   const push = block(`\`${STACK} mode PLAN_FILE github\``);
   mustHave(push, [`\`${STACK} submit PLAN_FILE <N>\``, 'each phase still `done`, in order', 'already `submitted`', '`--open`'], 'the push option');
   const at = (needle) => push.indexOf(needle);
@@ -339,7 +352,7 @@ test('git reaches the main checkout with -C and no cd or shell variable stands f
 test('MAIN_ROOT is the parent of the shared git dir, noted once and used by every later command', () => {
   const option1 = text().slice(text().indexOf('### Option 1: Merge Locally'), text().indexOf('### Option 2: Push and Create PR'));
   mustHave(option1, ['git -C <GIT_COMMON>/.. rev-parse --show-toplevel', '`MAIN_ROOT`', 'git -C <MAIN_ROOT> checkout <base-branch>', 'git -C <MAIN_ROOT> merge <feature-branch>'], 'Option 1');
-  mustHave(option1, ['npm test --prefix <MAIN_ROOT>', 'go test -C <MAIN_ROOT> ./...'], 'the merged-result test command');
+  mustHave(option1, ['node --test <MAIN_ROOT>/<test file>', 'go test -C <MAIN_ROOT> <package>'], 'the merged-result test command');
   assert.match(option1, /never chained behind a directory change/, 'the test command may be chained behind a directory change');
 });
 
