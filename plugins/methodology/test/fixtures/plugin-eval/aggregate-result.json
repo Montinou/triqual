@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 1,
+  "claudeVersion": "2.1.326",
+  "startedAt": "2026-11-17T04:28:08.508Z",
+  "durationSeconds": 29,
+  "costUsd": 0.004,
+  "partial": false,
+  "suite": {
+    "root": "/work/example/plugins/methodology",
+    "ablation": "none",
+    "modelOverride": "claude-haiku-5-5",
+    "threshold": 1,
+    "concurrency": 1,
+    "plugins": [
+      {
+        "name": "methodology",
+        "version": "1.13.0",
+        "path": "/work/example/plugins/methodology"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "probe-case",
+      "dir": "evals/cases/probe-case",
+      "source": "prose",
+      "promptMarkdown": "Reply with exactly one line that names two primary colors. Do not use any tool.",
+      "runsPerCase": 1,
+      "timeoutSeconds": 300,
+      "maxTurns": 3,
+      "graders": [
+        {
+          "name": "criteria",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "The response names two primary colors in one line.",
+          "config": {
+            "criteria": "The response names two primary colors in one line.",
+            "focus": "last_message"
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 1,
+            "costUsd": 0.0015,
+            "judgeCostUsd": 0,
+            "durationSeconds": 16,
+            "startedAt": "2026-11-17T04:28:09.766Z",
+            "error": null,
+            "tracePath": "/tmp/example/out/trace-1.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "criteria",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "Red and blue."
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 1,
+        "passRate": 1
+      }
+    },
+    {
+      "name": "second-case",
+      "dir": "evals/cases/second-case",
+      "source": "prose",
+      "promptMarkdown": "Reply with one word only. Do not use any tool.",
+      "runsPerCase": 1,
+      "timeoutSeconds": 300,
+      "maxTurns": 3,
+      "graders": [
+        {
+          "name": "criteria",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "The response is one word only.",
+          "config": {
+            "criteria": "The response is one word only.",
+            "focus": "last_message"
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 0,
+            "passed": false,
+            "turns": 1,
+            "costUsd": 0.0025,
+            "judgeCostUsd": 0,
+            "durationSeconds": 13,
+            "startedAt": "2026-11-17T04:28:26.000Z",
+            "error": null,
+            "tracePath": "/tmp/example/out/trace-2.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "criteria",
+                "passed": false,
+                "weight": 1,
+                "explanation": "judge votes: FAIL FAIL FAIL",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  false,
+                  false,
+                  false
+                ],
+                "evidence": "Two words."
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 0,
+        "passRate": 0
+      }
+    }
+  ],
+  "aggregates": {
+    "casesTotal": 2,
+    "casesPassed": 1,
+    "overallScore": 0.5,
+    "overallPassRate": 0.5
+  }
+}
