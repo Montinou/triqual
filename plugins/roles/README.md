@@ -24,7 +24,7 @@ Only `phase-orchestrator` can dispatch subagents; `Agent` is in every other role
 | `roles:review-fixer` | `sonnet` | high | Agent | Resolves review findings on a task branch. Fixes what is real with the smallest change; refutes with evidence what is wrong instead of implementing it. Re-runs the covering tests, commits and appends a fix report. |
 | `roles:final-adversarial-reviewer` | `opus` | low | Agent, Edit, Write, NotebookEdit | One adversarial review of a whole branch before merge. Hunts correctness and security defects across task boundaries, triages deferred and parked findings, and gives a merge verdict. |
 | `roles:hunter` | `claude-haiku-5-5` | medium | Agent, Edit, NotebookEdit | Hunts for defects in one diff package for one category (correctness, security, spec-drift or state) and writes its candidates to a single file. Finds and reports; never fixes and never grades severity. |
-| `roles:phase-orchestrator` | `sonnet` | medium | Edit, NotebookEdit | Runs one phase of a plan by following `methodology:executing-plans` for that phase only: dispatches the other roles, never edits product code, ends on any stop with `BLOCKED: <stop> — <details>` and returns a summary of at most 20 lines (phase status, task commits, rulings, open minors, errors and fallbacks). The only role that may dispatch agents. |
+| `roles:phase-orchestrator` | `sonnet` | medium | Edit, NotebookEdit | Runs one phase of a plan by following `methodology:executing-plans` for that phase only: dispatches the other roles, never edits product code, ends on any stop with `BLOCKED: <stop> — <details>` and returns a summary of at most 20 lines (phase status, task commits, rulings, open minors, errors and fallbacks). The only role that may dispatch agents. One runs for each running phase, so several run at once, each in its phase's checkout. |
 
 The reviewers `safety-reviewer`, `spec-reviewer` and `final-adversarial-reviewer` cannot edit or
 write files. The `hunter` and `brief-writer` can write (each writes one output file) but cannot
@@ -44,7 +44,7 @@ Found by searching `roles:<name>` in `plugins/methodology/skills`:
 | `review-fixer` | `executing-plans` (fix rounds) |
 | `final-adversarial-reviewer` | `executing-plans`, `brainstorming` (spec audit), `writing-plans` (plan audit) |
 | `hunter` | none since 2026-11-12; kept for A/B tests |
-| `phase-orchestrator` | `executing-plans`: one per phase, from methodology 1.3.0 |
+| `phase-orchestrator` | `executing-plans`: one per running phase, several at once from methodology 1.13.0 (one per phase from methodology 1.3.0) |
 
 A plan's task `**Role:**` line is `roles:tdd-implementer` (the default when the line is
 missing), `roles:complex-implementer` or `coordinator`. `roles:review-fixer` is still read in plans
