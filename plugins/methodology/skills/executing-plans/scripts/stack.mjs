@@ -8,10 +8,12 @@
 //   mode PLAN_FILE github|local                                         switch the mode (github re-runs the checks)
 //   path PLAN_FILE                                                      print the state file's path
 //   status PLAN_FILE [--tree]                                           print the state (JSON), PR states refreshed; --tree: the phases as a tree
-//                                                                       (each phase also prints `ready` and `base`, keys never written to the file)
+//                                                                       (each phase also prints `ready` and `base`, keys never written to the file);
+//                                                                       a join is printed under its first parent with ` + P<k>` per other parent
 //   phase PLAN_FILE N                                                   check out phase N's branch, mark it active; while another phase
 //                                                                       holds the main checkout, build it in <root>/.claude/worktrees/
-//                                                                       <plan stem>-p<N> (a second line `workdir: <path>`)
+//                                                                       <plan stem>-p<N> (a second line `workdir: <path>`); a join (a phase of
+//                                                                       `**Parent:** P1, P2`) starts at one commit that merges every parent's tip
 //   squash PLAN_FILE BASE [--phase N]                                   fold BASE..HEAD into one commit, print its sha; runs in
 //                                                                       phase N's workdir (default: the only active phase)
 //   done PLAN_FILE N                                                    mark phase N done (its worktree removed, its branch kept)
@@ -199,6 +201,10 @@ function parentBranch(phase, phases, trunk) {
   if (kind === 'trunk') return trunk;
   return kind === 'phase' ? phases[Number(value.slice(1)) - 1].branch : value;
 }
+
+// The branches a phase starts from, in written order: a join's (every parent a phase of the plan), else its one parent.
+const planParents = (phase, phases, trunk) =>
+  phase.parents.length > 1 ? phase.parents.map((n) => phases[n - 1].branch) : [parentBranch(phase, phases, trunk)];
 
 // --- state file -------------------------------------------------------------------------------------------------
 
@@ -485,19 +491,27 @@ const printState = (state) => out(JSON.stringify(state, null, 2));
 
 // Phases whose branch already exists when the state is first written: `done` when chained on its parent (the previous
 // phase, an earlier one or the trunk); in GitHub mode with the PR number, `submitted`, when gh finds one. An unchained
-// branch exits 3. A `prs` state records each phase's parent branch.
+// branch exits 3. A `prs` state records each phase's parent branch, and a join's parent branches (`parents`); an adopted join branch
+// must hold every parent's tip and records its join commit as `base`.
 function adoptExisting(cwd, phases, trunk, trunkSha, github, layout) {
   return phases.map((phase) => {
     const sha = revParse(`refs/heads/${phase.branch}`, { cwd });
-    const parent = parentBranch(phase, phases, trunk);
-    const parentSha = parent === trunk ? trunkSha : revParse(`refs/heads/${parent}`, { cwd });
+    const parents = planParents(phase, phases, trunk);
     const entry = { n: phase.n, branch: phase.branch, title: phase.prTitle, pr: null, state: 'pending' };
-    if (layout === 'prs') entry.parent = parent;
+    if (layout === 'prs') {
+      entry.parent = parents[0];
+      if (parents.length > 1) entry.parents = parents;
+    }
     if (sha) {
-      if (!parentSha) fail(EXIT_REFUSED, `branch ${phase.branch} exists but its parent's branch ${parent} does not`);
-      if (!gitOk(['merge-base', '--is-ancestor', parentSha, sha], { cwd })) {
-        fail(EXIT_REFUSED, `branch ${phase.branch} is not chained on ${parent}: its history lacks ${parent}'s tip`);
-      }
+      const shas = parents.map((parent) => {
+        const parentSha = parent === trunk ? trunkSha : revParse(`refs/heads/${parent}`, { cwd });
+        if (!parentSha) fail(EXIT_REFUSED, `branch ${phase.branch} exists but its parent's branch ${parent} does not`);
+        if (!gitOk(['merge-base', '--is-ancestor', parentSha, sha], { cwd })) {
+          fail(EXIT_REFUSED, `branch ${phase.branch} is not chained on ${parent}: its history lacks ${parent}'s tip`);
+        }
+        return parentSha;
+      });
+      if (parents.length > 1) entry.base = joinCommitOf(cwd, phase, shas[0], sha, parents.length);
       entry.state = 'done';
       if (github) {
         const found = JSON.parse(
@@ -530,7 +544,6 @@ function cmdInit(args) {
   const ctx = context(rest[0]);
   refuseCommittedTracking(ctx.cwd);
   const { prefix, forest, phases } = parsePhases(readFileSync(ctx.planFile, 'utf8'), ctx.planFile);
-  if (phases.some((p) => p.parents.length > 1)) fail(EXIT_REFUSED, 'joins need a methodology version that runs concurrent phases');
   const aliasRemote = () => {
     const githubName = pickGithubRemote(ctx.cwd, opts.remote);
     return githubName ? githubRemote(githubName, ctx.cwd).alias : false;
@@ -542,6 +555,17 @@ function cmdInit(args) {
     const had = layoutOf(existing);
     if (had !== chooseLayout({ forest, alias: false }) && !(had === 'prs' && !forest && aliasRemote())) {
       fail(EXIT_REFUSED, `state was written for the ${had} layout: delete ${ctx.path} and run stack init again`);
+    }
+    // The parents a phase starts from are part of the state: a plan that changed them needs a new state.
+    if (had === 'prs') {
+      for (const phase of phases) {
+        const recorded = existing.phases.find((p) => p.n === phase.n);
+        if (!recorded) continue;
+        const have = recorded.parents ?? [recorded.parent];
+        if (have.join(',') !== planParents(phase, phases, existing.trunk).join(',')) {
+          fail(EXIT_REFUSED, `state was written for other parents of phase ${phase.n} (${have.join(', ')}): delete ${ctx.path} and run stack init again`);
+        }
+      }
     }
     return printState(existing);
   }
@@ -603,7 +627,9 @@ function renderTree(state, root) {
   const walk = (parent, depth) => {
     for (const phase of state.phases.filter((p) => parentOf(p) === parent)) {
       const where = phase.state === 'active' && phase.workdir ? ` ${relative(root, phase.workdir)}` : '';
-      lines.push(`${'  '.repeat(depth)}P${phase.n} ${phase.branch} [${phase.state}${phase.pr === null ? '' : ` #${phase.pr}`}]${where}`);
+      // A join is printed once, under its first parent, with its other parents after it.
+      const joins = (phase.parents ?? []).slice(1).map((b) => ` + P${state.phases.find((p) => p.branch === b)?.n ?? b}`).join('');
+      lines.push(`${'  '.repeat(depth)}P${phase.n} ${phase.branch} [${phase.state}${phase.pr === null ? '' : ` #${phase.pr}`}]${where}${joins}`);
       walk(phase, depth + 1);
     }
   };
@@ -732,6 +758,41 @@ export function phaseBase(cwd, state, phase) {
   return parentsOf(state, phase).length > 0 ? start : git(['merge-base', start, tip], { cwd });
 }
 
+// A join's `base` when none is recorded: the first commit, oldest first, of `git rev-list --first-parent --reverse <first parent's
+// branch>..<head>` that has as many parents as the join (`git rev-list --parents -n 1 <commit>`). None found is exit 3.
+function joinCommitOf(cwd, phase, firstTip, head, count) {
+  const walked = git(['rev-list', '--first-parent', '--reverse', `${firstTip}..${head}`], { cwd });
+  const found = (walked ? walked.split('\n') : []).find((c) => git(['rev-list', '--parents', '-n', '1', c], { cwd }).split(' ').length - 1 === count);
+  return found ?? fail(EXIT_REFUSED, `phase ${phase.n}'s branch ${phase.branch} has no join commit of its ${count} parents: delete the branch and run phase ${phase.n} again`);
+}
+
+// git merge-tree --write-tree of two commits: { tree, conflicts } (conflicts: the paths, empty when the merge is clean).
+function mergeTrees(cwd, a, b) {
+  const res = spawnSync('git', ['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', a, b], {
+    cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (res.error) throw res.error;
+  if (res.status !== 0 && res.status !== 1) throw new Error(`git merge-tree ${a} ${b} failed: ${res.stderr.trim()}`);
+  const [tree, ...names] = res.stdout.split('\0');
+  return { tree, conflicts: res.status === 1 ? [...new Set(names.filter((name) => name !== ''))] : [] };
+}
+
+// The commit a join phase starts at, made without any checkout: the first two parent tips are merged, then that result (a
+// commit-tree object on no branch) and each next parent; one commit of the last tree has a parent per tip, in written order. A
+// conflict is exit 3 and nothing exists but loose objects.
+function makeJoinCommit(cwd, phase, branches, tips) {
+  const message = `Join of phase ${phase.n}: ${branches.join(', ')}`;
+  let left = tips[0];
+  let tree;
+  tips.slice(1).forEach((tipSha, i) => {
+    const merged = mergeTrees(cwd, left, tipSha);
+    if (merged.conflicts.length > 0) fail(EXIT_REFUSED, `the join of phase ${phase.n} conflicts in ${merged.conflicts.join(', ')}: nothing was created`);
+    tree = merged.tree;
+    if (i < tips.length - 2) left = git(['commit-tree', tree, '-p', left, '-p', tipSha, '-m', message], { cwd });
+  });
+  return git(['commit-tree', tree, ...tips.flatMap((tipSha) => ['-p', tipSha]), '-m', message], { cwd });
+}
+
 // Where a phase is built: its own worktree when the state records one, else the main checkout.
 export const workdirOf = (root, phase) => phase.workdir ?? root;
 
@@ -839,6 +900,16 @@ function cmdPhase(args) {
   // 1. A phase is in its worktree when one is registered at the path on the phase's branch, whether or not the state records it
   // (a crash between `worktree add` and the state write leaves exactly that). Otherwise it needs one when another phase holds the
   // main checkout, or when its recorded worktree is gone.
+  // A join starts at the commit that merges its parents, made here before any checkout, branch or state write; a join branch that exists
+  // with no recorded base gets its join commit found by the rule (nothing is written when there is none).
+  const parents = prs ? phase.parents ?? [phase.parent] : [];
+  let joinStart = null;
+  let joinFound = null;
+  if (parents.length > 1) {
+    const tipOf = (b) => branchTip(ctx.cwd, state, b) ?? fail(EXIT_REFUSED, `phase ${phase.n}'s parent ${b} does not exist`);
+    if (!hasBranch && !remoteOnly) joinStart = phase.base ?? makeJoinCommit(ctx.cwd, phase, parents, parents.map(tipOf));
+    else if (!phase.base) joinFound = joinCommitOf(ctx.cwd, phase, tipOf(parents[0]), branchTip(ctx.cwd, state, branch), parents.length);
+  }
   const inItsWorktree = hasBranch && inWorktree(ctx.cwd, path, branch);
   const needsWorktree = !inItsWorktree && (Boolean(phase.workdir) || holdingMain(state, phase.n) !== undefined);
 
@@ -849,7 +920,7 @@ function cmdPhase(args) {
       if (remoteOnly) {
         git(['branch', '--quiet', '--track', branch, remoteRef], { cwd: ctx.cwd });
       } else {
-        created = startPoint(ctx.cwd, state, phase.n);
+        created = joinStart ?? startPoint(ctx.cwd, state, phase.n);
         git(['branch', '--quiet', '--no-track', branch, created], { cwd: ctx.cwd });
       }
     }
@@ -863,7 +934,7 @@ function cmdPhase(args) {
     requireCleanTree(ctx.cwd);
     if (!hasBranch && !remoteOnly) {
       if (prs ? phase.parent === state.trunk : phase.n === 1) refuseStrandedHead(ctx.cwd, state);
-      created = startPoint(ctx.cwd, state, phase.n);
+      created = joinStart ?? startPoint(ctx.cwd, state, phase.n);
     }
   }
 
@@ -879,7 +950,7 @@ function cmdPhase(args) {
     if (entry.state === 'pending') entry.startedAt = at;
     entry.state = 'active';
     // A v2 phase records the commit its own work starts after (a v1 branch can be restacked by gh stack: it keeps the computed floor).
-    if (prs && created && !entry.base) entry.base = created;
+    if (prs && (created ?? joinFound) && !entry.base) entry.base = created ?? joinFound;
   });
 
   // 4. Outside the lock.
@@ -1043,8 +1114,12 @@ function workspaceOf(ctx) {
 }
 
 // What a `prs` PR body says about its base: the branch it is against, and that a phase's PR merges after its parent's.
-const baseText = (state, phase) =>
-  `\`${phase.parent}\`${parentPhase(state, phase) ? `, phase ${parentPhase(state, phase).n}'s branch: merge its PR first` : ''}`;
+// A join's PR is against its first parent and says it also merges the others.
+const baseText = (state, phase) => {
+  const others = (phase.parents ?? []).slice(1).map((b) => `\`${b}\``);
+  const first = `\`${phase.parent}\`${parentPhase(state, phase) ? `, phase ${parentPhase(state, phase).n}'s branch: merge its PR first` : ''}`;
+  return others.length > 0 ? `${first}. It also merges ${others.join(', ')}: merge those first.` : first;
+};
 
 // The PR body: the plan's phase block (Slice, Stands alone because, Phase check) and the subjects of the phase's
 // commits (the range from the previous phase's tip, or the trunk's, to this phase's branch).
@@ -1164,14 +1239,13 @@ function pushBranch(cwd, state, phase, upstream) {
   }
 }
 
-// A phase is submitted once its parent is: a parent phase submitted, ready or merged, a named branch on the remote.
+// A phase is submitted once its parents are: each parent phase submitted, ready or merged, a named branch on the remote.
 function requireParentSubmitted(cwd, state, phase) {
-  const parent = parentPhase(state, phase);
-  if (parent) {
-    if (!['submitted', 'ready', 'merged'].includes(parent.state)) {
-      fail(EXIT_REFUSED, `phase ${parent.n} is ${parent.state}: phase ${phase.n}'s parent must be submitted, ready or merged first`);
-    }
-  } else if (phase.parent !== state.trunk && !revParse(`refs/remotes/${state.remote}/${phase.parent}`, { cwd })) {
+  const parents = parentsOf(state, phase);
+  const unmet = parents.find((p) => !['submitted', 'ready', 'merged'].includes(p.state));
+  if (unmet) {
+    fail(EXIT_REFUSED, `phase ${unmet.n} is ${unmet.state}: phase ${phase.n}'s parent must be submitted, ready or merged first`);
+  } else if (parents.length === 0 && phase.parent !== state.trunk && !revParse(`refs/remotes/${state.remote}/${phase.parent}`, { cwd })) {
     fail(EXIT_REFUSED, `phase ${phase.n}'s parent ${phase.parent} is not on ${state.remote}: push it and fetch first`);
   }
 }
