@@ -210,17 +210,17 @@ Subagent (<task role>):
 
 **Next task (batched light dispatch).** When the controller resumes this same
 implementer for the next light task of the phase (see SKILL.md, Batched light
-dispatch), it sends only this message, after the previous task's review,
-squash and `triqual tasks done` finished:
+dispatch), it sends only this message, after the previous task of the batch is closed (squashed or landed, and done):
 
 ```
     Next task: Task N: [task name]
 
-    The previous task is closed: its commit was squashed and reviewed, so do
+    The previous task is closed: its commit was squashed or landed, and reviewed, so do
     not touch its files again unless this brief lists them.
 
     Read your new task brief first: [BRIEF_FILE]
     It is your requirements, with the exact values to use verbatim.
+    Work in: [WORK_DIR]
 
     [CONTEXT — for this task, if any]
 
@@ -238,7 +238,7 @@ squash and `triqual tasks done` finished:
   "Next task" message only what this task adds; omit the line when there is nothing
 - `[BRIEF_FILE]` — the path `node scripts/task-brief PLAN_FILE N` printed
 - `[REPORT_FILE]` — the report file named after the brief (`task-N-report.md`)
-- `[WORK_DIR]` — the checkout the plan runs in (the current one, or the worktree your human partner asked for); for a task opened with `task-open --worktree`, the task worktree it printed as `workdir:`, for the implementer and for its fixer
+- `[WORK_DIR]` — the checkout the plan runs in (the current one, or the worktree your human partner asked for); for a task opened with `task-open --worktree`, the task worktree it printed as `workdir:`, for the implementer and for its fixer; in the "Next task" message, the checkout `task-open` gave that task
 - `[TRACKING]` — the Tracking section, kept only when the repo is opted in, with `[MODE]` (`"committed"`, `"local"` or `"store"`), `[PROGRESS_PATH]` and `[STATUS_PATH]` from `triqual tasks paths --json`, and `[TASKS_LEDGER_PATH]`, the plan's `*.tasks.json` beside it in `plansDir`; `[PROGRESS_PATH]`, `[STATUS_PATH]` and `[TASKS_LEDGER_PATH]` are dropped in store mode, which has no such files
 - `[MODE]` — see `[TRACKING]`
 - `[PROGRESS_PATH]` — see `[TRACKING]`

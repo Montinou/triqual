@@ -403,6 +403,9 @@ test('the workspace ledger is sdd-ledger.md, with the Tier lines in its vocabula
     '`Ruling: <what you decided> — <why> — <what it costs if wrong>`',
     '`Unrecorded: <record JSON>`',
     '`RateLimit: <role> <time>`',
+    '`Opened: T<N> <ISO time>`',
+    '`Closed: T<N> <ISO time>`',
+    '`Serial: T<a>, T<b> — <reason>`',
   ]) {
     assert.ok(vocab.includes(line), `the vocabulary lacks ${line}`);
   }
@@ -411,11 +414,12 @@ test('the workspace ledger is sdd-ledger.md, with the Tier lines in its vocabula
 test('batched light dispatch resumes one implementer one task at a time, BASE recorded before each resume', () => {
   const text = flat(section(skill(), '#### Batched light dispatch'));
   for (const line of [
-    'consecutive light tasks of one phase whose role is `roles:tdd-implementer`',
+    'consecutive light tasks of one lane (of the phase, when it has `**Sequential because:**`) whose role is `roles:tdd-implementer`',
     'resume that same implementer for each next task',
     'One task at a time',
     "only after the previous task's review and `task-close` finished",
-    'its own BASE (recorded from `HEAD`, the squashed commit of the previous task)',
+    'its own BASE (recorded by `task-open`: `HEAD` in the main checkout, the last closed commit for a worktree task)',
+    "the resumed implementer is told that task's workdir",
     '`task-prep`, the review and `task-close` stay per task',
     'A task that `tier-check` raises above light ends the batch',
     'gets a fresh dispatch',
@@ -1088,7 +1092,7 @@ test('the per-task scripts are deleted, nothing live calls them, and the scripts
     assert.equal(existsSync(join(SCRIPTS, name)), false, `${name} is still there`);
     assert.deepEqual(mentions(name), [], `a live file names ${name}`);
   }
-  assert.deepEqual(readdirSync(SCRIPTS).sort(), ['lib', 'phase-resume', 'review-package', 'sdd-workspace', 'stack.mjs', 'task-brief', 'task-close', 'task-open', 'task-prep', 'tier-check', 'validate']);
+  assert.deepEqual(readdirSync(SCRIPTS).sort(), ['lib', 'phase-resume', 'review-package', 'sdd-workspace', 'stack.mjs', 'task-brief', 'task-close', 'task-open', 'task-prep', 'tier-check', 'timeline.mjs', 'validate']);
 });
 
 // ---- the harness references -----------------------------------------------------------------------------------------------
@@ -2127,19 +2131,19 @@ test('independence is no shared Files path with a running task and every depende
   assert.ok(flat(PROMPT()).includes('`**Files:**` paths share no path with any earlier task of the phase that is not yet closed'), 'the orchestrator prompt does not carry the independence rule');
 });
 
-test('an earlier overlapping task always starts first: independence looks at every earlier task not yet closed, and the deadlock is the reason', () => {
+test('an earlier overlapping task always starts first: independence looks at every earlier task not yet closed, and the shared path is the reason', () => {
   const body = parallel();
   for (const line of [
     'any earlier task of the phase that is not yet closed, running or not yet started',
     'an earlier task that overlaps it always starts first',
     'it starts once that earlier task is closed',
-    // the reason: a later task running while an earlier overlapping one has not started deadlocks against the landing order
-    'if a later task ran while an earlier task it overlaps had not started, the earlier would wait for the later to close, and the later `task-close` waits for the earlier to land: a deadlock',
+    // the reason: two tasks that share a path run in plan order
+    'so two tasks that share a path run in plan order',
   ]) assert.ok(body.includes(line), `Parallel tasks lacks: ${line}`);
   assert.doesNotMatch(body, /share no path with any running task/, 'the rule still checks only running tasks');
   const prompt = flat(PROMPT());
   assert.ok(prompt.includes('so an earlier overlapping task always starts first'), 'the orchestrator prompt does not order the starts');
-  assert.ok(prompt.includes('a deadlock against the landing order'), 'the orchestrator prompt does not give the deadlock reason');
+  assert.ok(prompt.includes('two tasks that share a path run in plan order'), 'the orchestrator prompt does not give the shared-path reason');
   assert.doesNotMatch(prompt, /share no path with any running task/, 'the orchestrator prompt still checks only running tasks');
   const log = readFileSync(join(PLUGIN, '..', '..', 'CHANGELOG.md'), 'utf8');
   const entry = flat(log.slice(log.indexOf('\n## methodology 1.4.0'), log.indexOf('\n## methodology 1.3.0')));
@@ -2174,17 +2178,21 @@ test('at most 3 implementers at once', () => {
   assert.ok(flat(section(skill(), '### 2. Build')).includes('Two implementers run at once only as Parallel tasks says'), 'step 2 does not point at Parallel tasks');
 });
 
-test('batched light tasks never run in parallel', () => {
-  assert.ok(parallel().includes('Batched light tasks never run in parallel'), 'Parallel tasks does not exclude batched light tasks');
-  assert.ok(PROMPT().includes('batched light tasks never run in parallel'), 'the orchestrator prompt does not exclude batched light tasks');
-  assert.ok(flat(section(skill(), '#### Batched light dispatch')).includes('Batched light tasks never run in parallel'), 'Batched light dispatch does not say so');
+test('a batch is the consecutive light tasks of one lane, and the batches of different lanes run side by side', () => {
+  assert.ok(parallel().includes('A batch (see Batched light dispatch) is the consecutive light `roles:tdd-implementer` tasks of one lane'), 'Parallel tasks does not define a batch per lane');
+  assert.ok(parallel().includes('the batches of different lanes run side by side'), 'Parallel tasks does not run the batches of lanes side by side');
+  assert.ok(PROMPT().includes('a batch is the consecutive light tasks of one lane, and the batches of different lanes run side by side'), 'the orchestrator prompt does not say it');
+  assert.ok(flat(section(skill(), '#### Batched light dispatch')).includes('The batches of different lanes run side by side'), 'Batched light dispatch does not say so');
+  assert.doesNotMatch(skill(), /[Bb]atched light tasks never run in parallel/, 'the skill still says batched light tasks never run in parallel');
 });
 
 test('a task uses the main checkout only when every earlier task of the phase is done or dropped; others use task-open --worktree', () => {
   const body = parallel();
   for (const line of [
     'A task uses the main checkout only when every earlier task of the phase is done or dropped',
-    'every other task is opened with `node scripts/task-open PLAN_FILE N --worktree`',
+    'and no other task of the phase is open: a task built there runs alone',
+    '`task-open` without `--worktree` refuses (exit 3) while another task of the phase is open, and `task-open --worktree` refuses while a task built in the main checkout is open',
+    'Every other task is opened with `node scripts/task-open PLAN_FILE N --worktree`',
     '`.claude/worktrees/<plan stem>-t<N>`',
     'on the branch `wt/<plan stem>-t<N>`',
     'started at its BASE',
@@ -2199,13 +2207,13 @@ test('a task uses the main checkout only when every earlier task of the phase is
   assert.ok(flat(section(skill(), '### 1. Start the task')).includes('`node scripts/task-open PLAN_FILE N --worktree`'), 'step 1 does not name --worktree');
 });
 
-test('task-close for a worktree task is called only after every earlier task has landed', () => {
+test('task-close lands a worktree task as soon as its review is clean', () => {
   const body = parallel();
   for (const line of [
-    '`task-close` for a worktree task is called only after every earlier task of the phase has landed',
-    'lands in plan order',
-    'refused (exit 3) with no `Error:` line',
-    'a wait, not a failure',
+    '`task-close` lands a worktree task as soon as its review is clean',
+    "the phase branch may hold a later-numbered task's commit under it",
+    'It refuses (exit 3, with an `Error:` line) while another task of the phase has a `Landed:` line with no `Tested:` line',
+    'No script assumes that the commits of a phase branch are in task-number order',
     '`task-prep PLAN_FILE N --head <sha>`',
     '`git rev-parse wt/<plan stem>-t<N>`',
     '`--fix-round --head <sha>`',
@@ -2218,7 +2226,8 @@ test('task-close for a worktree task is called only after every earlier task has
     '`git worktree list`',
     'worktree and its branch are removed',
   ]) assert.ok(body.includes(line), `Parallel tasks lacks: ${line}`);
-  assert.ok(PROMPT().includes('closed with `task-close` only after every earlier task has landed'), 'the orchestrator prompt does not order the landings');
+  assert.ok(PROMPT().includes('closed with `task-close` as soon as its review is clean'), 'the orchestrator prompt does not land a task at once');
+  assert.doesNotMatch(body, /plan order, and one that finished early waits/, 'Parallel tasks still makes a landing wait');
   assert.ok(PROMPT().includes('`task-prep --head <sha>`'), 'the orchestrator prompt does not review a worktree task with --head');
   assert.ok(flat(section(skill(), '### 6. Complete the task')).includes('a worktree task: see Parallel tasks'), 'step 6 does not point at Parallel tasks');
 });
@@ -2307,9 +2316,9 @@ test('a task-close rerun resumes past Landed and Tested lines, and the exit-3 re
   ]) assert.ok(six.includes(line), `step 6 does not say what a landing resume is: ${line}`);
   const body = parallel();
   for (const line of [
-    'Every exit-3 refusal of `task-close` writes its `Error: task-close T<N> — exit 3 — <cause>` line except the earlier-task wait and the linked-worktree refusal',
+    'Every exit-3 refusal of `task-close` writes its `Error: task-close T<N> — exit 3 — <cause>` line except the linked-worktree refusal',
     'a linked worktree (`run from the main checkout`) is refused before the workspace is known',
-    'the wait is the refusal whose message starts `T<N> waits for`',
+    "another task's landing with no `Tested:` line",
     'the landed commit is not on the phase branch',
     'no longer the tip',
     'the owner decides',
@@ -2317,8 +2326,8 @@ test('a task-close rerun resumes past Landed and Tested lines, and the exit-3 re
     'the tree is not clean',
   ]) assert.ok(body.includes(line), `Parallel tasks lacks: ${line}`);
   const vocab = flat(section(skill(), '## Ledger vocabulary'));
-  assert.ok(vocab.includes('except the earlier-task wait of `task-close` and a refusal from a linked worktree'), 'the Error line of the ledger vocabulary does not name what writes none');
-  assert.ok(flat(PROMPT()).includes('a refusal whose message starts `T<N> waits for` is a wait'), 'the orchestrator prompt does not name the wait by its message');
+  assert.ok(vocab.includes('except a refusal from a linked worktree (exit 3), which writes none'), 'the Error line of the ledger vocabulary does not name what writes none');
+  assert.doesNotMatch(flat(skill()) + flat(PROMPT()), /T<N> waits for/, 'the earlier-task wait is still named');
   assert.doesNotMatch(flat(PROMPT()), /a refusal that writes no `Error:` line is a wait/, 'the prompt still takes a missing Error line for a wait');
 });
 
@@ -2363,20 +2372,59 @@ test('the 1.4.0 CHANGELOG entry and the orchestrator prompt carry the parallel r
   assert.ok(PROMPT().includes('## Parallel Tasks'), 'the orchestrator prompt has no Parallel Tasks section');
 });
 
-test('an earlier unstarted task is never blocked by a later one: a batch starts only when every earlier task is closed', () => {
+test('each task of a batch is opened like any task: in the main checkout when alone, with --worktree otherwise', () => {
   const body = parallel();
+  const rule = 'each task of a batch is opened like any task';
+  const where = 'in the main checkout when every earlier task of the phase is done or dropped and no other task is open, with `--worktree` otherwise';
   for (const line of [
-    '**An earlier task is never blocked by a later one.**',
-    'A later task never starts while an earlier task that has not started could be held back by it',
-    'a batched light task holds back every other task, so a task of a batch starts only when every earlier task of the phase is closed (a batch therefore always runs in the main checkout)',
-    'a parallel task holds an earlier one back only through a shared path (the independence rule above) or a slot (the slot rule above)',
-    // the reason, as the deadlock the independence rule already names
-    "would wait for the light task to close while the light task's `task-close` waits for it to land",
+    rule,
+    where,
   ]) assert.ok(body.includes(line), `Parallel tasks lacks: ${line}`);
-  assert.ok(flat(section(skill(), '#### Batched light dispatch')).includes('a task of a batch starts only when every earlier task of the phase is closed'), 'Batched light dispatch does not give the start rule');
-  assert.ok(flat(PROMPT()).includes('a task of a batch starts only when every earlier task of the phase is closed (an earlier task is never blocked by a later one)'), 'the orchestrator prompt does not give the start rule');
+  const batched = flat(section(skill(), '#### Batched light dispatch'));
+  assert.ok(batched.includes(rule) && batched.includes(where), 'Batched light dispatch does not open each task like any task');
+  assert.ok(flat(PROMPT()).includes(rule), 'the orchestrator prompt does not open each task of a batch like any task');
+  assert.doesNotMatch(skill(), /a task of a batch starts only when every earlier task of the phase is closed/, 'the skill still holds a batch back until every earlier task is closed');
   const log = readFileSync(join(PLUGIN, '..', '..', 'CHANGELOG.md'), 'utf8');
   assert.ok(flat(log.slice(log.indexOf('\n## methodology 1.4.0'), log.indexOf('\n## methodology 1.3.0'))).includes('An earlier task is never blocked by a later one'), 'the CHANGELOG does not state the start rule');
+});
+
+test('the first task of every lane opens at once, and independent tasks run serially only after a Serial line', () => {
+  const body = parallel();
+  for (const line of [
+    'The first task of every lane is opened at once, up to the 3 slots',
+    'get `Serial: T<a>, T<b> — <reason>` in the ledger first',
+    'the main session never tells an orchestrator to run lanes serially for caution',
+  ]) assert.ok(body.includes(line), `Parallel tasks lacks: ${line}`);
+  for (const line of [
+    'open the first task of every lane at once, up to the 3 slots',
+    'write `Serial: T<a>, T<b> — <reason>` in the ledger',
+    'never run lanes serially for caution',
+  ]) assert.ok(PROMPT().includes(line), `the orchestrator prompt lacks: ${line}`);
+});
+
+test('a Phase-check failure reopens the task whose commit is the phase tip, and the orchestrator opens it again', () => {
+  const seven = flat(section(skill(), '### 7. End the phase'));
+  for (const line of [
+    'A real failure reopens the task whose commit is the phase tip',
+    'runs `task-open PLAN_FILE N` again for it',
+  ]) assert.ok(seven.includes(line), `step 7 lacks: ${line}`);
+  assert.ok(flat(section(skill(), '## Ledger vocabulary')).includes('reopens the task whose commit is the phase tip'), 'the vocabulary does not say which task a Phase check reopens');
+  assert.doesNotMatch(skill(), /reopens the phase's last task/, 'the skill still reopens the phase\'s last task');
+});
+
+test('the plan ends with timeline.mjs, its plan line in the closing entry and the final message', () => {
+  const finish = flat(section(skill(), '## Finish'));
+  for (const line of [
+    'run `node scripts/timeline.mjs PLAN_FILE`',
+    'the plan line, goes into the closing progress entry and your final message',
+  ]) assert.ok(finish.includes(line), `Finish lacks: ${line}`);
+  assert.ok(finish.indexOf('timeline.mjs') < finish.indexOf("delete this plan's workspace"), 'timeline.mjs runs after the workspace is deleted');
+});
+
+test("a resumed batch implementer is told the next task's workdir", () => {
+  const text = read(`${EP}/implementer-prompt.md`);
+  const block = text.slice(text.indexOf('**Next task (batched light dispatch).**'), text.indexOf('**Placeholders:**'));
+  assert.ok(block.includes('Work in: [WORK_DIR]'), 'the Next task message does not name the workdir');
 });
 
 test('the BASE of a worktree task is the last closed commit, and the scripts do it', () => {
@@ -2406,9 +2454,9 @@ test('task-open step: not every non-zero exit writes an Error line', () => {
 
 const COORD_START = 'only once every earlier task of the phase is done or dropped and nothing else runs there';
 
-test('a coordinator task starts like a batch task: every earlier task done or dropped and nothing else in the main checkout, in the skill, the prompt and the role', () => {
+test('a coordinator task starts only once every earlier task is done or dropped and nothing else runs in the main checkout, and no longer starts "like a batch task": every earlier task done or dropped and nothing else in the main checkout, in the skill, the prompt and the role', () => {
   const coord = flat(section(skill(), '### Coordinator tasks'));
-  assert.ok(coord.includes('works in the main checkout and starts like a batch task'), 'Coordinator tasks does not say where a coordinator task starts');
+  assert.ok(coord.includes('works in the main checkout and starts only once every earlier task'), 'Coordinator tasks does not say where a coordinator task starts');
   assert.ok(coord.includes(COORD_START), 'Coordinator tasks lacks the start condition');
   assert.ok(coord.includes('`task-open` refuses it with exit 3 otherwise'), 'Coordinator tasks does not say the script refuses it');
   assert.ok(coord.includes("its BASE is `HEAD` and its close squashes `BASE..HEAD`, which would absorb an earlier task's unreviewed commits"), 'Coordinator tasks does not give the reason');
@@ -2419,6 +2467,7 @@ test('a coordinator task starts like a batch task: every earlier task done or dr
   assert.ok(handoff.indexOf(COORD_START) < handoff.indexOf('`BLOCKED: coordinator task T<N>'), 'the start condition comes after the handoff line');
   assert.ok(flat(section(skill(), '### Parallel tasks')).includes('A coordinator task is always a main-checkout task: it starts only once every earlier task of the phase is done or dropped'), 'Parallel tasks does not put a coordinator task under the Where rule');
   const prompt = PROMPT();
+  for (const [where, text] of [['the skill', flat(skill())], ['the prompt', prompt], ['the role', flat(ORCHESTRATOR_ROLE())]]) assert.doesNotMatch(text, /starts like a batch task/, `${where} still says a coordinator task starts like a batch task`);
   for (const line of [COORD_START, 'until then it waits like any task that is not independent', 'Once it may start']) assert.ok(prompt.includes(line), `the orchestrator prompt lacks: ${line}`);
   const role = ORCHESTRATOR_ROLE();
   for (const line of ['starts only once every earlier task of the phase is done or dropped and nothing else runs there', 'until then it waits', 'Once it may start']) assert.ok(role.includes(line), `the orchestrator role lacks: ${line}`);
@@ -2439,11 +2488,11 @@ test('SKILL, prompt and role agree on who runs a coordinator task: the main sess
   assert.ok(ORCHESTRATOR_ROLE().includes('one that edits no file you run yourself'), 'the orchestrator role does not say it');
 });
 
-test('step 6 says which non-zero exits of task-close write no Error line, and lists the earlier-task wait and the undone landing as exit 3', () => {
+test('step 6 says which non-zero exits of task-close write no Error line, and lists the other task\'s untested landing and the undone landing as exit 3', () => {
   const six = flat(section(skill(), '### 6. Complete the task'));
   for (const line of [
-    'a worktree task whose earlier tasks have not landed, an undone landing',
-    'except the earlier-task wait of a worktree task (a wait, not a failure) and a refusal from a linked worktree (`run from the main checkout`), which write none',
+    "another task's landing with no `Tested:` line, an undone landing",
+    'except a refusal from a linked worktree (`run from the main checkout`), which writes none',
   ]) assert.ok(six.includes(line), `step 6 lacks: ${line}`);
   assert.doesNotMatch(six, /before a non-zero exit it appends `Error: task-close T<N> — exit <code> — <first stderr line>` to the ledger\.(?! )/, 'step 6 still says every non-zero exit writes an Error line');
 });

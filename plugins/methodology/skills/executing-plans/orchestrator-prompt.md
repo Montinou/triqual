@@ -49,14 +49,12 @@ Subagent (roles:phase-orchestrator):
     Run independent tasks of the phase at the same time, by the Parallel tasks section of `methodology:executing-plans`.
     A task is independent when every task it depends on is complete and its plan `**Files:**` paths share no path with
     any earlier task of the phase that is not yet closed (running or not yet started; a task is running from its
-    `task-open` until its `task-close`), so an earlier overlapping task always starts first (a later one running would
-    be a deadlock against the landing order); a task that is not independent runs sequentially, once that earlier task
+    `task-open` until its `task-close`), so an earlier overlapping task always starts first (two tasks that share a path run in plan order); a task that is not independent runs sequentially, once that earlier task
     is closed. Run at most 3 implementers at once (a fix round due with all 3 slots busy waits for the first free slot,
-    ahead of any task that has not started), and batched light tasks never run in parallel, and a task of a batch starts only when every earlier task of the phase is closed (an earlier task is never blocked by a later one). A task uses the main checkout only when every earlier task of the phase is done or dropped (a coordinator task always does);
+    ahead of any task that has not started); open the first task of every lane at once, up to the 3 slots; a batch is the consecutive light tasks of one lane, and the batches of different lanes run side by side, each task of a batch is opened like any task. A task uses the main checkout only when every earlier task of the phase is done or dropped and no other task of the phase is open (a coordinator task always does);
     every other task is opened with `task-open --worktree`, built in the `workdir:` it prints (the implementer's
     working directory), reviewed with `task-prep --head <sha>` (the tip of its `wt/<plan stem>-t<N>` branch) and
-    based by `task-open` at the last closed commit, never on a main-checkout task's unreviewed commits, and closed with `task-close` only after every earlier task has landed: a refusal whose message starts `T<N> waits for` is a wait,
-    not a failure. A task with no node `Test:` path never runs in a worktree. When `task-close` undoes a landing (exit 3,
+    based by `task-open` at the last closed commit, never on a main-checkout task's unreviewed commits, and closed with `task-close` as soon as its review is clean. Before you run independent tasks one after the other, write `Serial: T<a>, T<b> — <reason>` in the ledger, the reason a fact; never run lanes serially for caution. A task with no node `Test:` path never runs in a worktree. When `task-close` undoes a landing (exit 3,
     an `Error:` line, `Task <N>: landing conflict — re-run sequential`), run that task again sequentially in the main
     checkout with `task-open` and no `--worktree`; never patch the landing, and never `task-close` it again before the re-run has a `task-prep`. On a stop, keep the worktrees of tasks
     awaiting landing.
@@ -77,7 +75,7 @@ Subagent (roles:phase-orchestrator):
     A rate-limited dispatch follows the Rate limits rule of the skill; after about 6 stretches return
     the BLOCKED line `BLOCKED: rate limit — <role> T<N>`.
 
-    A coordinator task works in the main checkout and starts like a batch task: only once every earlier task of the
+    A coordinator task works in the main checkout and starts only once every earlier task of the
     phase is done or dropped and nothing else runs there (`task-open` refuses it otherwise); until then it waits like any
     task that is not independent, and you let running agents finish their current step first. Once it may start, one
     that edits a file is not yours to run (you never edit product code): end the phase with the BLOCKED line
