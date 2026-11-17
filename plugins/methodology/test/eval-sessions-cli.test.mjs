@@ -245,3 +245,16 @@ test('the store is private and bad arguments exit 2', () => {
     }
   } finally { cleanup(e); }
 });
+
+test('a session\'s arm comes from <evals>/session-arms.jsonl, also on a later run with the transcript unchanged', () => {
+  const e = env();
+  try {
+    write(e, '-home-me-a', 'armed', [opening('2026-11-01T08:00:00Z'), turn({ id: 'r1', at: '2026-11-01T08:00:10Z', input: 10, output: 10 })]);
+    assert.equal(runJson(e).sessions[0].arm, null);
+    appendFileSync(join(e.evals, 'session-arms.jsonl'), `${JSON.stringify({ sessionId: 'armed', source: 'startup', arm: 'arm-a', launchId: 'l1', at: '2026-11-01T08:00:00.000Z' })}\n`);
+    const second = runJson(e);
+    assert.equal(second.sessions[0].arm, 'arm-a');
+    assert.equal(second.sessions[0].contaminated, false);
+    assert.equal(readJsonl(join(e.evals, 'sessions.jsonl')).rows[0].arm, 'arm-a');
+  } finally { cleanup(e); }
+});

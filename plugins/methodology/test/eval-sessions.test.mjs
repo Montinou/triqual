@@ -162,3 +162,15 @@ test('ensureDir creates the directory with mode 0700', () => {
   assert.equal(statSync(dir).mode & 0o777, 0o700);
   ensureDir(dir); // idempotent
 });
+
+test('sessionSignals fills arm and contaminated from the SessionStart records of its session', () => {
+  const dir = tmp();
+  const file = join(dir, 'sess-arm.jsonl');
+  writeFileSync(file, jsonl([{ type: 'user', cwd: '/work/proj', entrypoint: 'cli', timestamp: '2026-11-01T10:00:00.000Z', message: { role: 'user', content: 'hi' } }]));
+  const rec = (sessionId, arm) => ({ sessionId, source: 'startup', arm, launchId: null, at: '2026-11-01T10:00:00.000Z' });
+  const sig = (armRecords) => sessionSignals(file, { prices: PRICES, armRecords });
+  assert.deepEqual([sig([rec('sess-arm', 'a')]).arm, sig([rec('sess-arm', 'a')]).contaminated], ['a', false]);
+  assert.deepEqual([sig([rec('sess-arm', 'a'), rec('sess-arm', 'b')]).arm, sig([rec('sess-arm', 'a'), rec('sess-arm', 'b')]).contaminated], [null, true]);
+  assert.deepEqual([sig([rec('someone-else', 'a')]).arm, sig([rec('someone-else', 'a')]).contaminated], [null, false]);
+  assert.deepEqual([sessionSignals(file, { prices: PRICES }).arm, sessionSignals(file, { prices: PRICES }).contaminated], [null, false], 'no records given');
+});

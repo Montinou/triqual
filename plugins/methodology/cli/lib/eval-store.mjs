@@ -2,6 +2,7 @@
 // lib/eval-sessions.mjs plus `projectDir` and `refreshedAt`. node: built-ins only.
 import { chmodSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { SESSION_ARMS_FILE, attributeArm } from './eval-arms.mjs';
 import { ensureDir } from './eval-paths.mjs';
 import { mainTranscripts, sessionSignals } from './eval-sessions.mjs';
 import { withStoreLock } from './role-eval.mjs';
@@ -30,12 +31,15 @@ const grew = (end, storedEnd) => end !== null && (typeof storedEnd !== 'string' 
 // `file` under the store lock: a new sessionId is added, a stored line is replaced when its transcript's `end` grew, a
 // stored line without a `methodologyVersion` key is replaced by the recomputed signals, a stored line whose `entrypoint` is null while its transcript now has one is patched in that field only, a stored line
 // whose transcript is gone stays. The file is rewritten through a temp file and a rename, so a reader
-// sees the old store or the new one. { sessions: every stored line, added, updated, skipped: lines of the file that
-// were not rows }.
+// sees the old store or the new one. Every run loads <evals>/session-arms.jsonl (next to `file`) once and re-attributes
+// `arm` and `contaminated` of every stored line, whether or not its transcript grew or still exists; a line whose
+// attribution changed is rewritten in the same atomic rewrite, keeping its other fields (`days`, `methodologyVersion`).
+// { sessions: every stored line, added, updated, skipped: lines of the file that were not rows }.
 export function refreshSessions({ root, file, prices, now = new Date() }) {
+  const armRecords = readJsonl(join(dirname(file), SESSION_ARMS_FILE)).rows;
   const found = new Map();
   for (const t of mainTranscripts(root)) {
-    const sig = { ...sessionSignals(t.file, { prices }), projectDir: t.projectDir };
+    const sig = { ...sessionSignals(t.file, { prices, armRecords }), projectDir: t.projectDir };
     const prev = found.get(sig.sessionId);
     if (prev === undefined || grew(sig.end, prev.end)) found.set(sig.sessionId, sig);
   }
@@ -52,8 +56,10 @@ export function refreshSessions({ root, file, prices, now = new Date() }) {
     }
     let added = 0;
     let updated = 0;
+    const counted = new Set(); // ids already counted in added or updated this run
     for (const [id, sig] of found) {
       const cur = stored.get(id);
+      const before = added + updated;
       if (cur === undefined) { stored.set(id, { ...sig, refreshedAt }); added += 1; }
       else if (grew(sig.end, cur.end)) { stored.set(id, { ...sig, refreshedAt }); updated += 1; }
       // A stored line from before methodologyVersion existed (no such key) is replaced by the recomputed signals.
@@ -61,6 +67,15 @@ export function refreshSessions({ root, file, prices, now = new Date() }) {
       // An unchanged transcript whose stored line lost its entrypoint (an older extractor read it from the first record
       // only): patch that one field, keep the rest of the line.
       else if (cur.entrypoint == null && sig.entrypoint !== null) { stored.set(id, { ...cur, entrypoint: sig.entrypoint }); updated += 1; }
+      if (added + updated > before) counted.add(id);
+    }
+    // Re-attribute every stored line from the SessionStart records, transcript or not; a line without the keys reads as
+    // no arm and not contaminated.
+    for (const [id, cur] of stored) {
+      const { arm, contaminated } = attributeArm(id, armRecords);
+      if ((cur.arm ?? null) === arm && (cur.contaminated === true) === contaminated) continue;
+      stored.set(id, { ...cur, arm, contaminated });
+      if (!counted.has(id)) updated += 1;
     }
     if (added + updated > 0) {
       const tmp = `${file}.${process.pid}.tmp`;
