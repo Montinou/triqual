@@ -187,12 +187,12 @@ test('an arm with no counted units gives null statistics, not NaN', () => {
 
 // ---- sessionVerdict -----------------------------------------------------------------------------------------------
 
-const snap = ({ checks = { 'code-a': 'pass' }, judges = ['judge-b'], judgeExclude = [] } = {}) => ({
+const snap = ({ checks = { 'code-a': 'pass' }, judges = ['judge-b'], judgeExclude = [], version = 'vc' } = {}) => ({
   hash: 'h',
   categories: [...Object.keys(checks).map((id) => ({ id, check: 'code' })), ...judges.map((id) => ({ id, check: 'judge' }))],
   judgeExclude,
   prompts: Object.fromEntries(judges.map((id) => [id, `hash-${id}`])),
-  checks: { CHECKS: Object.fromEntries(Object.entries(checks).map(([id, r]) => [id, () => r])), runCheck: (id, s, f, c) => c[id](s, f) },
+  checks: { CHECKS: Object.fromEntries(Object.entries(checks).map(([id, r]) => [id, () => r])), runCheck: (id, s, f, c) => c[id](s, f), checkVersion: () => version },
 });
 const sess = { sessionId: 's1', project: '/home/x/Client', file: '/nowhere' };
 const judged = (result, over = {}) => ({ sessionId: 's1', category: 'judge-b', result, promptHash: 'hash-judge-b', ...over });
@@ -213,6 +213,28 @@ test('a unit with no guardrail verdict is undecided, not healthy', () => {
   // a judgment of another session, or of another prompt, is no verdict
   assert.equal(sessionVerdict(sess, snap(), { 'judge-b': [judged('pass', { sessionId: 's2' })] }), 'undecided');
   assert.equal(sessionVerdict(sess, snap(), { 'judge-b': [judged('pass', { promptHash: 'older' })] }), 'undecided');
+});
+
+const stored = (result, over = {}) => ({ sessionId: 's1', category: 'code-a', result, promptHash: 'vc', ...over });
+
+test('a code check that is undecided (transcript gone) takes the stored line of the snapshot check version', () => {
+  const undecided = snap({ checks: { 'code-a': 'undecided' } });
+  const base = { 'judge-b': [judged('pass')] };
+  assert.equal(sessionVerdict(sess, undecided, { ...base, 'code-a': [stored('pass')] }), 'healthy');
+  assert.equal(sessionVerdict(sess, undecided, { ...base, 'code-a': [stored('fail')] }), 'unhealthy');
+  // the last stored line of that version wins; an undecided line stays undecided
+  assert.equal(sessionVerdict(sess, undecided, { ...base, 'code-a': [stored('fail'), stored('pass')] }), 'healthy');
+  assert.equal(sessionVerdict(sess, undecided, { ...base, 'code-a': [stored('undecided')] }), 'undecided');
+});
+
+test('a stored code line of another check version, or of another session, is no verdict', () => {
+  const undecided = snap({ checks: { 'code-a': 'undecided' } });
+  const base = { 'judge-b': [judged('pass')] };
+  assert.equal(sessionVerdict(sess, undecided, { ...base, 'code-a': [stored('pass', { promptHash: 'older' })] }), 'undecided');
+  assert.equal(sessionVerdict(sess, undecided, { ...base, 'code-a': [stored('pass', { sessionId: 's2' })] }), 'undecided');
+  assert.equal(sessionVerdict(sess, undecided, base), 'undecided');
+  // a check that decides is never overridden by a stored line
+  assert.equal(sessionVerdict(sess, snap({ checks: { 'code-a': 'fail' } }), { ...base, 'code-a': [stored('pass')] }), 'unhealthy');
 });
 
 test('judgeExclude: a session of an excluded or unknown project has no judge verdict, a code check still runs', () => {
@@ -261,13 +283,17 @@ function world(plan, { judgeExclude = [], expOver = {} } = {}) {
 
   const sessions = [];
   const judgments = [];
+  const codeLines = [];
   const armLines = [];
   for (const p of plan) {
     for (const arm of p.records ?? []) armLines.push(`${JSON.stringify({ sessionId: p.id, source: 'startup', arm, launchId: null, at: '2026-11-05T10:00:00.000Z' })}\n`);
     sessions.push({
       sessionId: p.id, project: p.project ?? '/home/x/Client', projectDir: '-home-x-Client', start: p.start ?? '2026-11-05T10:00:00.000Z',
       end: '2026-11-05T11:00:00.000Z', models: { [p.model ?? 'm1']: { messages: 3, usd: p.usd } }, usd: p.usd, arm: p.arm ?? null, contaminated: p.contaminated === true,
+      ...(p.entrypoint === undefined ? {} : { entrypoint: p.entrypoint }),
     });
+    // A recorded verdict of the code check (`triqual eval check` wrote it), under the snapshot's check version.
+    if (p.stored) codeLines.push({ sessionId: p.id, category: 'chased-progress', result: p.stored.result, promptHash: p.stored.promptHash ?? 'v-snapshot', model: null, auth: 'code', at: '2026-11-06T00:00:00Z' });
     if (p.code !== null) writeFileSync(join(transcripts, '-home-x-Client', `${p.id}.jsonl`), `${JSON.stringify({ type: 'user', message: { content: p.code === 'fail' ? 'CHASED invented' : 'fine invented' } })}\n`);
     if (p.judge) judgments.push({ sessionId: p.id, category: 'wrong-turn', result: p.judge, promptHash, model: 'claude-haiku-5-5', auth: 'x', at: '2026-11-06T00:00:00Z' });
   }
@@ -276,6 +302,7 @@ function world(plan, { judgeExclude = [], expOver = {} } = {}) {
   writeFileSync(join(evals, 'sessions.jsonl'), sessions.map((s) => `${JSON.stringify(s)}\n`).join(''));
   mkdirSync(join(evals, 'judgments'));
   writeFileSync(join(evals, 'judgments', 'wrong-turn.jsonl'), judgments.map((j) => `${JSON.stringify(j)}\n`).join(''));
+  writeFileSync(join(evals, 'judgments', 'chased-progress.jsonl'), codeLines.map((j) => `${JSON.stringify(j)}\n`).join(''));
   const experiments = join(base, 'experiments.json');
   writeFileSync(experiments, JSON.stringify({ experiments: [{ ...experiment({ evaluators: hash }), ...expOver }] }));
   const env = {
@@ -324,6 +351,47 @@ test('report --json prints the experiments with their rows, scored by the snapsh
     assert.deepEqual(off.excluded, { contaminated: 1, undecided: 0 }); // both-contam, other-contam and old-contam count nowhere
     assert.deepEqual(on.models, ['m1']);
     assert.equal(on.verdict, 'insufficient data');
+  } finally { rmSync(w.base, { recursive: true, force: true }); }
+});
+
+test('a session whose transcript is deleted keeps its stored code verdict; another check version leaves it undecided', async () => {
+  const w = world([
+    ...mk(3, 'off'),
+    ...mk(2, 'on'),
+    { id: 'on-gone-pass', arm: 'e1/on', code: null, judge: 'pass', usd: 2, stored: { result: 'pass' } },
+    { id: 'on-gone-fail', arm: 'e1/on', code: null, judge: 'pass', usd: 2, stored: { result: 'fail' } },
+    { id: 'on-gone-old', arm: 'e1/on', code: null, judge: 'pass', usd: 2, stored: { result: 'pass', promptHash: 'older' } },
+    { id: 'on-gone-none', arm: 'e1/on', code: null, judge: 'pass', usd: 2 },
+  ]);
+  try {
+    const { code, out } = await run(['--json'], w.env);
+    assert.equal(code, 0);
+    const [, on] = JSON.parse(out).experiments[0].rows;
+    assert.equal(on.n, 4); // 2 with a transcript, the stored pass and the stored fail
+    assert.equal(on.rate, 0.75);
+    assert.deepEqual(on.excluded, { contaminated: 0, undecided: 2 });
+  } finally { rmSync(w.base, { recursive: true, force: true }); }
+});
+
+test('only interactive sessions are units: a print-mode child of an assigned session is not counted', async () => {
+  const w = world([
+    ...mk(3, 'off'),
+    { id: 'on-cli', arm: 'e1/on', entrypoint: 'cli', code: 'pass', judge: 'pass', usd: 2 },
+    // a `claude -p` started inside the assigned session inherits its arm in the environment
+    { id: 'on-print', arm: 'e1/on', entrypoint: 'sdk-cli', code: 'pass', judge: 'pass', usd: 2 },
+    { id: 'on-print-bad', arm: 'e1/on', entrypoint: 'sdk-cli', code: 'fail', judge: 'pass', usd: 2 },
+    { id: 'on-print-contam', arm: null, entrypoint: 'sdk-cli', contaminated: true, records: ['e1/on', null], code: 'pass', judge: 'pass', usd: 2 },
+    // an older store line has no entrypoint: it counts as before
+    { id: 'on-old', arm: 'e1/on', code: 'pass', judge: 'pass', usd: 2 },
+  ]);
+  try {
+    const { code, out } = await run(['--json'], w.env);
+    assert.equal(code, 0);
+    const [off, on] = JSON.parse(out).experiments[0].rows;
+    assert.equal(off.n, 3);
+    assert.equal(on.n, 2); // on-cli and on-old
+    assert.equal(on.rate, 1);
+    assert.deepEqual(on.excluded, { contaminated: 0, undecided: 0 });
   } finally { rmSync(w.base, { recursive: true, force: true }); }
 });
 

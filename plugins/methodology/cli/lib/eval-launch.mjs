@@ -17,9 +17,12 @@ import { ensureDir, evalsDir, experimentsPath } from './eval-paths.mjs';
 export const RC_LINE = "alias claude='triqual eval launch' # triqual eval launch";
 
 // Any of these means the session is not a new interactive one the launcher may name: print mode, continue, fork, an
-// id the owner chose, help and version.
-const PASS_FLAGS = new Set(['-p', '--print', '-c', '--continue', '--fork-session', '--session-id', '-h', '--help', '-v', '--version']);
-const SESSION_ID_EQ = '--session-id=';
+// id the owner chose, a pull request's, a teleported, a cloud or a background session, help and version.
+const PASS_FLAGS = new Set([
+  '-p', '--print', '-c', '--continue', '--fork-session', '--session-id', '--from-pr', '--teleport', '--cloud', '--bg',
+  '-h', '--help', '-v', '--version',
+]);
+const PASS_EQ = ['--session-id=', '--from-pr=', '--teleport=', '--cloud=', '--bg='];
 const RESUME_FLAGS = new Set(['-r', '--resume']);
 const RESUME_EQ = '--resume=';
 
@@ -84,7 +87,7 @@ export function helpCache({ bin, evalsDir: evals, run = defaultRun, env }) {
 // parsed help. The first argument that is not an option (a value option's next token that does not start with a dash is
 // its value) names a subcommand or is the prompt. A resume without an id opens claude's picker: nothing to look up, pass.
 export function classify(argv, help) {
-  if (argv.some((a) => PASS_FLAGS.has(a) || a.startsWith(SESSION_ID_EQ))) return { mode: 'pass' };
+  if (argv.some((a) => PASS_FLAGS.has(a) || PASS_EQ.some((p) => a.startsWith(p)))) return { mode: 'pass' };
   const values = new Set(help.valueOptions);
   const subcommands = new Set(help.subcommands);
   let positional = false;

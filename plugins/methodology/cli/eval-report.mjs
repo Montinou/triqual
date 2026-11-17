@@ -111,7 +111,7 @@ export async function main(argv, {
       armRecords ??= readJsonl(join(evals, SESSION_ARMS_FILE)).rows;
       judgments ??= {};
       for (const c of snapshot.categories) {
-        if (c.check === 'judge' && !Object.hasOwn(judgments, c.id)) judgments[c.id] = readJsonl(join(evals, 'judgments', `${c.id}.jsonl`)).rows;
+        if (!Object.hasOwn(judgments, c.id)) judgments[c.id] = readJsonl(join(evals, 'judgments', `${c.id}.jsonl`)).rows;
       }
       const units = sessionUnits({
         sessions, experiment: e, snapshot, judgments, home, platform, armRecords,

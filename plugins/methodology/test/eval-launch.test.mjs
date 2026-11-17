@@ -134,6 +134,17 @@ test('classify: print, continue, fork, session-id, help and version never get an
   }
 });
 
+test('classify: --from-pr, --teleport, --cloud and --bg resume or start a remote or background session: never assigned', () => {
+  for (const argv of [
+    ['--from-pr'], ['--from-pr', '123'], ['--from-pr=123'], ['--dangerously-skip-permissions', '--from-pr', '123'],
+    ['--teleport'], ['--teleport', 'S1'], ['--teleport=S1'],
+    ['--cloud'], ['--cloud', 'fix the bug'], ['--cloud=main'],
+    ['--bg'], ['--bg', 'fix the bug'], ['--bg=x'],
+  ]) {
+    assert.deepEqual(classify(argv, HELP_PARSED), { mode: 'pass' }, argv.join(' '));
+  }
+});
+
 test('classify: a subcommand is a pass, but a value taken by an option is not a subcommand', () => {
   assert.deepEqual(classify(['mcp', 'list'], HELP_PARSED), { mode: 'pass' });
   assert.deepEqual(classify(['--verbose', 'plugins', 'x'], HELP_PARSED), { mode: 'pass' });

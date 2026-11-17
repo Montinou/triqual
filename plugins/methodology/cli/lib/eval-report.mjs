@@ -11,6 +11,8 @@ import { judgeExcluded } from './eval-taxonomy.mjs';
 // The smallest arm the verdicts accept, whatever the required sample size says.
 export const MIN_N = 30;
 export const VERDICTS = ['insufficient data', 'worse', 'propose', 'non-inferior, not cheaper', 'inconclusive'];
+// The entrypoint the sessions store keeps for an interactive session (print mode keeps "sdk-cli").
+const INTERACTIVE_ENTRYPOINT = 'cli';
 const UNKNOWN_PROJECT = '(unknown)';
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -30,7 +32,9 @@ export async function loadSnapshot(dir) {
 
 // The guardrail verdict of one session under `snapshot`: "unhealthy" when any evaluator fails, else "undecided" when any
 // is undecided or has no judgment, else "healthy". A code category runs the snapshot's frozen check on `session.file`
-// (the transcript; a missing file is undecided). A judge category reads the last line of judgments[category] for the
+// (the transcript); when that is undecided (the transcript is gone, the store outlives the 30-day cleanup) it takes the
+// last line of judgments[category] for the session recorded under the snapshot's check version, else it stays
+// undecided. A judge category reads the last line of judgments[category] for the
 // session and the snapshot's prompt hash; with none, or for a session whose project is under the snapshot's judgeExclude
 // (an unknown project counts as excluded), it has no judgment.
 export function sessionVerdict(session, snapshot, judgments, { home, platform } = {}) {
@@ -40,6 +44,11 @@ export function sessionVerdict(session, snapshot, judgments, { home, platform } 
     if (c.check === 'code') {
       const { CHECKS, runCheck } = snapshot.checks;
       result = Object.hasOwn(CHECKS, c.id) ? runCheck(c.id, {}, session.file ?? '', CHECKS) : 'undecided';
+      if (result === 'undecided' && typeof snapshot.checks.checkVersion === 'function') {
+        const version = snapshot.checks.checkVersion();
+        const kept = (judgments?.[c.id] ?? []).filter((r) => r.sessionId === session.sessionId && r.promptHash === version);
+        if (kept.length > 0) result = kept[kept.length - 1].result;
+      }
     } else if (judgeExcluded(session.project ?? null, snapshot.judgeExclude, { home, platform })) {
       result = 'undecided';
     } else {
@@ -161,13 +170,17 @@ export function buildRows(units, experiment) {
 
 // The units of a session experiment from the sessions store: the sessions of its arms (`arm` = "<id>/<name>") that
 // started on or after the experiment's start day, each scored by sessionVerdict under `snapshot`. A contaminated session
-// is not scored. `file(session)` is its transcript path. The store keeps no arm on a contaminated session (its records
+// is not scored; a session whose stored entrypoint is not the interactive one is no unit at all. `file(session)` is its transcript path. The store keeps no arm on a contaminated session (its records
 // disagree), so its arm is read from `armRecords` (the parsed lines of <evals>/session-arms.jsonl): the one arm of this
 // experiment its records name; none, or two different arms of it, and the session cannot be placed and is left out.
 export function sessionUnits({ sessions, experiment, snapshot, judgments, file, home, platform, armRecords = [] }) {
   const prefix = `${experiment.id}/`;
   const units = [];
   for (const s of sessions) {
+    // Only a new interactive session is assigned an arm. A `claude -p` started inside one runs the SessionStart hook under
+    // its own session id with the parent's arm in the environment, but never got the arm's settings: not a unit. A line
+    // with no entrypoint (an older store) keeps counting.
+    if (typeof s.entrypoint === 'string' && s.entrypoint !== INTERACTIVE_ENTRYPOINT) continue;
     let named = typeof s.arm === 'string' ? s.arm : null;
     if (named === null && s.contaminated === true) {
       const own = new Set(armRecords.filter((r) => r?.sessionId === s.sessionId && typeof r.arm === 'string' && r.arm.startsWith(prefix)).map((r) => r.arm));
