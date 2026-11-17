@@ -1,7 +1,7 @@
 // The experiment report of the evals: per-session guardrail verdicts scored by the experiment's frozen evaluator
 // snapshot, the arm rows (rate, cost, difference with the control) and the five non-inferiority verdicts.
 // node: built-ins only.
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { loadJudgePrompt } from './eval-judge.mjs';
@@ -227,4 +227,31 @@ export function roleRows({ experiment, records, assignments, root, snapshots }) 
     return planDescriptives(buildRows(units, experiment), units, { records, snapshots });
   }
   return buildRows(taskUnits({ experiment, assignments, records, root }), experiment);
+}
+
+// The units of a skill experiment: one per case of the suite run each arm wrote, <evalsDir>/skill-runs/<id>/<arm>.json as
+// `triqual eval skills` writes it ({ experiment, arm, at, auth, units: [{ caseId, pass, usd }] }). A case passed is
+// "healthy", failed "unhealthy"; a case whose `pass` is neither a boolean is "undecided", never counted. The cost of a unit
+// is its usd. A suite run holds no project or model, so a unit has none; an arm with no file (or one that cannot be read)
+// has no units. An arm name that is not a plain file name is skipped.
+export function skillUnits({ evalsDir, experiment }) {
+  const units = [];
+  for (const arm of Object.keys(isObject(experiment.arms) ? experiment.arms : {})) {
+    if (arm !== basename(arm) || arm.startsWith('.')) continue;
+    const file = join(evalsDir, 'skill-runs', experiment.id, `${arm}.json`);
+    if (!existsSync(file)) continue;
+    let doc;
+    try { doc = JSON.parse(readFileSync(file, 'utf8')); } catch { continue; }
+    for (const u of Array.isArray(doc?.units) ? doc.units : []) {
+      units.push({
+        arm,
+        contaminated: false,
+        verdict: u?.pass === true ? 'healthy' : u?.pass === false ? 'unhealthy' : 'undecided',
+        cost: finite(u?.usd) ? u.usd : null,
+        project: null,
+        models: [],
+      });
+    }
+  }
+  return units;
 }

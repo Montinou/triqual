@@ -5,8 +5,8 @@
 // { experiments: [{ id, kind, status, margin, evaluators, rows }] }, the row format later role and skill rows share; the
 // text form prints the same rows. A role experiment that is not paused has rows too: a planner experiment per plan
 // (the parallelism figures, cleanTaskRate, wallClockHours), any other role per task (clean-task rate, cost per task),
-// from the role-eval store, <evals>/role-assignments.jsonl and the subagent transcripts. Skill experiments have no rows
-// yet. Prints counts, ids, model names and project names, never transcript text. It also stores, once per session and
+// from the role-eval store, <evals>/role-assignments.jsonl and the subagent transcripts. A skill experiment has one row per arm
+// from the suite runs of `triqual eval skills` (<evals>/skill-runs/<id>/<arm>.json), a case being a unit (pass = healthy, usd = cost). Prints counts, ids, model names and project names, never transcript text. It also stores, once per session and
 // check version, the code verdict it computes for an assigned session whose transcript is still there
 // (<evals>/judgments/<category>.jsonl, the line `triqual eval check` writes). Exit codes: 0 done; 1 a snapshot or the store that cannot be read; 2 usage, an
 // invalid experiments file or an unknown experiment id.
@@ -20,7 +20,7 @@ import { SESSION_ARMS_FILE } from './lib/eval-arms.mjs';
 import { appendPrivate } from './lib/eval-ask.mjs';
 import { loadExperiments, validateExperiments } from './lib/eval-experiments.mjs';
 import { ensureDir, evalsDir, experimentsPath, transcriptsRoot } from './lib/eval-paths.mjs';
-import { buildRows, loadSnapshot, roleRows, sessionUnits } from './lib/eval-report.mjs';
+import { buildRows, loadSnapshot, roleRows, sessionUnits, skillUnits } from './lib/eval-report.mjs';
 import { readJsonl } from './lib/eval-store.mjs';
 import { loadRoleRecords, taskSnapshots } from './lib/eval-tasks.mjs';
 import { storePath, withStoreLock } from './lib/role-eval.mjs';
@@ -156,6 +156,11 @@ export async function main(argv, {
       assignments ??= readJsonl(join(evals, ASSIGNMENTS_FILE)).rows;
       if (Object.values(e.arms)[0]?.role === 'planner') snapshots ??= taskSnapshots(env);
       rows = roleRows({ experiment: e, records: roleRecords, assignments, root, snapshots });
+    }
+    // A skill experiment has rows once a suite run of its arms is written (`triqual eval skills`).
+    if (e.kind === 'skill') {
+      const units = skillUnits({ evalsDir: evals, experiment: e });
+      if (units.length > 0) rows = buildRows(units, e);
     }
     out.push({ id: e.id, kind: e.kind, status: e.status, margin: e.margin, evaluators: e.evaluators ?? null, rows });
   }
