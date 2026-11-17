@@ -37,7 +37,8 @@ function script(path, body) {
 }
 
 // `runs` is what the fake gh prints; null leaves gh out of PATH. `tasks` overrides the closed task.
-async function withWorld(fn, { runs = [], gh = true, task = {} } = {}) {
+// `build(repo)` replaces the default history (the task commit straight on main) and returns the task's commit sha.
+async function withWorld(fn, { runs = [], gh = true, task = {}, build = null } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'cm-escape-scan-')));
   try {
     const repo = join(root, 'repo');
@@ -45,8 +46,13 @@ async function withWorld(fn, { runs = [], gh = true, task = {} } = {}) {
     mkdirSync(repo);
     mkdirSync(bin);
     execFileSync('git', ['init', '-q', '-b', 'main', repo]);
-    const taskSha = commit(repo, 'a.txt', 'feat: the parser', T0);
-    commit(repo, 'b.txt', 'feat: the printer', day(0.2));
+    let taskSha;
+    if (build) {
+      taskSha = build(repo);
+    } else {
+      taskSha = commit(repo, 'a.txt', 'feat: the parser', T0);
+      commit(repo, 'b.txt', 'feat: the printer', day(0.2));
+    }
 
     const snapshot = [{
       repo: { name: 'repo', root: repo },
@@ -200,3 +206,31 @@ test('escapes scan: usage errors exit 2', () => withWorld((w) => {
   }
   assert.deepEqual(stored(w.store), []);
 }));
+
+// A phase branch: the task commit and a review-fix commit on it, merged into main by a merge commit.
+const phaseBranch = (repo, { merge }) => {
+  commit(repo, 'base.txt', 'chore: base', day(-1));
+  git(repo, ['checkout', '-q', '-b', 'phase']);
+  const taskSha = commit(repo, 'a.txt', 'feat: the parser', T0);
+  commit(repo, 'a.txt', 'fix(parser): phase review round 1', day(0.1));
+  git(repo, ['checkout', '-q', 'main']);
+  commit(repo, 'other.txt', 'chore: unrelated work on main', day(0.2));
+  if (merge) git(repo, ['merge', '--no-ff', '-q', '-m', 'merge: the phase', 'phase'], day(0.3));
+  return taskSha;
+};
+
+test('a review fix merged with the task is not an escape; a fix after the merge is, once', () => withWorld((w) => {
+  const fix = commit(w.repo, 'a.txt', 'fix(parser): handle the empty input', day(3));
+  const r = run(['escapes', 'scan'], { env: w.env, cwd: w.repo });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.out, '1 new\n');
+  assert.deepEqual(stored(w.store).map((x) => [x.source, x.ref]), [['post-merge-fix', fix]]);
+}, { build: (repo) => phaseBranch(repo, { merge: true }) }));
+
+test('a task whose commit is not on the default branch yet records nothing', () => withWorld((w) => {
+  commit(w.repo, 'a.txt', 'fix(parser): a fix on main that touches the same file', day(3));
+  const r = run(['escapes', 'scan'], { env: w.env, cwd: w.repo });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.out, '0 new\n');
+  assert.deepEqual(stored(w.store), []);
+}, { build: (repo) => phaseBranch(repo, { merge: false }) }));

@@ -292,3 +292,33 @@ test('no Arm line: no arms key', () => withRig({}, (r) => {
     { role: 'spec-reviewer', experiment: 'review-model', arm: 'control', model: 'opus', effort: 'medium' },
   ]);
 }));
+
+test('an Arm line that would not validate is dropped with a warning and the close goes on', () => withRig({}, (r) => {
+  prepared(r, 2);
+  const badEffort = 'Arm: T2 tdd-implementer impl-effort/arm-a sonnet ultra';
+  const badName = 'Arm: T2 spec-reviewer Review-Model/control opus medium';
+  r.appendLedger(badEffort, 'Arm: T2 spec-reviewer review-model/control opus medium', badName);
+  HEAVY_OUTPUTS(r, 2);
+
+  const res = ok(r.run('task-close', r.plan, '2'));
+  assert.equal(out(res).record, 'recorded');
+  const record = recordOf(r, 2);
+  assert.deepEqual(validateRecord(record), { ok: true });
+  assert.deepEqual(record.arms, [
+    { role: 'spec-reviewer', experiment: 'review-model', arm: 'control', model: 'opus', effort: 'medium' },
+  ]);
+  assert.deepEqual(storedRecords(r)[0].arms, record.arms);
+  assert.ok(res.stderr.includes(badEffort), res.stderr);
+  assert.ok(res.stderr.includes(badName), res.stderr);
+  assert.equal(res.stderr.split('\n').filter((l) => l.includes('Arm:')).length, 2, res.stderr); // the valid line is not named
+}));
+
+test('every Arm line invalid: no arms key, close succeeds', () => withRig({}, (r) => {
+  prepared(r, 2);
+  r.appendLedger('Arm: T2 spec-reviewer review-model/control opus enormous');
+  HEAVY_OUTPUTS(r, 2);
+  const res = ok(r.run('task-close', r.plan, '2'));
+  assert.equal(out(res).record, 'recorded');
+  assert.equal(Object.hasOwn(recordOf(r, 2), 'arms'), false);
+  assert.match(res.stderr, /Arm: T2 spec-reviewer review-model\/control opus enormous/);
+}));

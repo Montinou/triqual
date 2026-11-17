@@ -60,8 +60,10 @@ export const ESCAPE_SOURCES = Object.freeze(['post-merge-fix', 'red-ci', 'bug-re
 // A commit sha (7 to 40 hex) or a PR number (optionally `#`).
 const REF = /^([0-9a-f]{7,40}|#?[0-9]{1,9})$/;
 const PLAN_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-// An experiment arm: `<name>/<name>`, lowercase.
-const ARM = /^[a-z0-9-]+\/[a-z0-9-]+$/;
+// An experiment id and an arm name: lowercase letters, digits and `-`. A plan-review's `arm` is `<experiment>/<arm>`; a
+// task-review's `arms` entries carry the two halves apart, under the same rule.
+const ARM_PART = /^[a-z0-9-]+$/;
+const armName = (value) => value.split('/').length === 2 && value.split('/').every((part) => ARM_PART.test(part));
 const NOTE_MAX = 200;
 // A final-escapes entry's optional category (a short slug) and summary (one line); a task-review arm's role and effort.
 const ESCAPE_CATEGORY = /^[a-z][a-z0-9-]{0,39}$/;
@@ -255,8 +257,20 @@ function validateArm(arm, path) {
   object(arm, path);
   noUnknown(arm, ['role', 'experiment', 'arm', 'model', 'effort'], path);
   if (typeof arm.role !== 'string' || !ROLE_NAME.test(arm.role)) fail(join2(path, 'role'));
-  for (const key of ['experiment', 'arm', 'model']) if (typeof arm[key] !== 'string') fail(join2(path, key));
+  for (const key of ['experiment', 'arm']) if (typeof arm[key] !== 'string' || !ARM_PART.test(arm[key])) fail(join2(path, key));
+  if (typeof arm.model !== 'string') fail(join2(path, 'model'));
   if (!EFFORTS.includes(arm.effort)) fail(join2(path, 'effort'));
+}
+
+// Whether one `arms` entry is valid on its own (task-close drops an entry that is not, instead of failing its close).
+export function validArm(arm) {
+  try {
+    validateArm(arm, 'arm');
+    return true;
+  } catch (err) {
+    if (err instanceof Invalid) return false;
+    throw err;
+  }
 }
 
 function validateFinalEscapes(obj) {
@@ -288,7 +302,7 @@ function validateEscape(obj) {
 
 function validatePlanReview(obj) {
   if (typeof obj.plan !== 'string' || !PLAN_NAME.test(obj.plan)) fail('plan');
-  if (obj.arm !== null && (typeof obj.arm !== 'string' || !ARM.test(obj.arm))) fail('arm');
+  if (obj.arm !== null && (typeof obj.arm !== 'string' || !armName(obj.arm))) fail('arm');
   for (const key of ['tasks', 'phases', 'runnerOnly']) count(obj, key, '');
   if (typeof obj.parallelism !== 'number' || !Number.isFinite(obj.parallelism) || obj.parallelism < 1) fail('parallelism');
   const findings = object(obj.auditFindings, 'auditFindings');

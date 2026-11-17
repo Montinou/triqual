@@ -1058,6 +1058,21 @@ test('task-review with arms is valid; arms with an unknown key is rejected', () 
   assert.deepEqual(validateRecord(taskReviewRecord({ plan: 'bad plan' })), { ok: false, field: 'plan' });
 });
 
+test('arms and plan-review arm follow one name rule for experiment ids and arm names', () => {
+  const inArms = (over) => validateRecord(taskReviewRecord({ arms: [{ ...ARM_ENTRY, ...over }] }));
+  const inPlanReview = (arm) => validateRecord(planReviewRecord({ arm }));
+  for (const name of ['control', 'arm-b', 'a1', '0', 'x-1-y']) {
+    assert.deepEqual(inArms({ experiment: name, arm: name }), { ok: true }, name);
+    assert.deepEqual(inPlanReview(`${name}/${name}`), { ok: true }, name);
+  }
+  for (const name of ['', 'Upper', 'has space', 'a/b', 'under_score', 'a.b']) {
+    assert.deepEqual(inArms({ experiment: name }), { ok: false, field: 'arms.0.experiment' }, `experiment ${JSON.stringify(name)}`);
+    assert.deepEqual(inArms({ arm: name }), { ok: false, field: 'arms.0.arm' }, `arm ${JSON.stringify(name)}`);
+    assert.deepEqual(inPlanReview(`${name}/ok`), { ok: false, field: 'arm' }, `plan-review ${JSON.stringify(name)}`);
+    assert.deepEqual(inPlanReview(`ok/${name}`), { ok: false, field: 'arm' }, `plan-review ${JSON.stringify(name)}`);
+  }
+});
+
 test('escape source revert is valid', () => {
   assert.ok(ESCAPE_SOURCES.includes('revert'));
   assert.deepEqual(validateRecord({ v: 2, at: '2026-09-06T10:00:00Z', kind: 'escape', source: 'revert', ref: '#42' }), { ok: true });
