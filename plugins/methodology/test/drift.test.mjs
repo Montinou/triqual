@@ -198,7 +198,7 @@ const BOTH_DRIFT = { claudeMd: '# Machine\n', settings: JSON.stringify({ enabled
 
 function runHook(pluginRoot, home, input, extraEnv = {}) {
   // Never log into a real plugin data dir, and never reach the real config through XDG_CONFIG_HOME.
-  const { CLAUDE_PLUGIN_DATA: _, XDG_CONFIG_HOME: __, ...env } = process.env;
+  const { CLAUDE_PLUGIN_DATA: _, XDG_CONFIG_HOME: __, TRIQUAL_EVAL_ARM: ___, TRIQUAL_EVAL_LAUNCH: ____, TRIQUAL_EVALS_DIR: _____, ...env } = process.env;
   return spawnSync(process.execPath, [join(pluginRoot, 'cli', 'drift.mjs')], {
     env: { ...env, HOME: home, ...extraEnv }, input, encoding: 'utf8',
   });
@@ -506,5 +506,55 @@ test('no setup notice when the CLI is installed', () => {
       assert.equal(context, `${lines}\n\n${WRAPPED(SKILL_TEXT)}`);
       assert.ok(context.includes('triqual sync'));
     }, BOTH_DRIFT);
+  });
+});
+
+// Arm attribution (evals): the hook records which experiment arm launched the session, and never changes what it prints.
+const ARMS_INPUT = (source) => JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'sess-1', source, cwd: tmpdir() });
+const armRows = (evals) => readFileSync(join(evals, 'session-arms.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+const stdoutOf = (context) => JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: context } });
+
+test('no env var: record has arm null and the hook\'s stdout is byte-identical', () => {
+  withPluginCopy([SUPERSEDED], (pluginRoot) => {
+    withHome((home) => {
+      const evals = join(home, 'evals');
+      const expected = stdoutOf(sessionContext({ home, pluginRoot, source: 'startup' }));
+      const r = runHook(pluginRoot, home, ARMS_INPUT('startup'), { TRIQUAL_EVALS_DIR: evals });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(r.stdout, expected);
+      const [row] = armRows(evals);
+      assert.equal(row.sessionId, 'sess-1');
+      assert.equal(row.source, 'startup');
+      assert.equal(row.arm, null);
+      assert.equal(row.launchId, null);
+      // With the variables set: the same stdout, and the record carries them.
+      const armed = runHook(pluginRoot, home, ARMS_INPUT('clear'), { TRIQUAL_EVALS_DIR: evals, TRIQUAL_EVAL_ARM: 'arm-a', TRIQUAL_EVAL_LAUNCH: 'launch-1' });
+      assert.equal(armed.stdout, stdoutOf(sessionContext({ home, pluginRoot, source: 'clear' })));
+      assert.deepEqual(armRows(evals).map((x) => [x.source, x.arm, x.launchId]), [['startup', null, null], ['clear', 'arm-a', 'launch-1']]);
+    }, BOTH_DRIFT);
+  });
+});
+
+test('an unwritable evals dir: hook exits 0, stdout unchanged, error logged', () => {
+  withPluginCopy([SUPERSEDED], (pluginRoot) => {
+    withHome((home) => {
+      const blocker = join(home, 'blocker');
+      writeFileSync(blocker, 'a file where a directory is needed');
+      const expected = stdoutOf(sessionContext({ home, pluginRoot, source: 'startup' }));
+      const data = join(home, 'plugin-data');
+      const r = runHook(pluginRoot, home, ARMS_INPUT('startup'), { TRIQUAL_EVALS_DIR: join(blocker, 'evals'), CLAUDE_PLUGIN_DATA: data });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(r.stdout, expected);
+      assert.match(readFileSync(join(data, 'log'), 'utf8'), /drift: /);
+    }, BOTH_DRIFT);
+  });
+});
+
+test('a hook input with no session_id writes no record', () => {
+  withHome((home) => {
+    const evals = join(home, 'evals');
+    const r = runHook(PLUGIN_ROOT, home, JSON.stringify({ source: 'startup' }), { TRIQUAL_EVALS_DIR: evals });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(existsSync(join(evals, 'session-arms.jsonl')), false);
   });
 });

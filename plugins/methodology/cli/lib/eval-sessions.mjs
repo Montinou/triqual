@@ -3,6 +3,7 @@
 // assistant message per content block, so a turn is counted once per message id and request id (as cost.mjs).
 import { readdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { attributeArm } from './eval-arms.mjs';
 
 const IDLE_MS = 300_000;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -21,7 +22,8 @@ const usdOf = (p, u) => (u.input * p.input + u.output * p.output + u.cacheRead *
 const isPrompt = (c) => typeof c === 'string'
   || (Array.isArray(c) && c.some((b) => b?.type === 'text') && !c.some((b) => b?.type === 'tool_result'));
 
-export function sessionSignals(file, { prices }) {
+// armRecords: the parsed lines of <evals>/session-arms.jsonl (none by default); they give `arm` and `contaminated`.
+export function sessionSignals(file, { prices, armRecords = [] }) {
   let text = '';
   try { text = readFileSync(file, 'utf8'); } catch { /* an unreadable file has no signals */ }
   // Null-prototype map: a model name is only ever a key (`__proto__` included).
@@ -98,6 +100,7 @@ export function sessionSignals(file, { prices }) {
   }
   sig.ctxAvg = sig.turns === 0 ? 0 : ctxSum / sig.turns;
   sig.unpriced = [...unpriced].sort();
+  Object.assign(sig, attributeArm(sig.sessionId, armRecords));
   sig.models = { ...models };
   sig.days = Object.fromEntries(Object.entries(days).map(([d, byModel]) => [d, { ...byModel }]));
   return sig;

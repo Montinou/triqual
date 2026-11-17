@@ -9,6 +9,7 @@
 // ~/.claude/CLAUDE.md, and names `triqual sync --harness <id>`.
 // The evals notice (the newest round's judges below the bar, failed steps) is for every harness, in a checkout of this
 // repository only: the session's cwd comes from the hook's stdin payload (the Codex and Grok bridge passes it through).
+// SessionStart also appends the session's experiment arm record to <evals>/session-arms.jsonl (lib/eval-arms.mjs), silently.
 // Never throws; the hook always exits 0. A swallowed error (not a missing settings or CLAUDE.md file) is logged as one
 // line to ${CLAUDE_PLUGIN_DATA}/log when that is set.
 import { appendFileSync, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
@@ -21,6 +22,7 @@ import { readMethodologyConfig, supersededEnabled } from './lib/settings.mjs';
 import { HARNESS_IDS, expectedRules, harnessPaths } from './lib/harnesses.mjs';
 import { evalsDir } from './lib/eval-paths.mjs';
 import { evalsCheckout, evalsNotice } from './lib/eval-notice.mjs';
+import { recordSessionArm } from './lib/eval-arms.mjs';
 
 const RULES_NOTICE = 'triqual: global rules out of date: run `triqual sync`';
 // Injected first, on Claude's path, while the triqual CLI is not installed (/methodology:setup installs it).
@@ -165,8 +167,9 @@ export function sessionContext({ home, pluginRoot, dataDir = null, source, harne
   return parts.length > 0 ? parts.join('\n\n') : null;
 }
 
-// The hook's `source` and `cwd`, from its stdin JSON, read once. source is undefined when the input is empty or not JSON;
-// cwd falls back to the process's working directory when the payload has no string cwd.
+// The hook's `source`, `sessionId` (its session_id) and `cwd`, from its stdin JSON, read once. source and sessionId are
+// undefined when the input is empty or not JSON; cwd falls back to the process's working directory when the payload has
+// no string cwd.
 async function readInput() {
   let payload = null;
   try {
@@ -174,7 +177,7 @@ async function readInput() {
     for await (const chunk of process.stdin) input += chunk;
     payload = JSON.parse(input);
   } catch { /* an empty or non-JSON input has no fields */ }
-  return { source: payload?.source, cwd: typeof payload?.cwd === 'string' ? payload.cwd : process.cwd() };
+  return { source: payload?.source, sessionId: payload?.session_id, cwd: typeof payload?.cwd === 'string' ? payload.cwd : process.cwd() };
 }
 
 // The `--harness <id>` argument when it names a known harness, else null.
@@ -185,11 +188,17 @@ function harnessArg(argv) {
 }
 
 async function main() {
-  const { source, cwd } = await readInput();
+  const { source, sessionId, cwd } = await readInput();
+  const dataDir = process.env.CLAUDE_PLUGIN_DATA || null;
+  try { // the arm record (evals) never changes what the hook prints, or whether it exits 0
+    recordSessionArm({ input: { sessionId, source }, env: process.env, home: homedir(), onError: (err) => logError(dataDir, err) });
+  } catch (err) {
+    logError(dataDir, err);
+  }
   const context = sessionContext({
     home: homedir(),
     pluginRoot: dirname(dirname(fileURLToPath(import.meta.url))),
-    dataDir: process.env.CLAUDE_PLUGIN_DATA || null,
+    dataDir,
     source,
     harness: harnessArg(process.argv.slice(2)),
     env: process.env,

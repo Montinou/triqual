@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sessionSignals } from '../cli/lib/eval-sessions.mjs';
@@ -270,4 +270,73 @@ test('review sample --more stamps every added row with the command\'s now and le
   rmSync(join(g.evals, 'review', 'sample.jsonl'));
   assert.equal((await run(g, ['sample', '--n', '4', '--seed', '2'])).code, 0);
   assert.ok(readFileSync(join(g.evals, 'review', 'sample.jsonl'), 'utf8').trim().split('\n').every((l) => !('at' in JSON.parse(l))));
+});
+
+// Arm attribution in the store: SessionStart records arrive after the session's line was stored.
+const addArm = (evals, rec) => appendFileSync(join(evals, 'session-arms.jsonl'), typeof rec === 'string' ? rec : `${JSON.stringify(rec)}\n`);
+const armRec = (sessionId, arm, source = 'startup') => ({ sessionId, source, arm, launchId: null, at: '2026-11-01T10:00:00.000Z' });
+function armFixture() {
+  const dir = tmp();
+  const root = join(dir, 'projects');
+  mkdirSync(join(root, '-work-p'), { recursive: true });
+  writeFileSync(join(root, '-work-p', 'sa.jsonl'), jsonl([
+    user(`skill at ${path('1.9.3')}`, '2026-11-01T10:00:00.000Z'),
+    turn('m1', '2026-11-01T10:00:05.000Z'),
+  ]));
+  const evals = join(dir, 'evals');
+  const file = join(evals, 'sessions.jsonl');
+  const run = (n) => refreshSessions({ root, file, prices: PRICES, now: new Date(`2026-11-0${n}T00:00:00.000Z`) });
+  const stored = () => readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  return { root, evals, file, run, stored };
+}
+
+test('a stored session gains its arm after a later SessionStart record', () => {
+  const f = armFixture();
+  assert.equal(f.run(2).added, 1);
+  assert.deepEqual([f.stored()[0].arm, f.stored()[0].contaminated], [null, false]);
+  addArm(f.evals, armRec('sa', 'arm-a'));
+  const again = f.run(3);
+  assert.equal(again.updated, 1);
+  assert.deepEqual([f.stored()[0].arm, f.stored()[0].contaminated], ['arm-a', false]);
+  assert.equal(again.sessions[0].arm, 'arm-a');
+  assert.equal(f.run(4).updated, 0, 'nothing changed: nothing rewritten');
+});
+
+test('a stored session becomes contaminated after a disagreeing record', () => {
+  for (const second of ['arm-b', null]) {
+    const f = armFixture();
+    f.run(2);
+    addArm(f.evals, armRec('sa', 'arm-a'));
+    f.run(3);
+    addArm(f.evals, armRec('sa', second, 'clear'));
+    assert.equal(f.run(4).updated, 1);
+    assert.deepEqual([f.stored()[0].arm, f.stored()[0].contaminated], [null, true], String(second));
+  }
+});
+
+test('a stored line keeps its days and methodologyVersion when only its arm changes', () => {
+  const f = armFixture();
+  f.run(2);
+  const before = f.stored()[0];
+  assert.ok(Object.keys(before.days).length > 0);
+  addArm(f.evals, armRec('sa', 'arm-a'));
+  f.run(3);
+  const after = f.stored()[0];
+  assert.equal(after.arm, 'arm-a');
+  assert.deepEqual(after.days, before.days);
+  assert.equal(after.methodologyVersion, '1.9.3');
+  assert.equal(after.refreshedAt, before.refreshedAt, 'a re-attribution is not a re-extraction');
+  assert.deepEqual({ ...after, arm: null }, before);
+});
+
+test('a truncated session-arms line is skipped, and a line whose transcript is gone is re-attributed', () => {
+  const f = armFixture();
+  f.run(2);
+  mkdirSync(f.evals, { recursive: true });
+  addArm(f.evals, armRec('sa', 'arm-a'));
+  addArm(f.evals, '{"sessionId":"sa","source":"clear","arm":"arm-');
+  rmSync(join(f.root, '-work-p', 'sa.jsonl'));
+  assert.equal(f.run(3).updated, 1);
+  const row = f.stored()[0];
+  assert.deepEqual([row.sessionId, row.arm, row.contaminated], ['sa', 'arm-a', false], 'the torn record counted for nothing');
 });
