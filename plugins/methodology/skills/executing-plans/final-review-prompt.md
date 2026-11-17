@@ -224,8 +224,7 @@ Subagent (roles:final-adversarial-reviewer):
 - `[SPEC_PATH]` — the spec the plan names; "none" when the plan has no reachable spec
 - `[REVIEW_FOCUS]` — the plan's Review Focus section, copied verbatim; "none" when the plan has none
 - `[SDD_LEDGER_PATH]` — the workspace ledger, `sdd-ledger.md`; the reviewer reads its `Ruling:`, deferred-minor and parked lines (see Seams Scope); "none" in a phase review (see Phase Scope)
-- `[PHASE_RANGE]` — phase review only: the phase base..phase top range of the package (the phase base is the
-  previous phase's branch tip, or `git merge-base <trunk> HEAD` for phase 1)
+- `[PHASE_RANGE]` — phase review only: the phase base..phase top range of the package, the phase's recorded `base` (`node scripts/stack.mjs status PLAN_FILE`) to its branch tip
 - `[PHASE_TASKS]` — phase review only: this phase's tasks, as the plan states them (the task headings and goals)
 - `[PHASE_LEDGER_LINES]` — phase review only: the file `<workspace>/phase-<N>-ledger.md`, holding this phase's
   `Ruling:`, deferred-minor and parked ledger lines, which the controller copies there
