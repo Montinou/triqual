@@ -6,7 +6,12 @@
 // Prints text:
 //   no timeline                       alone, when the ledger has no `Opened:` / `Closed:` line
 //   plan <stem>: wall-clock <W> min, task time <S> min, achieved <A>, <K> at once, planned: <P>
+//   P<n>: wall-clock ..., planned: <P>   one row per phase in plan order, in the plan line's form over the closed windows of
+//                                     that phase's tasks (`P<n>: no timeline` when it has none); only for a plan of 2+ phases
+//   phase windows: <M> phases at once    (`1 phase at once`) the most closed phase windows, `startedAt` to `doneAt` of the stack
+//                                     state, open at one instant; `phase windows: unknown` with no state file
 //   open: T<n> since <time>           one per window opened and never closed, in ledger order
+//   open: P<n> since <startedAt>      one per phase with a `startedAt` and no `doneAt` (2+ phases), after the task `open:` lines
 //   Serial: ...                       every `Serial:` line as written, in ledger order
 //
 // Lines read (the form task-open and task-close write): `Opened: T<n> <time>`, `Closed: T<n> <time>` (a time is UTC
@@ -17,7 +22,9 @@
 // wall-clock (0 when the wall-clock is 0) and at once = the most windows open at one instant (a window that closes when another
 // opens does not count as both).
 // Planned is the `parallelism` of `triqual plan lanes PLAN_FILE --json`, read when that command exits 0 or 1 (1: the plan has
-// layout violations) and prints an object with a finite `parallelism`; otherwise `unknown`.
+// layout violations) and prints an object with a finite `parallelism`; otherwise `unknown`. A phase row's planned is the
+// `parallelism` of the `phaseRows` entry with its `n`, else `unknown`. A phase time of the state that is not an ISO time, or a
+// `doneAt` earlier than its `startedAt`, is skipped with `timeline: skipped P<n> <field> <value>` on stderr.
 //
 // Exit codes: 0 printed (also with no time lines), 2 usage / no such plan file / malformed plan, 3 refused (the plan has no
 // ledger), 1 any other failure (`timeline: <message>`). Node built-ins and the files next to it only.
@@ -27,6 +34,7 @@ import { basename, join } from 'node:path';
 
 import * as common from './lib/task-common.mjs';
 import { PlanError, readPhases } from './lib/plan.mjs';
+import { readState, statePath } from './stack.mjs';
 
 const { ScriptError, EXIT_USAGE, EXIT_REFUSED, EXIT_OTHER } = common;
 
@@ -37,19 +45,22 @@ const MINUTE_MS = 60000;
 
 const skip = (line) => process.stderr.write(`timeline: skipped ${line}\n`);
 
-// The `parallelism` the layout planned, else 'unknown'.
+const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+const parallelismOf = (value) => (isObject(value) && typeof value.parallelism === 'number' && Number.isFinite(value.parallelism) ? value.parallelism.toFixed(2) : 'unknown');
+
+// What the layout planned: { plan: the `parallelism` or 'unknown', phase(n): that phase row's `parallelism` or 'unknown' }.
 function planned(planFile) {
   const res = spawnSync('triqual', ['plan', 'lanes', planFile, '--json'], { encoding: 'utf8' });
-  if (res.error || (res.status !== 0 && res.status !== 1)) return 'unknown';
-  try {
-    const out = JSON.parse(res.stdout);
-    if (out !== null && typeof out === 'object' && !Array.isArray(out) && typeof out.parallelism === 'number' && Number.isFinite(out.parallelism)) {
-      return out.parallelism.toFixed(2);
+  let out = null;
+  if (!res.error && (res.status === 0 || res.status === 1)) {
+    try {
+      out = JSON.parse(res.stdout);
+    } catch {
+      // not JSON: unknown
     }
-  } catch {
-    // not JSON: unknown
   }
-  return 'unknown';
+  const rows = isObject(out) && Array.isArray(out.phaseRows) ? out.phaseRows : [];
+  return { plan: parallelismOf(out), phase: (n) => parallelismOf(rows.find((row) => isObject(row) && row.n === n)) };
 }
 
 // { closed: [{ n, open, close }] (ms), open: [{ n, time }] } from the ledger lines; lines that cannot be windows are skipped.
@@ -89,6 +100,40 @@ function atOnce(windows) {
   return most;
 }
 
+// The sums of a set of closed windows, in the form of the plan line (and of a phase row).
+function row(windows, plannedValue) {
+  const wall = windows.length === 0 ? 0 : (Math.max(...windows.map((w) => w.close)) - Math.min(...windows.map((w) => w.open))) / MINUTE_MS;
+  const sum = windows.reduce((total, w) => total + (w.close - w.open), 0) / MINUTE_MS;
+  const achieved = wall === 0 ? 0 : sum / wall;
+  return `wall-clock ${wall.toFixed(1)} min, task time ${sum.toFixed(1)} min, achieved ${achieved.toFixed(2)}, ${atOnce(windows)} at once, planned: ${plannedValue}`;
+}
+
+// { closed: [{ open, close }] (ms), open: [{ n, time }] } from the state's phase times; a time that is not ISO is skipped.
+function phaseWindows(state, phases) {
+  const closed = [];
+  const open = [];
+  for (const { n } of phases) {
+    const entry = Array.isArray(state.phases) ? state.phases.find((p) => isObject(p) && p.n === n) : undefined;
+    if (!entry) continue;
+    const times = {};
+    for (const field of ['startedAt', 'doneAt']) {
+      const value = entry[field];
+      if (value === undefined || value === null) continue;
+      const ms = typeof value === 'string' && ISO_TIME.test(value) ? Date.parse(value) : NaN;
+      if (Number.isNaN(ms)) skip(`P${n} ${field} ${value}`);
+      else times[field] = { ms, value };
+    }
+    if (times.startedAt && times.doneAt && times.doneAt.ms < times.startedAt.ms) {
+      skip(`P${n} doneAt ${times.doneAt.value}`);
+    } else if (times.startedAt && times.doneAt) {
+      closed.push({ open: times.startedAt.ms, close: times.doneAt.ms });
+    } else if (times.startedAt && (entry.doneAt === undefined || entry.doneAt === null)) {
+      open.push({ n, time: times.startedAt.value });
+    }
+  }
+  return { closed, open };
+}
+
 function main(args) {
   const [plan, ...extra] = args;
   if (!plan || extra.length > 0) throw new ScriptError(EXIT_USAGE, USAGE);
@@ -99,8 +144,9 @@ function main(args) {
     throw new ScriptError(EXIT_USAGE, `no such plan file: ${plan}`);
   }
   const stem = basename(plan, '.md');
+  let phases;
   try {
-    readPhases(text, stem);
+    ({ phases } = readPhases(text, stem));
   } catch (e) {
     if (e instanceof PlanError) throw new ScriptError(EXIT_USAGE, `${plan}: ${e.message}`);
     throw e;
@@ -112,12 +158,29 @@ function main(args) {
 
   if (!lines.some((l) => TIME_LINE.test(l))) return 'no timeline\n';
   const { closed, open } = windowsOf(lines);
-  const wall = closed.length === 0 ? 0 : (Math.max(...closed.map((w) => w.close)) - Math.min(...closed.map((w) => w.open))) / MINUTE_MS;
-  const sum = closed.reduce((total, w) => total + (w.close - w.open), 0) / MINUTE_MS;
-  const achieved = wall === 0 ? 0 : sum / wall;
+  const layout = planned(plan);
+  const phaseLines = [];
+  const phaseOpen = [];
+  if (phases.length >= 2) {
+    for (const phase of phases) {
+      const own = closed.filter((w) => phase.tasks.includes(`T${w.n}`));
+      phaseLines.push(own.length === 0 ? `P${phase.n}: no timeline` : `P${phase.n}: ${row(own, layout.phase(phase.n))}`);
+    }
+    const state = readState(statePath(common.git(['rev-parse', '--show-toplevel']), plan));
+    if (state === null) {
+      phaseLines.push('phase windows: unknown');
+    } else {
+      const windows = phaseWindows(state, phases);
+      const most = atOnce(windows.closed);
+      phaseLines.push(`phase windows: ${most} ${most === 1 ? 'phase' : 'phases'} at once`);
+      phaseOpen.push(...windows.open.map((w) => `open: P${w.n} since ${w.time}`));
+    }
+  }
   return `${[
-    `plan ${stem}: wall-clock ${wall.toFixed(1)} min, task time ${sum.toFixed(1)} min, achieved ${achieved.toFixed(2)}, ${atOnce(closed)} at once, planned: ${planned(plan)}`,
+    `plan ${stem}: ${row(closed, layout.plan)}`,
+    ...phaseLines,
     ...open.map((w) => `open: T${w.n} since ${w.time}`),
+    ...phaseOpen,
     ...lines.filter((l) => l.startsWith('Serial: ')),
   ].join('\n')}\n`;
 }
