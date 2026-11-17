@@ -180,7 +180,7 @@ test('Next by the first task that is not complete', () => {
   assert.equal(nextOf([...upTo(1), 'BASE: T2 abcdef0123']), `Continue T2 (BASE abcdef0): finish its build and review, then node scripts/task-close ${plan} 2.`);
   assert.equal(
     nextOf([...upTo(1), 'BASE: T2 abcdef0123', 'Task 2: awaiting landing']),
-    `Land T2: once every earlier task has landed, node scripts/task-close ${plan} 2.`,
+    `Land T2: node scripts/task-close ${plan} 2.`,
   );
   assert.equal(
     nextOf([...upTo(1), 'BASE: T2 abcdef0123', 'Task 2: awaiting landing', 'Landed: T2 1234567890']),
@@ -190,6 +190,28 @@ test('Next by the first task that is not complete', () => {
     nextOf([...upTo(1), 'BASE: T2 abcdef0123', 'BASE: T2 0123456abc', 'Task 2: landing conflict — re-run sequential']),
     `Re-run T2 sequentially: node scripts/task-open ${plan} 2.`,
   );
+});
+
+test('time lines and Serial lines change no row and no Next line', () => {
+  const lines = [
+    HEADER,
+    'BASE: T1 0000001aaaaaaa',
+    'Opened: T1 2026-11-16T10:00:00Z',
+    'Closed: T1 2026-11-16T10:10:00Z',
+    'Task 1: complete (commits 0000001..1111111, review clean)',
+    'BASE: T2 abcdef0123',
+    'Opened: T2 2026-11-16T10:10:00Z',
+    'Serial: T2, T3 — one shared file',
+  ];
+  assert.equal(
+    nextOf(lines),
+    `Continue T2 (BASE abcdef0): finish its build and review, then node scripts/task-close ${PLAN_REL} 2.`,
+  );
+  withRig({ ledger: lines }, ({ run }) => {
+    const res = run(PLAN_REL, '1');
+    assert.equal(res.status, 0, res.stderr);
+    assert.ok(res.stdout.includes('| T1 | complete | commits 0000001..1111111, review clean |'), res.stdout);
+  });
 });
 
 test('an undone task that was opened again is running, and a reopened complete task is running', () => {

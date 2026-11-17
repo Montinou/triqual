@@ -21,14 +21,12 @@ export const EXIT_OTHER = 1;
 export const EXIT_USAGE = 2;
 export const EXIT_REFUSED = 3;
 
-// A failed step with the exit code the script ends with. `logged: false` is a refusal that is a wait, not a failure (a task
-// that must wait for an earlier one): the script exits with its code and cause but appends no `Error:` line.
+// A failed step with the exit code the script ends with.
 export class ScriptError extends Error {
-  constructor(code, message, { logged = true } = {}) {
+  constructor(code, message) {
     super(message);
     this.name = 'ScriptError';
     this.code = code;
-    this.logged = logged;
   }
 }
 
@@ -124,6 +122,27 @@ export function ledgerLines(workspace) {
   return existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter((l) => l !== '') : [];
 }
 
+// ---- the time lines ----
+
+// `Opened: T<N> <time>` and `Closed: T<N> <time>` mark the window a task was open: task-open writes the first, task-close the
+// second (one write before the complete line), and the timeline reads both. A time is UTC, to the second.
+export const ISO_TIME = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/;
+export const TIME_LINE = /^(Opened|Closed): T(\d+) (\S+)\s*$/;
+
+// The time every script writes: TRIQUAL_NOW when set and not empty (a test or a replay sets it), else the clock.
+export function now() {
+  const set = process.env.TRIQUAL_NOW;
+  if (set === undefined || set === '') return new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+  if (!ISO_TIME.test(set)) throw new ScriptError(EXIT_USAGE, `TRIQUAL_NOW must be an ISO time like 2026-11-16T10:00:00Z, not ${set}`);
+  return set;
+}
+
+// The kind of the last time line of task N in `lines` ('Opened' or 'Closed'), else null.
+export function lastTimeLine(lines, n) {
+  const hits = lines.map((l) => TIME_LINE.exec(l)).filter((m) => m && Number(m[2]) === n);
+  return hits.length ? hits.at(-1)[1] : null;
+}
+
 // The sha of the last `BASE: T<N> <sha>` line, else null.
 export function lastBase(lines, n) {
   const re = new RegExp(`^BASE: T${n} (\\S+)\\s*$`);
@@ -159,6 +178,20 @@ export const UNDONE_LINE = (n) => `Task ${n}: landing conflict — re-run sequen
 // The index in `lines` of the last undo line of the task, else -1.
 export function lastUndoIndex(lines, n) {
   return lines.findLastIndex((l) => l === UNDONE_LINE(n));
+}
+
+// Whether the task is undone: its last `BASE: T<N>` line is followed by its undo line, and no `Task <N>: complete (commits ` line
+// comes after them. Nothing of it is in the main checkout (its worktree and branch were removed) until its sequential re-run starts.
+export function isUndone(lines, n) {
+  const undo = lastUndoIndex(lines, n);
+  return undo > lastBaseIndex(lines, n) && !lines.slice(undo + 1).some((l) => l.startsWith(`Task ${n}: complete (commits `));
+}
+
+// The line `task-open` writes when it opens an undone task without --worktree: the sequential re-run has started.
+export const RERUN_LINE = (n) => `Rerun: T${n}`;
+// Whether the sequential re-run of the task's undone landing has started: a `Rerun: T<N>` line after the last undo line.
+export function rerunStarted(lines, n) {
+  return lines.findLastIndex((l) => l === RERUN_LINE(n)) > lastUndoIndex(lines, n);
 }
 
 // Whether a `Tested: T<N> <sha>` line (written after the landing's Test files passed at <sha>) is among `lines`.
@@ -283,8 +316,8 @@ export function landingTestTimeoutMs() {
   return Number(raw);
 }
 
-// The numbers of the tasks before T<N> in its phase (a plan with no phases is one phase of every task).
-export function earlierTasks(planFile, n) {
+// The ids (`T3`) of T<N>'s phase in plan order, T<N> included (a plan with no phases is one phase of every task).
+function phaseIds(planFile, n) {
   let phases;
   try {
     phases = readPhases(readFileSync(planFile, 'utf8'), basename(planFile).replace(/\.md$/, '')).phases;
@@ -294,16 +327,45 @@ export function earlierTasks(planFile, n) {
   }
   const phase = phases.find((p) => p.tasks.includes(`T${n}`));
   if (!phase) throw new ScriptError(EXIT_REFUSED, `T${n} is in no phase of ${planFile}`);
-  return phase.tasks.slice(0, phase.tasks.indexOf(`T${n}`)).map((id) => Number(id.slice(1)));
+  return phase.tasks;
+}
+
+// The numbers of the tasks of T<N>'s phase in plan order, T<N> included.
+export const phaseTasks = (planFile, n) => phaseIds(planFile, n).map((id) => Number(id.slice(1)));
+
+// The numbers of the tasks before T<N> in its phase.
+export function earlierTasks(planFile, n) {
+  const ids = phaseIds(planFile, n);
+  return ids.slice(0, ids.indexOf(`T${n}`)).map((id) => Number(id.slice(1)));
 }
 
 // The earlier tasks of T<N>'s phase that are neither done nor dropped: in the tracking ledger when the repo is opted in, else those
-// with no `Task <M>: complete` line. A worktree task's landing and a coordinator task's start both wait for this list to be empty.
+// with no `Task <M>: complete` line. A coordinator task's start waits for this list to be empty.
 export function earlierUnfinished(plan, planName, n, ledger) {
   const statuses = taskStatuses(planName);
   return earlierTasks(plan, n).filter((m) => (statuses
     ? !['done', 'dropped'].includes(statuses[`T${m}`])
     : !ledger.some((l) => l.startsWith(`Task ${m}: complete (commits `))));
+}
+
+// The other tasks of T<N>'s phase, in plan order, that have a `BASE: T<M>` line and are started and not closed, each as { n, inPlace, undone }:
+// in the tracking ledger `in_progress`, `in_review` or `blocked` (a blocked task still holds its work), else (not opted in) with no
+// `Task <M>: complete (commits ` line. `undone` is true for a task whose landing was undone and whose sequential re-run has not started
+// (no `Rerun: T<M>` line after the undo): it is built nowhere, so it does not stop a task from opening in the main checkout, but no
+// worktree task opens beside it. `inPlace` is true for a task built in the main checkout: it has no landing that stands and no worktree
+// branch (an undone task from its `Rerun:` line until its re-run closes). A task in the main checkout runs alone: task-open refuses to
+// open any task of the phase beside one, and refuses a main-checkout task beside any open one.
+export function openTasks(planFile, planName, n, ledger) {
+  const statuses = taskStatuses(planName);
+  const stem = planName.replace(/\.md$/, '');
+  return phaseTasks(planFile, n)
+    .filter((m) => m !== n && lastBase(ledger, m) !== null && (statuses
+      ? ['in_progress', 'in_review', 'blocked'].includes(statuses[`T${m}`])
+      : !ledger.some((l) => l.startsWith(`Task ${m}: complete (commits `))))
+    .map((m) => {
+      const undone = isUndone(ledger, m) && !rerunStarted(ledger, m);
+      return { n: m, undone, inPlace: !undone && lastLanded(ledger, m) === null && commitOf(`refs/heads/wt/${stem}-t${m}`) === null };
+    });
 }
 
 // The tier of the last `Tier: T<N> <tier>` / `Tier raised: T<N> <from> → <to>` line of the task, else null.

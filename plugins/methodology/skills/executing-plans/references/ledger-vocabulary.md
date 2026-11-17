@@ -12,7 +12,11 @@ The workspace ledger, `sdd-ledger.md`, is append-only, one line per event, in th
 - `Landed: T<N> <sha>` (written by `task-close` for a worktree task: the phase branch now holds the task's one landed commit; it stands until a later `BASE: T<N>` line undoes it)
 - `Prep: T<N> r<R> <landed sha>` (written by `task-close` right after `Landed:` and only when the attempt has a `Prep:` line, `<R>` the round of the attempt's last `Prep:` line; the head check of a rerun, not a review and not a reopen)
 - `Tested: T<N> <sha>` (written by `task-close` once the plan's `Test:` files passed at the landed sha; a rerun without it runs them again)
+- `Opened: T<N> <ISO time>` (written by `task-open` when the task's last time line is not an `Opened:` line: its first open, and the `task-open` the orchestrator runs again for a reopened task)
+- `Closed: T<N> <ISO time>` (written by `task-close` in one write with, and just before, the task's complete line; an undone landing writes none)
+- `Serial: T<a>, T<b> — <reason>` (written by the orchestrator before it runs independent tasks one after the other)
 - `BASE: T<N> <previous tip>` followed by `Task <N>: landing conflict — re-run sequential` (written together, in one write, by the undo of a landing in `task-close`; the file `<workspace>/task-<N>-undone` beside them dates the undone attempt, and the sequential re-run's ledger starts after the undo line)
+- `Rerun: T<N>` (written by `task-open` when it opens an undone task without `--worktree`, once per undo: the sequential re-run has started, and from this line on the task counts as built in the main checkout; before it, an undone task does not stop a task from opening there)
 - `Worktree removed: <path> — left behind at the close of P<n>` (written by the main session at phase close, one per leftover worktree removed; `<path>` absolute)
 - `Validation: P<n> run <id> verdict <clean|failed> — <url>` (written by `validate`)
 - `Validation fix: P<n> <sha> — <finding>` (written by the controller after the plain fix commit is pushed)
@@ -30,7 +34,7 @@ The workspace ledger, `sdd-ledger.md`, is append-only, one line per event, in th
 - `Re-review: T<N> round <R> — applies Ruling verbatim, no security logic`
 - `Task <N>: fix round <R>/5 (<X> addressed, <Y> open — <finding one-liners>; commits <a7>..<b7>)`
 - `Task <N>: minor (deferred): <one-liner>`
-- `Task <N>: reopened — Phase check failed — <command>` (written by the main session when it reopens the phase's last task after a real Phase check failure)
+- `Task <N>: reopened — Phase check failed — <command>` (written by the main session when it reopens the task whose commit is the phase tip after a real Phase check failure)
 - `Task <N>: awaiting landing` (written by the orchestrator on a stop for a task that finished but is not landed)
 - `Orchestrator: P<n> — <summary first line>` (written by the main session when an orchestrator returns)
 - `Task <N>: blocked at fix round 5/5 — <open findings>`, then the human's decision: `Task <N>: Ruling: <finding> — <decision> — <why> — <what it costs if wrong>`, and for more rounds `Ruling: human granted <K> rounds for T<N> — <why> — <what it costs if wrong>`
@@ -42,4 +46,4 @@ The workspace ledger, `sdd-ledger.md`, is append-only, one line per event, in th
 - `Skipped: hunters and safety gate — <cause>; safety checklist runs in the spec review`
 - `RateLimit: <role> <time>`
 - `Unrecorded: <record JSON>`
-- `Error: <step> T<N> — exit <code> — <first stderr line>` (written by a script before it exits non-zero, except the earlier-task wait of `task-close` and a refusal from a linked worktree, both exit 3, which write none; `<step>` is `task-open`, `task-prep` or `task-close`); the main session writes `Error: orchestrator P<n> — exit 1 — <first line of the error>` itself when an orchestrator cannot be dispatched
+- `Error: <step> T<N> — exit <code> — <first stderr line>` (written by a script before it exits non-zero, except a refusal from a linked worktree (exit 3), which writes none; `<step>` is `task-open`, `task-prep` or `task-close`); the main session writes `Error: orchestrator P<n> — exit 1 — <first line of the error>` itself when an orchestrator cannot be dispatched

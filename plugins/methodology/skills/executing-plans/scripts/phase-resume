@@ -119,7 +119,7 @@
         if (open.state === 'not started') return `Open ${t}: ${script('task-open', open.number)}.`;
         if (open.state === 'blocked') return `${t} is blocked: ask your human partner for the decision.`;
         if (open.state.startsWith('running')) return `Continue ${t} (${open.state.slice('running ('.length, -1)}): finish its build and review, then ${script('task-close', open.number)}.`;
-        if (open.state === 'awaiting landing') return `Land ${t}: once every earlier task has landed, ${script('task-close', open.number)}.`;
+        if (open.state === 'awaiting landing') return `Land ${t}: ${script('task-close', open.number)}.`;
         if (open.state === 'landed, not closed') return `Close ${t}: ${script('task-close', open.number)}.`;
         return `Re-run ${t} sequentially: ${script('task-open', open.number)}.`;
       }
