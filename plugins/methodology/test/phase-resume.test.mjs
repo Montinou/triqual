@@ -30,7 +30,7 @@ const gitEnv = (home) => {
 };
 
 // A repo with the plan committed; `ledger` (an array of lines) is written to the plan's workspace, `stackPhases` (state per phase) to its stack state.
-function rig({ ledger = null, stackPhases = null, mode = 'github', single = false } = {}) {
+function rig({ ledger = null, stackPhases = null, mode = 'github', single = false, planText = null, stackState = null } = {}) {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'phase-resume-')));
   const home = join(base, 'home');
   const dir = join(base, 'repo');
@@ -43,12 +43,16 @@ function rig({ ledger = null, stackPhases = null, mode = 'github', single = fals
   git('config', 'user.email', 'test@example.invalid');
   git('config', 'commit.gpgsign', 'false');
   mkdirSync(join(dir, 'docs', 'plans'), { recursive: true });
-  writeFileSync(join(dir, PLAN_REL), single ? PLAN.slice(0, PLAN.indexOf('## Phase 2')) : PLAN);
+  writeFileSync(join(dir, PLAN_REL), planText ?? (single ? PLAN.slice(0, PLAN.indexOf('## Phase 2')) : PLAN));
   git('add', '.');
   git('commit', '-q', '-m', 'plan');
   const workspace = execFileSync(process.execPath, [WORKSPACE, PLAN_REL], { cwd: dir, env, encoding: 'utf8' }).trim();
   const ledgerFile = join(workspace, 'sdd-ledger.md');
   if (ledger !== null) writeFileSync(ledgerFile, `${ledger.join('\n')}\n`);
+  if (stackState !== null) {
+    mkdirSync(join(dir, '.methodology', 'stack'), { recursive: true });
+    writeFileSync(join(dir, '.methodology', 'stack', 'resume-plan.json'), `${JSON.stringify(stackState)}\n`);
+  }
   if (stackPhases !== null) {
     mkdirSync(join(dir, '.methodology', 'stack'), { recursive: true });
     const phases = [['demo/01-core', 'feat: core'], ['demo/02-edge', 'feat: edge']].slice(0, single ? 1 : 2).map(([branch, title], i) => ({
@@ -351,4 +355,64 @@ test('exit 3 with no ledger; exit 2 for a bad call; the script writes nothing', 
     assert.equal(run(PLAN_REL, '1').status, 0);
     assert.equal(readFileSync(ledgerFile, 'utf8'), before, 'phase-resume wrote to the ledger');
   });
+});
+
+// A three-phase plan, one task each: P1 and P2 on the trunk, P3 on both (a join), and the v2 state written by hand for it.
+const JOIN_PLAN = [
+  '# Resume Plan\n\n**Branch prefix:** demo\n\n',
+  ...[['Core', 'trunk'], ['Edge', 'trunk'], ['Join', 'P1, P2']].flatMap(([title, parent], i) => [
+    `## Phase ${i + 1}: ${title}\n\n**Slice:** S${i + 1}\n**Branch:** demo/0${i + 1}-${title.toLowerCase()}\n**Parent:** ${parent}\n**PR title:** feat: ${title.toLowerCase()}\n**Stands alone because:** ${title} only\n**Phase check:** \`true\` → exit 0\n\n`,
+    task(i + 1, `Task number ${i + 1}`),
+  ]),
+].join('');
+const JOIN_BRANCHES = ['demo/01-core', 'demo/02-edge', 'demo/03-join'];
+// `states` per phase; `p3parents` the branches P3 starts from in the state.
+const joinState = (states, p3parents = JOIN_BRANCHES.slice(0, 2)) => ({
+  v: 2, plan: 'resume-plan.md', mode: 'github', trunk: 'main', remote: 'origin',
+  phases: JOIN_BRANCHES.map((branch, i) => ({
+    n: i + 1, branch, title: `feat: ${i + 1}`, pr: null, state: states[i],
+    ...(i < 2 ? { parent: 'main' } : { parent: p3parents[0], parents: p3parents }),
+  })),
+});
+const reviewedLedger = (...phases) => [
+  HEADER,
+  ...phases.flatMap((n) => [`BASE: T${n} 000000${n}aaaaaaa`, `Task ${n}: complete (commits 000000${n}..111111${n}, review clean)`, `Phase review: P${n} clean`]),
+];
+const joinNext = (n, states, p3parents) =>
+  withRig({ planText: JOIN_PLAN, ledger: reviewedLedger(n), stackState: joinState(states, p3parents) }, ({ run }) => {
+    const res = run(PLAN_REL, String(n));
+    assert.equal(res.status, 0, res.stderr);
+    return res.stdout.split('\n## Next\n\n')[1].trimEnd();
+  });
+const startCmd = (k) => `node scripts/stack.mjs phase ${PLAN_REL} ${k}`;
+
+test('a submitted phase that made two phases ready names both', () => {
+  assert.equal(
+    joinNext(1, ['submitted', 'pending', 'pending'], ['demo/01-core']),
+    `P1 is submitted: start the ready phases with ${startCmd(2)} and ${startCmd(3)}.`,
+  );
+  // Three ready phases: commas between the earlier ones, "and" before the last.
+  const three = joinState(['submitted', 'pending', 'pending']);
+  three.phases.push({ n: 4, branch: 'demo/04-x', title: 'feat: 4', pr: null, state: 'pending', parent: 'main' });
+  three.phases[2].parents = ['demo/01-core'];
+  three.phases[2].parent = 'demo/01-core';
+  withRig({ planText: JOIN_PLAN, ledger: reviewedLedger(1), stackState: three }, ({ run }) => {
+    const out = run(PLAN_REL, '1').stdout;
+    assert.ok(out.trimEnd().endsWith(`P1 is submitted: start the ready phases with ${startCmd(2)}, ${startCmd(3)} and ${startCmd(4)}.`), out);
+  });
+});
+
+test('a submitted phase whose child still waits says what it waits for', () => {
+  assert.equal(joinNext(2, ['active', 'submitted', 'pending']), 'P2 is submitted: no phase is ready yet; P3 waits for P1.');
+});
+
+test('a submitted sibling that is not the top phase is not the last phase', () => {
+  assert.equal(joinNext(1, ['submitted', 'submitted', 'submitted']), 'P1 is submitted: every phase has started; the plan ends with P3.');
+});
+
+test('the top phase submitted with nothing pending gets the seams review and --open', () => {
+  assert.equal(
+    joinNext(3, ['submitted', 'submitted', 'submitted']),
+    `P3 is the last phase and is submitted: run the seams review of the plan, then node scripts/stack.mjs submit ${PLAN_REL} 3 --open.`,
+  );
 });

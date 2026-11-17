@@ -913,11 +913,12 @@ test('the skill carries no credit footer (NOTICE and the READMEs carry the credi
   assert.doesNotMatch(text, /Forked from/);
 });
 
-test('worktrees: detect isolation, native tool first, git fallback, baseline check and cleanup at finish', () => {
+test('worktrees: detect isolation, no worktree for the run (a clone of its own), baseline check and cleanup at finish', () => {
   const text = flat(section(skill(), '## Worktrees'));
-  for (const phrase of ['git rev-parse --path-format=absolute --git-dir --git-common-dir', 'Native tool first', 'Git fallback', 'git check-ignore -q <location>', 'git worktree add', 'baseline', 'methodology:finishing-branch']) {
+  for (const phrase of ['git rev-parse --path-format=absolute --git-dir --git-common-dir', 'makes a linked worktree, which the plan\'s scripts refuse', 'Own clone', 'one clone per running plan', 'baseline', 'methodology:finishing-branch']) {
     assert.ok(text.includes(phrase), `the Worktrees section does not say ${phrase}`);
   }
+  assert.ok(!text.includes('git worktree add'), 'the Worktrees section still tells the run to create a worktree');
 });
 
 // ---- fence cooperation (design U9) ----
@@ -1731,7 +1732,7 @@ test('Finish lists the open deferred Minors beside the rulings', () => {
 test('step 8: the phase ledger file, the fixer inputs and the phase re-review inputs', () => {
   const body = phaseReview();
   assert.ok(body.includes('for a single-phase plan also every ledger line that names no task: pre-flight, flaky Phase check and submit rulings'), 'the phase ledger file omits the task-less lines of a single-phase plan');
-  for (const line of ['the phase\'s diff package (`node scripts/review-package PLAN_FILE PHASE_BASE HEAD`, in place of a brief)', 'the plan\'s tasks of this phase', '`<workspace>/phase-<N>-report.md`', 'its own plain `fix(...)` commit', 'with the findings, the phase report file and the plan\'s tasks of this phase in place of a brief']) {
+  for (const line of ['the phase\'s diff package (`node scripts/review-package PLAN_FILE PHASE_BASE PHASE_TIP`, in place of a brief)', 'the plan\'s tasks of this phase', '`<workspace>/phase-<N>-report.md`', 'its own plain `fix(...)` commit', 'with the findings, the phase report file and the plan\'s tasks of this phase in place of a brief']) {
     assert.ok(body.includes(line), `step 8 lacks: ${line}`);
   }
   assert.ok(flat(read(`${EP}/re-review-prompt.md`)).includes('phase review\'s fix rounds (8. Review the phase) and the final review\'s fix rounds use the same prompt'), 're-review-prompt does not cover phase-review fix rounds');
@@ -2368,7 +2369,6 @@ test('the 1.4.0 CHANGELOG entry and the orchestrator prompt carry the parallel r
   for (const line of ['Parallel tasks', 'At most 3 implementers', '`task-open --worktree`', 'plan order', 'landing conflict', 'TRIQUAL_LANDING_TEST_TIMEOUT_MS']) {
     assert.ok(entry.includes(line), `the 1.4.0 CHANGELOG entry lacks: ${line}`);
   }
-  assert.equal(JSON.parse(readFileSync(join(PLUGIN, '.claude-plugin', 'plugin.json'), 'utf8')).version, '1.12.2');
   assert.ok(PROMPT().includes('## Parallel Tasks'), 'the orchestrator prompt has no Parallel Tasks section');
 });
 
@@ -2432,7 +2432,7 @@ test('the BASE of a worktree task is the last closed commit, and the scripts do 
   assert.ok(body.includes('The BASE of a worktree task is the last closed commit of the phase branch: the phase tip, or, when a task built in the main checkout has commits that no `task-close` has squashed yet, that task\'s own BASE'), 'Parallel tasks does not say what a worktree task is based at');
   assert.doesNotMatch(body, /started at its BASE \(the phase tip\)/, 'the phase-tip claim is still there');
   assert.ok(flat(PROMPT()).includes('based by `task-open` at the last closed commit, never on a main-checkout task\'s unreviewed commits'), 'the orchestrator prompt does not say it');
-  assert.match(readFileSync(join(SCRIPTS, 'task-open'), 'utf8'), /worktree \? common\.worktreeBase\(/, 'task-open no longer takes the BASE of a worktree task from worktreeBase');
+  assert.match(readFileSync(join(SCRIPTS, 'task-open'), 'utf8'), /worktree\s*\?\s*common\.worktreeBase\(/, 'task-open no longer takes the BASE of a worktree task from worktreeBase');
 });
 
 test('the worktree of a task is the exception to "no worktree by default", in Setup and in Worktrees', () => {

@@ -8,7 +8,7 @@ triqual plan check-collisions <plan.md…> [--diff <node> <head>]
 
 ## What it compares
 
-Each phase is a node `<plan file name without .md>#P<n>` holding the union of the `Create:`, `Modify:` and `Test:` paths of its tasks. A phase on the trunk has no parent, a `P<k>` parent is a node of the same plan, and a branch parent equal to the branch of a phase in another plan given on the command line is that phase. A join (`**Parent:** P1, P2`) is a descendant of each of its parents, so it is compared with neither parent's chain. Ancestors and descendants are never compared, so a linear plan has no incomparable pairs. Give every plan of the forest in one call: two plans linked by a branch parent are comparable only when both are given.
+Each phase is a node `<plan file name without .md>#P<n>` holding the union of the `Create:`, `Modify:` and `Test:` paths of its tasks. A phase on the trunk has no parent, a `P<k>` parent is a node of the same plan, and a branch parent equal to the branch of a phase in another plan given on the command line is that phase. A join (`**Parent:** P1, P2`) is a descendant of each of its parents, so it is compared with neither parent's chain. With `--diff`, a join's own changes are read from its join commit, the first commit of its branch that merges every parent, so the parents' work is not reported OUTSIDE. Ancestors and descendants are never compared, so a linear plan has no incomparable pairs. Give every plan of the forest in one call: two plans linked by a branch parent are comparable only when both are given.
 
 Paths are compared literally. A path holding `*` or `{` stops the check with `globs are not supported in Files: <path>`; list the files one by one.
 

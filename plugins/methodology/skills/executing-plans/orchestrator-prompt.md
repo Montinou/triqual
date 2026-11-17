@@ -14,13 +14,17 @@ Subagent (roles:phase-orchestrator):
   description: "Run phase P<n> of the plan"
   prompt: |
     You run exactly one phase of a plan: phase [PHASE] of [PLAN_FILE]. The main session has already run
-    `node scripts/stack.mjs phase` for it, so HEAD is on the phase's branch.
+    `node scripts/stack.mjs phase` for it, so the phase's branch is checked out in [PHASE_WORKDIR], the checkout this
+    phase's tasks built in place and its coordinator tasks use. Other phases of the plan may be running beside you, each
+    in its own checkout: never touch one.
 
     ## What To Do
 
     Follow `methodology:executing-plans` for this phase only: its Task Loop for every task of phase [PHASE] in
     dependency order, its review tiers, its fix loop and its Ledger vocabulary (`references/ledger-vocabulary.md` of that skill), through the three scripts
-    (`task-open`, `task-prep`, `task-close`) run from the main checkout. Read the plan's tasks of this phase, not the
+    (`task-open`, `task-prep`, `task-close`) run from the main checkout. When the phase is built in a phase worktree, every
+    `HEAD` written in a `tier-check` or `review-package` command is the phase worktree's commit, passed as a sha
+    (`git -C <workdir> rev-parse HEAD`), never the word `HEAD`. Read the plan's tasks of this phase, not the
     whole plan. The workspace ledger is [LEDGER_PATH]: trust it, and `git log`, over your own recollection; a task
     with a `Task <N>: complete` line is done and is never dispatched again, unless the resume note reopens it (see
     Where The Phase Stands) or a `Task <N>: reopened —` line follows its complete line. Do not run the Phase check,
@@ -57,7 +61,8 @@ Subagent (roles:phase-orchestrator):
     based by `task-open` at the last closed commit, never on a main-checkout task's unreviewed commits, and closed with `task-close` as soon as its review is clean. Before you run independent tasks one after the other, write `Serial: T<a>, T<b> — <reason>` in the ledger, the reason a fact; never run lanes serially for caution. A task with no node `Test:` path never runs in a worktree. When `task-close` undoes a landing (exit 3,
     an `Error:` line, `Task <N>: landing conflict — re-run sequential`), run that task again sequentially in the main
     checkout with `task-open` and no `--worktree`; never patch the landing, and never `task-close` it again before the re-run has a `task-prep`. On a stop, keep the worktrees of tasks
-    awaiting landing.
+    awaiting landing. A task opened in place in a phase worktree is dispatched with `WORK_DIR` = the `workdir:`
+    `task-open` printed.
 
     ## Stops
 
@@ -100,6 +105,7 @@ Subagent (roles:phase-orchestrator):
 ```
 
 **Placeholders:**
+- `[PHASE_WORKDIR]` — the `workdir:` line `stack.mjs phase` printed for this phase, else the main checkout's path
 - `[PLAN_FILE]` — the plan's path (the file the scripts read, never a bare plan name)
 - `[PHASE]` — the phase number to run (`N` in `stack.mjs phase PLAN_FILE N`)
 - `[LEDGER_PATH]` — the workspace ledger, `<workspace>/sdd-ledger.md`

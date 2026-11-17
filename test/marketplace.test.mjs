@@ -153,10 +153,10 @@ test('plugin versions are the ones this release ships', () => {
   const versions = Object.fromEntries(readJson('.claude-plugin/marketplace.json').plugins
     .filter((p) => !isExternal(p)).map((p) => [p.name, p.version]));
   assert.deepEqual(versions, {
-    'progress-tracking': '0.9.1',
+    'progress-tracking': '0.10.0',
     'workflow-gate': '0.4.0',
-    roles: '0.8.1',
-    methodology: '1.12.2',
+    roles: '0.9.0',
+    methodology: '1.13.0',
     'memory-report': '0.5.0',
   });
   assert.equal(readJson('plugins/methodology-codex/.codex-plugin/plugin.json').version, '0.2.0');

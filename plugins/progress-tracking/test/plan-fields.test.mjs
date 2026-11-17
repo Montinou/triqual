@@ -263,3 +263,9 @@ test('a parenthetical note after the Parent value is not read as list elements',
   assert.deepEqual(parentsOf(plan(3, { 2: 'trunk', 3: '`P1`, `P2`' }))[2], [1, 2]);
   assert.deepEqual(parentsOf(plan(3, { 2: 'trunk', 3: 'P1, P2 (core and api)' }))[2], [1, 2]);
 });
+
+test('a backticked branch holding a parenthesis is read whole', () => {
+  const r = readPhases(plan(3, { 3: '`release/(x)`' }), 'demo');
+  assert.deepEqual([r.phases[2].parents, r.phases[2].parent], [[], { kind: 'branch', value: 'release/(x)' }]);
+  assert.deepEqual(parentsOf(plan(3, { 2: 'trunk', 3: 'P1, P2 (core, api)' }))[2], [1, 2]);
+});

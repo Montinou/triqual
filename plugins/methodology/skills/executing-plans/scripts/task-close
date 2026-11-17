@@ -4,8 +4,8 @@
 //
 // Usage: task-close PLAN_FILE N [--provider claude|codex] [--head <sha>]
 // Prints, in this order:
-//   sha: <sha>                         the squashed (or, for a worktree task, the landed) commit (HEAD when a task closed in place made no
-//                                      commit, the tip of the phase branch when a worktree task made none: its complete line reads `<tip>..<tip>`, so a reopen squashes from the tip)
+//   sha: <sha>                         the squashed (or, for a worktree task, the landed) commit (HEAD of the phase's checkout when a task closed in place made no
+//                                      commit, the tip of its phase's branch when a worktree task made none: its complete line reads `<tip>..<tip>`, so a reopen squashes from the tip)
 //   record: <recorded|already recorded>   what `triqual role-eval record` said
 //
 // The complete line is written with `Closed: T<N> <time>` just before it, in one write (UTC, to the second; the time is the record's
@@ -31,6 +31,12 @@
 //   - the hunter model: with `--provider codex` the Codex routing value of `hunter`; otherwise (claude, the default) the `model:`
 //     line of agents/hunter.md in the roles plugin's installPath from ~/.claude/plugins/installed_plugins.json.
 //
+// The checkout of the task's phase: where the stack state puts its phase (the `workdir` of the phase entry: a phase built in a phase worktree
+// has its own HEAD, index and tree there, else the main checkout; no stack state: the main checkout). Every read of HEAD, the index and the
+// tree, every `git reset --keep`, the landing's Test files (their `cwd` and the check that each one is there) and the HEAD of a close that made
+// no commit are made in that checkout, so a close of one phase never reads or moves another phase's checkout. A worktree task lands only on
+// its OWN phase's branch (exit 3 when that phase is not active), whatever other phases are active.
+//
 // A worktree task (task-open --worktree) is one with --head <sha>, a branch `wt/<plan stem>-t<N>` (--head then defaults to its tip) or
 // a `Landed:` line of this attempt. Its commits are reviewed in the worktree (task-prep --head), so the head the last `Prep:` line
 // names is the worktree's, and the close LANDS the task instead of squashing:
@@ -45,8 +51,8 @@
 //     (else exit 3: the undo of the landing was cut short, nothing is closed), and its Test files must have passed (a ledger line
 //     `Tested: T<N> <sha>` written after a green run): without that line the Test files run again at the phase tip, and a failure is
 //     undone as below (a landing that is not the phase tip and has no `Tested:` line is refused, exit 3);
-//   - else it needs HEAD on the active phase branch of the stack (a detached HEAD or another branch is exit 3, as for `stack.mjs
-//     squash`), a clean tree, and Test paths that name files inside the repository (no glob, nothing outside it), merges the task's head
+//   - else it needs HEAD of the phase's checkout on the phase branch of the task's phase, which must be active (a detached HEAD or another branch
+//     is exit 3, as for `stack.mjs squash`), a clean tree there (the main checkout's changes do not matter when the phase is built elsewhere), and Test paths that name files inside the repository (no glob, nothing outside it), merges the task's head
 //     into the phase tip (`git merge-tree --write-tree` with the task's BASE as merge base; BASE must be an ancestor of the head), makes
 //     ONE commit of the merged tree on the phase tip (`git commit-tree`, the task's first commit's message and author), moves the phase
 //     branch to it (`git reset --keep`), appends `Landed: T<N> <sha>` and, for the head check of a rerun after the close, `Prep: T<N> r<R>
@@ -77,7 +83,7 @@
 // Ledger line forms this script adds to the plan's list (SKILL.md's ledger vocabulary is outside this task's files, so the form is
 // recorded here): `Tested: T<N> <sha>`.
 //
-// Then, in this order: `stack.mjs squash PLAN BASE`, `triqual tasks done T<N> --commit <sha>` (not when the ledger already
+// Then, in this order: `stack.mjs squash PLAN BASE` (`--phase <k>` when there is a stack state: the task's own phase, in its checkout), `triqual tasks done T<N> --commit <sha>` (not when the ledger already
 // shows the task done), the complete line, `triqual role-eval record`, and the progress entry (store mode: `tracking add
 // --commit <sha>`; local mode: `tracking write entry`; committed mode or not opted in: none).
 //
@@ -178,6 +184,9 @@
     const planTask = common.readPlanTask(plan, n);
     const planName = basename(plan);
     const stem = planName.replace(/\.md$/, '');
+    // The checkout of the task's phase (see the header): the `{ cwd }` of every git call that reads or moves HEAD, the index or the tree.
+    const phase = common.phaseOfTask(plan, n);
+    const inPhase = phase ? { cwd: phase.workdir } : {};
 
     // ---- read everything: nothing is written before the record is built and valid ----
     const ledger = common.ledgerLines(workspace);
@@ -246,7 +255,7 @@
     let head;
     if (landed !== null) head = common.commitOf(landed);
     else if (headArg !== null) head = common.commitOf(headArg);
-    else head = wtTip ?? common.commitOf('HEAD');
+    else head = wtTip ?? common.commitOf('HEAD', inPhase);
     if (head === null) {
       throw landed !== null ? new ScriptError(EXIT_OTHER, `cannot resolve the landed commit ${landed}`)
         : new ScriptError(headArg !== null ? EXIT_USAGE : EXIT_OTHER, headArg !== null ? `bad --head: ${headArg}` : 'cannot resolve HEAD');
@@ -282,7 +291,7 @@
         }
       }
     }
-    const noCommits = resumed ? resumedNoCommits : Number(common.git(['rev-list', '--count', `${base}..${head}`])) === 0;
+    const noCommits = resumed ? resumedNoCommits : Number(common.git(['rev-list', '--count', `${base}..${head}`], inPhase)) === 0;
     // The commits a close squashes are the commits a reviewer saw: the last `Prep:` head of the attempt is HEAD. A reopened
     // task (attempt 2 and later) may be reviewed by hand (SKILL step 8), so it is checked only when it ran task-prep.
     // A landing that stands passed this check before it was written (its sha is the head now), so only a review after it is checked:
@@ -444,20 +453,20 @@
 
     // The landing of a worktree task (see the header). Everything that can refuse runs before anything is written.
     const preflight = () => {
-      const phaseBranch = common.activePhaseBranch(plan);
-      const current = common.exec('git', ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+      const phaseBranch = common.phaseBranchOf(plan, n);
+      const current = common.exec('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], inPhase);
       if (current.status !== 0) throw new ScriptError(EXIT_REFUSED, `HEAD is detached, not the active phase's branch ${phaseBranch}: nothing to land on`);
       if (current.stdout.trim() !== phaseBranch) {
         throw new ScriptError(EXIT_REFUSED, `HEAD is on ${current.stdout.trim()}, not the active phase's branch ${phaseBranch}: nothing to land on`);
       }
-      const tip = common.commitOf('HEAD');
-      if (tip === null) throw new ScriptError(EXIT_REFUSED, 'HEAD of the main checkout is not on a commit: nothing to land on');
-      if (common.git(['status', '--porcelain', '--untracked-files=no']) !== '') {
+      const tip = common.commitOf('HEAD', inPhase);
+      if (tip === null) throw new ScriptError(EXIT_REFUSED, `HEAD of ${phase ? phase.workdir : 'the main checkout'} is not on a commit: nothing to land on`);
+      if (common.git(['status', '--porcelain', '--untracked-files=no'], inPhase) !== '') {
         throw new ScriptError(EXIT_REFUSED, 'the working tree is not clean: commit or stash the changes to tracked files first');
       }
       const tests = common.testPaths(planTask);
       if (tests.length === 0) throw new ScriptError(EXIT_REFUSED, `T${n} has no Test: path in the plan: a landing runs none, and a landing that tests nothing is no landing`);
-      const root = common.git(['rev-parse', '--show-toplevel']);
+      const root = common.git(['rev-parse', '--show-toplevel'], inPhase);
       const problem = tests.map((t) => common.testPathProblem(root, t)).find((why) => why !== null);
       if (problem) throw new ScriptError(EXIT_REFUSED, `T${n}: ${problem}`);
       return { tip, tests, root, timeout: common.landingTestTimeoutMs(), landingTest: common.landingTestOf(plan) };
@@ -466,7 +475,7 @@
     // attempt's outputs, the task moved back, the worktree and its branch removed.
     // `reset: false`: the phase branch is already at `before` (an undo that died after its reset and before its ledger lines).
     const undo = (why, before, { reset = true } = {}) => {
-      if (reset) common.git(['reset', '--keep', before]);
+      if (reset) common.git(['reset', '--keep', before], inPhase);
       common.appendLedger(workspace, `BASE: T${n} ${before}`, common.UNDONE_LINE(n));
       writeFileSync(undoneMarker, `${before}\n`);
       if (state) common.taskMove('rework', n, plan);
@@ -477,6 +486,7 @@
     // run; so are a non-zero exit and a run that outlives the timeout. A green run is ledgered: `Tested: T<N> <sha>`.
     // With a `**Landing test:**` command in the plan, that command is the run: `sh -c <command>` with {files} replaced by the Test paths
     // (each one single-quoted), at the repository root; else `node --test <the Test files>`.
+    // `root` is the toplevel of the phase's checkout: the Test paths are looked up and run there.
     const runTests = ({ tests, root, timeout, landingTest }, landedSha, before) => {
       const missing = tests.find((t) => !existsSync(resolve(root, t)));
       if (missing !== undefined) undo(`landing failed: the Test file ${missing} is not in the landed tree`, before);
@@ -495,21 +505,21 @@
     const land = () => {
       const context = preflight();
       const { tip } = context;
-      if (!common.isAncestor(base, head)) {
+      if (!common.isAncestor(base, head, inPhase)) {
         throw new ScriptError(EXIT_REFUSED, `the BASE of T${n} (${base.slice(0, 7)}) is not an ancestor of its head ${head.slice(0, 7)}: the worktree was not made from it, so it cannot be landed`);
       }
-      const first = common.git(['rev-list', '--reverse', `${base}..${head}`]).split('\n')[0];
-      const [name, email, date, message] = common.git(['log', '--format=%an%x00%ae%x00%aI%x00%B', '-1', first]).split('\0');
+      const first = common.git(['rev-list', '--reverse', `${base}..${head}`], inPhase).split('\n')[0];
+      const [name, email, date, message] = common.git(['log', '--format=%an%x00%ae%x00%aI%x00%B', '-1', first], inPhase).split('\0');
 
       // A crash after the reset and before the `Landed:` line leaves the tip at a commit that already is the landing of this head
       // (the merge of the head onto the tip's parent is the tip's tree, with the first commit's author and message): record it,
       // do not land a second, empty commit on top of it.
-      const parent = common.commitOf(`${tip}^`);
-      const same = (rev) => common.git(['log', '--format=%an%x00%ae%x00%B', '-1', rev]).split('\0');
+      const parent = common.commitOf(`${tip}^`, inPhase);
+      const same = (rev) => common.git(['log', '--format=%an%x00%ae%x00%B', '-1', rev], inPhase).split('\0');
       const alreadyLanded = () => {
         if (parent === null) return false;
-        const prior = common.exec('git', ['merge-tree', '--write-tree', `--merge-base=${base}`, parent, head]);
-        return prior.status === 0 && prior.stdout.split('\n')[0].trim() === common.git(['rev-parse', `${tip}^{tree}`])
+        const prior = common.exec('git', ['merge-tree', '--write-tree', `--merge-base=${base}`, parent, head], inPhase);
+        return prior.status === 0 && prior.stdout.split('\n')[0].trim() === common.git(['rev-parse', `${tip}^{tree}`], inPhase)
           && same(tip).join('\0') === [name, email, message].join('\0');
       };
       let before = tip;
@@ -518,7 +528,7 @@
         before = parent;
         landedSha = tip;
       } else {
-        const merged = common.exec('git', ['merge-tree', '--write-tree', '--name-only', `--merge-base=${base}`, tip, head]);
+        const merged = common.exec('git', ['merge-tree', '--write-tree', '--name-only', `--merge-base=${base}`, tip, head], inPhase);
         if (merged.status === 1) {
           const files = merged.stdout.split('\n').slice(1).map((l) => l.trim()).filter((l, i, all) => l !== '' && all.slice(0, i).every((p) => p !== ''));
           undo(`landing conflict in ${files.join(', ') || 'the merge'}`, tip);
@@ -526,10 +536,11 @@
         if (merged.status !== 0) throw new ScriptError(EXIT_OTHER, `git merge-tree: ${common.firstLine(merged.stderr) || `exited ${merged.status}`}`);
         const tree = merged.stdout.split('\n')[0].trim();
         landedSha = common.git(['commit-tree', tree, '-p', tip, '-F', '-'], {
+          ...inPhase,
           input: `${message}\n`,
           env: { ...process.env, GIT_AUTHOR_NAME: name, GIT_AUTHOR_EMAIL: email, GIT_AUTHOR_DATE: date },
         });
-        common.git(['reset', '--keep', landedSha]);
+        common.git(['reset', '--keep', landedSha], inPhase);
       }
       common.appendLedger(workspace, `Landed: T${n} ${landedSha}`);
       const lastPrep = common.prepsOf(window, n).at(-1);
@@ -543,13 +554,13 @@
     // The two refusals below clear by no rerun: the way out is the abandon recipe of the SKILL's Refusals section.
     const abandon = () => `; the owner decides: to abandon this landing follow the Refusals section of the executing-plans SKILL.md (with the sha the owner names, reset the phase branch to it, write \`BASE: T${n} <sha>\` and \`Task ${n}: landing conflict — re-run sequential\`, create the file task-${n}-undone, remove the worktree and its branch), then re-run T${n} sequential`;
     const verifyLanding = (landedSha) => {
-      const phaseBranch = common.activePhaseBranch(plan);
+      const phaseBranch = common.phaseBranchOf(plan, n);
       const phaseTip = common.commitOf(`refs/heads/${phaseBranch}`);
-      if (phaseTip === null || !common.isAncestor(landedSha, phaseTip)) {
+      if (phaseTip === null || !common.isAncestor(landedSha, phaseTip, inPhase)) {
         // The undo of a landing resets the phase branch first and writes its ledger lines after: a landing with no `Tested:` line whose
         // phase branch is back at its parent is an undo that died between the two. Finish it (the lines, the marker, the task moved back,
         // the worktree removed) and refuse, as the undo does. A tested landing was never undone by the script: that stays an owner's call.
-        const before = common.commitOf(`${landedSha}^`);
+        const before = common.commitOf(`${landedSha}^`, inPhase);
         if (phaseTip !== null && before === phaseTip && !common.isTested(window, n, landedSha)) {
           undo(`the undo of the landing of T${n} was cut short after its reset; it is finished now`, before, { reset: false });
         }
@@ -559,7 +570,7 @@
       if (landedSha !== phaseTip) {
         throw new ScriptError(EXIT_REFUSED, `the landed commit ${landedSha.slice(0, 7)} of T${n} has no Tested: line and is not the tip of ${phaseBranch}: its Test files cannot be run again here${abandon()}`);
       }
-      const before = common.commitOf(`${landedSha}^`);
+      const before = common.commitOf(`${landedSha}^`, inPhase);
       if (before === null) throw new ScriptError(EXIT_OTHER, `the landed commit ${landedSha.slice(0, 7)} of T${n} has no parent`);
       runTests(preflight(), landedSha, before);
     };
@@ -575,7 +586,7 @@
       const m = /commits ([0-9a-f]{7,40})\.\.([0-9a-f]{7,40})[,)]/.exec(line);
       const opened = m && common.commitOf(m[1]);
       const closed = m && common.commitOf(m[2]);
-      if (!closed || !common.isAncestor(closed, head)) {
+      if (!closed || !common.isAncestor(closed, head, inPhase)) {
         throw new ScriptError(EXIT_OTHER, `the commit of T${n}'s previous close (${m ? m[2] : line}) is not in the history of HEAD: a reopen cannot tell where its squash starts`);
       }
       if (opened === closed) return closed;
@@ -595,16 +606,17 @@
         if (landed === null && noCommits) {
           // Nothing to land: the task closes at the tip of the phase branch, as a task closed in place closes at HEAD. Its own head is its
           // BASE, older than every task that closed since it opened, and a Phase check reopen would squash from there and fold them in.
-          sha = common.commitOf(`refs/heads/${common.activePhaseBranch(plan)}`);
-          if (sha === null) throw new ScriptError(EXIT_OTHER, 'cannot resolve the tip of the active phase branch');
+          sha = common.commitOf(`refs/heads/${common.phaseBranchOf(plan, n)}`);
+          if (sha === null) throw new ScriptError(EXIT_OTHER, "cannot resolve the tip of the task's phase branch");
           closeBase = sha;
         } else sha = landed ?? land();
       } else {
         closeBase = squashBase();
-        const squashed = common.runScript('stack.mjs', ['squash', plan, closeBase]);
+        // With a stack state the squash is the task's own phase's, in that phase's checkout (and refused when the phase is not active).
+        const squashed = common.runScript('stack.mjs', ['squash', plan, closeBase, ...(phase ? ['--phase', String(phase.n)] : [])]);
         if (squashed.status !== 0) throw common.scriptError('stack.mjs squash', squashed);
         const printed = squashed.stdout.trim();
-        sha = printed === 'no commits' ? common.git(['rev-parse', 'HEAD']) : printed;
+        sha = printed === 'no commits' ? common.git(['rev-parse', 'HEAD'], inPhase) : printed;
       }
       if (state && state.status !== 'done') common.taskMove('done', n, plan, ['--commit', sha]);
       // One write, the time line first: the complete line stays the task's last line.

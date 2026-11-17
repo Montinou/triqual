@@ -106,7 +106,32 @@ function generate(opts) {
 
 const gitLines = (args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).split('\n').filter(Boolean);
 
+// The join commit of `node` (two or more parents) on `head`: the first commit, oldest first, of
+// `git rev-list --first-parent --reverse <first parent's branch>..<head>` that has as many parents as the join
+// (`git rev-list --parents -n 1 <commit>`).
+function joinCommit(node, nodes, head) {
+  const base = nodes.find((n) => n.id === node.parentIds[0])?.branch;
+  if (!base) throw new UsageError(`--diff ${node.id}: the first parent of the join has no branch`);
+  let commits;
+  try {
+    commits = gitLines(['rev-list', '--first-parent', '--reverse', `${base}..${head}`]);
+  } catch (err) {
+    throw new UsageError(`git rev-list ${base}..${head} failed: ${String(err.stderr || err.message).trim()}`);
+  }
+  const found = commits.find((commit) => gitLines(['rev-list', '--parents', '-n', '1', commit])[0].split(' ').length - 1 === node.parentIds.length);
+  if (!found) throw new UsageError(`--diff ${node.id}: no join commit between ${base} and ${head}`);
+  return found;
+}
+
 function changedFiles(node, nodes, head) {
+  if (node.parentIds.length >= 2) {
+    const from = joinCommit(node, nodes, head);
+    try {
+      return gitLines(['diff', '--name-only', '--no-renames', from, head]);
+    } catch (err) {
+      throw new UsageError(`git diff ${from} ${head} failed: ${String(err.stderr || err.message).trim()}`);
+    }
+  }
   const parent = nodes.find((n) => n.id === node.parentId);
   let base = parent?.branch ?? node.parentBranch;
   if (!base) {
