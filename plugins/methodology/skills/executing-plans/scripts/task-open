@@ -32,13 +32,18 @@
 // task the tracking ledger shows as started with no `BASE:` line (a 1.1.0 ledger resumed mid-task) is refused: its first
 // commit is not HEAD, and HEAD as BASE would close it with no review. Run from the main checkout.
 //
+// An undone task (its last `BASE: T<N>` line is followed by `Task <N>: landing conflict — re-run sequential`, no complete line after) is
+// built nowhere until its sequential re-run starts: opening it without --worktree appends `Rerun: T<N>` once per undo (a rerun adds none),
+// and from that line on it is built in the main checkout. Before it, it does not stop a task from opening in the main checkout, and no
+// --worktree task opens beside it.
+//
 // A coordinator task (the plan's `**Role:** coordinator`) opened in the main checkout is refused (exit 3) while an earlier task of its phase
 // is not done or dropped: it starts like a batch task, once nothing earlier is open in the main checkout.
 //
 // A task built in the main checkout runs alone. The other tasks of the phase that have a BASE line and are started and not closed (in the
 // tracking ledger `in_progress`, `in_review` or `blocked`; not opted in: no `Task <M>: complete` line) are its open tasks. A task opened
 // without --worktree is refused (exit 3, nothing written) while one is open; a task opened with --worktree is refused while an open task
-// is built in the main checkout, an undone one included (it has no worktree and no landing until its sequential re-run closes).
+// is built in the main checkout, and while an undone one is open (an undone task has no worktree and no landing until its sequential re-run closes).
 //
 // Exit codes: 0 ok, 2 usage / no such plan file / malformed plan / TRIQUAL_NOW not an ISO time, 3 refused (linked worktree, unknown task, a started task
 // with no BASE line, a blocked task, a coordinator task with an earlier task open, a task opened in the main checkout beside an open one, a worktree task opened beside one built in the main checkout, a move the ledger refuses), 1 any other failure. A failure appends `Error: task-open T<N> — exit <code> — <cause>` to the ledger.
@@ -97,12 +102,18 @@
     // A task built in the main checkout runs alone: nothing else of the phase is open beside it, and none opens beside it.
     const open = common.openTasks(plan, planName, n, common.ledgerLines(workspace));
     const names = (tasks) => `${tasks.map((t) => `T${t.n}`).join(', ')} ${tasks.length === 1 ? 'is' : 'are'}`;
-    if (!worktree && open.length > 0) {
-      throw new ScriptError(EXIT_REFUSED, `T${n} runs in the main checkout, and a task there runs alone: ${names(open)} open in this phase; open T${n} with --worktree, or once it is closed`);
+    // An undone task whose re-run has not started is built nowhere: it does not stop a task from opening in the main checkout.
+    const beside = open.filter((t) => !t.undone);
+    if (!worktree && beside.length > 0) {
+      throw new ScriptError(EXIT_REFUSED, `T${n} runs in the main checkout, and a task there runs alone: ${names(beside)} open in this phase; open T${n} with --worktree, or once it is closed`);
     }
     const inPlace = open.filter((t) => t.inPlace);
     if (worktree && inPlace.length > 0) {
       throw new ScriptError(EXIT_REFUSED, `T${n} cannot open in a worktree while ${names(inPlace)} built in the main checkout, where a task runs alone: open T${n} once it is closed`);
+    }
+    const undone = open.filter((t) => t.undone);
+    if (worktree && undone.length > 0) {
+      throw new ScriptError(EXIT_REFUSED, `T${n} cannot open in a worktree while ${names(undone)} undone and ${undone.length === 1 ? 'waits' : 'wait'} for ${undone.length === 1 ? 'its' : 'their'} sequential re-run: open T${n} once it is closed`);
     }
     const state = common.taskState(planName, n);
     if (state && state.status === 'blocked') throw new ScriptError(EXIT_REFUSED, `T${n} is blocked: only your human partner's decision restarts it, with triqual tasks start T${n}`);
@@ -121,6 +132,10 @@
       common.appendLedger(workspace, `BASE: T${n} ${base}`);
     }
     if (common.lastTimeLine(common.ledgerLines(workspace), n) !== 'Opened') common.appendLedger(workspace, `Opened: T${n} ${at}`);
+    // The sequential re-run of an undone landing starts here: from this line on the task counts as built in the main checkout.
+    if (!worktree && common.isUndone(common.ledgerLines(workspace), n) && !common.rerunStarted(common.ledgerLines(workspace), n)) {
+      common.appendLedger(workspace, common.RERUN_LINE(n));
+    }
 
     let workdir = null;
     if (worktree) {

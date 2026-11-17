@@ -87,7 +87,7 @@ await loadSqlite();
 // A clean environment: no GIT_* from a calling hook, a temp HOME, no registry or data-dir redirects.
 const cleanEnv = (home, extra) => {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
-  for (const k of ['XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'TRIQUAL_REGISTRY_DIR', 'CM_REGISTRY_DIR', 'TRIQUAL_TRACKING_DB']) delete env[k];
+  for (const k of ['XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'TRIQUAL_REGISTRY_DIR', 'CM_REGISTRY_DIR', 'TRIQUAL_TRACKING_DB', 'TRIQUAL_TRACKING_ROOT']) delete env[k];
   return { ...env, HOME: home, GIT_CONFIG_NOSYSTEM: '1', ...extra };
 };
 
@@ -2452,7 +2452,7 @@ test('a landing is refused while another task of the phase has a Landed line wit
   assert.equal(r.git('rev-parse', `${c2.sha}^`).trim(), landed);
 }));
 
-test('an undone task counts as built in the main checkout until its sequential re-run closes', () => withRig({ planText: T3_PLAN }, (r) => {
+test('an undone task holds the phase against a new worktree task, and counts as built in the main checkout from its re-run until it closes', () => withRig({ planText: T3_PLAN }, (r) => {
   startStack(r);
   wtOpen(r, 1);
   wtOpen(r, 2);
@@ -2460,7 +2460,7 @@ test('an undone task counts as built in the main checkout until its sequential r
   assert.equal(closeOf(r, 1).status, 3, 'the landing is undone');
   const third = r.run('task-open', r.plan, '3', '--worktree');
   assert.equal(third.status, 3, `${third.stdout}\n${third.stderr}`);
-  assert.match(third.stderr, /T3 cannot open in a worktree while T1 is built in the main checkout/);
+  assert.match(third.stderr, /T3 cannot open in a worktree while T1 is undone and waits for its sequential re-run/);
   const again = r.run('task-open', r.plan, '1');
   assert.equal(again.status, 3, `${again.stdout}\n${again.stderr}`);
   assert.match(again.stderr, /T1 runs in the main checkout, and a task there runs alone: T2 is open/);
@@ -2468,6 +2468,58 @@ test('an undone task counts as built in the main checkout until its sequential r
   wtReview(r, 2);
   ok(closeOf(r, 2));
   ok(r.run('task-open', r.plan, '1'));
+}));
+
+// Two worktree tasks whose landings were both undone: nothing of either is in the main checkout until its re-run starts.
+const bothUndone = (r) => {
+  startStack(r);
+  wtOpen(r, 1);
+  wtOpen(r, 2);
+  wtReview(r, 1, { test: FAILING_TEST });
+  assert.equal(closeOf(r, 1).status, 3, 'the landing of T1 is undone');
+  wtReview(r, 2, { test: FAILING_TEST });
+  assert.equal(closeOf(r, 2).status, 3, 'the landing of T2 is undone');
+};
+
+test('two undone landings in one phase re-run one after the other: the first opens, the second waits for it', () => withRig({ planText: WT_PLAN }, (r) => {
+  bothUndone(r);
+  const first = r.run('task-open', r.plan, '1');
+  assert.equal(first.status, 0, `${first.stdout}\n${first.stderr}`);
+  assert.equal(r.ledger().filter((l) => l === 'Rerun: T1').length, 1);
+  const second = r.run('task-open', r.plan, '2');
+  assert.equal(second.status, 3, `${second.stdout}\n${second.stderr}`);
+  assert.match(second.stderr, /^T2 runs in the main checkout, and a task there runs alone: T1 is open in this phase; open T2 with --worktree, or once it is closed$/m);
+  assert.equal(r.ledger().some((l) => l === 'Rerun: T2'), false, 'a Rerun line was written for the refused task');
+
+  mainReviewed(r, 1);
+  ok(closeOf(r, 1));
+  ok(r.run('task-open', r.plan, '2'));
+  assert.equal(r.ledger().filter((l) => l === 'Rerun: T2').length, 1);
+}));
+
+test('a rerun of task-open for the sequential re-run of an undone landing writes no second Rerun line', () => withRig({ planText: WT_PLAN }, (r) => {
+  bothUndone(r);
+  open(r, 1);
+  open(r, 1);
+  assert.equal(r.ledger().filter((l) => l.startsWith('Rerun: ')).length, 1);
+  assert.equal(r.ledger().filter((l) => l.startsWith('Opened: T1 ')).length, 1);
+}));
+
+test('an undone task whose re-run has not started still holds the phase against a new worktree task', () => withRig({ planText: T3_PLAN }, (r) => {
+  startStack(r);
+  wtOpen(r, 1);
+  wtReview(r, 1, { test: FAILING_TEST });
+  assert.equal(closeOf(r, 1).status, 3, 'the landing is undone');
+  const res = r.run('task-open', r.plan, '2', '--worktree');
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /^T2 cannot open in a worktree while T1 is undone and waits for its sequential re-run: open T2 once it is closed$/m);
+  assert.equal(existsSync(wtPath(r, 2)), false, 'a worktree was made');
+  assert.equal(r.ledger().some((l) => l.startsWith('BASE: T2 ')), false, 'a BASE line was written');
+  // Once the re-run has started, the refusal is the one of a task built in the main checkout.
+  open(r, 1);
+  const during = r.run('task-open', r.plan, '2', '--worktree');
+  assert.equal(during.status, 3, `${during.stdout}\n${during.stderr}`);
+  assert.match(during.stderr, /T2 cannot open in a worktree while T1 is built in the main checkout/);
 }));
 
 test('a worktree task is based at the phase tip once the main-checkout task is closed', () => withRig({ planText: WT_PLAN }, (r) => {

@@ -16,6 +16,7 @@ The workspace ledger, `sdd-ledger.md`, is append-only, one line per event, in th
 - `Closed: T<N> <ISO time>` (written by `task-close` in one write with, and just before, the task's complete line; an undone landing writes none)
 - `Serial: T<a>, T<b> — <reason>` (written by the orchestrator before it runs independent tasks one after the other)
 - `BASE: T<N> <previous tip>` followed by `Task <N>: landing conflict — re-run sequential` (written together, in one write, by the undo of a landing in `task-close`; the file `<workspace>/task-<N>-undone` beside them dates the undone attempt, and the sequential re-run's ledger starts after the undo line)
+- `Rerun: T<N>` (written by `task-open` when it opens an undone task without `--worktree`, once per undo: the sequential re-run has started, and from this line on the task counts as built in the main checkout; before it, an undone task does not stop a task from opening there)
 - `Worktree removed: <path> — left behind at the close of P<n>` (written by the main session at phase close, one per leftover worktree removed; `<path>` absolute)
 - `Validation: P<n> run <id> verdict <clean|failed> — <url>` (written by `validate`)
 - `Validation fix: P<n> <sha> — <finding>` (written by the controller after the plain fix commit is pushed)

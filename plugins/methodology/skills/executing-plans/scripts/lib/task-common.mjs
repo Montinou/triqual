@@ -180,6 +180,20 @@ export function lastUndoIndex(lines, n) {
   return lines.findLastIndex((l) => l === UNDONE_LINE(n));
 }
 
+// Whether the task is undone: its last `BASE: T<N>` line is followed by its undo line, and no `Task <N>: complete (commits ` line
+// comes after them. Nothing of it is in the main checkout (its worktree and branch were removed) until its sequential re-run starts.
+export function isUndone(lines, n) {
+  const undo = lastUndoIndex(lines, n);
+  return undo > lastBaseIndex(lines, n) && !lines.slice(undo + 1).some((l) => l.startsWith(`Task ${n}: complete (commits `));
+}
+
+// The line `task-open` writes when it opens an undone task without --worktree: the sequential re-run has started.
+export const RERUN_LINE = (n) => `Rerun: T${n}`;
+// Whether the sequential re-run of the task's undone landing has started: a `Rerun: T<N>` line after the last undo line.
+export function rerunStarted(lines, n) {
+  return lines.findLastIndex((l) => l === RERUN_LINE(n)) > lastUndoIndex(lines, n);
+}
+
 // Whether a `Tested: T<N> <sha>` line (written after the landing's Test files passed at <sha>) is among `lines`.
 export function isTested(lines, n, sha) {
   const re = new RegExp(`^Tested: T${n} (\\S+)\\s*$`);
@@ -334,11 +348,13 @@ export function earlierUnfinished(plan, planName, n, ledger) {
     : !ledger.some((l) => l.startsWith(`Task ${m}: complete (commits `))));
 }
 
-// The other tasks of T<N>'s phase, in plan order, that have a `BASE: T<M>` line and are started and not closed, each as { n, inPlace }:
+// The other tasks of T<N>'s phase, in plan order, that have a `BASE: T<M>` line and are started and not closed, each as { n, inPlace, undone }:
 // in the tracking ledger `in_progress`, `in_review` or `blocked` (a blocked task still holds its work), else (not opted in) with no
-// `Task <M>: complete (commits ` line. `inPlace` is true for a task built in the main checkout: it has no landing that stands and no
-// worktree branch (an undone task, whose worktree is gone, is in place until its sequential re-run closes). A task in the main
-// checkout runs alone: task-open refuses to open any task of the phase beside one, and refuses a main-checkout task beside any open one.
+// `Task <M>: complete (commits ` line. `undone` is true for a task whose landing was undone and whose sequential re-run has not started
+// (no `Rerun: T<M>` line after the undo): it is built nowhere, so it does not stop a task from opening in the main checkout, but no
+// worktree task opens beside it. `inPlace` is true for a task built in the main checkout: it has no landing that stands and no worktree
+// branch (an undone task from its `Rerun:` line until its re-run closes). A task in the main checkout runs alone: task-open refuses to
+// open any task of the phase beside one, and refuses a main-checkout task beside any open one.
 export function openTasks(planFile, planName, n, ledger) {
   const statuses = taskStatuses(planName);
   const stem = planName.replace(/\.md$/, '');
@@ -346,7 +362,10 @@ export function openTasks(planFile, planName, n, ledger) {
     .filter((m) => m !== n && lastBase(ledger, m) !== null && (statuses
       ? ['in_progress', 'in_review', 'blocked'].includes(statuses[`T${m}`])
       : !ledger.some((l) => l.startsWith(`Task ${m}: complete (commits `))))
-    .map((m) => ({ n: m, inPlace: lastLanded(ledger, m) === null && commitOf(`refs/heads/wt/${stem}-t${m}`) === null }));
+    .map((m) => {
+      const undone = isUndone(ledger, m) && !rerunStarted(ledger, m);
+      return { n: m, undone, inPlace: !undone && lastLanded(ledger, m) === null && commitOf(`refs/heads/wt/${stem}-t${m}`) === null };
+    });
 }
 
 // The tier of the last `Tier: T<N> <tier>` / `Tier raised: T<N> <from> → <to>` line of the task, else null.
