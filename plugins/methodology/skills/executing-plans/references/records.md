@@ -28,18 +28,19 @@ A light task with a clean gate:
   "fixRounds": 0, "blocked": false, "coordinator": false }
 ```
 
-**`final-escapes`**, once per multi-phase plan, after the seams review (a single-phase plan's `P1` record stands): one entry per seams-review finding that the final reviewer traced to a task, with that task's effective tier and the finding's severity; `untraced` findings are not entries, and a final review with none writes `"escapes": []`:
+**`final-escapes`**, once per multi-phase plan, after the seams review (a single-phase plan's `P1` record stands): one entry per seams-review finding that the final reviewer traced to a task, with that task's effective tier and the finding's severity, and the `task` (`T<N>`), the `category` (one short kebab-case word) and the `summary` (at most 200 characters, one line, no secrets) the reviewer gave for it; `untraced` findings are not entries, and a final review with none writes `"escapes": []`:
 
 ```json
 { "v": 2, "at": "2026-10-18T18:30:05Z", "provider": "claude", "task": "final", "kind": "final-escapes",
-  "escapes": [ { "tier": "light", "severity": "important" }, { "tier": "standard", "severity": "minor" } ] }
+  "escapes": [ { "tier": "light", "severity": "important", "task": "T2", "category": "edge-case", "summary": "an empty plan list crashes tasks status" },
+               { "tier": "standard", "severity": "minor", "task": "T5", "category": "missing-test", "summary": "the retry path has no test" } ] }
 ```
 
 **The phase review** records `final-escapes` with `task: "P<n>"` (the seams review records only `final-escapes`, with `task: "final"`), and no `hunters` record: no hunters run since 2026-11-12, and the `hunters` kind stays valid only for the records already in the store and for A/B tests. The phase's fix commit lands with its own progress entry, Stage/task `Plan <name> · P<n> fix`. An escape counts only a finding no earlier review recorded: a deferred Minor confirmed again is not an escape. Phase-review escape counts will rise by design: they now hold what per-task hunters used to catch.
 
 ```json
 { "v": 2, "at": "2026-10-20T16:41:30Z", "provider": "claude", "task": "P1", "kind": "final-escapes",
-  "escapes": [ { "tier": "standard", "severity": "important" } ] }
+  "escapes": [ { "tier": "standard", "severity": "important", "task": "T4", "category": "stale-base", "summary": "the ledger keeps a stale BASE line after a reopen" } ] }
 ```
 
 **`escape`**, after the plan merges: whenever a `fix:` commit or a red CI on trunk is traced to the plan, record it with `triqual role-eval record --plan <plan file> <json-file>`. `source` is `post-merge-fix`, `red-ci` or `bug-report`; `ref` the fixing commit's sha or the PR number; `task` (optional) the task it traces to, whose effective tier the command fills in from the ledger when `tier` is left out; `note` (optional) at most 200 characters, no secrets. One record per plan and ref:

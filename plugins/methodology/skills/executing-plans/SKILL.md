@@ -30,7 +30,7 @@ The only exception to the push stop is a ledgered authorization, either `Authori
 
 ## Role Dispatch
 
-Every dispatch goes to a `roles:*` agent (plugin `roles`), and no dispatch passes a model: each role's definition pins its model and effort, and a model in the dispatch would override that pin. Choose the role; never choose a model.
+Every dispatch goes to a `roles:*` agent (plugin `roles`), and no dispatch passes a model: each role's definition pins its model and effort, and a model in the dispatch would override that pin. Choose the role; never choose a model. The one exception is a role arm (see Role arms below): a model and effort that `triqual eval arm` names for this task.
 
 - **Default:** `node scripts/task-brief PLAN_FILE N` copies the task's `**Role:**` line into its brief; a task with no `**Role:**` line is `roles:tdd-implementer`.
 - **`roles:tdd-implementer`, `roles:complex-implementer` or `roles:review-fixer`** (the last only in plans written before 1.0): dispatch [implementer-prompt.md](implementer-prompt.md), with its header's `<task role>` filled with that role. A plan marks a task `roles:complex-implementer` (Opus) for multi-system changes, migrations of live state, or work where a mistake is costly; such a task is heavy.
@@ -42,6 +42,13 @@ Every dispatch goes to a `roles:*` agent (plugin `roles`), and no dispatch passe
 - **Fix rounds:** `roles:review-fixer`; a `roles:complex-implementer` task keeps its own role.
 - **Seams review:** `roles:final-adversarial-reviewer`, once per multi-phase plan ([final-review-prompt.md](final-review-prompt.md), its Seams Scope).
 - **Briefs:** `node scripts/task-brief PLAN_FILE N` extracts each brief mechanically, at no cost. Dispatch `roles:brief-writer` only when a task's plan text lacks interfaces that must come from the current code.
+
+**Role arms.** Before each role dispatch of a task (an implementer, a fixer, a reviewer), run `triqual eval arm --kind role --plan <plan file name> --task T<N> --role <role>`, with `<role>` the role's name without the `roles:` prefix (`tdd-implementer`). Run it from the main checkout, as every loop script runs, never from a phase or task worktree: the cost join of `eval report` finds a task's subagent transcripts under the main session's project directory, so an assignment recorded from a worktree gets cost null. The task is passed as `T<N>`, with the `T`. It prints `none`, or `<experiment>/<arm> <model> <effort>`.
+
+- On a line other than `none`, pass its model and effort on the dispatch (the one exception to "pass no model") and write `Arm: T<N> <role> <experiment>/<arm> <model> <effort>` in the ledger. A fix round or a resume of the same task asks again and gets the same arm.
+- On `none`, or when `triqual` is missing or the command fails, dispatch unchanged: the role's own settings.
+- Every dispatch's description is `T<N> <role>` (`T3 tdd-implementer`), so the cost of the task's subagents is found by that description. A dispatch with no task, such as the phase or seams review, passes `--key <plan file name>/P<n>` (or `<plan file name>/final`) in place of `--plan` and `--task`.
+- When the experiment's role is the phase or final reviewer, the guardrail uses objective signals only (the clean task, the escapes recorded after the merge, a red CI), never the findings of the reviewer under test.
 
 **Turn count beats token price.** Wall-clock and context cost scale with how many turns a subagent takes. The role pins the model; what you control is the dispatch: a brief that carries the exact values, the interfaces the task touches, and nothing else.
 
@@ -316,7 +323,7 @@ Use methodology:finishing-branch.
 | "The fix was small, skip the re-review" | The matrix names the only exception (a standard fix that applies an approved `Ruling:` verbatim, no security logic). Otherwise every round is re-reviewed, and re-checked by `tier-check`. |
 | "This finding is obviously wrong, I'll drop it" | Silent discards are forbidden. Rule in the ledger; adjudicate only at the cap. |
 | "The implementer spawned its own reviewer — free extra assurance" | It's a duplicate seat; the task review is the gate. A worker-spawned reviewer is a defect to flag. |
-| "I'll name a model to be safe" | A model in the dispatch overrides the role's pinned model. Choose the role; pass no model. |
+| "I'll name a model to be safe" | A model in the dispatch overrides the role's pinned model. Choose the role; pass no model, except the arm `triqual eval arm` named. |
 | "The plan says a reviewer role implements this task — close enough" | A reviewer role is never a task role. Stop and ask. |
 | "The denied call has a harmless variant" | A variant is a retry. A fence denial stops the task and asks the human; it is never ruled on or routed around. |
 

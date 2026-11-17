@@ -184,6 +184,11 @@ Subagent (roles:final-adversarial-reviewer):
     task's commit introduced the defect (it emerges from several, or from
     code before the branch). The controller counts the traced findings
     against each task's review tier, so name a task only when you traced it.
+    For each finding you traced to a task, also give its `task` (`T<N>`), its
+    `category` (one short kebab-case word naming the kind of defect, for
+    example `edge-case` or `missing-test`) and its `summary` (at most 200
+    characters, no secrets, no code): the controller records them with the
+    escape.
     Name the phase (`Phase <N>`; the package's commit list shows which
     commits belong to which phase, and a plan without phases needs none): the
     controller fixes every finding in at most two rounds, each a commit on the top phase, and never

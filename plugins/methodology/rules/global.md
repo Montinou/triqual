@@ -88,7 +88,7 @@ effort parameter). Coordination and rulings stay with the session model.
 | Write the plan | `roles:planner` | opus | medium | `methodology:writing-plans` | lanes-first plan drafts out of the main session |
 | Coordination and decisions | (session) | session model | — | — | never delegated |
 
-Methodology's skills dispatch `roles:*` and pass no model: the role's definition carries it.
+Methodology's skills dispatch `roles:*` and pass no model: the role's definition carries it, except a model and effort that an active `triqual eval arm` line names for that dispatch.
 Do not use `general-purpose` for these roles; pick the matching agent type above.
 
 ### Workflow Fan-out Caps
