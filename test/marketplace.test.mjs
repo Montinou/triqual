@@ -207,10 +207,10 @@ test('workflow-gate\'s descriptions name the Workflow cap and the Agent and Task
   }
 });
 
-test('roles\' plugin.json description lists the nine shipped role agents', () => {
+test('roles\' plugin.json description lists the ten shipped role agents', () => {
   assert.equal(readJson('plugins/roles/.claude-plugin/plugin.json').description,
-    'Nine role agents for plan execution: brief-writer, tdd-implementer, complex-implementer, safety-reviewer, '
-    + 'spec-reviewer, review-fixer, final-adversarial-reviewer, hunter, phase-orchestrator.');
+    'Ten role agents for plan execution: brief-writer, tdd-implementer, complex-implementer, safety-reviewer, '
+    + 'spec-reviewer, review-fixer, final-adversarial-reviewer, hunter, phase-orchestrator, planner.');
 });
 
 test('methodology\'s description names its skills, roles dispatch and tracking, and no longer calls itself a fork', () => {

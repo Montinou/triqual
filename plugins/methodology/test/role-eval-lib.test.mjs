@@ -11,7 +11,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
-  RETIRED_KINDS, appendRecord, formatSummary, formatTierSummary, recordKey, storePath, summarize, summarizeByTier,
+  ESCAPE_SOURCES, RETIRED_KINDS, appendRecord, formatSummary, formatTierSummary, recordKey, storePath, summarize, summarizeByTier,
   takeOverStale, validateRecord, withStoreLock,
 } from '../cli/lib/role-eval.mjs';
 
@@ -277,7 +277,7 @@ const REJECTIONS = [
   ['final-escapes escape not an object', escapesRecord({ escapes: [null] }), 'escapes.0'],
   ['final-escapes escape tier', escapesRecord({ escapes: [{ tier: 'medium', severity: 'minor' }] }), 'escapes.0.tier'],
   ['final-escapes escape severity', escapesRecord({ escapes: [{ tier: 'light', severity: 'major' }] }), 'escapes.0.severity'],
-  ['final-escapes escape extra key', escapesRecord({ escapes: [{ tier: 'light', severity: 'minor' }, { tier: 'light', severity: 'minor', task: 'T1' }] }), 'escapes.1.task'],
+  ['final-escapes escape extra key', escapesRecord({ escapes: [{ tier: 'light', severity: 'minor' }, { tier: 'light', severity: 'minor', provider: 'claude' }] }), 'escapes.1.provider'],
 ];
 
 for (const [name, record, field] of REJECTIONS) {
@@ -904,4 +904,181 @@ test('formatTierSummary prints the tiers, rates as percentages and null as n/a',
   assert.match(empty, /heavy: tasks 0, raised 0, hunter confirmed n\/a, spec confirmed\/task n\/a, fix rounds\/task n\/a, blocked 0, escapes\/task n\/a/);
   assert.equal(empty.includes('null'), false);
   assert.equal(empty.includes('NaN'), false);
+});
+
+// ---- the plan-review kind ---------------------------------------------------------------------------------------
+
+// One record per plan: what the plan review found and how parallel the plan is. No provider; counts only.
+const planReviewRecord = (over = {}) => ({
+  v: 2, at: '2026-11-17T10:00:00Z', kind: 'plan-review', plan: '2026-11-17-example-plan.md', arm: 'alpha/beta-1',
+  tasks: 12, phases: 3, parallelism: 1.5, runnerOnly: 2, auditFindings: { critical: 0, important: 2, minor: 1 },
+  plannerUsd: 0.42, ...over,
+});
+
+test('a fixture plan-review record validates', () => {
+  assert.deepEqual(validateRecord(planReviewRecord()), { ok: true });
+  // arm and plannerUsd may be null; zero counts and a parallelism of exactly 1 are valid.
+  assert.deepEqual(validateRecord(planReviewRecord({
+    arm: null, plannerUsd: null, tasks: 0, phases: 0, parallelism: 1, runnerOnly: 0,
+    auditFindings: { critical: 0, important: 0, minor: 0 },
+  })), { ok: true });
+  assert.deepEqual(validateRecord(planReviewRecord({ plannerUsd: 0 })), { ok: true });
+});
+
+test('old records stay valid next to the plan-review kind', () => {
+  assert.deepEqual(validateRecord(shadowRecord()), { ok: true });
+  assert.deepEqual(validateRecord(huntersRecord()), { ok: true });
+  assert.deepEqual(validateRecord(taskReviewRecord()), { ok: true });
+  assert.deepEqual(validateRecord(escapesRecord()), { ok: true });
+  assert.deepEqual(validateRecord({
+    v: 2, at: '2026-09-06T10:00:00Z', kind: 'escape', plan: 'p.md', source: 'red-ci', ref: '#12',
+  }), { ok: true });
+});
+
+test('parallelism 0.5 is rejected (field parallelism)', () => {
+  assert.deepEqual(validateRecord(planReviewRecord({ parallelism: 0.5 })), { ok: false, field: 'parallelism' });
+});
+
+test('an unknown auditFindings key is rejected', () => {
+  assert.deepEqual(
+    validateRecord(planReviewRecord({ auditFindings: { critical: 0, important: 0, minor: 0, major: 1 } })),
+    { ok: false, field: 'auditFindings.major' },
+  );
+});
+
+test('plan-review field rules: each bad field is named', () => {
+  const cases = [
+    ['v 1', { v: 1 }, 'v'],
+    ['a provider', { provider: 'claude' }, 'provider'],
+    ['a task', { task: 'T1' }, 'task'],
+    ['an unknown key', { extra: 1 }, 'extra'],
+    ['no plan name', { plan: 'a/b.md' }, 'plan'],
+    ['plan not a string', { plan: 7 }, 'plan'],
+    ['arm with no slash', { arm: 'alpha' }, 'arm'],
+    ['arm with uppercase', { arm: 'Alpha/beta' }, 'arm'],
+    ['arm not a string', { arm: 3 }, 'arm'],
+    ['negative tasks', { tasks: -1 }, 'tasks'],
+    ['fractional phases', { phases: 1.5 }, 'phases'],
+    ['runnerOnly a string', { runnerOnly: '2' }, 'runnerOnly'],
+    ['parallelism NaN', { parallelism: NaN }, 'parallelism'],
+    ['parallelism a string', { parallelism: '2' }, 'parallelism'],
+    ['plannerUsd negative', { plannerUsd: -0.01 }, 'plannerUsd'],
+    ['plannerUsd Infinity', { plannerUsd: Infinity }, 'plannerUsd'],
+    ['auditFindings not an object', { auditFindings: 3 }, 'auditFindings'],
+    ['auditFindings count negative', { auditFindings: { critical: -1, important: 0, minor: 0 } }, 'auditFindings.critical'],
+    ['auditFindings count missing', { auditFindings: { critical: 0, important: 0 } }, 'auditFindings.minor'],
+  ];
+  for (const [name, over, field] of cases) {
+    assert.deepEqual(validateRecord(planReviewRecord(over)), { ok: false, field }, name);
+  }
+  for (const key of ['arm', 'tasks', 'phases', 'parallelism', 'runnerOnly', 'auditFindings', 'plannerUsd', 'plan']) {
+    const r = planReviewRecord();
+    delete r[key];
+    assert.deepEqual(validateRecord(r), { ok: false, field: key }, `missing ${key}`);
+  }
+});
+
+test('recordKey of two plan-reviews of one plan is equal', () => {
+  const base = { commonDir: '/r/.git', plan: '/r/docs/plans/p.md', kind: 'plan-review' };
+  const key = recordKey(base);
+  assert.match(key, /^[0-9a-f]{64}$/);
+  // The task part of the key is the plan argument, so the other arguments do not move it.
+  assert.equal(recordKey({ ...base, task: 'T3', attempt: 2, ref: '#1' }), key);
+  assert.equal(recordKey({ ...base, plan: '/elsewhere/p.md' }), key);
+  assert.equal(key, createHash('sha256').update('/r/.git\0p.md\0p.md\0plan-review').digest('hex'));
+  // Another plan, repo or kind is another key.
+  assert.notEqual(recordKey({ ...base, plan: '/r/docs/plans/q.md' }), key);
+  assert.notEqual(recordKey({ ...base, commonDir: '/other/.git' }), key);
+  assert.notEqual(recordKey({ ...base, kind: 'final-escapes' }), key);
+});
+
+test('summaries ignore plan-review lines', () => {
+  const line = rec({ ...planReviewRecord(), key: 'k-pr' });
+  const before = summarize(TIER_STORE, {});
+  const withLine = summarize(`${TIER_STORE}${line}\n`, {});
+  assert.deepEqual(withLine, before);
+  assert.deepEqual(summarizeByTier(`${TIER_STORE}${line}\n`, {}), summarizeByTier(TIER_STORE, {}));
+  assert.equal(formatSummary(withLine), formatSummary(before));
+  // A store of plan-reviews alone names no provider and counts no tier.
+  const only = summarize(`${line}\n`, {});
+  assert.deepEqual(only, { providers: {}, skipped: { malformed: [], otherVersion: 0, duplicateKey: 0 } });
+  assert.match(formatSummary(only), /^No records in the window/);
+  const tiers = summarizeByTier(`${line}\n`, {});
+  assert.deepEqual(tiers, summarizeByTier('', {}));
+  assert.equal(formatTierSummary(tiers), formatTierSummary(summarizeByTier('', {})));
+  // A plan-review is valid, so it is not reported as malformed.
+  assert.deepEqual(only.skipped.malformed, []);
+});
+
+// ---- escape categories, plan stamps and arms -----------------------------------------------------------------------
+
+const ESCAPE_ENTRY = { tier: 'light', severity: 'important' };
+const ARM_ENTRY = { role: 'spec-reviewer', experiment: 'review-model', arm: 'control', model: 'opus', effort: 'medium' };
+
+test('final-escapes with task, category and summary is valid', () => {
+  const entry = { ...ESCAPE_ENTRY, task: 'T4', category: 'state-drift', summary: 'the cache was read before it was filled' };
+  assert.deepEqual(validateRecord(escapesRecord({ escapes: [entry] })), { ok: true });
+  assert.deepEqual(validateRecord(escapesRecord({ escapes: [{ ...ESCAPE_ENTRY, summary: 'x'.repeat(200) }] })), { ok: true });
+  assert.deepEqual(validateRecord(escapesRecord({ plan: '2026-11-17-example-plan.md' })), { ok: true });
+});
+
+test('final-escapes entries: task, category and summary rules name the field', () => {
+  const bad = (over) => validateRecord(escapesRecord({ escapes: [{ ...ESCAPE_ENTRY, ...over }] }));
+  assert.deepEqual(bad({ summary: 'x'.repeat(201) }), { ok: false, field: 'escapes.0.summary' });
+  assert.deepEqual(bad({ summary: 'two\nlines' }), { ok: false, field: 'escapes.0.summary' });
+  assert.deepEqual(bad({ summary: 5 }), { ok: false, field: 'escapes.0.summary' });
+  assert.deepEqual(bad({ task: 'final' }), { ok: false, field: 'escapes.0.task' });
+  assert.deepEqual(bad({ task: 'T' }), { ok: false, field: 'escapes.0.task' });
+  assert.deepEqual(bad({ category: 'Bad' }), { ok: false, field: 'escapes.0.category' });
+  assert.deepEqual(bad({ category: '1x' }), { ok: false, field: 'escapes.0.category' });
+  assert.deepEqual(bad({ category: `a${'b'.repeat(40)}` }), { ok: false, field: 'escapes.0.category' });
+  assert.deepEqual(bad({ extra: 1 }), { ok: false, field: 'escapes.0.extra' });
+  assert.deepEqual(validateRecord(escapesRecord({ plan: 'bad plan' })), { ok: false, field: 'plan' });
+});
+
+test('old records without the new fields stay valid', () => {
+  assert.deepEqual(validateRecord(escapesRecord()), { ok: true });
+  assert.deepEqual(validateRecord(taskReviewRecord()), { ok: true });
+});
+
+test('task-review with arms is valid; arms with an unknown key is rejected', () => {
+  assert.deepEqual(validateRecord(taskReviewRecord({ plan: 'p.md', arms: [ARM_ENTRY, { ...ARM_ENTRY, role: 'hunter', effort: 'max' }] })), { ok: true });
+  assert.deepEqual(validateRecord(taskReviewRecord({ arms: [] })), { ok: true });
+  assert.deepEqual(
+    validateRecord(taskReviewRecord({ arms: [{ ...ARM_ENTRY, extra: 'x' }] })), { ok: false, field: 'arms.0.extra' },
+  );
+  const bad = (over) => validateRecord(taskReviewRecord({ arms: [{ ...ARM_ENTRY, ...over }] }));
+  assert.deepEqual(bad({ role: 'Spec' }), { ok: false, field: 'arms.0.role' });
+  assert.deepEqual(bad({ effort: 'huge' }), { ok: false, field: 'arms.0.effort' });
+  assert.deepEqual(bad({ model: 3 }), { ok: false, field: 'arms.0.model' });
+  assert.deepEqual(bad({ arm: undefined }), { ok: false, field: 'arms.0.arm' });
+  assert.deepEqual(bad({ experiment: undefined }), { ok: false, field: 'arms.0.experiment' });
+  assert.deepEqual(validateRecord(taskReviewRecord({ arms: {} })), { ok: false, field: 'arms' });
+  assert.deepEqual(validateRecord(taskReviewRecord({ arms: [null] })), { ok: false, field: 'arms.0' });
+  assert.deepEqual(validateRecord(taskReviewRecord({ plan: 'bad plan' })), { ok: false, field: 'plan' });
+});
+
+test('arms and plan-review arm follow one name rule for experiment ids and arm names', () => {
+  const inArms = (over) => validateRecord(taskReviewRecord({ arms: [{ ...ARM_ENTRY, ...over }] }));
+  const inPlanReview = (arm) => validateRecord(planReviewRecord({ arm }));
+  for (const name of ['control', 'arm-b', 'a1', '0', 'x-1-y']) {
+    assert.deepEqual(inArms({ experiment: name, arm: name }), { ok: true }, name);
+    assert.deepEqual(inPlanReview(`${name}/${name}`), { ok: true }, name);
+  }
+  for (const name of ['', 'Upper', 'has space', 'a/b', 'under_score', 'a.b']) {
+    assert.deepEqual(inArms({ experiment: name }), { ok: false, field: 'arms.0.experiment' }, `experiment ${JSON.stringify(name)}`);
+    assert.deepEqual(inArms({ arm: name }), { ok: false, field: 'arms.0.arm' }, `arm ${JSON.stringify(name)}`);
+    assert.deepEqual(inPlanReview(`${name}/ok`), { ok: false, field: 'arm' }, `plan-review ${JSON.stringify(name)}`);
+    assert.deepEqual(inPlanReview(`ok/${name}`), { ok: false, field: 'arm' }, `plan-review ${JSON.stringify(name)}`);
+  }
+});
+
+test('escape source revert is valid', () => {
+  assert.ok(ESCAPE_SOURCES.includes('revert'));
+  assert.deepEqual(validateRecord({ v: 2, at: '2026-09-06T10:00:00Z', kind: 'escape', source: 'revert', ref: '#42' }), { ok: true });
+});
+
+test('recordKey is unchanged by the plan stamp and the new fields', () => {
+  const base = { commonDir: '/r/.git', plan: 'p.md', task: 'T3', kind: 'task-review', attempt: 1 };
+  assert.equal(recordKey(base), createHash('sha256').update('/r/.git\0p.md\0T3\0task-review\0' + 1).digest('hex'));
 });

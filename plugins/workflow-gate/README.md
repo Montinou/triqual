@@ -30,7 +30,7 @@ only whitespace is not empty to the gate: it reads as 0 and forbids that model.
 A script is accepted when it meets all three rules.
 
 1. **Every `agent()` names its model.**
-   - `agentType: "roles:<name>"` for one of the nine [`roles`](../roles/README.md) agents, which
+   - `agentType: "roles:<name>"` for one of the ten [`roles`](../roles/README.md) agents, which
      maps to that role's model (map below), or
    - a string-literal `model:` that contains `fable`, `opus`, `sonnet` or `haiku`.
 
@@ -98,7 +98,7 @@ test (`test/roles-consistency.test.mjs` at the repository root) keeps it equal t
 |---|---|
 | `hunter` | haiku |
 | `brief-writer`, `tdd-implementer`, `safety-reviewer`, `review-fixer`, `phase-orchestrator` | sonnet |
-| `complex-implementer`, `spec-reviewer`, `final-adversarial-reviewer` | opus |
+| `complex-implementer`, `spec-reviewer`, `final-adversarial-reviewer`, `planner` | opus |
 
 ## The `Agent` burst cap
 
