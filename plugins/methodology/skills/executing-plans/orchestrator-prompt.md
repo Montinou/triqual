@@ -14,7 +14,9 @@ Subagent (roles:phase-orchestrator):
   description: "Run phase P<n> of the plan"
   prompt: |
     You run exactly one phase of a plan: phase [PHASE] of [PLAN_FILE]. The main session has already run
-    `node scripts/stack.mjs phase` for it, so HEAD is on the phase's branch.
+    `node scripts/stack.mjs phase` for it, so the phase's branch is checked out in [PHASE_WORKDIR], the checkout this
+    phase's tasks built in place and its coordinator tasks use. Other phases of the plan may be running beside you, each
+    in its own checkout: never touch one.
 
     ## What To Do
 
@@ -57,7 +59,8 @@ Subagent (roles:phase-orchestrator):
     based by `task-open` at the last closed commit, never on a main-checkout task's unreviewed commits, and closed with `task-close` as soon as its review is clean. Before you run independent tasks one after the other, write `Serial: T<a>, T<b> — <reason>` in the ledger, the reason a fact; never run lanes serially for caution. A task with no node `Test:` path never runs in a worktree. When `task-close` undoes a landing (exit 3,
     an `Error:` line, `Task <N>: landing conflict — re-run sequential`), run that task again sequentially in the main
     checkout with `task-open` and no `--worktree`; never patch the landing, and never `task-close` it again before the re-run has a `task-prep`. On a stop, keep the worktrees of tasks
-    awaiting landing.
+    awaiting landing. A task opened in place in a phase worktree is dispatched with `WORK_DIR` = the `workdir:`
+    `task-open` printed.
 
     ## Stops
 
@@ -100,6 +103,7 @@ Subagent (roles:phase-orchestrator):
 ```
 
 **Placeholders:**
+- `[PHASE_WORKDIR]` — the `workdir:` line `stack.mjs phase` printed for this phase, else the main checkout's path
 - `[PLAN_FILE]` — the plan's path (the file the scripts read, never a bare plan name)
 - `[PHASE]` — the phase number to run (`N` in `stack.mjs phase PLAN_FILE N`)
 - `[LEDGER_PATH]` — the workspace ledger, `<workspace>/sdd-ledger.md`
