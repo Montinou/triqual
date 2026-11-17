@@ -24,18 +24,19 @@ const MAX_BYTES = 87040;
 // `ledger-vocabulary` and `parallel-tasks` were edited again on 2026-11-16 (parallel plans B): the time lines and `Serial:`,
 // landing without a wait and a batch per lane, so their hashes follow that text.
 // `ledger-vocabulary` was edited once more on 2026-11-16 (parallel plans B, phase 1 fix round 1): the `Rerun:` line, so its hash follows it.
+// `setup`, `ledger-vocabulary`, `worktrees`, `final-review` and `parallel-tasks` were edited on 2026-11-16 (parallel plans C): phase worktrees, joins and the `Serial: P<n>` line, so their hashes follow that text.
 // `setup` was edited on 2026-11-10 (looser review tiers): the tier rubric's light allowance, standard reasons, the
 // 1000-line heavy limit and the eval, fixture and dataset test paths, so its hash follows that text.
 // `setup`, `records` and `example` were edited again on 2026-11-12 (hunters disabled): no hunter skip rule in `setup`, no
 // phase `hunters` record in `records`, and no hunter in the worked `example`, so their hashes follow that text.
 const REFERENCES = [
-  ['setup', '## Setup', 'd74a196c8df60391258e6f109abe9ecda8e9e762154043c290669f59f0b42b43'],
+  ['setup', '## Setup', '51bc3a449722c74cc7bc0fb6ac18956e27c1b26f563765d5440fd9da12916497'],
   ['records', '## Records', '60286438e7fa3cd555bf252984293a7dfdc3b0d8ccc1848685be56fc3b2726ab'],
-  ['ledger-vocabulary', '## Ledger vocabulary', 'c1630e0c8baecc1f5ed38580f7ab206b18bb1bf0dc7153982abc3d2a29b77b23'],
-  ['worktrees', '## Worktrees', 'e45e1f51e4aafb1e43441712df14b8c4980a3382fae9c3b3ce201f4d1c416f05'],
-  ['final-review', '## Final Review', 'caa9a5fc7b13fb478039fd0cc6b2eec8ce5082e76cca3168d77d0d29deb7dbcd'],
+  ['ledger-vocabulary', '## Ledger vocabulary', '78fefa1c13179a0ee974174ceac323c910e9e09d94c91defa97a8a810b24ee48'],
+  ['worktrees', '## Worktrees', 'beb695ff1c3f06c137529f589790163812a9f618d960895a9c0486e0e59775b5'],
+  ['final-review', '## Final Review', 'b254407ad950af4ebd137befab8de091eacb29d1ab4b0942a9d27f6d1a7020d8'],
   ['example', '## Example', 'bca99f052e60ce47c544f813315c1e04b94149adb5c3178980845bb7d61430ce'],
-  ['parallel-tasks', '### Parallel tasks', '65ef5c9c1464a840d49b2539462bb5f66f3256c66ea40b02e0dd2bbbbbd08468'],
+  ['parallel-tasks', '### Parallel tasks', '6928c02c189ac8f7c60e7ed7f83775977ed1b524690b9fe35b0297a5f4194953'],
 ];
 
 const sha = (text) => createHash('sha256').update(text).digest('hex');
