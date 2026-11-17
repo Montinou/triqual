@@ -258,9 +258,19 @@ decide nothing ("TBD", "handle edge cases", "add appropriate validation",
 "write tests for the above", a type or function no task defines) are the
 opposite failure, and the self-review catches both.
 
+## Planner Dispatch
+
+The plan draft is written by `roles:planner`, a subagent that follows this skill, lanes first. After `triqual tasks paths --json`, the Scope Check and the file map, with the spec path and the draft path (see Save plans to) at hand:
+
+1. Run `triqual eval arm --kind role --key <plan file name> --role planner`, where `<plan file name>` is the base name of the draft. It prints `none`, or `<experiment>/<arm> <model> <effort>`.
+2. Dispatch `roles:planner` with description `planner <plan file name>`, giving it the spec path, the repository and the draft path. Pass the arm's `model` and `effort` only when a line other than `none` came back; on `none`, or when `triqual` is missing or the command fails, dispatch with the role's own settings.
+3. The planner's draft then goes through the existing step 6 check of Parallel layout: run `triqual plan lanes <draft>` and require exit 0 before the self-review. When it does not exit 0, fix the draft or send the planner back with the violations.
+
+The planner writes only the draft. What stays with the main session: the self-review, the plan audit, the fixes, the registration and the review by your human partner. The planner self-reviews its own draft before it returns and runs none of the rest of that list, and it writes no tracking entry.
+
 ## Self-Review
 
-After writing the complete plan, look at the spec with fresh eyes and check the plan against it. This is a checklist you run yourself — not a subagent dispatch.
+After the planner returns the complete plan, look at the spec with fresh eyes and check the plan against it. This is a checklist you run yourself — not a subagent dispatch.
 
 **1. Spec coverage:** Skim each section/requirement in the spec. Can you point to a task that implements it? List any gaps.
 
@@ -287,6 +297,8 @@ If you find issues, fix them inline. No need to re-review — just fix and move 
 ## Plan Audit
 
 After the self-review, dispatch `roles:final-adversarial-reviewer` with `../brainstorming/spec-document-reviewer-prompt.md` on the plan and its spec: the adversarial audit runs on every plan, and no other reviewer takes its place. The audit checks the tiers both ways: a task tiered lower than its content justifies by the Task Tiers rubric is a finding, and so is a task tiered higher than the rubric justifies. A `heavy` task, or a `roles:complex-implementer` task, whose reason line is missing or does not match the rubric's criteria for it is a finding too. The audit also flags unrequested complexity and over-tiering as findings. The shared audit prompt holds the serial-order check but not these, so write both tier checks and this instruction into your dispatch message to the auditor. Write the layout check into that message too: for each `Depends on`, each `**Sequential because:**` and each `**Parent:**`, the auditor asks whether the dependency is real, whether one is missing, and whether splitting one file or fixing one interface first would let two pieces run side by side; a layout that is serial without a dependency is a finding.
+
+Right after the audit returns, and before you fix its findings, record the planner's outcome, so the record measures the planner's draft: run `triqual eval plan-review --plan <draft> --audit <c>,<i>,<m> [--arm <experiment>/<arm>]`, with the audit's critical, important and minor finding counts. Pass `--arm <experiment>/<arm>` only when the arm lookup printed an arm; omit it when the lookup printed `none`, failed, or `triqual` was missing. A second run for the same plan prints `already recorded`.
 
 Fix the findings in the plan. Name, in your message to your human partner, each finding you did not fix and why.
 

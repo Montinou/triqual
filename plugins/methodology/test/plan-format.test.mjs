@@ -562,3 +562,32 @@ test('Self-Review checks the forest and simplicity, and the Plan Audit flags unr
   const audit = section(PLANS, '## Plan Audit').join(' ').replace(/\s+/g, ' ');
   assert.match(audit, /unrequested complexity[^.]*over-tiering[^.]*finding/, 'the Plan Audit does not tell the auditor to flag unrequested complexity and over-tiering');
 });
+
+test('writing-plans names the planner dispatch and the arm lookup', () => {
+  const text = readFileSync(join(SKILLS, PLANS), 'utf8').replace(/\s*\n\s*/g, ' ');
+  assert.ok(text.includes('triqual eval arm --kind role --key <plan file name> --role planner'), 'writing-plans does not run the arm lookup for the planner');
+  assert.ok(text.includes('`roles:planner`'), 'writing-plans does not dispatch roles:planner');
+  assert.ok(text.includes('planner <plan file name>'), 'writing-plans does not give the planner dispatch its description');
+  assert.match(text, /`model` and `effort`[^.]*other than `none`/, 'writing-plans does not pass the arm model and effort only for a line other than none');
+  assert.match(text, /planner's draft[^.]*triqual plan lanes/, 'the planner draft does not go through the lanes check');
+});
+
+test('writing-plans says what stays with the main session', () => {
+  const text = readFileSync(join(SKILLS, PLANS), 'utf8').replace(/\s*\n\s*/g, ' ');
+  const stays = /stays with the main session:([^.]*)\./.exec(text)?.[1] ?? '';
+  for (const word of ['self-review', 'audit', 'fixes', 'registration', 'human partner']) {
+    assert.ok(stays.includes(word), `writing-plans does not keep the ${word} with the main session`);
+  }
+  assert.match(text, /planner self-reviews its own draft[^.]*runs none of the rest/, 'writing-plans does not say the planner self-reviews its own draft');
+  assert.doesNotMatch(text, /planner runs none of them/, 'writing-plans still says the planner runs none of the main-session steps, the self-review included');
+});
+
+test('writing-plans records the plan-review', () => {
+  const text = readFileSync(join(SKILLS, PLANS), 'utf8').replace(/\s*\n\s*/g, ' ');
+  assert.ok(text.includes('triqual eval plan-review --plan <draft> --audit <c>,<i>,<m> [--arm <experiment>/<arm>]'), 'writing-plans does not run eval plan-review with its flags');
+  const audit = section(PLANS, '## Plan Audit').join(' ').replace(/\s+/g, ' ');
+  assert.match(audit, /triqual eval plan-review/, 'the plan-review is not recorded after the audit');
+  assert.ok(audit.indexOf('triqual eval plan-review') < audit.indexOf('Fix the findings in the plan'), 'the plan-review is not run before the fixes');
+  assert.match(audit, /right after the audit[^.]*before you fix/i, 'writing-plans does not say plan-review runs right after the audit and before the fixes');
+  assert.match(audit, /only when the arm lookup printed an arm[^.]*omit it when the lookup printed `none`, failed, or `triqual` was missing/, 'writing-plans does not pass --arm only when the lookup printed an arm');
+});
