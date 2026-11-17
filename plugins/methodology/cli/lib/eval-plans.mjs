@@ -4,10 +4,10 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sessionSignals } from './eval-sessions.mjs';
 
-const PRICES = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'prices.json'), 'utf8')).models;
+export const PRICES = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'prices.json'), 'utf8')).models;
 
 // Every *.jsonl below `dir` that lies under a `subagents` directory.
-function subagentTranscripts(dir, inside, out) {
+export function subagentTranscripts(dir, inside, out) {
   let entries = [];
   try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return out; }
   for (const e of entries) {
@@ -45,7 +45,8 @@ const count = (v) => finite(v) && v >= 0;
 // is `<experiment id>/<arm name>` of the experiment and whose `at` is on or after its start. A unit is the shape
 // buildRows reads: guardrail `auditClean` (critical + important = 0; the verdict is "healthy" for a clean plan,
 // "unhealthy" otherwise, "undecided" when the audit counts are unreadable), cost `plannerUsd` (null counts for no cost,
-// the plan still counts everywhere else) and measure `parallelism` (tasks / critical path, as the record stores it).
+// the plan still counts everywhere else) and measure `parallelism` (tasks / critical path, as the record stores it); `plan`
+// is the record's plan name, for the descriptive figures that join the plan's tasks.
 // [] for an experiment that is not a role experiment of the planner.
 export function planUnits(records, experiment) {
   if (experiment?.kind !== 'role' || !isObject(experiment.arms)) return [];
@@ -67,6 +68,7 @@ export function planUnits(records, experiment) {
       auditClean,
       cost: finite(r.plannerUsd) ? r.plannerUsd : null,
       parallelism: finite(r.parallelism) ? r.parallelism : null,
+      plan: r.plan,
       project: null,
       models: typeof experiment.arms[arm].model === 'string' ? [experiment.arms[arm].model] : [],
     });

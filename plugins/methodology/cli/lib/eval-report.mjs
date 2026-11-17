@@ -5,8 +5,10 @@ import { readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { loadJudgePrompt } from './eval-judge.mjs';
+import { planUnits } from './eval-plans.mjs';
 import { bootstrapMedian, bootstrapMedianDiff, median, newcombe, requiredN, wilson } from './eval-stats.mjs';
 import { judgeExcluded } from './eval-taxonomy.mjs';
+import { planDescriptives, taskUnits } from './eval-tasks.mjs';
 
 // The smallest arm the verdicts accept, whatever the required sample size says.
 export const MIN_N = 30;
@@ -212,4 +214,17 @@ export function sessionUnits({ sessions, experiment, snapshot, judgments, file, 
     });
   }
   return units;
+}
+
+// The rows of a role experiment: [control row, arm row] over its units. An experiment of the planner is scored per plan
+// (planUnits over the `plan-review` records, the rows with their parallelism figures and, per arm, the descriptive
+// cleanTaskRate and wallClockHours from `snapshots`, the parsed `triqual tasks export --json --all`); any other role per
+// task (taskUnits over `assignments`, the parsed role-assignments.jsonl, the clean-task rate as the healthy rate and the
+// subagent cost of the task under `root` as the cost). `records` are the valid records of the role-eval store.
+export function roleRows({ experiment, records, assignments, root, snapshots }) {
+  if (Object.values(experiment.arms)[0]?.role === 'planner') {
+    const units = planUnits(records, experiment);
+    return planDescriptives(buildRows(units, experiment), units, { records, snapshots });
+  }
+  return buildRows(taskUnits({ experiment, assignments, records, root }), experiment);
 }
