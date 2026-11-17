@@ -41,7 +41,7 @@ test('the Codex routing table names every role once, with its model and effort',
   assert.deepEqual(routing, [
     '| `hunter`, `brief-writer`, `safety-reviewer` | `gpt-6-luna` | `medium` |',
     '| `tdd-implementer`, `review-fixer` | `gpt-6.1-terra` | `low` |',
-    '| `spec-reviewer`, `complex-implementer` | `gpt-6.1-terra` | `high` |',
+    '| `spec-reviewer`, `complex-implementer`, `planner` | `gpt-6.1-terra` | `high` |',
     '| `final-adversarial-reviewer` | `gpt-6-astra` | `low` |',
     '| `phase-orchestrator` | `gpt-6.1-terra` | `medium` |',
   ]);

@@ -85,6 +85,7 @@ effort parameter). Coordination and rulings stay with the session model.
 | Final adversarial whole-branch review | `roles:final-adversarial-reviewer` | opus | low | `methodology:executing-plans`, `methodology:brainstorming` (spec audit), `methodology:writing-plans` (plan audit) | one pass, the most valuable one |
 | Candidate findings (hunter) | `roles:hunter` | claude-haiku-5-5 | medium | none since 2026-11-12 (kept for A/B tests) | cheap candidates, every one verified by the Opus spec reviewer (by the Opus final reviewer in the phase review) |
 | Run one plan phase | `roles:phase-orchestrator` | sonnet | medium | `methodology:executing-plans` (one per phase, from methodology 1.3.0) | follows the phase's task loop, dispatches the other roles, never edits product code; the only role that may dispatch |
+| Write the plan | `roles:planner` | opus | medium | `methodology:writing-plans` | lanes-first plan drafts out of the main session |
 | Coordination and decisions | (session) | session model | — | — | never delegated |
 
 Methodology's skills dispatch `roles:*` and pass no model: the role's definition carries it.

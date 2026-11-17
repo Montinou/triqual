@@ -17,6 +17,7 @@ const ROLES = {
   'final-adversarial-reviewer': { model: 'opus', effort: 'low', disallowedTools: 'Agent, Edit, Write, NotebookEdit' },
   hunter: { model: 'claude-haiku-5-5', effort: 'medium', disallowedTools: 'Agent, Edit, NotebookEdit' },
   'phase-orchestrator': { model: 'sonnet', effort: 'medium', disallowedTools: 'Edit, NotebookEdit' },
+  planner: { model: 'opus', effort: 'medium', disallowedTools: 'Agent' },
 };
 
 // Minimal frontmatter parser: `key: value` lines between the first two `---` fences.
@@ -202,4 +203,24 @@ test('brainstorming approaches and Spec Self-Review carry a Simplicity check', (
   assert.ok(item, 'Spec Self-Review has no Simplicity item');
   assert.match(item, /traces to the request or names the failure it prevents/);
   assert.match(item, /cut/);
+});
+
+// Plan 2026-11-17-evals-experiments T27: the planner drafts plans out of the main session, lanes first.
+test('planner.md states the four lanes-first rules and never registers', () => {
+  const { meta, body } = parseAgent('planner.md');
+  const flat = body.replace(/\s+/g, ' ');
+  assert.match(meta.description, /plan/i);
+  assert.match(flat, /methodology:writing-plans/, 'the planner must follow writing-plans');
+  assert.match(flat, /spec path/i);
+  assert.match(flat, /draft path/i);
+  assert.match(flat, /a phase opens with the contracts and types its tasks share/i);
+  assert.match(flat, /shared files are split by responsibility so lanes stay disjoint/i);
+  assert.match(flat, /`\*\*Landing test:\*\*`/);
+  assert.match(flat, /runner is not node/);
+  assert.match(flat, /`\*\*Sequential because:\*\*`/);
+  assert.match(flat, /cannot restructure/);
+  assert.match(flat, /triqual plan lanes <draft>/);
+  assert.match(flat, /never run the audit/i);
+  assert.match(flat, /never register/i);
+  assert.equal(body.split('## Denied by Policy').length, 2, 'one Denied by Policy heading');
 });
