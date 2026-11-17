@@ -98,7 +98,9 @@ test('parallelism objective tests the arm - control parallelism in place of cost
     experiment({ objective: 'parallelism' }),
   );
   assert.equal(armRow(rows).verdict, 'propose');
-  assert.ok(armRow(rows).cCI[0] > 0);
+  assert.ok(armRow(rows).pCI[0] > 0);
+  assert.equal(armRow(rows).p, 1);
+  assert.deepEqual(armRow(rows).cCI, [0, 0]); // the cost difference is still reported, and is none here
 });
 
 // ---- the row ------------------------------------------------------------------------------------------------------
@@ -107,7 +109,8 @@ test('a row has the shared shape; the control row carries no comparison', () => 
   const rows = rowsOf([...units('off', 180, 200, (i) => 10 + (i % 5)), ...units('on', 170, 200, (i) => 6 + (i % 5))]);
   assert.deepEqual(rows.map((r) => r.arm), ['off', 'on']);
   const [control, arm] = rows;
-  assert.deepEqual(Object.keys(control).sort(), ['arm', 'c', 'cCI', 'control', 'costCI', 'costMedian', 'd', 'dCI', 'excluded', 'experiment', 'kind', 'models', 'n', 'perProject', 'rate', 'rateCI', 'required', 'verdict'].sort());
+  assert.deepEqual(Object.keys(control).sort(), ['arm', 'c', 'cCI', 'control', 'costCI', 'costMedian', 'd', 'dCI', 'excluded', 'experiment', 'kind', 'models', 'n', 'p', 'pCI', 'parallelismCI', 'parallelismMedian', 'perProject', 'rate', 'rateCI', 'required', 'verdict'].sort());
+  for (const k of ['p', 'pCI', 'parallelismMedian', 'parallelismCI']) assert.equal(control[k], null, k); // a cost experiment has none
   assert.equal(control.control, true);
   for (const k of ['d', 'dCI', 'c', 'cCI', 'required', 'verdict']) assert.equal(control[k], null, k);
   assert.equal(arm.control, false);

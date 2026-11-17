@@ -4,7 +4,9 @@
 // (<evals>/snapshots/<hash>/), never by the live taxonomy or checks. `--json` prints
 // { experiments: [{ id, kind, status, margin, evaluators, rows }] }, the row format later role and skill rows share; the
 // text form prints the same rows. Role and skill experiments have no rows yet. Prints counts, ids, model names and
-// project names, never transcript text. Exit codes: 0 done; 1 a snapshot or the store that cannot be read; 2 usage, an
+// project names, never transcript text. It also stores, once per session and check version, the code verdict it
+// computes for an assigned session whose transcript is still there (<evals>/judgments/<category>.jsonl, the line
+// `triqual eval check` writes). Exit codes: 0 done; 1 a snapshot or the store that cannot be read; 2 usage, an
 // invalid experiments file or an unknown experiment id.
 // node: built-ins only. main() is exported for tests and runs only when this file is the entry point.
 import { realpathSync } from 'node:fs';
@@ -12,10 +14,12 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { SESSION_ARMS_FILE } from './lib/eval-arms.mjs';
+import { appendPrivate } from './lib/eval-ask.mjs';
 import { loadExperiments, validateExperiments } from './lib/eval-experiments.mjs';
-import { evalsDir, experimentsPath, transcriptsRoot } from './lib/eval-paths.mjs';
+import { ensureDir, evalsDir, experimentsPath, transcriptsRoot } from './lib/eval-paths.mjs';
 import { buildRows, loadSnapshot, sessionUnits } from './lib/eval-report.mjs';
 import { readJsonl } from './lib/eval-store.mjs';
+import { withStoreLock } from './lib/role-eval.mjs';
 
 export const SUMMARY = 'report the experiments: arm rows and non-inferiority verdicts (report)';
 
@@ -67,7 +71,7 @@ function textOf(e) {
 }
 
 export async function main(argv, {
-  env = process.env, stdout = process.stdout, stderr = process.stderr, platform = process.platform,
+  env = process.env, stdout = process.stdout, stderr = process.stderr, platform = process.platform, now = () => new Date(),
 } = {}) {
   const usage = (m) => { stderr.write(`triqual eval report: ${m}\n${USAGE}`); return 2; };
   const refuse = (m) => { stderr.write(`triqual eval report: ${m}\n`); return 2; };
@@ -113,8 +117,25 @@ export async function main(argv, {
       for (const c of snapshot.categories) {
         if (!Object.hasOwn(judgments, c.id)) judgments[c.id] = readJsonl(join(evals, 'judgments', `${c.id}.jsonl`)).rows;
       }
+      // The code verdict of an assigned session is stored while its transcript is still there (the sessions store
+      // outlives the 30-day cleanup): one line per session and check version, as `triqual eval check` writes it, so a
+      // second report run, or one after the cleanup, scores the same session.
+      const onCode = ({ sessionId, category, result, promptHash }) => {
+        if (result === 'undecided') return;
+        const file = join(evals, 'judgments', `${category}.jsonl`);
+        try {
+          ensureDir(join(evals, 'judgments'));
+          withStoreLock(`${file}.lock`, () => {
+            const rows = readJsonl(file).rows;
+            if (rows.some((r) => r.sessionId === sessionId && r.promptHash === promptHash)) return;
+            const line = { sessionId, category, result, promptHash, model: null, auth: 'code', at: new Date(now()).toISOString() };
+            appendPrivate(file, line);
+            judgments[category] = [...rows, line];
+          });
+        } catch { /* storing is a convenience: a store that cannot be written never stops the report */ }
+      };
       const units = sessionUnits({
-        sessions, experiment: e, snapshot, judgments, home, platform, armRecords,
+        sessions, experiment: e, snapshot, judgments, home, platform, armRecords, onCode,
         file: (s) => (typeof s.projectDir === 'string' ? join(root, s.projectDir, `${s.sessionId}.jsonl`) : null),
       });
       rows = buildRows(units, e);

@@ -34,20 +34,24 @@ export async function loadSnapshot(dir) {
 // is undecided or has no judgment, else "healthy". A code category runs the snapshot's frozen check on `session.file`
 // (the transcript); when that is undecided (the transcript is gone, the store outlives the 30-day cleanup) it takes the
 // last line of judgments[category] for the session recorded under the snapshot's check version, else it stays
-// undecided. A judge category reads the last line of judgments[category] for the
-// session and the snapshot's prompt hash; with none, or for a session whose project is under the snapshot's judgeExclude
-// (an unknown project counts as excluded), it has no judgment.
-export function sessionVerdict(session, snapshot, judgments, { home, platform } = {}) {
+// undecided. A decided result (pass or fail) of a session with no line of that version is handed to `onCode({ sessionId,
+// category, result, promptHash })`, so the caller can store it before the transcript is cleaned up. A judge category
+// reads the last line of judgments[category] for the session and the snapshot's prompt hash; with none, or for a
+// session whose project is under the snapshot's judgeExclude (an unknown project counts as excluded), it has no judgment.
+export function sessionVerdict(session, snapshot, judgments, { home, platform, onCode } = {}) {
   let undecided = false;
   for (const c of snapshot.categories) {
     let result;
     if (c.check === 'code') {
       const { CHECKS, runCheck } = snapshot.checks;
       result = Object.hasOwn(CHECKS, c.id) ? runCheck(c.id, {}, session.file ?? '', CHECKS) : 'undecided';
-      if (result === 'undecided' && typeof snapshot.checks.checkVersion === 'function') {
-        const version = snapshot.checks.checkVersion();
-        const kept = (judgments?.[c.id] ?? []).filter((r) => r.sessionId === session.sessionId && r.promptHash === version);
-        if (kept.length > 0) result = kept[kept.length - 1].result;
+      const version = typeof snapshot.checks.checkVersion === 'function' ? snapshot.checks.checkVersion() : null;
+      const lines = version === null ? [] : (judgments?.[c.id] ?? []).filter((r) => r.sessionId === session.sessionId && r.promptHash === version);
+      if (result === 'undecided') {
+        if (lines.length > 0) result = lines[lines.length - 1].result;
+      } else if (version !== null && lines.length === 0 && typeof onCode === 'function') {
+        // A verdict computed while the transcript is still there: handed to the caller to store, once per session and version.
+        onCode({ sessionId: session.sessionId, category: c.id, result, promptHash: version });
       }
     } else if (judgeExcluded(session.project ?? null, snapshot.judgeExclude, { home, platform })) {
       result = 'undecided';
@@ -105,10 +109,12 @@ function perProject(group) {
 // The rows of `experiment` over `units`: [control row, arm row]. A unit is { arm (the arm name), contaminated, verdict
 // ("healthy" | "unhealthy" | "undecided"), cost, project, models, parallelism? }; a unit of another arm is ignored,
 // contaminated and undecided units are excluded from n and counted in `excluded`. A row is { experiment, kind, arm,
-// control, n, excluded, rate, rateCI, costMedian, costCI, perProject, models, d, dCI, c, cCI, required, verdict }: d is
-// the healthy-rate difference arm - control (Newcombe interval), c the median difference of the experiment's objective
-// (cost, or parallelism) with its bootstrap interval, required the sample size for the control's rate and the margin.
-// The control row carries null from d on. Every statistic of an empty group is null, never NaN.
+// control, n, excluded, rate, rateCI, costMedian, costCI, perProject, models, parallelismMedian, parallelismCI, d, dCI,
+// c, cCI, p, pCI, required, verdict }: d is the healthy-rate difference arm - control (Newcombe interval), c the cost
+// median difference with its bootstrap interval, required the sample size for the control's rate and the margin. With
+// objective "parallelism" the rows also hold the median parallelism and its interval, and the arm row p, the median
+// parallelism difference arm - control with its bootstrap interval (null for a cost experiment, whose parallelism fields
+// are all null). The control row carries null from d on. Every statistic of an empty group is null, never NaN.
 export function buildRows(units, experiment) {
   const margin = experiment.margin;
   const parallel = experiment.objective === 'parallelism';
@@ -126,8 +132,8 @@ export function buildRows(units, experiment) {
       },
     }];
   }));
-  const metric = (u) => (parallel ? u.parallelism : u.cost);
-  const values = (name) => groups.get(name).counted.map(metric).filter(finite);
+  const costs = (name) => groups.get(name).counted.map((u) => u.cost).filter(finite);
+  const parallelisms = (name) => groups.get(name).counted.map((u) => u.parallelism).filter(finite);
   const control = groups.get(experiment.control).counted;
   const controlStats = summarize(control);
   const kControl = control.filter((u) => u.verdict === 'healthy').length;
@@ -144,23 +150,28 @@ export function buildRows(units, experiment) {
       excluded: g.excluded,
       perProject: perProject(g.counted),
       models: [...new Set(g.own.flatMap((u) => (Array.isArray(u.models) ? u.models : [])))].sort(),
-      d: null, dCI: null, c: null, cCI: null, required: null, verdict: null,
+      // A cost experiment has no parallelism figures; a parallelism one shows them on every row, whatever the sample size.
+      parallelismMedian: parallel ? median(parallelisms(name)) : null,
+      parallelismCI: parallel ? bootstrapMedian(parallelisms(name)) : null,
+      d: null, dCI: null, c: null, cCI: null, p: null, pCI: null, required: null, verdict: null,
     };
     if (isControl) return row;
     const k = g.counted.filter((u) => u.verdict === 'healthy').length;
     const diff = newcombe(k, g.counted.length, kControl, control.length);
-    const shift = bootstrapMedianDiff(values(name), values(experiment.control));
+    const shift = bootstrapMedianDiff(costs(name), costs(experiment.control));
+    const spread = parallel ? bootstrapMedianDiff(parallelisms(name), parallelisms(experiment.control)) : null;
     row.required = controlStats.rate === null ? null : requiredN(controlStats.rate, margin);
     if (diff !== null) { row.d = diff.d; row.dCI = [diff.lower, diff.upper]; }
     if (shift !== null) { row.c = shift.c; row.cCI = [shift.lower, shift.upper]; }
+    if (spread !== null) { row.p = spread.c; row.pCI = [spread.lower, spread.upper]; }
     row.verdict = verdict({
       nArm: row.n,
       nControl: controlStats.n,
       required: row.required,
       lower: diff?.lower ?? null,
       upper: diff?.upper ?? null,
-      cUpper: parallel ? null : shift?.upper ?? null,
-      pLower: parallel ? shift?.lower ?? null : null,
+      cUpper: shift?.upper ?? null,
+      pLower: spread?.lower ?? null,
       margin,
       objective: experiment.objective,
     });
@@ -173,7 +184,7 @@ export function buildRows(units, experiment) {
 // is not scored; a session whose stored entrypoint is not the interactive one is no unit at all. `file(session)` is its transcript path. The store keeps no arm on a contaminated session (its records
 // disagree), so its arm is read from `armRecords` (the parsed lines of <evals>/session-arms.jsonl): the one arm of this
 // experiment its records name; none, or two different arms of it, and the session cannot be placed and is left out.
-export function sessionUnits({ sessions, experiment, snapshot, judgments, file, home, platform, armRecords = [] }) {
+export function sessionUnits({ sessions, experiment, snapshot, judgments, file, home, platform, armRecords = [], onCode }) {
   const prefix = `${experiment.id}/`;
   const units = [];
   for (const s of sessions) {
@@ -194,7 +205,7 @@ export function sessionUnits({ sessions, experiment, snapshot, judgments, file, 
     units.push({
       arm,
       contaminated,
-      verdict: contaminated ? null : sessionVerdict({ sessionId: s.sessionId, project: s.project ?? null, file: file(s) }, snapshot, judgments, { home, platform }),
+      verdict: contaminated ? null : sessionVerdict({ sessionId: s.sessionId, project: s.project ?? null, file: file(s) }, snapshot, judgments, { home, platform, onCode }),
       cost: finite(s.usd) ? s.usd : null,
       project: s.project ?? null,
       models: Object.keys(isObject(s.models) ? s.models : {}).sort(),
