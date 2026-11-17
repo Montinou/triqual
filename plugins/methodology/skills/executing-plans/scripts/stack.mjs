@@ -8,17 +8,25 @@
 //   mode PLAN_FILE github|local                                         switch the mode (github re-runs the checks)
 //   path PLAN_FILE                                                      print the state file's path
 //   status PLAN_FILE [--tree]                                           print the state (JSON), PR states refreshed; --tree: the phases as a tree
+//                                                                       (each phase also prints `ready` and `base`, keys never written to the file)
 //   phase PLAN_FILE N                                                   check out phase N's branch, mark it active
-//   squash PLAN_FILE BASE                                               fold BASE..HEAD into one commit, print its sha
+//   squash PLAN_FILE BASE [--phase N]                                   fold BASE..HEAD into one commit, print its sha; runs in
+//                                                                       phase N's workdir (default: the only active phase)
 //   done PLAN_FILE N                                                    mark phase N done
 //   submit PLAN_FILE N [--open]                                         reconcile gh stack, submit, fill phase N's PR
 //   push PLAN_FILE N                                                    push a submitted phase, refresh its PR body
 //                                                                       (a `prs` plan: plain git push and gh pr create, no gh stack)
 //
-// Exit codes: 0 ok, 2 usage or malformed plan, 3 refused precondition, 5 a gh command failed.
+// Exit codes: 0 ok, 2 usage, malformed plan or TRIQUAL_NOW not an ISO time, 3 refused precondition, 5 a gh command failed.
 // Node built-ins, git and gh only. Every gh call is non-interactive.
+//
+// State fields a phase may carry (a state is .methodology/stack/<plan stem>.json): `startedAt` and `doneAt` (UTC times, written by
+// phase and done), `base` (v2 only: the commit the phase's own work starts after), `workdir` (a phase built in a phase worktree),
+// `parents` (a join). Every write goes through updateState, which holds the lock directory <state>.lock around the re-read, the
+// mutation and the write only; no git command that touches a worktree, no push and no gh call runs inside it.
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -30,6 +38,10 @@ const EXIT_GH = 5;
 const STATE_VERSION = 1;
 // A `prs` state: the v1 keys plus a parent per phase. The version tells the layout; the state has no layout key.
 const PRS_STATE_VERSION = 2;
+const ISO_TIME = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/;
+// The state lock: polled every LOCK_POLL_MS, taken over when its directory is older than STALE_LOCK_MS.
+const LOCK_POLL_MS = 50;
+const STALE_LOCK_MS = 60_000;
 const COMMITTED_MODE_MESSAGE =
   'committed tracking mode cannot hold one commit per task: switch with triqual progress-init --store (or --local)';
 
@@ -206,15 +218,91 @@ export function readState(path) {
   }
 }
 
-// Atomic: the JSON goes to <path>.tmp, then a rename. .methodology/ keeps a self-ignoring .gitignore, as the SDD
-// workspace does, so the state never shows in git status.
+// Atomic: the JSON goes to <path>.<pid>.tmp, then a rename. .methodology/ keeps a self-ignoring .gitignore, as the SDD
+// workspace does, so the state never shows in git status. Callers outside updateState hold no lock: only updateState writes.
 export function writeState(path, state) {
   mkdirSync(dirname(path), { recursive: true });
   const ignore = join(dirname(dirname(path)), '.gitignore');
   if (!existsSync(ignore)) writeFileSync(ignore, '*\n');
-  const tmp = `${path}.tmp`;
+  const tmp = `${path}.${process.pid}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`);
   renameSync(tmp, path);
+}
+
+const sleepMs = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+// A waiter that finds the lock directory older than STALE_LOCK_MS renames it away (one atomic renameSync: only one waiter
+// wins it), says so on stderr and removes it; true when this waiter took it over, false when another did or the
+// directory renamed was a live lock another waiter had just made (it is put back).
+function takeOverStaleLock(lock) {
+  const stale = `${lock}.stale.${process.pid}.${randomBytes(4).toString('hex')}`;
+  try {
+    renameSync(lock, stale);
+  } catch (e) {
+    if (e.code === 'ENOENT') return false;
+    throw e;
+  }
+  const age = Date.now() - statSync(stale).mtimeMs;
+  if (age <= STALE_LOCK_MS) {
+    // The lock this waiter saw as stale was already taken over and made again by another waiter: give it back.
+    try {
+      renameSync(stale, lock);
+    } catch {
+      rmSync(stale, { recursive: true, force: true });
+    }
+    return false;
+  }
+  process.stderr.write(`stack: taking over a stale state lock (${Math.round(age / 1000)} s old): ${lock}\n`);
+  rmSync(stale, { recursive: true, force: true });
+  return true;
+}
+
+function acquireLock(lock) {
+  mkdirSync(dirname(lock), { recursive: true });
+  for (;;) {
+    try {
+      mkdirSync(lock);
+      return;
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+    }
+    let mtime;
+    try {
+      mtime = statSync(lock).mtimeMs;
+    } catch (e) {
+      if (e.code === 'ENOENT') continue;
+      throw e;
+    }
+    if (Date.now() - mtime > STALE_LOCK_MS && takeOverStaleLock(lock)) continue;
+    sleepMs(LOCK_POLL_MS);
+  }
+}
+
+// The one way the state is written: take the lock, re-read the state (null when there is none), mutate it, write it,
+// release the lock (also when mutate throws). `mutate(state)` changes the object it is given, or returns a state to write
+// instead, or returns false to write nothing; it reads and changes the state object only, so it runs no git command that
+// touches a worktree, no install, no push and no gh call. Returns the state as written (or as found).
+export function updateState(ctx, mutate) {
+  const lock = `${ctx.path}.lock`;
+  acquireLock(lock);
+  try {
+    const current = readState(ctx.path);
+    const result = mutate(current);
+    if (result === false) return current;
+    const next = result ?? current;
+    writeState(ctx.path, next);
+    return next;
+  } finally {
+    rmSync(lock, { recursive: true, force: true });
+  }
+}
+
+// The time a phase starts or ends: TRIQUAL_NOW when set and not empty, else the clock; UTC, to the second.
+export function nowIso() {
+  const set = process.env.TRIQUAL_NOW;
+  if (set === undefined || set === '') return new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+  if (!ISO_TIME.test(set)) fail(EXIT_USAGE, `TRIQUAL_NOW must be an ISO time like 2026-11-16T10:00:00Z, not ${set}`);
+  return set;
 }
 
 // --- mode detection, remote and trunk ---------------------------------------------------------------------------
@@ -368,7 +456,8 @@ function parseOptions(args, allowed) {
   return { opts, rest };
 }
 
-// { cwd, root, planFile, path } for a command's PLAN_FILE argument.
+// { cwd, root, planFile, path } for a command's PLAN_FILE argument. Every command runs from the main checkout, where the
+// workspace, the ledger and the stack state live: in a linked worktree the git dir differs from the common dir (exit 3).
 function context(planFile) {
   if (!planFile) fail(EXIT_USAGE, 'missing PLAN_FILE');
   if (!existsSync(planFile)) fail(EXIT_USAGE, `no such plan file: ${planFile}`);
@@ -379,6 +468,8 @@ function context(planFile) {
   } catch {
     return fail(EXIT_USAGE, 'not inside a git repository');
   }
+  const [gitDir, commonDir] = git(['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'], { cwd }).split('\n');
+  if (gitDir !== commonDir) fail(EXIT_REFUSED, 'run from the main checkout');
   return { cwd, root, planFile, path: statePath(root, planFile) };
 }
 
@@ -466,8 +557,8 @@ function cmdInit(args) {
     remote: picked.remote,
     phases: adoptExisting(ctx.cwd, phases, trunk, trunkSha, picked.mode === 'github' ? picked : null, layout),
   };
-  writeState(ctx.path, state);
-  return printState(state);
+  // An existing state found under the lock (another init won the race) is printed, not overwritten.
+  return printState(updateState(ctx, (found) => (found ? false : state)));
 }
 
 function cmdMode(args) {
@@ -476,16 +567,20 @@ function cmdMode(args) {
   const ctx = context(planFile);
   const state = readState(ctx.path);
   if (!state) fail(EXIT_REFUSED, `no stack state at ${ctx.path}: run stack init first`);
+  let change;
   if (mode === 'github') {
     const found = checkGithub(ctx.cwd, undefined, layoutOf(state));
     if (!found.ok) fail(EXIT_REFUSED, `cannot switch to github mode: ${found.reason}`);
     requireTrunkOnRemote(ctx.cwd, state.trunk, found.remote);
-    Object.assign(state, { mode, reason: null, ghStackVersion: found.ghStackVersion, remote: found.remote });
+    change = { mode, reason: null, ghStackVersion: found.ghStackVersion, remote: found.remote };
   } else {
-    Object.assign(state, { mode, reason: 'switched with stack mode local', ghStackVersion: null });
+    change = { mode, reason: 'switched with stack mode local', ghStackVersion: null };
   }
-  writeState(ctx.path, state);
-  return out(`mode: ${state.mode}`);
+  updateState(ctx, (fresh) => {
+    if (!fresh) fail(EXIT_REFUSED, `no stack state at ${ctx.path}: run stack init first`);
+    Object.assign(fresh, change);
+  });
+  return out(`mode: ${mode}`);
 }
 
 function cmdPath(args) {
@@ -514,21 +609,36 @@ function cmdStatus(args) {
   const ctx = context(args.filter((a) => a !== '--tree')[0]);
   const state = readState(ctx.path);
   if (!state) fail(EXIT_REFUSED, `no stack state at ${ctx.path}: run stack init first`);
+  let shown = state;
   if (state.mode === 'github') {
+    // The gh calls run first, outside the lock; updateState then sets the merged marks on the state it re-reads.
     const slug = state.remote ? githubSlug(state.remote, ctx.cwd) : null;
-    let changed = false;
+    const merged = [];
     for (const phase of state.phases) {
       if (phase.pr === null || phase.state === 'merged') continue;
       if (!slug) fail(EXIT_REFUSED, `remote "${state.remote}" is no longer a GitHub remote: switch with stack mode local`);
       const view = JSON.parse(gh(['pr', 'view', String(phase.pr), '--repo', slug, '--json', 'number,state,isDraft'], { cwd: ctx.cwd }));
-      if (view.state === 'MERGED') {
-        phase.state = 'merged';
-        changed = true;
-      }
+      if (view.state === 'MERGED') merged.push(phase.n);
     }
-    if (changed) writeState(ctx.path, state);
+    if (merged.length > 0) {
+      shown = updateState(ctx, (fresh) => {
+        for (const phase of fresh.phases) if (merged.includes(phase.n)) phase.state = 'merged';
+      });
+    }
   }
-  return tree ? out(renderTree(state)) : printState(state);
+  if (tree) return out(renderTree(shown));
+  // `ready` and `base` are printed, never written to the file.
+  const ready = readyPhases(shown);
+  const phases = shown.phases.map((phase) => {
+    let base = null;
+    try {
+      base = phaseBase(ctx.cwd, shown, phase);
+    } catch {
+      // a floor that cannot be computed (a parent's branch deleted after its merge) prints as null
+    }
+    return { ...phase, ready: ready.includes(phase.n), base };
+  });
+  return printState({ ...shown, phases });
 }
 
 // --- phase, squash and done -------------------------------------------------------------------------------------
@@ -586,6 +696,36 @@ function startPoint(cwd, state, n) {
   return tip ?? fail(EXIT_REFUSED, `phase ${n - 1}'s branch ${prev} does not exist`);
 }
 
+// The state entries a phase starts from. v2: each branch of `parents ?? [parent]` that is a phase branch of the state (the
+// trunk and a named branch give none); v1: the previous phase, none for phase 1.
+export function parentsOf(state, phase) {
+  if (layoutOf(state) !== 'prs') return state.phases.filter((p) => p.n === phase.n - 1);
+  return (phase.parents ?? [phase.parent]).map((b) => state.phases.find((p) => p.branch === b)).filter(Boolean);
+}
+
+// The pending phases whose every parent entry has started (is in a state the next phase may start after), ascending.
+export function readyPhases(state) {
+  const started = STARTED_AFTER[state.mode === 'local' ? 'local' : 'github'];
+  return state.phases
+    .filter((phase) => phase.state === 'pending' && parentsOf(state, phase).every((p) => started.includes(p.state)))
+    .map((phase) => phase.n)
+    .sort((a, b) => a - b);
+}
+
+// The commit a phase's own work starts after: the recorded `base`; null when its branch has no tip; else the floor as it
+// was computed before `base` existed: the start point of a phase that has a parent entry, else where the branch forked
+// from the trunk (or from a named branch).
+export function phaseBase(cwd, state, phase) {
+  if (phase.base) return phase.base;
+  const tip = branchTip(cwd, state, phase.branch);
+  if (!tip) return null;
+  const start = startPoint(cwd, state, phase.n);
+  return parentsOf(state, phase).length > 0 ? start : git(['merge-base', start, tip], { cwd });
+}
+
+// Where a phase is built: its own worktree when the state records one, else the main checkout.
+export const workdirOf = (root, phase) => phase.workdir ?? root;
+
 // Phase 1 starts at the trunk's tip, so a HEAD on another branch with commits the trunk lacks (a run that began before
 // stacked execution, finished on its own feature branch) would be left behind: refuse, naming that branch.
 function refuseStrandedHead(cwd, state) {
@@ -611,15 +751,18 @@ function cmdPhase(args) {
   }
   requireCleanTree(ctx.cwd);
   const prs = layoutOf(state) === 'prs';
-  const prev = prs ? parentPhase(state, phase) : state.phases.find((p) => p.n === phase.n - 1);
-  if (prev) {
-    const allowed = state.mode === 'local' ? STARTED_AFTER.local : STARTED_AFTER.github;
+  const allowed = state.mode === 'local' ? STARTED_AFTER.local : STARTED_AFTER.github;
+  for (const prev of parentsOf(state, phase)) {
     if (!allowed.includes(prev.state)) {
       fail(EXIT_REFUSED, `phase ${prev.n} is ${prev.state}: phase ${phase.n} needs it ${allowed.join(' or ')} (${state.mode} mode)`);
     }
   }
+  // The time is read before any write: a TRIQUAL_NOW that is no time leaves the branch and the state as they were.
+  const at = nowIso();
 
+  // The branch is switched to or created outside updateState: a git command that touches the worktree never runs under the lock.
   const remoteRef = state.remote ? `refs/remotes/${state.remote}/${branch}` : null;
+  let created = null;
   if (revParse(`refs/heads/${branch}`, { cwd: ctx.cwd })) {
     git(['switch', '--quiet', branch], { cwd: ctx.cwd });
   } else if (remoteRef && revParse(remoteRef, { cwd: ctx.cwd })) {
@@ -627,22 +770,51 @@ function cmdPhase(args) {
     git(['switch', '--quiet', '-c', branch, '--track', remoteRef], { cwd: ctx.cwd });
   } else {
     if (prs ? phase.parent === state.trunk : phase.n === 1) refuseStrandedHead(ctx.cwd, state);
-    git(['switch', '--quiet', '--no-track', '-c', branch, startPoint(ctx.cwd, state, phase.n)], { cwd: ctx.cwd });
+    created = startPoint(ctx.cwd, state, phase.n);
+    git(['switch', '--quiet', '--no-track', '-c', branch, created], { cwd: ctx.cwd });
   }
-  phase.state = 'active';
-  writeState(ctx.path, state);
+  updateState(ctx, (fresh) => {
+    const entry = fresh.phases.find((p) => p.n === phase.n);
+    if (entry.state === 'pending') entry.startedAt = at;
+    entry.state = 'active';
+    // A v2 phase records the commit its own work starts after (a v1 branch can be restacked by gh stack: it keeps the computed floor).
+    if (prs && created && !entry.base) entry.base = created;
+  });
   return out(branch);
 }
 
 // R3: every commit of BASE..HEAD folded into one with commit-tree (HEAD's tree, parent BASE, the first commit's message
 // and author), then reset --soft. Never a rebase and never git commit, so no hook runs and nothing can conflict.
 function cmdSquash(args) {
-  const ctx = context(args[0]);
-  if (args[1] === undefined) fail(EXIT_USAGE, 'usage: stack.mjs squash PLAN_FILE BASE');
+  const usage = 'usage: stack.mjs squash PLAN_FILE BASE [--phase N]';
+  // Only --phase is an option here: any other argument is positional, so a BASE that looks like an option reaches git as a ref.
+  const opts = {};
+  const rest = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== '--phase') {
+      rest.push(args[i]);
+      continue;
+    }
+    if (i + 1 >= args.length) fail(EXIT_USAGE, '--phase needs a value');
+    opts.phase = args[++i];
+  }
+  const ctx = context(rest[0]);
+  if (rest[1] === undefined) fail(EXIT_USAGE, usage);
   const state = loadState(ctx);
-  const cwd = ctx.cwd;
+  // The phase: --phase N (it must be active), else the only active phase.
+  const actives = state.phases.filter((p) => p.state === 'active');
+  let active;
+  if (opts.phase !== undefined) {
+    active = phaseOf(state, opts.phase, usage);
+    if (active.state !== 'active') fail(EXIT_REFUSED, `phase ${active.n} is ${active.state}: only an active phase is squashed`);
+  } else if (actives.length > 1) {
+    fail(EXIT_REFUSED, `several phases are active (${actives.map((p) => `P${p.n}`).join(', ')}): name one with --phase N`);
+  } else {
+    active = actives[0];
+  }
+  // It runs in the phase's own checkout: its clean tree, its HEAD and branch, and its reset --soft.
+  const cwd = active ? workdirOf(ctx.root, active) : ctx.cwd;
   requireCleanTree(cwd);
-  const active = state.phases.find((p) => p.state === 'active');
   let current = null;
   try {
     current = git(['symbolic-ref', '--quiet', '--short', 'HEAD'], { cwd });
@@ -656,20 +828,19 @@ function cmdSquash(args) {
   }
   let base;
   try {
-    base = git(['rev-parse', '--verify', '--quiet', '--end-of-options', `${args[1]}^{commit}`], { cwd });
+    base = git(['rev-parse', '--verify', '--quiet', '--end-of-options', `${rest[1]}^{commit}`], { cwd });
   } catch {
-    return fail(EXIT_REFUSED, `BASE "${args[1]}" is not a commit`);
+    return fail(EXIT_REFUSED, `BASE "${rest[1]}" is not a commit`);
   }
   if (!gitOk(['merge-base', '--is-ancestor', base, 'HEAD'], { cwd })) {
     fail(EXIT_REFUSED, `BASE ${base} is not an ancestor of HEAD (${active.branch})`);
   }
-  // R1: the range stays inside the active phase. Its start is the parent phase's tip, or where HEAD forked from the
-  // trunk (phase 1) or from a named branch; a BASE under it would fold an earlier phase's (or the trunk's) commits into
-  // this one.
-  const fromPhase = layoutOf(state) === 'prs' ? parentPhase(state, active) !== undefined : active.n > 1;
+  // R1: the range stays inside the active phase. Its start is the phase's floor (phaseBase: the recorded base, else the
+  // parent phase's tip, or where HEAD forked from the trunk or a named branch); a BASE under it would fold an earlier
+  // phase's (or the trunk's) commits into this one.
   let start;
   try {
-    start = fromPhase ? startPoint(cwd, state, active.n) : git(['merge-base', startPoint(cwd, state, active.n), 'HEAD'], { cwd });
+    start = phaseBase(cwd, state, active);
   } catch (e) {
     if (e instanceof StackError) throw e;
     return fail(EXIT_REFUSED, `${active.branch} shares no history with the trunk ${state.trunk}`);
@@ -704,8 +875,12 @@ function cmdDone(args) {
     fail(EXIT_REFUSED, `phase ${phase.n} is ${phase.state}: only an active phase is marked done`);
   }
   if (phase.state === 'active') {
-    phase.state = 'done';
-    writeState(ctx.path, state);
+    updateState(ctx, (fresh) => {
+      const entry = fresh.phases.find((p) => p.n === phase.n);
+      if (entry.state !== 'active') return false;
+      entry.state = 'done';
+      entry.doneAt = nowIso();
+    });
   }
   return out(`phase ${phase.n} done`);
 }
@@ -871,11 +1046,11 @@ function requireParentSubmitted(cwd, state, phase) {
 function submitPrs(ctx, state, phase, open, { slug, bodyFile }) {
   const { cwd } = ctx;
   if (open) {
-    for (const p of state.phases) {
-      gh(['pr', 'ready', String(p.pr), '--repo', slug], { cwd });
-      p.state = 'ready';
-    }
-    writeState(ctx.path, state);
+    for (const p of state.phases) gh(['pr', 'ready', String(p.pr), '--repo', slug], { cwd });
+    updateState(ctx, (fresh) => {
+      for (const p of fresh.phases) p.state = 'ready';
+    });
+    for (const p of state.phases) p.state = 'ready';
     return out(state.phases.map((p) => `Phase ${p.n}: ready (${p.branch}, PR #${p.pr})`).join('\n'));
   }
   pushBranch(cwd, state, phase, true);
@@ -889,8 +1064,10 @@ function submitPrs(ctx, state, phase, open, { slug, bodyFile }) {
     number = Number(/\/pull\/(\d+)\s*$/.exec(created)?.[1]);
     if (!number) fail(EXIT_GH, `gh pr create printed no PR URL for ${phase.branch}`);
   }
+  updateState(ctx, (fresh) => {
+    Object.assign(fresh.phases.find((p) => p.n === phase.n), { pr: number, state: 'submitted' });
+  });
   Object.assign(phase, { pr: number, state: 'submitted' });
-  writeState(ctx.path, state);
   return out(`Phase ${phase.n}: submitted (${phase.branch}, PR #${number} draft, base ${phase.parent})`);
 }
 
@@ -927,8 +1104,11 @@ function cmdSubmit(args) {
     const numbers = touched.map(prOf);
     gh(['pr', 'edit', String(prOf(phase)), '--repo', slug, '--title', phase.title, '--body-file', bodyFile], { cwd });
 
+    // The gh calls are done: one updateState sets the touched phases' pr and state.
+    updateState(ctx, (fresh) => {
+      for (const [i, p] of touched.entries()) Object.assign(fresh.phases.find((q) => q.n === p.n), { pr: numbers[i], state: open ? 'ready' : 'submitted' });
+    });
     for (const [i, p] of touched.entries()) Object.assign(p, { pr: numbers[i], state: open ? 'ready' : 'submitted' });
-    writeState(ctx.path, state);
     lines = touched.map((p) => (open ? `Phase ${p.n}: ready (${p.branch}, PR #${p.pr})` : `Phase ${p.n}: submitted (${p.branch}, PR #${p.pr} draft)`));
     if (prs.size >= 2 && !STACK_LINKED.test(submitted)) lines[lines.length - 1] += LINK_MISSING;
   } catch (e) {
