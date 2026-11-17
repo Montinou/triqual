@@ -18,7 +18,9 @@
 //     task, reviewed by hand, is checked only when it ran task-prep);
 //   - the ledger: BASE, the effective tier, `Skipped:` lines, `Round 2: T<N> — light items`, the last `Budget: hunters <tier
 //     count> → <used> for T<N>` line of the attempt, and this attempt's `Task <N>:` fix round, parked and blocked lines (an attempt runs from the task's previous
-//     `Task <N>: complete` line; `attempt` is 1 + the number of earlier ones);
+//     `Task <N>: complete` line; `attempt` is 1 + the number of earlier ones), and this attempt's `Arm: T<N> <role> <experiment>/<arm> <model>
+//     <effort>` lines (one per experiment arm a role ran under), which become the record's `arms: [{ role, experiment, arm, model, effort }]`
+//     in ledger order (none: no `arms` key; another task's `Arm:` lines and an earlier attempt's are not copied);
 //   - the saved reviewer outputs `<workspace>/task-<N>-<role>-r<R>.md`, parsed with lib/footer.mjs: the gate
 //     (safety-reviewer) and the spec reviewer, of the lowest round saved for each role. Heavy and standard tasks need both;
 //     a light task needs the gate, and the spec reviewer only when its Round 2 had light items; after `Skipped: hunters and
@@ -429,6 +431,11 @@
     const stray = [...verdicts.keys()].find((id) => !known.has(id));
     if (stray !== undefined) throw new ScriptError(EXIT_OTHER, `the spec reviewer's footer names candidate ${stray}, which no hunter file has`);
 
+    // The experiment arms this attempt's roles ran under: `Arm: T<N> <role> <experiment>/<arm> <model> <effort>` lines of the window.
+    const arms = window.flatMap((l) => {
+      const m = new RegExp(`^Arm: T${n} (\\S+) ([^\\s/]+)/([^\\s/]+) (\\S+) (\\S+)\\s*$`).exec(l);
+      return m ? [{ role: m[1], experiment: m[2], arm: m[3], model: m[4], effort: m[5] }] : [];
+    });
     const record = {
       v: 2,
       at: common.now(),
@@ -446,6 +453,7 @@
       fixRounds: count(`Task ${n}: fix round `),
       blocked: count(`Task ${n}: blocked at fix round `) > 0,
       coordinator: planTask.task.role === 'coordinator',
+      ...(arms.length > 0 ? { arms } : {}),
     };
     const valid = validateRecord(record);
     if (!valid.ok) throw new ScriptError(EXIT_OTHER, `the task-review record is invalid: field ${valid.field}`);
