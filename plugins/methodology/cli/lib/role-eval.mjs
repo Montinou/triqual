@@ -46,9 +46,9 @@ export const TIERS = Object.freeze(['heavy', 'standard', 'light']);
 const V1_KEYS = ['v', 'at', 'provider', 'task', 'kind', 'gate', 'shadow', 'hunters', 'budget'];
 const TASK_REVIEW_KEYS = [
   'v', 'at', 'provider', 'task', 'kind', 'attempt', 'tier', 'declaredTier', 'raised', 'hunters', 'gate', 'spec', 'fixRounds',
-  'blocked', 'coordinator',
+  'blocked', 'coordinator', 'plan', 'arms',
 ];
-const FINAL_ESCAPES_KEYS = ['v', 'at', 'provider', 'task', 'kind', 'escapes'];
+const FINAL_ESCAPES_KEYS = ['v', 'at', 'provider', 'task', 'kind', 'escapes', 'plan'];
 // An escape names no provider; `plan` is the plan file's base name, which `record` sets from --plan.
 const ESCAPE_KEYS = ['v', 'at', 'kind', 'plan', 'source', 'ref', 'task', 'tier', 'note'];
 // A plan-review names no provider and no task; its `plan` is the plan file's base name.
@@ -56,13 +56,17 @@ const PLAN_REVIEW_KEYS = [
   'v', 'at', 'kind', 'plan', 'arm', 'tasks', 'phases', 'parallelism', 'runnerOnly', 'auditFindings', 'plannerUsd',
 ];
 const ALL_KEYS = [...new Set([...V1_KEYS, ...TASK_REVIEW_KEYS, ...FINAL_ESCAPES_KEYS, ...ESCAPE_KEYS, ...PLAN_REVIEW_KEYS])];
-export const ESCAPE_SOURCES = Object.freeze(['post-merge-fix', 'red-ci', 'bug-report']);
+export const ESCAPE_SOURCES = Object.freeze(['post-merge-fix', 'red-ci', 'bug-report', 'revert']);
 // A commit sha (7 to 40 hex) or a PR number (optionally `#`).
 const REF = /^([0-9a-f]{7,40}|#?[0-9]{1,9})$/;
 const PLAN_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 // An experiment arm: `<name>/<name>`, lowercase.
 const ARM = /^[a-z0-9-]+\/[a-z0-9-]+$/;
 const NOTE_MAX = 200;
+// A final-escapes entry's optional category (a short slug) and summary (one line); a task-review arm's role and effort.
+const ESCAPE_CATEGORY = /^[a-z][a-z0-9-]{0,39}$/;
+const ROLE_NAME = /^[a-z-]+$/;
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 // Kinds `record` no longer accepts: the safety shadow was retired (roles 0.3.0). validateRecord still accepts them, so
 // the lines stored before stay valid and the summary keeps reporting them.
 export const RETIRED_KINDS = Object.freeze(['safety-shadow']);
@@ -239,6 +243,20 @@ function validateTaskReview(obj) {
   count(obj, 'fixRounds', '');
   flag(obj, 'blocked', '');
   flag(obj, 'coordinator', '');
+  if (obj.plan !== undefined && (typeof obj.plan !== 'string' || !PLAN_NAME.test(obj.plan))) fail('plan');
+  if (obj.arms !== undefined) {
+    if (!Array.isArray(obj.arms)) fail('arms');
+    obj.arms.forEach((a, i) => validateArm(a, `arms.${i}`));
+  }
+}
+
+// One experiment arm a task review ran under: who (role), which experiment and arm, and the model and effort used.
+function validateArm(arm, path) {
+  object(arm, path);
+  noUnknown(arm, ['role', 'experiment', 'arm', 'model', 'effort'], path);
+  if (typeof arm.role !== 'string' || !ROLE_NAME.test(arm.role)) fail(join2(path, 'role'));
+  for (const key of ['experiment', 'arm', 'model']) if (typeof arm[key] !== 'string') fail(join2(path, key));
+  if (!EFFORTS.includes(arm.effort)) fail(join2(path, 'effort'));
 }
 
 function validateFinalEscapes(obj) {
@@ -247,10 +265,16 @@ function validateFinalEscapes(obj) {
   obj.escapes.forEach((e, i) => {
     const path = `escapes.${i}`;
     object(e, path);
-    noUnknown(e, ['tier', 'severity'], path);
+    noUnknown(e, ['tier', 'severity', 'task', 'category', 'summary'], path);
     tier(e, 'tier', path, { nullable: false });
     if (!SEVERITIES.includes(e.severity)) fail(join2(path, 'severity'));
+    if (e.task !== undefined && (typeof e.task !== 'string' || !/^T[0-9]+$/.test(e.task))) fail(join2(path, 'task'));
+    if (e.category !== undefined && (typeof e.category !== 'string' || !ESCAPE_CATEGORY.test(e.category))) fail(join2(path, 'category'));
+    if (e.summary !== undefined && (typeof e.summary !== 'string' || e.summary.length > NOTE_MAX || /[\r\n]/.test(e.summary))) {
+      fail(join2(path, 'summary'));
+    }
   });
+  if (obj.plan !== undefined && (typeof obj.plan !== 'string' || !PLAN_NAME.test(obj.plan))) fail('plan');
 }
 
 function validateEscape(obj) {

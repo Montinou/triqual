@@ -11,7 +11,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
-  RETIRED_KINDS, appendRecord, formatSummary, formatTierSummary, recordKey, storePath, summarize, summarizeByTier,
+  ESCAPE_SOURCES, RETIRED_KINDS, appendRecord, formatSummary, formatTierSummary, recordKey, storePath, summarize, summarizeByTier,
   takeOverStale, validateRecord, withStoreLock,
 } from '../cli/lib/role-eval.mjs';
 
@@ -277,7 +277,7 @@ const REJECTIONS = [
   ['final-escapes escape not an object', escapesRecord({ escapes: [null] }), 'escapes.0'],
   ['final-escapes escape tier', escapesRecord({ escapes: [{ tier: 'medium', severity: 'minor' }] }), 'escapes.0.tier'],
   ['final-escapes escape severity', escapesRecord({ escapes: [{ tier: 'light', severity: 'major' }] }), 'escapes.0.severity'],
-  ['final-escapes escape extra key', escapesRecord({ escapes: [{ tier: 'light', severity: 'minor' }, { tier: 'light', severity: 'minor', task: 'T1' }] }), 'escapes.1.task'],
+  ['final-escapes escape extra key', escapesRecord({ escapes: [{ tier: 'light', severity: 'minor' }, { tier: 'light', severity: 'minor', provider: 'claude' }] }), 'escapes.1.provider'],
 ];
 
 for (const [name, record, field] of REJECTIONS) {
@@ -1008,4 +1008,62 @@ test('summaries ignore plan-review lines', () => {
   assert.equal(formatTierSummary(tiers), formatTierSummary(summarizeByTier('', {})));
   // A plan-review is valid, so it is not reported as malformed.
   assert.deepEqual(only.skipped.malformed, []);
+});
+
+// ---- escape categories, plan stamps and arms -----------------------------------------------------------------------
+
+const ESCAPE_ENTRY = { tier: 'light', severity: 'important' };
+const ARM_ENTRY = { role: 'spec-reviewer', experiment: 'review-model', arm: 'control', model: 'opus', effort: 'medium' };
+
+test('final-escapes with task, category and summary is valid', () => {
+  const entry = { ...ESCAPE_ENTRY, task: 'T4', category: 'state-drift', summary: 'the cache was read before it was filled' };
+  assert.deepEqual(validateRecord(escapesRecord({ escapes: [entry] })), { ok: true });
+  assert.deepEqual(validateRecord(escapesRecord({ escapes: [{ ...ESCAPE_ENTRY, summary: 'x'.repeat(200) }] })), { ok: true });
+  assert.deepEqual(validateRecord(escapesRecord({ plan: '2026-11-17-example-plan.md' })), { ok: true });
+});
+
+test('final-escapes entries: task, category and summary rules name the field', () => {
+  const bad = (over) => validateRecord(escapesRecord({ escapes: [{ ...ESCAPE_ENTRY, ...over }] }));
+  assert.deepEqual(bad({ summary: 'x'.repeat(201) }), { ok: false, field: 'escapes.0.summary' });
+  assert.deepEqual(bad({ summary: 'two\nlines' }), { ok: false, field: 'escapes.0.summary' });
+  assert.deepEqual(bad({ summary: 5 }), { ok: false, field: 'escapes.0.summary' });
+  assert.deepEqual(bad({ task: 'final' }), { ok: false, field: 'escapes.0.task' });
+  assert.deepEqual(bad({ task: 'T' }), { ok: false, field: 'escapes.0.task' });
+  assert.deepEqual(bad({ category: 'Bad' }), { ok: false, field: 'escapes.0.category' });
+  assert.deepEqual(bad({ category: '1x' }), { ok: false, field: 'escapes.0.category' });
+  assert.deepEqual(bad({ category: `a${'b'.repeat(40)}` }), { ok: false, field: 'escapes.0.category' });
+  assert.deepEqual(bad({ extra: 1 }), { ok: false, field: 'escapes.0.extra' });
+  assert.deepEqual(validateRecord(escapesRecord({ plan: 'bad plan' })), { ok: false, field: 'plan' });
+});
+
+test('old records without the new fields stay valid', () => {
+  assert.deepEqual(validateRecord(escapesRecord()), { ok: true });
+  assert.deepEqual(validateRecord(taskReviewRecord()), { ok: true });
+});
+
+test('task-review with arms is valid; arms with an unknown key is rejected', () => {
+  assert.deepEqual(validateRecord(taskReviewRecord({ plan: 'p.md', arms: [ARM_ENTRY, { ...ARM_ENTRY, role: 'hunter', effort: 'max' }] })), { ok: true });
+  assert.deepEqual(validateRecord(taskReviewRecord({ arms: [] })), { ok: true });
+  assert.deepEqual(
+    validateRecord(taskReviewRecord({ arms: [{ ...ARM_ENTRY, extra: 'x' }] })), { ok: false, field: 'arms.0.extra' },
+  );
+  const bad = (over) => validateRecord(taskReviewRecord({ arms: [{ ...ARM_ENTRY, ...over }] }));
+  assert.deepEqual(bad({ role: 'Spec' }), { ok: false, field: 'arms.0.role' });
+  assert.deepEqual(bad({ effort: 'huge' }), { ok: false, field: 'arms.0.effort' });
+  assert.deepEqual(bad({ model: 3 }), { ok: false, field: 'arms.0.model' });
+  assert.deepEqual(bad({ arm: undefined }), { ok: false, field: 'arms.0.arm' });
+  assert.deepEqual(bad({ experiment: undefined }), { ok: false, field: 'arms.0.experiment' });
+  assert.deepEqual(validateRecord(taskReviewRecord({ arms: {} })), { ok: false, field: 'arms' });
+  assert.deepEqual(validateRecord(taskReviewRecord({ arms: [null] })), { ok: false, field: 'arms.0' });
+  assert.deepEqual(validateRecord(taskReviewRecord({ plan: 'bad plan' })), { ok: false, field: 'plan' });
+});
+
+test('escape source revert is valid', () => {
+  assert.ok(ESCAPE_SOURCES.includes('revert'));
+  assert.deepEqual(validateRecord({ v: 2, at: '2026-09-06T10:00:00Z', kind: 'escape', source: 'revert', ref: '#42' }), { ok: true });
+});
+
+test('recordKey is unchanged by the plan stamp and the new fields', () => {
+  const base = { commonDir: '/r/.git', plan: 'p.md', task: 'T3', kind: 'task-review', attempt: 1 };
+  assert.equal(recordKey(base), createHash('sha256').update('/r/.git\0p.md\0T3\0task-review\0' + 1).digest('hex'));
 });

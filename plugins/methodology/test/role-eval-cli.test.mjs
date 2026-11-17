@@ -571,3 +571,45 @@ test('importing the module runs nothing; run as a script it exits with main()\'s
   assert.equal(rec.status, 0, rec.stderr);
   assert.equal(lines(w.file).length, 1);
 }));
+
+// ---- plan stamps --------------------------------------------------------------------------------------------------
+
+const planReviewRecord = (over = {}) => ({
+  v: 2, at: '2026-11-17T10:00:00Z', kind: 'plan-review', arm: null, tasks: 12, phases: 3, parallelism: 1.5, runnerOnly: 2,
+  auditFindings: { critical: 0, important: 1, minor: 2 }, plannerUsd: null, ...over,
+});
+
+test('record stamps plan on a task-review; the key and the other fields are unchanged', () => withWorld((w) => {
+  const input = writeInput(w, taskReviewRecord());
+  const res = run(['record', '--plan', w.plan, input], { env: envFor(w), cwd: w.repo });
+  assert.equal(res.code, 0, res.err);
+  const stored = JSON.parse(lines(w.file)[0]);
+  assert.equal(stored.plan, 'p.md');
+  const commonDir = realpathSync(execFileSync('git', ['-C', w.repo, 'rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8' }).trim());
+  assert.equal(stored.key, recordKey({ commonDir, plan: 'p.md', task: 'T3', kind: 'task-review', attempt: 1 }));
+  assert.equal(stored.task, 'T3');
+}));
+
+test('record stamps plan on a final-escapes record and overwrites a plan the file names', () => withWorld((w) => {
+  const input = writeInput(w, escapesRecord({ plan: 'other.md' }));
+  assert.equal(run(['record', '--plan', w.plan, input], { env: envFor(w), cwd: w.repo }).code, 0);
+  assert.equal(JSON.parse(lines(w.file)[0]).plan, 'p.md');
+}));
+
+test('record accepts a plan-review file and stamps plan from --plan, overwriting the file\'s own plan', () => withWorld((w) => {
+  const opts = { env: envFor(w), cwd: w.repo };
+  const res = run(['record', '--plan', w.plan, writeInput(w, planReviewRecord({ plan: 'other.md' }))], opts);
+  assert.equal(res.code, 0, res.err);
+  const stored = JSON.parse(lines(w.file)[0]);
+  assert.equal(stored.plan, 'p.md');
+  assert.equal(stored.kind, 'plan-review');
+  // A plan-review file with no plan field is stored too, once per plan.
+  const again = run(['record', '--plan', w.plan, writeInput(w, planReviewRecord(), 'b.json')], opts);
+  assert.match(again.out, /already recorded/);
+  assert.equal(lines(w.file).length, 1);
+}));
+
+test('record: --help and the usage text name the plan-review kind', () => withWorld((w) => {
+  const res = run(['--help'], { env: envFor(w), cwd: w.repo });
+  assert.match(res.out, /plan-review/);
+}));

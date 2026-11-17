@@ -1,6 +1,6 @@
 // `triqual role-eval record --plan <plan file> <json-file>` and `triqual role-eval summary [--by-tier] [--since YYYY-MM-DD]
 // [--json]`: the command line of the role-eval store (lib/role-eval.mjs; spec 5 and U7). `record` validates a record
-// (hunters, task-review, final-escapes or escape), derives its idempotency key and appends it under the store lock;
+// (hunters, task-review, final-escapes, escape or plan-review), derives its idempotency key and appends it under the store lock;
 // `summary` reports the store per provider, or per review tier with --by-tier (post-merge escapes included). An escape
 // with a task and no tier takes the task's effective tier from `triqual tasks export --json` when that resolves. A record of a retired kind (safety-shadow) is
 // refused; the lines of that kind already stored are still summarized.
@@ -20,12 +20,13 @@ import {
 
 const GIT_TIMEOUT_MS = 10000;
 const TASKS_TIMEOUT_MS = 10000;
+const STAMPED_KINDS = ['task-review', 'final-escapes', 'escape', 'plan-review'];
 const SINCE = /^\d{4}-\d{2}-\d{2}$/;
 
 const USAGE = [
   'usage:',
   '  triqual role-eval record --plan <plan file> <json-file>',
-  '      Validate the record in <json-file> (kind hunters, task-review, final-escapes or escape) and append it to',
+  '      Validate the record in <json-file> (kind hunters, task-review, final-escapes, escape or plan-review) and append it to',
   '      the store once (the key comes from the repo, the plan\'s file name, the task, the kind and, for a task-review,',
   '      its attempt: attempt 2 of a task is stored, a repeated attempt is a no-op). The safety-shadow kind is retired:',
   '      record refuses it. Exits 0 when written or already recorded, 2 on a bad or retired record or usage, 1 on a',
@@ -34,6 +35,7 @@ const USAGE = [
   '      {"v": 2, "at": "<ISO time>", "kind": "escape", "source": "post-merge-fix|red-ci|bug-report", "ref": "<sha or PR>",',
   '       "task": "T<n>" (optional), "tier": "heavy|standard|light" (optional), "note": "<200 chars max>" (optional)}',
   '      With a task and no tier, the tier is the task\'s effective tier from the ledger when it resolves.',
+  '      A task-review, final-escapes, escape or plan-review record gets its "plan" field from --plan (the plan\'s base name).',
   '  triqual role-eval summary [--since YYYY-MM-DD] [--json]',
   '      Per provider: hunter right and new rates (from hunters and task-review records), and the safety-shadow',
   '      agreement of the records stored before that kind was retired, from the records at or after --since.',
@@ -127,11 +129,12 @@ function record(args, { env, cwd, stdout, stderr }) {
   // A fixed kind name, never a value from the file.
   const retired = RETIRED_KINDS.find((kind) => obj !== null && typeof obj === 'object' && obj.kind === kind);
   if (retired !== undefined) {
-    stderr.write(`triqual role-eval: the ${retired} kind is retired: record a hunters, task-review, final-escapes or escape record\n`);
+    stderr.write(`triqual role-eval: the ${retired} kind is retired: record a hunters, task-review, final-escapes, escape or plan-review record\n`);
     return 2;
   }
   const escape = obj !== null && typeof obj === 'object' && obj.kind === 'escape';
-  if (escape) obj.plan = basename(plan);
+  // These kinds carry the plan's base name, taken from --plan (the same name that feeds the key), never from the file.
+  if (obj !== null && typeof obj === 'object' && STAMPED_KINDS.includes(obj.kind)) obj.plan = basename(plan);
   const verdict = validateRecord(obj);
   if (!verdict.ok) {
     stderr.write(`triqual role-eval: invalid record: field ${verdict.field}\n`);
