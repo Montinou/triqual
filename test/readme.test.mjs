@@ -395,3 +395,11 @@ test('README header: the only image file it references is the banner, which exis
   // The hero is a release asset, not a file in the tree.
   assert.ok(header.includes('https://github.com/Montinou/triqual/releases/download/readme-assets/run-board-hero.png'));
 });
+
+test('the README says phases run at the same time and no longer that nothing runs in parallel across phases', () => {
+  const flat = README.replace(/\s+/g, ' ');
+  assert.ok(!flat.includes('Nothing runs in parallel across phases'), 'the old sentence is gone');
+  assert.ok(!flat.includes('Worktree tasks land on the phase branch in plan order'), 'the old landing sentence is gone');
+  assert.match(flat, /phases whose parents are submitted run at the same time, each in its own checkout/i, 'phases run at the same time');
+  assert.match(flat, /a worktree task lands on the phase branch as soon as its review is clean/i, 'a worktree task lands without a wait');
+});

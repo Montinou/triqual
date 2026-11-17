@@ -4,7 +4,7 @@ An initiative is a set of plans run side by side or one after another, each with
 
 ### Several plans
 
-- **One clone per running plan.** Each running plan works in its own clone of the work repository: its own checkout, its own `.methodology/` workspace and stack state, its own phase branches. Two plans never share a checkout, because a script reads `HEAD`, the tree and the workspace of the checkout it runs in.
+- **One clone per running plan.** Each running plan works in its own clone of the work repository: its own checkout, its own `.methodology/` workspace and stack state, its own phase branches. Two plans never share a checkout, because a script reads `HEAD`, the tree and the workspace of the checkout it runs in. A plan's own phase worktrees are inside that clone, and its scripts still run from its main checkout.
 - **One tracking root.** The clones are not opted in to tracking. Export `TRIQUAL_TRACKING_ROOT=<path of the coordination repository>` in the shell that runs a plan's scripts: `triqual tasks …` and `triqual tracking …` then resolve tracking from that repository, and the commits made in the clone are recorded as external commits. The variable is only for the scripts: the git hooks and the plugin hooks never read it, so keep it out of a shell where you commit in the coordination repository itself.
 - **Cross-plan parents.** A phase's `**Parent:**` may name a branch of another plan (a phase branch of that plan, pushed to the remote). The phase starts at that branch, and `submit` needs it on the remote. It is merged after its parent, as in a forest (`forest.md`).
 

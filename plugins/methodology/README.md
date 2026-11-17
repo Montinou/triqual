@@ -295,13 +295,23 @@ Every gh call is non-interactive.
 init PLAN_FILE [--trunk <b>] [--mode github|local] [--remote <r>]   print the state (JSON), writing it the first time
 mode PLAN_FILE github|local                                         switch the mode (github re-runs the checks)
 path PLAN_FILE                                                      print the state file's path
-status PLAN_FILE                                                    print the state (JSON), PR states refreshed
+status PLAN_FILE [--tree]                                           print the state (JSON), PR states refreshed; each phase also
+                                                                    prints `ready` and `base`; --tree: the phases as a tree
 phase PLAN_FILE N                                                   check out phase N's branch, mark it active
-squash PLAN_FILE BASE                                               fold BASE..HEAD into one commit, print its sha
+squash PLAN_FILE BASE [--phase N]                                   fold BASE..HEAD into one commit, print its sha
 done PLAN_FILE N                                                    mark phase N done
 submit PLAN_FILE N [--open]                                         reconcile gh stack, submit, fill phase N's PR
 push PLAN_FILE N                                                    push a submitted phase, refresh its PR body
 ```
+
+While another phase holds the main checkout, a phase is built in its own phase worktree,
+`.claude/worktrees/<plan stem>-p<N>`, and `phase` prints a second line `workdir: <path>`; `done` removes that
+worktree and keeps the branch. A join (a phase with `**Parent:** P1, P2`) starts at one commit that merges every parent's
+tip. `squash` runs in phase N's workdir (default: the only active phase). `status` prints `"ready": true` for a pending
+phase whose parents are all submitted (in local mode, done), and `"base"` for a phase that has started: the commit its
+own range begins at. Each phase carries `startedAt` and `doneAt` (UTC), which `timeline.mjs` reads. Every write of the
+state file holds a lock (the directory `<state>.lock`, polled every 50 ms and taken over when older than 60 s) around the
+re-read, the change and the write only, so phases that run at the same time never overwrite each other.
 
 `push` is for the commits a review adds after a phase was submitted. It pushes this plan's whole stack, refreshes phase
 N's PR body and never marks a PR ready. It refuses a phase that was not submitted (exit 3), and in local mode it pushes
@@ -331,11 +341,22 @@ none). Their exit codes are 0 ok, 2 usage or a bad argument (no such plan file, 
   task's worktree branch when there is one, else `HEAD`. It refuses (exit 3) a plain call at a new head once a `Prep:`
   line exists, and a fix round with no new commit.
 - `task-close PLAN_FILE N [--provider claude|codex] [--head <sha>]` closes a reviewed task: it squashes the task's
-  commits (a worktree task is landed on the phase branch instead, in plan order, and its `Test:` files run), makes the
+  commits (a worktree task is landed on the phase branch instead, as soon as its review is clean, without a wait for an
+  earlier task, and its `Test:` files run), makes the
   `done` move, writes the complete line, builds the `task-review` record from the saved reviewer outputs with
   `triqual role-eval record` and writes the review progress entry. `--provider` selects the hunter model (default
-  `claude`). It prints `sha:` and `record:`. It exits 3 on a refusal, among them a worktree task whose earlier tasks have
-  not landed yet (a wait, with no `Error:` line) and a landing that a conflict or a failing test undid.
+  `claude`). It prints `sha:` and `record:`. It exits 3 on a refusal, among them a landing that a conflict or a failing
+  test undid. `task-open` and `task-close` also write `Opened: T<N> <time>` and `Closed: T<N> <time>` lines (UTC, to the
+  second) to the ledger; `TRIQUAL_NOW`, set to a time like `2026-11-16T10:00:00Z`, replaces the clock for them and for
+  the phase times of `stack.mjs`. Each task script reads and moves HEAD in the checkout of its own task's phase, so
+  phases at once never touch each other's.
+- `timeline.mjs PLAN_FILE` is read-only: it reads the ledger's `Opened:` and `Closed:` lines and the phase times of the
+  stack state, asks `triqual plan lanes` what the layout planned, and prints `plan <stem>: wall-clock <W> min, task time
+  <S> min, achieved <A>, <K> at once, planned: <P>`. A plan of two or more phases also gets one `P<n>:` row per phase in
+  the same form, a `phase windows: <M> phases at once` line (the most phases open at one instant) and an `open: P<n>
+  since <time>` line for a phase started and not done; then an `open: T<n> since <time>` line for each task opened and
+  never closed and every `Serial: <reason>` line of the ledger. With no time lines it prints `no timeline`. Exit 0
+  printed, 2 usage or a malformed plan, 3 the plan has no ledger, 1 any other failure.
 
 ## Hooks
 
@@ -365,16 +386,17 @@ Plans run only through subagents. For each plan phase the main session dispatche
 runs the phase's task loop: it dispatches a role agent for each task, sizes the task's review by its tier (`heavy`,
 `standard` or `light`, declared by `writing-plans` and raised, never lowered, by `tier-check`) and follows TDD on every
 task. The main session reads only the orchestrator's summary of at most 20 lines, then runs the Phase check, the phase
-review (one `roles:final-adversarial-reviewer`, no hunters), `stack.mjs done` and `submit`. The next phase starts at
-once, with no pause; a compacted or new session resumes from the ledger. Independent
+review (one `roles:final-adversarial-reviewer`, no hunters), `stack.mjs done` and `submit`. Every ready phase starts at
+once, with no pause: phases whose parents are submitted run at the same time, one orchestrator for each, each in its
+own checkout (see `references/concurrent-phases.md`); a compacted or new session resumes from the ledger. Independent
 tasks of one phase run at the same time, at most 3 implementers, one in the main checkout and the others in task
-worktrees that land on the phase branch in plan order (parallel runs need store or local tracking mode). When the
+worktrees that land on the phase branch as soon as their review is clean (parallel runs need store or local tracking mode). When the
 orchestrator cannot be dispatched, or cannot dispatch (for example Codex at depth 1), the main session announces it and
 runs the phase loop itself with the same scripts.
 
 `executing-plans` keeps its core in `SKILL.md` and holds the long procedures it rarely needs in
 `skills/executing-plans/references/` (`setup`, `records`, `ledger-vocabulary`, `worktrees`, `final-review`, `example`,
-`parallel-tasks`), read when the step they serve comes up. A session can run the execution on a cheaper model: its
+`parallel-tasks`, `concurrent-phases`), read when the step they serve comes up. A session can run the execution on a cheaper model: its
 judgment stops escalate to the session's stronger model, it compacts at about 250K tokens of context and it dispatches
 every phase to its orchestrator. The quality of a cheaper controller is unverified.
 
