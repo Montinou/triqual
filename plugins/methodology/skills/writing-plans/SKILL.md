@@ -264,7 +264,7 @@ opposite failure, and the self-review catches both.
 The plan draft is written by `roles:planner`, a subagent that follows this skill, lanes first. After `triqual tasks paths --json`, the Scope Check and the file map, with the spec path and the draft path (see Save plans to) at hand:
 
 1. Run `triqual eval arm --kind role --key <plan file name> --role planner`, where `<plan file name>` is the base name of the draft. It prints `none`, or `<experiment>/<arm> <model> <effort>`.
-2. Dispatch `roles:planner` with description `planner <plan file name>`, giving it the spec path, the repository and the draft path. Pass the arm's `model` and `effort` only when a line other than `none` came back; on `none`, or when `triqual` is missing or the command fails, dispatch with the role's own settings.
+2. Dispatch `roles:planner` with description `planner <plan file name>` (the file name with its `.md`: that is the only description the planner's cost is read by), giving it the spec path, the repository and the draft path. Pass the arm's `model` and `effort` only when a line other than `none` came back; on `none`, or when `triqual` is missing or the command fails, dispatch with the role's own settings.
 3. The planner's draft then goes through the existing step 6 check of Parallel layout: run `triqual plan lanes <draft>` and require exit 0 before the self-review. When it does not exit 0, fix the draft or send the planner back with the violations.
 
 The planner writes only the draft. What stays with the main session: the self-review, the plan audit, the fixes, the registration and the review by your human partner. The planner self-reviews its own draft before it returns and runs none of the rest of that list, and it writes no tracking entry.

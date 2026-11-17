@@ -71,6 +71,9 @@ const evalFixture = ({ preStore }) => {
   writeFileSync(join(projDir, 's1.jsonl'), turn('m1', now));
   writeFileSync(join(projDir, 's2.jsonl'), turn('m2', now));
   writeFileSync(join(projDir, 's-old.jsonl'), turn('m0', '2020-01-01T00:00:00Z'));
+  // A session of another project on the machine: the sessions store refresh reads it, the dataset must not list it.
+  mkdirSync(join(transcripts, '-x-elsewhere'), { recursive: true });
+  writeFileSync(join(transcripts, '-x-elsewhere', 's3.jsonl'), turn('m3', now));
 
   const evals = join(home, 'evals');
   const snapDir = join(evals, 'snapshots', 'snap-1');
@@ -167,6 +170,12 @@ test('eval_report counts the sessions of a store that was empty: the collector r
   assert.deepEqual(reportRows.map((x) => [x.arm, x.n]), [['off', 1], ['on', 1]]);
   const sessionRows = JSON.parse(readFileSync(join(out, 'eval_sessions.json'), 'utf8'));
   assert.deepEqual(sessionRows.map((x) => x.sessionId), ['s1', 's2']);
+});
+
+test('eval_sessions lists the sessions of the --project the other datasets read, not every project on the machine', () => {
+  const { out } = evalFixture({ preStore: false });
+  const ids = JSON.parse(readFileSync(join(out, 'eval_sessions.json'), 'utf8')).map((x) => x.sessionId);
+  assert.ok(!ids.includes('s3'), 'a session of another project is in eval_sessions');
 });
 
 test('skill text names the eval step', () => {

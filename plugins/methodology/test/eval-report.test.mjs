@@ -476,7 +476,7 @@ test('an experiment that was never started, a role experiment and no experiments
   try {
     const paused = JSON.parse((await run(['--json'], w.env)).out).experiments[0];
     assert.deepEqual(paused.rows, []);
-    writeFileSync(w.env.TRIQUAL_EXPERIMENTS_FILE, JSON.stringify({ experiments: [{ id: 'r1', kind: 'role', status: 'paused', control: 'a', arms: { a: { role: 'x' }, b: { role: 'x' } } }] }));
+    writeFileSync(w.env.TRIQUAL_EXPERIMENTS_FILE, JSON.stringify({ experiments: [{ id: 'r1', kind: 'role', status: 'paused', control: 'a', arms: { a: { role: 'x', model: 'opus', effort: 'low' }, b: { role: 'x', model: 'sonnet', effort: 'low' } } }] }));
     const role = JSON.parse((await run(['--json'], w.env)).out).experiments[0];
     assert.deepEqual([role.id, role.kind, role.margin, role.rows], ['r1', 'role', 0.1, []]);
     rmSync(w.env.TRIQUAL_EXPERIMENTS_FILE);

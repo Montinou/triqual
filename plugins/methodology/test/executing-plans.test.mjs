@@ -2554,4 +2554,5 @@ test('final-review prompt asks for task, category and summary', () => {
   for (const line of ['`task`', '`category` (one short kebab-case word', '`summary` (at most 200 characters']) assert.ok(prompt.includes(line), `the final-review prompt lacks: ${line}`);
   const records = flat(read(`${EP}/references/records.md`));
   assert.ok(records.includes('"category": "') && records.includes('"summary": "'), 'records.md does not show category and summary');
+  assert.ok(prompt.includes('Name the task (`T<N>`)') && !prompt.includes('Name the task (`Task <N>`)'), 'the final-review prompt names a finding task as Task <N>, the final-escapes record takes T<N>');
 });

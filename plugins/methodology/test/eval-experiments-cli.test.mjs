@@ -195,7 +195,7 @@ test('start of a role or skill experiment records the objective evaluators and n
   const f = fixture({
     validation: null,
     taxonomy: { categories: [] },
-    experiments: [exp({ id: 'r1', kind: 'role', arms: { a: { role: 'planner', model: 'm1' }, b: { role: 'planner', model: 'm2' } } })],
+    experiments: [exp({ id: 'r1', kind: 'role', arms: { a: { role: 'planner', model: 'opus', effort: 'low' }, b: { role: 'planner', model: 'sonnet', effort: 'low' } } })],
   });
   try {
     const r = await run(f, ['start', 'r1']);

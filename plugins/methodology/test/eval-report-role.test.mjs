@@ -444,7 +444,7 @@ test('an assignment is read by (key, role, experiment): the last line of a key w
   } finally { rmSync(w.base, { recursive: true, force: true }); }
 });
 
-test('the rows of a role experiment follow its status: none while paused, rows once done; skill experiments stay without rows', async () => {
+test('the rows of a role experiment follow whether it was started: none before, rows once started (paused or done); skill experiments stay without rows', async () => {
   const fixture = {
     assignments: [assignmentRow({ task: 'T1', key: `${PLAN_A}/T1` })],
     records: [taskReview({ task: 'T1' })],
@@ -453,6 +453,10 @@ test('the rows of a role experiment follow its status: none while paused, rows o
   try { assert.deepEqual(await rowsOf(w, 'r1'), []); } finally { rmSync(w.base, { recursive: true, force: true }); }
 
   w = world({ ...fixture, experiments: [roleExperiment({ status: 'done' })] });
+  try { assert.equal((await rowsOf(w, 'r1'))[0].n, 1); } finally { rmSync(w.base, { recursive: true, force: true }); }
+
+  // A role experiment that was started and then paused (it has evaluators) still reports, as a session experiment does.
+  w = world({ ...fixture, experiments: [roleExperiment({ status: 'paused' })] });
   try { assert.equal((await rowsOf(w, 'r1'))[0].n, 1); } finally { rmSync(w.base, { recursive: true, force: true }); }
 
   w = world({

@@ -178,7 +178,7 @@ Subagent (roles:final-adversarial-reviewer):
 
     For each: file:line, the task it traces to, the phase it sits in, what
     is wrong, a concrete failure scenario, and how to fix it (if not
-    obvious). Name the task (`Task <N>`): the package holds one commit per
+    obvious). Name the task (`T<N>`): the package holds one commit per
     task, whose subject and progress entry name it, so trace the defective
     lines to the commit that wrote them; write `untraced` only when no single
     task's commit introduced the defect (it emerges from several, or from
