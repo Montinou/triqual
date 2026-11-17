@@ -2,7 +2,11 @@
 // Collects the numbers of a performance audit of the triqual plugins into one JSON file per dataset, read-only:
 // `node collect.mjs --out <dir> [--days 10] [--project triqual] [--hooks]`. Late window = the last --days UTC days
 // (today included); early window = the --days before it. Datasets (arrays of row objects, written to <out>/<name>.json):
-// cost_by_role, controller_sessions, latency, tier_by_day, escapes, hunter_yield, hooks (with --hooks). USD is an ESTIMATE at
+// cost_by_role, controller_sessions, latency, tier_by_day, escapes, hunter_yield, eval_report, eval_sessions, hooks (with --hooks).
+// eval_sessions is `triqual eval sessions --json --since <early window start>` (the sessions of both windows; it refreshes the
+// evals sessions store, so it runs first); eval_report is `triqual eval report --json` on that store (its rows, one per
+// experiment and arm). A command
+// that fails leaves its dataset empty and a line on stderr. USD is an ESTIMATE at
 // cli/lib/prices.json. It prints counts and role names, never message content. Exit 0 done, 2 usage.
 import { readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -136,6 +140,19 @@ for (const r of reviews) for (const h of r.hunters || []) {
   yieldRows.set(k, y);
 }
 write('hunter_yield', [...yieldRows.values()].map((y) => ({ ...y, precision_pct: Math.round((100 * (y.critical + y.important + y.minor)) / Math.max(1, y.candidates)), important_per_100_runs: round((100 * (y.critical + y.important)) / y.runs, 1) })));
+
+// The evals commands run with the collector's own env (HOME, TRIQUAL_EVALS_DIR, TRIQUAL_EXPERIMENTS_FILE, TRIQUAL_TRANSCRIPTS_DIR).
+const evalJson = (name, sub) => {
+  const r = spawnSync(process.execPath, [join(here, '..', '..', '..', 'cli', 'eval.mjs'), ...sub, '--json'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+  try {
+    if (r.status !== 0) throw new Error(`exited ${r.status}`);
+    return JSON.parse(r.stdout);
+  } catch (err) { process.stderr.write(`${name}: triqual eval ${sub.join(' ')} ${err.message.startsWith('exited') ? err.message : 'printed no JSON'}\n`); return null; }
+};
+// `sessions` goes first: it refreshes the sessions store, and `report` scores that store as it stands.
+const SESSION_KEYS = ['sessionId', 'project', 'start', 'usd', 'turns', 'ctxPeak', 'compactions', 'idleRewrites', 'stopHookBlocks', 'arm', 'contaminated'];
+write('eval_sessions', (evalJson('eval_sessions', ['sessions', '--since', windows.early.since])?.sessions ?? []).map((s) => Object.fromEntries(SESSION_KEYS.map((k) => [k, s[k] ?? null]))));
+write('eval_report', (evalJson('eval_report', ['report'])?.experiments ?? []).flatMap((e) => e.rows));
 
 if (args.includes('--hooks')) {
   const time = (cmd, plugin, input = '') => {
