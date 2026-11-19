@@ -3,6 +3,13 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## methodology 1.14.2
+
+- methodology: `triqual role-eval escapes scan` is precise enough to keep its records. Files every release touches (`CHANGELOG.md`, `README.md`, `plugin.json`, `marketplace.json`, `package.json`, `package-lock.json`) no longer tie a fix to a task; a fix commit is one escape, of the task that shares the most files with it (then the latest shipped, then the lowest task number); and a fix that ships together with a task of the same plan is that plan's own work, not its escape. Over this repository's history the scan finds 35 escapes where it found 98.
+- methodology: skill replay. A case passes when most of its runs pass (2 of 3), not only when all do; the suite is graded with a Sonnet judge (`--judge-model sonnet`: the default Haiku judge failed long replies a reader would pass); the `stopped-early` case is a written decision exercise (it gave the model no shell, so stopping was right) and its graders accept a read-only check first and holding back a dependent step; `heavier-than-needed` judges only the process the assistant adds, not the team's own CI, review and deploy.
+- methodology: silent wrong results fixed. An experiments file whose `experiments` is not a list, or a snapshot without categories, is refused instead of read as empty (which read every session as healthy); `triqual eval launch` assigns no arm when you pass your own `--settings`, and says so, and says when an assignment fails; `start` and `stop` re-check the experiment inside the lock; an empty arm or model is refused; a failing snapshot check exits 1 with one line; the hook tests no longer reach the real home's evals directory.
+- Update the plugin. A skill experiment started on 1.14.1 or earlier scored cases with the old rule: stop it and start a new one.
+
 ## methodology 1.14.1
 
 - methodology: `triqual eval experiments start` refuses an experiment that its records could never use: an `id` or an arm name outside lowercase letters, digits and `-`, and, for a role experiment, an arm whose `role` is not a bare role name (`planner`, not `roles:planner`) or that has no `model` or no `effort` (`low`, `medium`, `high`, `xhigh` or `max`). Before, such an experiment started and every record for it was refused, so it never got rows (or `triqual eval arm` printed `null null`). An experiments file that holds one is refused by every `triqual eval` command that reads it; fix the id, the arm names, the role, the model and the effort.

@@ -25,7 +25,9 @@ const finite = (v) => typeof v === 'number' && Number.isFinite(v);
 // the snapshot's own eval-checks.mjs (CHECKS, runCheck), so a later edit of the live checks changes nothing.
 export async function loadSnapshot(dir) {
   const doc = JSON.parse(readFileSync(join(dir, 'taxonomy.json'), 'utf8'));
-  const categories = Array.isArray(doc?.categories) ? doc.categories : [];
+  // A snapshot with no categories list is as unreadable as a corrupt one: read as "no evaluators" it scores every session healthy.
+  if (!Array.isArray(doc?.categories)) throw new Error('snapshot taxonomy.json has no categories list');
+  const categories = doc.categories;
   const prompts = {};
   for (const c of categories) if (c.check === 'judge') prompts[c.id] = loadJudgePrompt(join(dir, 'judges', `${c.id}.md`)).hash;
   const checks = await import(pathToFileURL(join(dir, 'eval-checks.mjs')).href);

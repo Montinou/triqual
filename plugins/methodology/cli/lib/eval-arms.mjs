@@ -8,9 +8,12 @@ import { ensureDir, evalsDir } from './eval-paths.mjs';
 // The file, inside the evals directory, the hook appends to: one JSON line { sessionId, source, arm, launchId, at }.
 export const SESSION_ARMS_FILE = 'session-arms.jsonl';
 
+// An empty variable is no arm and no launch: never recorded as an arm named "".
+const nonEmpty = (v) => (typeof v === 'string' && v !== '' ? v : null);
+
 // Appends the SessionStart record of `input` ({ sessionId, source }, as drift.mjs reads them from the hook's stdin) to
 // <evals>/session-arms.jsonl in one appendFileSync: arm and launchId are the environment's TRIQUAL_EVAL_ARM and
-// TRIQUAL_EVAL_LAUNCH, or null. An input without a string session id writes nothing. Never throws, prints nothing: an
+// TRIQUAL_EVAL_LAUNCH, or null when unset or empty. An input without a string session id writes nothing. Never throws, prints nothing: an
 // error goes to onError when given.
 export function recordSessionArm({ input, env, home, onError }) {
   try {
@@ -21,8 +24,8 @@ export function recordSessionArm({ input, env, home, onError }) {
     const record = {
       sessionId,
       source: typeof input.source === 'string' ? input.source : null,
-      arm: env.TRIQUAL_EVAL_ARM ?? null,
-      launchId: env.TRIQUAL_EVAL_LAUNCH ?? null,
+      arm: nonEmpty(env.TRIQUAL_EVAL_ARM),
+      launchId: nonEmpty(env.TRIQUAL_EVAL_LAUNCH),
       at: new Date().toISOString(),
     };
     appendFileSync(join(dir, SESSION_ARMS_FILE), `${JSON.stringify(record)}\n`, { mode: 0o600 });

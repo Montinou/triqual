@@ -495,6 +495,37 @@ test('a missing snapshot directory is reported by experiment id and exits 1', as
   } finally { rmSync(w.base, { recursive: true, force: true }); }
 });
 
+test('a snapshot whose taxonomy has no categories list is unreadable, not "no evaluators"', async () => {
+  for (const doc of [{}, { categories: 'x' }, { categories: null }, { categories: {} }]) {
+    const w = world([...mk(6, 'off'), ...mk(6, 'on')]);
+    try {
+      writeFileSync(join(w.evals, 'snapshots', w.hash, 'taxonomy.json'), JSON.stringify(doc));
+      const r = await run(['--json'], w.env);
+      assert.equal(r.code, 1, JSON.stringify(doc));
+      assert.match(r.err, /e1: snapshot/);
+      assert.equal(r.out, '', 'no rows of healthy sessions are printed');
+    } finally { rmSync(w.base, { recursive: true, force: true }); }
+  }
+});
+
+test('a check of the snapshot that throws ends the report with exit 1 and one stderr line', async () => {
+  const w = world([...mk(6, 'off'), ...mk(6, 'on')]);
+  try {
+    writeFileSync(join(w.evals, 'snapshots', w.hash, 'eval-checks.mjs'), [
+      "export const CHECKS = { 'chased-progress': () => 'pass' };",
+      "export function runCheck() { throw new TypeError('invented failure with transcript text'); }",
+      "export const checkVersion = () => 'v-snapshot';",
+      '',
+    ].join('\n'));
+    const r = await run(['--json'], w.env);
+    assert.equal(r.code, 1);
+    assert.equal(r.err.trim().split('\n').length, 1, r.err);
+    assert.match(r.err, /triqual eval report: e1: .*check/);
+    assert.ok(!r.err.includes('transcript text'), 'the message of the error is not printed');
+    assert.equal(r.out, '');
+  } finally { rmSync(w.base, { recursive: true, force: true }); }
+});
+
 test('eval.mjs dispatches the report command', async () => {
   const w = world([...mk(6, 'off'), ...mk(6, 'on')]);
   try {

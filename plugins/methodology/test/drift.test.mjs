@@ -10,6 +10,15 @@ import { MARKERS } from '../cli/lib/fsx.mjs';
 import { expectedRules, harnessPaths } from '../cli/lib/harnesses.mjs';
 
 const PLUGIN_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+// The caller's data dirs are decoys for this file: a hook that is spawned with them in its environment writes its
+// session-arms record there instead of into its own temp home, so the last test checks they stay untouched.
+const DECOY = mkdtempSync(join(tmpdir(), 'cm-drift-decoy-'));
+process.env.XDG_DATA_HOME = join(DECOY, 'xdg-data');
+process.env.TRIQUAL_EVALS_DIR = join(DECOY, 'evals');
+// process.env without the variables that would reach the caller's real config, data or evals; a hook child never
+// logs into a real plugin data dir, never reads the real config and never writes the real evals store.
+const SCRUBBED = ['CLAUDE_PLUGIN_DATA', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'TRIQUAL_EVAL_ARM', 'TRIQUAL_EVAL_LAUNCH', 'TRIQUAL_EVALS_DIR'];
+const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !SCRUBBED.includes(k)));
 const GLOBAL = readFileSync(join(PLUGIN_ROOT, 'rules', 'global.md'), 'utf8');
 const SUPERSEDED = 'superpowers@superpowers-marketplace';
 const RULES_NOTICE = 'global rules out of date: run `triqual sync`';
@@ -100,8 +109,7 @@ const RESUME_NOTE = 'triqual: methodology skills are active (methodology:using-m
 
 test('drift.mjs as a hook on resume prints the drift lines, or the resume note, and exits 0', () => {
   const cli = join(PLUGIN_ROOT, 'cli', 'drift.mjs');
-  // Never log into a real plugin data dir, and never reach the real config through XDG_CONFIG_HOME.
-  const { CLAUDE_PLUGIN_DATA: _, XDG_CONFIG_HOME: __, ...env } = process.env;
+  const env = cleanEnv();
   const run = (home) => spawnSync(process.execPath, [cli], {
     env: { ...env, HOME: home }, input: '{"hook_event_name":"SessionStart","source":"resume"}', encoding: 'utf8',
   });
@@ -178,7 +186,7 @@ test('drift.mjs as a hook logs to ${CLAUDE_PLUGIN_DATA}/log and still exits 0', 
   try {
     withHome((home) => {
       const r = spawnSync(process.execPath, [join(PLUGIN_ROOT, 'cli', 'drift.mjs')], {
-        env: { ...process.env, HOME: home, CLAUDE_PLUGIN_DATA: data }, input: '{"source":"resume"}', encoding: 'utf8',
+        env: { ...cleanEnv(), HOME: home, CLAUDE_PLUGIN_DATA: data }, input: '{"source":"resume"}', encoding: 'utf8',
       });
       assert.equal(r.status, 0, r.stderr);
       assert.equal(r.stdout, '');
@@ -197,10 +205,8 @@ const WRAPPED = (skillText) => `<EXTREMELY_IMPORTANT>\nYou have the methodology 
 const BOTH_DRIFT = { claudeMd: '# Machine\n', settings: JSON.stringify({ enabledPlugins: { [SUPERSEDED]: true } }) };
 
 function runHook(pluginRoot, home, input, extraEnv = {}) {
-  // Never log into a real plugin data dir, and never reach the real config through XDG_CONFIG_HOME.
-  const { CLAUDE_PLUGIN_DATA: _, XDG_CONFIG_HOME: __, TRIQUAL_EVAL_ARM: ___, TRIQUAL_EVAL_LAUNCH: ____, TRIQUAL_EVALS_DIR: _____, ...env } = process.env;
   return spawnSync(process.execPath, [join(pluginRoot, 'cli', 'drift.mjs')], {
-    env: { ...env, HOME: home, ...extraEnv }, input, encoding: 'utf8',
+    env: { ...cleanEnv(), HOME: home, ...extraEnv }, input, encoding: 'utf8',
   });
 }
 const contextOf = (r) => {
@@ -437,7 +443,7 @@ test('drift --harness grok compares the whole rules file', () => {
 
 test('drift.mjs --harness codex as a hook names triqual sync --harness codex', () => {
   withHarnessRules('codex', '# Codex only\n', (home) => {
-    const { CLAUDE_PLUGIN_DATA: _, XDG_CONFIG_HOME: __, ...env } = process.env;
+    const env = cleanEnv();
     const r = spawnSync(process.execPath, [join(PLUGIN_ROOT, 'cli', 'drift.mjs'), '--harness', 'codex'], {
       env: { ...env, HOME: home }, input: JSON.stringify({ session_id: 's', cwd: home, source: 'startup' }), encoding: 'utf8',
     });
@@ -557,4 +563,14 @@ test('a hook input with no session_id writes no record', () => {
     assert.equal(r.status, 0, r.stderr);
     assert.equal(existsSync(join(evals, 'session-arms.jsonl')), false);
   });
+});
+
+// Last in the file: every hook above ran with XDG_DATA_HOME and TRIQUAL_EVALS_DIR set to the decoys in this process.
+test('no spawned hook reached the caller\'s XDG_DATA_HOME or TRIQUAL_EVALS_DIR', () => {
+  try {
+    assert.equal(existsSync(join(DECOY, 'xdg-data')), false, 'XDG_DATA_HOME was written');
+    assert.equal(existsSync(join(DECOY, 'evals')), false, 'TRIQUAL_EVALS_DIR was written');
+  } finally {
+    rmSync(DECOY, { recursive: true, force: true });
+  }
 });

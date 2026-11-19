@@ -14,7 +14,8 @@ export { ARM_PART, EFFORTS, MODEL, ROLE_NAME };
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-// The experiments of `file`; a missing file is []. `objective` defaults to "cost" and `margin` to 0.10.
+// The experiments of `file`; a missing file is []. A file that is not JSON, or whose `experiments` is not a list, throws
+// (never loads as []: every session would read as having no experiment). `objective` defaults to "cost" and `margin` to 0.10.
 export function loadExperiments(file) {
   let text;
   try { text = readFileSync(file, 'utf8'); } catch (e) {
@@ -22,7 +23,7 @@ export function loadExperiments(file) {
     throw e;
   }
   const list = JSON.parse(text)?.experiments;
-  if (!Array.isArray(list)) return [];
+  if (!Array.isArray(list)) throw new Error('experiments file: invalid field experiments (must be a list)');
   return list.map((e) => (isObject(e)
     ? { ...e, objective: e.objective ?? 'cost', margin: e.margin ?? DEFAULT_MARGIN }
     : e));
@@ -30,7 +31,7 @@ export function loadExperiments(file) {
 
 // What an active experiment competes for: the session, the skill, or (role) the one role of its arms.
 function targetOf(e) {
-  if (e.kind === 'role') return Object.values(e.arms)[0]?.role;
+  if (e.kind === 'role') return isObject(e.arms) ? Object.values(e.arms)[0]?.role : undefined;
   return e.kind;
 }
 
@@ -78,9 +79,9 @@ export function pickArm(experimentId, armNames, key) {
 // session and skill experiments; a role experiment's target is its role), or null when none is active.
 export function armFor(kind, key, { experiments, target = kind } = {}) {
   const experiment = (experiments ?? []).find(
-    (e) => e.status === 'active' && e.kind === kind && targetOf(e) === target,
+    (e) => isObject(e) && e.status === 'active' && e.kind === kind && targetOf(e) === target,
   );
-  if (!experiment) return null;
+  if (!experiment || !isObject(experiment.arms) || Object.keys(experiment.arms).length === 0) return null;
   const arm = pickArm(experiment.id, Object.keys(experiment.arms), key);
   return { experiment, arm, payload: experiment.arms[arm] };
 }

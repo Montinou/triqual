@@ -26,7 +26,7 @@ const ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const USAGE = [
   'usage:',
   '  triqual eval skills --experiment <id> [--paid]',
-  '      Runs `claude plugin eval <pluginDir> --eval-dir evals/cases --ablation none --no-publish` once for each arm of the',
+  '      Runs `claude plugin eval <pluginDir> --eval-dir evals/cases --ablation none --no-publish --judge-model sonnet` once for each arm of the',
   '      active skill experiment <id> and writes <evals>/skill-runs/<id>/<arm>.json',
   '      { experiment, arm, at, auth, units: [{ caseId, pass, usd }] }. The model credentials come from the chain in',
   '      TRIQUAL_EVAL_AUTH_FILE, else ~/.config/triqual/eval-auth.json (no file: the ambient login). A suite that hit a',

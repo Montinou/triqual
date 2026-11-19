@@ -57,6 +57,23 @@ test('no env var: the record has arm null and launchId null', () => {
   assert.equal(row.launchId, null);
 });
 
+test('an empty TRIQUAL_EVAL_ARM or TRIQUAL_EVAL_LAUNCH is not an arm or a launch: the record says null', () => {
+  const evals = join(tmp(), 'evals');
+  const env = { TRIQUAL_EVALS_DIR: evals, TRIQUAL_EVAL_ARM: '', TRIQUAL_EVAL_LAUNCH: '' };
+  recordSessionArm({ input: { sessionId: 's1', source: 'startup' }, env, home: '/nonexistent-home' });
+  const [row] = lines(join(evals, 'session-arms.jsonl'));
+  assert.equal(row.arm, null);
+  assert.equal(row.launchId, null);
+});
+
+test('an empty session id writes nothing', () => {
+  const evals = join(tmp(), 'evals');
+  for (const input of [{ sessionId: '', source: 'startup' }, { session_id: '' }]) {
+    recordSessionArm({ input, env: { TRIQUAL_EVALS_DIR: evals, TRIQUAL_EVAL_ARM: 'arm-a' }, home: '/nonexistent-home' });
+  }
+  assert.equal(existsSync(join(evals, 'session-arms.jsonl')), false);
+});
+
 test('the evals directory defaults under home when TRIQUAL_EVALS_DIR is unset', () => {
   const home = tmp();
   recordSessionArm({ input: { sessionId: 's1', source: 'startup' }, env: { XDG_DATA_HOME: join(home, 'xdg') }, home });

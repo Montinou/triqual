@@ -271,6 +271,7 @@ test('claude --resume of a session without one arm and a launch is unchanged', a
     assert.deepEqual(call.argv, ['--resume', id], id);
     assert.deepEqual([call.arm, call.launch], [null, null], id);
   }
+  assert.ok(!existsSync(join(t.evals, 'assignments.jsonl')), 'an unchanged resume writes no assignment line');
 });
 
 test('no active experiment: no --settings, no assignment line and no help spawn', async () => {
@@ -289,6 +290,73 @@ test('an experiments file that is not valid never stops claude', async () => {
   writeFileSync(t.env.TRIQUAL_EXPERIMENTS_FILE, '{ not json');
   await launch(['x'], { env: t.env, home: t.home });
   assert.deepEqual(t.calls()[0].argv, ['x']);
+});
+
+const capture = () => {
+  const out = [];
+  return { stderr: { write: (s) => { out.push(s); } }, text: () => out.join(''), lines: () => out.join('').split('\n').filter(Boolean) };
+};
+
+test('an owner --settings means no arm: arguments unchanged, nothing recorded, one stderr line saying why', async () => {
+  for (const owner of [['--settings', '/x/own.json', 'hello'], ['--settings={"model":"x"}', 'hello'], ['hello', '--settings', '/x/own.json']]) {
+    const t = setup();
+    const err = capture();
+    await launch(owner, { env: t.env, home: t.home, stderr: err.stderr });
+    const [call] = t.calls();
+    assert.deepEqual(call.argv, owner, owner.join(' '));
+    assert.deepEqual([call.arm, call.launch], [null, null]);
+    assert.ok(!existsSync(join(t.evals, 'assignments.jsonl')), 'no assignment is recorded');
+    assert.equal(err.lines().length, 1, err.text());
+    assert.match(err.text(), /--settings/);
+  }
+});
+
+test('an owner --settings on a resume of an assigned session is not overridden either', async () => {
+  const t = setup();
+  const uuid = '11111111-2222-4333-8444-555555555555';
+  await launch(['first'], { env: t.env, home: t.home, randomUUID: () => uuid });
+  const first = t.calls()[0];
+  writeFileSync(join(t.evals, 'session-arms.jsonl'), `${JSON.stringify({ sessionId: 'S-1', source: 'startup', arm: first.arm, launchId: uuid, at: '2026-11-17T10:00:00.000Z' })}\n`);
+  const err = capture();
+  await launch(['--resume', 'S-1', '--settings', '/x/own.json'], { env: t.env, home: t.home, stderr: err.stderr });
+  const call = t.calls().at(-1);
+  assert.deepEqual(call.argv, ['--resume', 'S-1', '--settings', '/x/own.json']);
+  assert.deepEqual([call.arm, call.launch], [null, null]);
+  assert.equal(err.lines().length, 1, err.text());
+  assert.equal(lines(join(t.evals, 'assignments.jsonl')).length, 1, 'still only the first launch');
+});
+
+test('an owner --settings with no active experiment prints nothing', async () => {
+  const t = setup({ experiments: null });
+  const err = capture();
+  await launch(['--settings', '/x/own.json'], { env: t.env, home: t.home, stderr: err.stderr });
+  assert.deepEqual(t.calls()[0].argv, ['--settings', '/x/own.json']);
+  assert.equal(err.text(), '');
+});
+
+test('an assignment that cannot be written starts claude unchanged and says so on one stderr line', async () => {
+  const t = setup();
+  mkdirSync(join(t.evals, 'assignments.jsonl'), { recursive: true }); // appending to a directory fails
+  const err = capture();
+  const code = await launch(['hello'], { env: t.env, home: t.home, stderr: err.stderr });
+  assert.equal(code, 0);
+  const [call] = t.calls();
+  assert.deepEqual(call.argv, ['hello']);
+  assert.deepEqual([call.arm, call.launch], [null, null]);
+  assert.equal(err.lines().length, 1, err.text());
+  assert.match(err.text(), /triqual eval launch: .*arm/);
+});
+
+test('an experiments file that is invalid starts claude unchanged and says so on one stderr line', async () => {
+  for (const content of ['{ not json', JSON.stringify({ experiments: 'nope' }), JSON.stringify({ experiments: [{ ...SESSION_EXPERIMENT, kind: 'nope' }] })]) {
+    const t = setup({ experiments: null });
+    writeFileSync(t.env.TRIQUAL_EXPERIMENTS_FILE, content);
+    const err = capture();
+    await launch(['x'], { env: t.env, home: t.home, stderr: err.stderr });
+    assert.deepEqual(t.calls()[0].argv, ['x']);
+    assert.equal(err.lines().length, 1, `${content}: ${err.text()}`);
+    assert.match(err.text(), /experiments/);
+  }
 });
 
 test('the same UUID always maps to the same arm', async () => {

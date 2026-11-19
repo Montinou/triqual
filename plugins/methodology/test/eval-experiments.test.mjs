@@ -180,3 +180,23 @@ test('the experiment rules are the role-eval record rules', async () => {
   assert.equal(m.MODEL, MODEL);
   assert.equal(m.EFFORTS, EFFORTS);
 });
+
+test('a file whose experiments is not a list is flagged, not loaded as empty', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'exp-'));
+  const file = join(dir, 'experiments.json');
+  for (const doc of [{ experiments: 'nope' }, { experiments: {} }, { experiments: null }, {}, [], null]) {
+    writeFileSync(file, JSON.stringify(doc));
+    assert.throws(() => loadExperiments(file), /experiments/, JSON.stringify(doc));
+  }
+  writeFileSync(file, JSON.stringify({ experiments: [] }));
+  assert.deepEqual(loadExperiments(file), [], 'an empty list is still empty');
+});
+
+test('armFor gives no arm for an experiment without an arms object, without throwing', () => {
+  for (const arms of [undefined, null, 'x', []]) {
+    const label = JSON.stringify(arms) ?? 'undefined';
+    assert.equal(armFor('role', 'k', { experiments: [exp({ id: 'r1', kind: 'role', arms })], target: 'planner' }), null, `role, arms ${label}`);
+    assert.equal(armFor('session', 'k', { experiments: [exp({ arms })] }), null, `session, arms ${label}`);
+  }
+  assert.equal(armFor('role', 'k', { experiments: [null, 5, 'x'], target: 'planner' }), null);
+});
