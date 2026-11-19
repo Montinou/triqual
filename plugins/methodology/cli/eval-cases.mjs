@@ -4,8 +4,8 @@
 // thrown away (its output directory is removed, no verdict) and runs again, whole, on the next entry. Prints
 // `<case> pass|fail <passed>/<runs> <usd>` per case and `<k> of <n> cases passed, <usd> USD` last. Never publishes, never
 // trusts a plugin it did not stage, never writes under <pluginDir>: each attempt has its own temp output directory, removed
-// afterwards. Own code (a <pluginDir> inside the git repository of the current directory, or one holding the
-// `.triqual-eval-variant` marker that `eval variant` writes) is copied to a temp directory first, its plugin.json
+// afterwards. Own code (a plugin tracked in the git repository of the current directory, or an `eval variant`
+// output whose `.triqual-eval-variant` marker names one) is copied to a temp directory first, its plugin.json
 // `dependencies` removed (the eval sandbox provides none, so a plugin with them has unknown skills), and run from the copy
 // with --trust-plugin (an untrusted directory is refused when there is no terminal to ask); the copy is removed afterwards.
 // A case whose directory holds a case.yaml with an indented `scaffold_script:` is spawned with --scaffold and the Bash,
@@ -41,8 +41,8 @@ const USAGE = [
   '      the ambient login). A case that hit a usage limit is discarded and run again, whole, on the next entry.',
   '      A case whose case.yaml names a scaffold_script is run with --scaffold and the Bash, Write and Edit tools:',
   '      --scaffold runs the case author\'s bash as you, so use it only for plugin directories you wrote.',
-  '      Own code (inside this repository, or made by `eval variant`) runs from a staged copy with `dependencies` removed',
-  '      and --trust-plugin; other directories are never trusted and run as they are.',
+  '      Own code is a plugin tracked in this repository, or an `eval variant` output whose marker names one. It runs from a',
+  '      staged copy with `dependencies` removed and --trust-plugin; other directories are never trusted and run as they are.',
   '      Exit 0 when every case passes, 1 when a case fails or the suite or the credentials failed, 2 on a usage error.',
   '  triqual eval cases --help',
   '',
@@ -72,21 +72,52 @@ function isScaffolded(caseDir) {
 
 const usd = (n) => n.toFixed(2);
 
-// True when `pluginDir` is own code: its realpath is inside the top level of the git repository of `cwd` (no repository: not
-// own code), or it holds the marker `eval variant` writes.
-function isOwnCode(pluginDir, cwd) {
-  if (existsSync(join(pluginDir, MARKER_FILE))) return true;
+// True when `pluginDir` is a plugin tracked in the git repository of `cwd` (rule 2): its realpath is under the repository's
+// top level (no repository: no) and its .claude-plugin/plugin.json is tracked (`git ls-files --error-unmatch`, from the top).
+function isTrackedPlugin(pluginDir, cwd) {
   try {
     const top = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
     if (top.status !== 0 || top.stdout.trim() === '') return false;
-    const inside = relative(realpathSync(top.stdout.trim()), realpathSync(pluginDir));
-    return inside === '' || !(inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside));
+    const root = realpathSync(top.stdout.trim());
+    const real = realpathSync(pluginDir);
+    const inside = relative(root, real);
+    if (inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) return false;
+    const manifest = relative(root, join(real, '.claude-plugin', 'plugin.json'));
+    const tracked = spawnSync('git', ['--literal-pathspecs', 'ls-files', '--error-unmatch', '--', manifest], { cwd: root, stdio: 'ignore' });
+    return tracked.status === 0;
   } catch { return false; }
 }
 
-// The text of a plugin.json without its top-level `dependencies` member, every other byte as it was: the member and one
+// The plugin directory the marker of `pluginDir` names: its one line, an absolute path, resolved through realpath; null for
+// no marker, an empty or multi-line one, a relative path, or a path that does not exist.
+function markerTarget(pluginDir) {
+  try {
+    const line = readFileSync(join(pluginDir, MARKER_FILE), 'utf8').replace(/\r?\n$/, '');
+    if (line.trim() === '' || /[\r\n]/.test(line) || !isAbsolute(line)) return null;
+    return realpathSync(line);
+  } catch { return null; }
+}
+
+// True when `pluginDir` is own code: a plugin tracked in the repository of `cwd`, or an `eval variant` output whose marker
+// names one. The marker alone proves nothing: what it names must itself be tracked in this repository.
+function isOwnCode(pluginDir, cwd) {
+  if (isTrackedPlugin(pluginDir, cwd)) return true;
+  const target = markerTarget(pluginDir);
+  return target !== null && isTrackedPlugin(target, cwd);
+}
+
+// The text of a plugin.json without its top-level `dependencies` members, every other byte as it was: each member and one
 // comma beside it are cut. Text that is not a JSON object, or has no such member, comes back as it is.
 export function withoutDependencies(text) {
+  // A key repeated in the object leaves the last one for JSON.parse, so cut members until none is left.
+  for (;;) {
+    const next = withoutFirstDependencies(text);
+    if (next === text) return text;
+    text = next;
+  }
+}
+
+function withoutFirstDependencies(text) {
   try { if (JSON.parse(text)?.dependencies === undefined) return text; } catch { return text; }
   // Walk the top-level members: `start` is where one begins (its key), `last` the last non-blank character seen.
   const members = [];

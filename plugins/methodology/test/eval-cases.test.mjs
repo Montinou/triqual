@@ -449,6 +449,22 @@ const git = (cwd, ...args) => {
   assert.equal(r.status, 0, r.stderr);
 };
 
+const commitAll = (cwd) => {
+  git(cwd, 'add', '-A');
+  git(cwd, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', 'x');
+};
+
+// A git repository whose tracked plugin directory is plugins/roles; `src` is its realpath.
+function repoWithPlugin() {
+  const repo = tmp();
+  git(repo, 'init', '-q');
+  const src = join(repo, 'plugins', 'roles');
+  mkdirSync(join(src, '.claude-plugin'), { recursive: true });
+  writeFileSync(join(src, '.claude-plugin', 'plugin.json'), PLUGIN_JSON);
+  commitAll(repo);
+  return { repo, src: realpathSync(src) };
+}
+
 const STAGED_LINE = (dir) => `triqual eval cases: staged ${dir} (own code: dependencies removed, --trust-plugin)\n`;
 
 test('a plugin directory inside the git repository of the cwd is staged: a copy without dependencies, --trust-plugin, removed afterwards', async () => {
@@ -456,6 +472,7 @@ test('a plugin directory inside the git repository of the cwd is staged: a copy 
   try {
     git(e.dir, 'init', '-q');
     withPluginJson(e);
+    commitAll(e.dir);
     const r = await run(e, ['--case', 'probe-case', '--runs', '1', e.plugin], { cwd: e.dir });
     assert.equal(r.code, 0, r.err);
     const [c] = calls(e);
@@ -506,13 +523,28 @@ test('a plugin directory outside the repository of the cwd is not own code', asy
   }
 });
 
-test('a plugin directory with the .triqual-eval-variant marker is staged wherever it is', async () => {
+test('a plugin directory inside the repository but not tracked is not own code', async () => {
   const e = fixture();
-  const elsewhere = tmp();
+  try {
+    git(e.dir, 'init', '-q');
+    withPluginJson(e);
+    const r = await run(e, ['--case', 'probe-case', '--runs', '1', e.plugin], { cwd: e.dir });
+    assert.equal(r.code, 0, r.err);
+    const [c] = calls(e);
+    assert.equal(c.argv.includes('--trust-plugin'), false);
+    assert.equal(c.argv[2], e.plugin);
+    assert.equal(c.pluginJson, PLUGIN_JSON);
+    assert.equal(r.err, '');
+  } finally { rmSync(e.dir, { recursive: true, force: true }); }
+});
+
+test('a plugin directory whose marker names a tracked plugin of the current repository is staged, wherever it is', async () => {
+  const e = fixture();
+  const { repo, src } = repoWithPlugin();
   try {
     withPluginJson(e);
-    writeFileSync(join(e.plugin, '.triqual-eval-variant'), '/work/source/plugins/roles\n');
-    const r = await run(e, ['--case', 'probe-case', '--runs', '1', e.plugin], { cwd: elsewhere });
+    writeFileSync(join(e.plugin, '.triqual-eval-variant'), `${src}\n`);
+    const r = await run(e, ['--case', 'probe-case', '--runs', '1', e.plugin], { cwd: repo });
     assert.equal(r.code, 0, r.err);
     const [c] = calls(e);
     assert.notEqual(c.argv[2], e.plugin);
@@ -522,15 +554,67 @@ test('a plugin directory with the .triqual-eval-variant marker is staged whereve
     assert.equal(r.err, STAGED_LINE(e.plugin));
   } finally {
     rmSync(e.dir, { recursive: true, force: true });
-    rmSync(elsewhere, { recursive: true, force: true });
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('a marker that does not name a tracked plugin of the current repository does not make own code', async () => {
+  const e = fixture();
+  const { repo, src } = repoWithPlugin();
+  const outside = tmp();
+  try {
+    mkdirSync(join(outside, 'plugin', '.claude-plugin'), { recursive: true });
+    writeFileSync(join(outside, 'plugin', '.claude-plugin', 'plugin.json'), PLUGIN_JSON);
+    mkdirSync(join(repo, 'untracked', '.claude-plugin'), { recursive: true });
+    writeFileSync(join(repo, 'untracked', '.claude-plugin', 'plugin.json'), PLUGIN_JSON);
+    withPluginJson(e);
+    const marks = [
+      ['points outside the repository', `${join(outside, 'plugin')}\n`],
+      ['is empty', ''],
+      ['is a blank line', '\n'],
+      ['names a path that does not exist', `${join(repo, 'plugins', 'gone')}\n`],
+      ['names an untracked plugin inside the repository', `${realpathSync(join(repo, 'untracked'))}\n`],
+      ['names a relative path', 'plugins/roles\n'],
+      ['names two lines', `${src}\n${join(outside, 'plugin')}\n`],
+    ];
+    for (const [i, [what, mark]] of marks.entries()) {
+      writeFileSync(join(e.plugin, '.triqual-eval-variant'), mark);
+      const r = await run(e, ['--case', 'probe-case', '--runs', '1', e.plugin], { cwd: repo });
+      const c = calls(e)[i];
+      assert.equal(c.argv.includes('--trust-plugin'), false, `a marker that ${what}`);
+      assert.equal(c.argv[2], e.plugin, `a marker that ${what}`);
+      assert.equal(c.pluginJson, PLUGIN_JSON, `a marker that ${what}`);
+      assert.equal(r.err, '', `a marker that ${what}`);
+    }
+  } finally {
+    rmSync(e.dir, { recursive: true, force: true });
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('a marker naming a tracked plugin does not count from a different repository', async () => {
+  const e = fixture();
+  const { repo, src } = repoWithPlugin();
+  const other = tmp();
+  try {
+    git(other, 'init', '-q');
+    withPluginJson(e);
+    writeFileSync(join(e.plugin, '.triqual-eval-variant'), `${src}\n`);
+    await run(e, ['--case', 'probe-case', '--runs', '1', e.plugin], { cwd: other });
+    assert.equal(calls(e)[0].argv.includes('--trust-plugin'), false);
+  } finally {
+    rmSync(e.dir, { recursive: true, force: true });
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(other, { recursive: true, force: true });
   }
 });
 
 test('staging leaves a plugin.json without dependencies, and a plugin without plugin.json, as they are', async () => {
   const e = fixture();
-  const elsewhere = tmp();
+  const { repo: elsewhere, src } = repoWithPlugin();
   try {
-    writeFileSync(join(e.plugin, '.triqual-eval-variant'), '/work/source\n');
+    writeFileSync(join(e.plugin, '.triqual-eval-variant'), `${src}\n`);
     mkdirSync(join(e.plugin, '.claude-plugin'), { recursive: true });
     const plain = '{\n  "name": "example",\n  "version": "1.0.0"\n}\n';
     writeFileSync(join(e.plugin, '.claude-plugin', 'plugin.json'), plain);
@@ -549,15 +633,17 @@ test('staging leaves a plugin.json without dependencies, and a plugin without pl
 
 test('dependencies are removed wherever the key sits, other bytes kept', async () => {
   const e = fixture();
-  const elsewhere = tmp();
+  const { repo: elsewhere, src } = repoWithPlugin();
   try {
-    writeFileSync(join(e.plugin, '.triqual-eval-variant'), '/work/source\n');
+    writeFileSync(join(e.plugin, '.triqual-eval-variant'), `${src}\n`);
     mkdirSync(join(e.plugin, '.claude-plugin'), { recursive: true });
     const forms = [
       ['{ "dependencies": ["a"], "name": "x" }\n', '{ "name": "x" }\n'],
       ['{\n  "name": "x",\n  "dependencies": [\n    "a, \\"b\\" ]"\n  ],\n  "license": "MIT"\n}\n', '{\n  "name": "x",\n  "license": "MIT"\n}\n'],
       ['{ "dependencies": ["a"] }', '{  }'],
       ['{ "meta": { "dependencies": ["keep"] }, "name": "x" }', '{ "meta": { "dependencies": ["keep"] }, "name": "x" }'],
+      ['{ "dependencies": ["a"], "name": "x", "dependencies": ["b"] }', '{ "name": "x" }'],
+      ['{ "name": "x", "dependencies": ["a"], "dependencies": ["b"], "dependencies": [] }', '{ "name": "x" }'],
     ];
     for (const [i, [before, after]] of forms.entries()) {
       writeFileSync(join(e.plugin, '.claude-plugin', 'plugin.json'), before);
@@ -574,7 +660,7 @@ test('--help says own code runs from a staged copy and other directories are nev
   const e = fixture();
   try {
     const r = await run(e, ['--help']);
-    assert.match(r.out, /inside this repository, or made by `eval variant`/);
+    assert.match(r.out, /Own code is a plugin tracked in this repository, or an `eval variant` output whose marker names one/);
     assert.match(r.out, /staged copy with `dependencies` removed\s+and --trust-plugin/);
     assert.match(r.out, /other directories are never trusted/);
   } finally { rmSync(e.dir, { recursive: true, force: true }); }
