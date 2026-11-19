@@ -19,5 +19,9 @@ Whole-branch diff:
 +}
 --- /dev/null
 +++ b/test/cart.test.mjs
++import { test } from 'node:test';
++import assert from 'node:assert/strict';
++import { cartTotal } from '../src/cart.mjs';
++import { formatCents } from '../src/money.mjs';
 +test('total of one 425-cent item', () => assert.equal(cartTotal([{ price: 425, qty: 1 }]), 425));
 +test('formatCents renders cents as dollars', () => assert.equal(formatCents(425), '4.25'));

@@ -12,12 +12,15 @@ Diff:
 
 --- /dev/null
 +++ b/src/clamp.mjs
-@@ -0,0 +3 @@
+@@ -0,0 +1,3 @@
 +export function clamp(value, min, max) {
 +  return Math.min(Math.max(value, min), max);
 +}
 --- /dev/null
 +++ b/test/clamp.test.mjs
-@@ -0,0 +2 @@
+@@ -0,0 +1,5 @@
++import { test } from 'node:test';
++import assert from 'node:assert/strict';
++import { clamp } from '../src/clamp.mjs';
 +test('clamps below', () => assert.equal(clamp(-5, 0, 10), 0));
 +test('clamps above', () => assert.equal(clamp(50, 0, 10), 10));

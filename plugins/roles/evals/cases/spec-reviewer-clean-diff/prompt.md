@@ -12,7 +12,7 @@ Diff:
 
 --- /dev/null
 +++ b/src/clamp.mjs
-@@ -0,0 +8 @@
+@@ -0,0 +1,7 @@
 +export function clamp(value, min, max) {
 +  if (![value, min, max].every((v) => typeof v === 'number' && Number.isFinite(v))) {
 +    throw new TypeError('clamp needs finite numbers');
@@ -22,7 +22,10 @@ Diff:
 +}
 --- /dev/null
 +++ b/test/clamp.test.mjs
-@@ -0,0 +4 @@
+@@ -0,0 +1,7 @@
++import { test } from 'node:test';
++import assert from 'node:assert/strict';
++import { clamp } from '../src/clamp.mjs';
 +test('clamps below', () => assert.equal(clamp(-5, 0, 10), 0));
 +test('clamps above', () => assert.equal(clamp(50, 0, 10), 10));
 +test('rejects an inverted range', () => assert.throws(() => clamp(1, 5, 2), RangeError));

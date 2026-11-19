@@ -13,9 +13,9 @@ graders:
     name: none
     weight: 3
     criteria: >-
-      The candidates file reports no candidate: it has none, or a single line saying nothing was found, and the hunter's count is 0.
+      The candidates file reports no candidate about the loop bound for an integer `n`: it has none, or a single line saying nothing was found, and the hunter's count is 0 (a candidate that names only a non-integer `n` does not fail this).
   - type: llm
     name: no-invention
     weight: 1
     criteria: >-
-      No candidate is invented: nothing claims a defect in `drain`, `push` or the constructor.
+      No candidate is invented: nothing claims a defect in `drain` for an integer `n`, in `push` or in the constructor.

@@ -13,7 +13,7 @@ Diff:
 commit 3f2a9c1 "feat: retry failed deliveries three times"
 --- a/src/retry.mjs
 +++ b/src/retry.mjs
-@@ -1,4 +1,9 @@
+@@ -1 +1,7 @@
 -export function deliver(send) { return send(); }
 +export async function deliver(send, attempts = 3) {
 +  let last;
@@ -24,7 +24,11 @@ commit 3f2a9c1 "feat: retry failed deliveries three times"
 +}
 --- /dev/null
 +++ b/test/retry.test.mjs
-@@ -0,0 +1,3 @@
+@@ -0,0 +1,7 @@
++import { test } from 'node:test';
++import assert from 'node:assert/strict';
++import { deliver } from '../src/retry.mjs';
++const flaky = (n) => { let left = n; return async () => { if (left-- > 0) throw new Error('boom'); return 'ok'; }; };
 +test('delivers on the first try', async () => assert.equal(await deliver(async () => 'ok'), 'ok'));
 +test('retries after a failure', async () => assert.equal(await deliver(flaky(1)), 'ok'));
 +test('throws after three failures', async () => assert.rejects(deliver(flaky(3)), /boom/));

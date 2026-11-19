@@ -7,7 +7,7 @@ execution:
   timeout_seconds: 900
   allowed_tools: [Agent, Bash, Read, Write]
   prompt: |
-    You are the controller of a plan run, working in the current directory (an empty project with only `spec.md`). Dispatch the agent `roles:planner` with the spec path `spec.md`, the repository (this directory) and the draft path `draft.md`. When it replies, run `cat draft.md`, then give as your final message the planner's reply followed by the draft, word for word.
+    You are the controller of a plan run, working in the current directory (an empty project with only `spec.md`). Dispatch the agent `roles:planner` with the spec path `spec.md`, the repository (this directory) and the draft path `draft.md`. Tell it that the skill `methodology:writing-plans` and the `triqual` command are not installed here: a task names its lane on a `**Lane:** <letter>` line, the tasks of a lane chain through `**Depends on:**`, the closing task takes a lane of its own and depends on every lane, each task has `**Files:**` and `**Test:**` lines, and the `triqual plan lanes` step is skipped. When it replies, run `cat draft.md`, then give as your final message the planner's reply followed by the draft, word for word.
 runs: 3
 graders:
   - type: llm
