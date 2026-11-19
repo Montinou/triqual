@@ -8,7 +8,11 @@ import { randomUUID } from 'node:crypto';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 // A wait past the timeout before the command starts: exit 75, so 75 always means the lock.
 class Busy extends Error {}
+// A signal that arrived while waiting: no guard and no lock are held when this is thrown.
+class Interrupted extends Error {}
 const nonce = randomUUID();
+let child, interrupted, escalation;
+const cancellationGraceMs = 1000;
 function identity(pid) {
   try {
     const value = execFileSync('ps', ['-p', String(pid), '-o', 'lstart=', '-o', 'stat='], { encoding: 'utf8' }).trim();
@@ -38,10 +42,17 @@ const timeout = Number(process.env.TRIQUAL_TEST_LOCK_TIMEOUT_MS || 300000);
 let lock, guard;
 function read() { try { return JSON.parse(readFileSync(lock, 'utf8')); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } }
 // All publication, recovery and release mutations use this guard. A crashed guard is deliberately not stolen.
-async function mutate(fn, deadline, busy = false) {
+// `abortable`: a signal ends the wait for the guard (acquisition only; a release must still get its turn).
+async function mutate(fn, deadline, busy = false, abortable = false) {
   for (;;) {
     try { mkdirSync(guard); break; } catch (e) { if (e.code !== 'EEXIST') throw e; }
-    if (Date.now() >= deadline) throw busy ? new Busy('test lock mutation timeout') : Error('test lock mutation timeout');
+    if (abortable && interrupted) throw new Interrupted();
+    if (Date.now() >= deadline) {
+      const message = `test lock guard timeout: ${guard}`;
+      if (!busy) throw Error(message);
+      console.error(message);
+      throw new Busy(message);
+    }
     await sleep(20);
   }
   try { return fn(); } finally { rmdirSync(guard); }
@@ -51,6 +62,32 @@ function publish(value) {
   writeFileSync(draft, JSON.stringify(value), { flag: 'wx', mode: 0o600 });
   renameSync(draft, lock);
 }
+// While waiting a handler only records the signal: the guard section finishes and releases the guard before the loop exits.
+function forward(signal) {
+  interrupted ||= signal;
+  process.exitCode = 128 + constants.signals[interrupted];
+  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
+  // The child leads its own process group: a signal meant for the run (Ctrl-C included) goes to the whole group.
+  signalGroup(signal);
+  // kill() sends a signal, not proof of termination. Keep ownership until close.
+  escalation ||= setTimeout(() => {
+    if (child.exitCode === null && child.signalCode === null) signalGroup('SIGKILL');
+  }, cancellationGraceMs);
+}
+function signalGroup(signal) {
+  try { process.kill(-child.pid, signal); } catch (e) { if (e.code !== 'ESRCH') throw e; }
+}
+const groupAlive = () => { try { process.kill(-child.pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+// After an interrupt nothing of the run may outlive the lock: members of the group that survived the child get the grace, then SIGKILL.
+async function reapGroup() {
+  if (!child?.pid) return;
+  const end = Date.now() + cancellationGraceMs;
+  while (groupAlive() && Date.now() < end) await sleep(20);
+  if (!groupAlive()) return;
+  signalGroup('SIGKILL');
+  for (let i = 0; i < 100 && groupAlive(); i++) await sleep(20);
+}
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, () => forward(signal));
 try {
   const args = process.argv.slice(2);
   if (args.shift() !== '--' || !args.length) throw Error('usage: node test-lock -- COMMAND ARG...');
@@ -73,26 +110,18 @@ try {
         if (old.state !== 'running' || (old.child && alive(old.child))) return false;
       }
       publish(owner); return true;
-    }, deadline, true);
+    }, deadline, true, true);
+    if (interrupted) {
+      // Guard released. A lock this run just published is released too; the command never starts.
+      if (acquired && !inherited) await mutate(() => { if (read()?.nonce === nonce) unlinkSync(lock); }, Date.now() + timeout);
+      throw new Interrupted();
+    }
     if (acquired) break;
     if (Date.now() >= deadline) throw new Busy(`test lock timeout: ${lock}`);
     await sleep(20);
   }
-  let child, interrupted, escalation;
-  const cancellationGraceMs = 1000;
-  const forward = signal => {
-    interrupted ||= signal;
-    process.exitCode = 128 + constants.signals[interrupted];
-    if (!child || child.exitCode !== null || child.signalCode !== null) return;
-    child.kill(signal);
-    // kill() sends a signal, not proof of termination. Keep ownership until close.
-    escalation ||= setTimeout(() => {
-      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
-    }, cancellationGraceMs);
-  };
-  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, () => forward(signal));
   try {
-    child = spawn(args[0], args.slice(1), { stdio: 'inherit', env: { ...process.env, TRIQUAL_TEST_LOCK_OWNER: `${lock}:${inherited || nonce}` } });
+    child = spawn(args[0], args.slice(1), { stdio: 'inherit', detached: true, env: { ...process.env, TRIQUAL_TEST_LOCK_OWNER: `${lock}:${inherited || nonce}` } });
     // Install completion listeners before any process inspection can observe an early exit.
     const finished = new Promise(resolve => {
       child.once('error', error => resolve({ error }));
@@ -105,6 +134,7 @@ try {
     }, Date.now() + timeout);
     if (interrupted) forward(interrupted);
     const result = await finished;
+    if (interrupted) await reapGroup();
     if (result.error) console.error(result.error.message);
     // The child's own 75 is reported as 1.
     const code = result.code === 75 ? 1 : result.code;
@@ -118,6 +148,7 @@ try {
     }
   }
 } catch (error) {
-  if (error instanceof Busy) { console.error(`test lock busy: ${lock}`); process.exitCode = 75; }
+  if (error instanceof Interrupted) process.exitCode = 128 + constants.signals[interrupted];
+  else if (error instanceof Busy) { console.error(`test lock busy: ${lock}`); process.exitCode = 75; }
   else { console.error(error.message); process.exitCode = 1; }
 }

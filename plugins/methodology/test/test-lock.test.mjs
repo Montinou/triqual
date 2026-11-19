@@ -10,15 +10,25 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // Poll for something a child or the runner writes: a bounded deadline, never a fixed wait or an immediate read.
 async function until(fn, what='fixture barrier') { const end=Date.now()+10000; for (;;) { if(fn()) return; if(Date.now()>=end) throw Error(`${what} timeout`); await sleep(25); } }
 const lockRunning = lock => () => { try { const o=JSON.parse(readFileSync(lock,'utf8')); return o.state==='running' && !!o.child; } catch { return false; } };
+// Every runner this file spawns is killed, with the child its lock record names, before its directory is removed: a failed assertion leaks nothing.
+const live=new Set();
+const killGroup=pid=>{ try { process.kill(-pid,'SIGKILL'); } catch {} try { process.kill(pid,'SIGKILL'); } catch {} };
+function reap(dir) {
+ try { const owner=JSON.parse(readFileSync(join(dir,'.git','triqual-test.lock'),'utf8')); if(owner.child?.pid) killGroup(owner.child.pid); } catch {}
+ for(const child of [...live]) if(child.cwd.startsWith(dir)) { try { child.kill('SIGKILL'); } catch {} live.delete(child); }
+}
+const cleanup=(t,dir)=>t.after(()=>{ reap(dir); rmSync(dir,{recursive:true,force:true}); });
 function fixture(t) {
- const dir=mkdtempSync(join(tmpdir(),'test-lock-')); t.after(()=>rmSync(dir,{recursive:true,force:true}));
+ const dir=mkdtempSync(join(tmpdir(),'test-lock-')); cleanup(t,dir);
  execFileSync('git',['init','-q',dir]); return dir;
 }
 function run(cwd, code, timeout='30000', extraEnv={}) {
  const child=spawn(process.execPath,[runner,'--',process.execPath,'-e',code],{cwd,env:{...process.env,TRIQUAL_TEST_LOCK_TIMEOUT_MS:timeout,...extraEnv},stdio:['ignore','pipe','pipe']});
+ child.cwd=cwd; live.add(child); child.on('close',()=>live.delete(child));
  let stderr=''; child.stderr.on('data',b=>stderr+=b); child.result=new Promise(resolve=>child.on('close',(code,signal)=>resolve({code,signal,stderr}))); return child;
 }
-const hold = (marker, release) => `require('fs').writeFileSync(${JSON.stringify(marker)},'ready'); const t=setInterval(()=>{if(require('fs').existsSync(${JSON.stringify(release)})){clearInterval(t)}},10)`;
+// A holder ends when the release file appears, or by itself after 60 s.
+const hold = (marker, release) => `require('fs').writeFileSync(${JSON.stringify(marker)},'ready'); const d=setTimeout(()=>process.exit(1),60000); const t=setInterval(()=>{if(require('fs').existsSync(${JSON.stringify(release)})){clearInterval(t);clearTimeout(d)}},10)`;
 test('[autonomy] sibling worktrees serialize, live owners survive age, argv and failures propagate', async t=>{
  const dir=fixture(t), sibling=join(dir,'sibling'); execFileSync('git',['-C',dir,'-c','user.name=Test','-c','user.email=test@example.invalid','commit','--allow-empty','-qm','init']); execFileSync('git',['-C',dir,'worktree','add','-qb','sibling',sibling]);
  const marker=join(dir,'ready'), release=join(dir,'release'), second=join(dir,'second');
@@ -34,15 +44,21 @@ test('[autonomy] killed owner cannot release a surviving child; dead owner recov
  const lock=join(dir,'.git','triqual-test.lock');
  const a=run(dir,hold(marker,release)); await until(()=>existsSync(marker)); await until(lockRunning(lock),'owner record'); a.kill('SIGKILL');
  assert.equal((await run(dir,'','150').result).code,75);
- writeFileSync(release,''); await sleep(100);
+ const owner=JSON.parse(readFileSync(lock,'utf8')).child.pid;
+ writeFileSync(release,''); await until(()=>{ try { process.kill(owner,0); return false; } catch(e) { if(e.code==='ESRCH') return true; throw e; } },'holder exit');
  assert.equal((await run(dir,'').result).code,0); await a.result;
 });
 test('[autonomy] unrelated repositories run independently and interrupt waits for child exit',async t=>{
- const dir=fixture(t), other=fixture(t), marker=join(dir,'ready'), release=join(dir,'release');
- const code=`process.on('SIGTERM',()=>{}); ${hold(marker,release)}`;
- const a=run(dir,code); await until(()=>existsSync(marker));
+ const dir=fixture(t), other=fixture(t), marker=join(dir,'ready'), release=join(dir,'release'), termed=join(dir,'termed'), lock=join(dir,'.git','triqual-test.lock');
+ const code=`process.on('SIGTERM',()=>require('fs').writeFileSync(${JSON.stringify(termed)},'')); ${hold(marker,release)}`;
+ const a=run(dir,code); await until(()=>existsSync(marker)); await until(lockRunning(lock),'owner record');
+ const nonce=JSON.parse(readFileSync(lock,'utf8')).nonce;
  assert.equal((await run(other,'').result).code,0); a.kill('SIGTERM');
- assert.equal((await run(dir,'','150').result).code,75); writeFileSync(release,''); await a.result;
+ // The child has seen the signal and is still alive: the lock is still the interrupted run's own.
+ await until(()=>existsSync(termed),'child saw SIGTERM');
+ assert.equal(JSON.parse(readFileSync(lock,'utf8')).nonce,nonce);
+ writeFileSync(release,''); assert.equal((await a.result).code,143);
+ assert.equal(existsSync(lock),false);
  assert.equal((await run(dir,'').result).code,0);
 });
 
@@ -143,7 +159,7 @@ test('no command and no -- print the usage and exit 1', () => {
  }
 });
 test('outside a git repository it fails closed: exit 1 and the command does not run', async t => {
- const dir=mkdtempSync(join(tmpdir(),'test-lock-nogit-')); t.after(()=>rmSync(dir,{recursive:true,force:true}));
+ const dir=mkdtempSync(join(tmpdir(),'test-lock-nogit-')); cleanup(t,dir);
  const marker=join(dir,'ran');
  const r=await run(dir,`require('fs').writeFileSync(${JSON.stringify(marker)},'yes')`,'3000',{GIT_CEILING_DIRECTORIES:dirname(dir)}).result;
  assert.equal(r.code,1); assert.match(r.stderr,/not a git repository/); assert.equal(existsSync(marker),false);
@@ -162,5 +178,53 @@ test('a held .guard directory during acquisition exits 75 with the busy line and
  mkdirSync(guard);
  const r=await run(dir,`require('fs').writeFileSync(${JSON.stringify(marker)},'yes')`,'150').result;
  assert.equal(r.code,75); assert.match(r.stderr,/^test lock busy: .*triqual-test\.lock$/m); assert.equal(existsSync(marker),false);
+ assert.match(r.stderr,/^test lock guard timeout: .*triqual-test\.lock\.guard$/m);
  assert.equal(existsSync(guard),true);
+});
+
+// A `ps` that logs every call and then stalls PS_DELAY seconds: the barrier that tells a test where in the acquisition a waiter is.
+// Call 1 is the waiter's own identity (handlers are installed); call 2 is the liveness check of the owner, made while the waiter holds the guard.
+function slowPs(dir) {
+ const bin=join(dir,'bin'), log=join(dir,'ps.log'); mkdirSync(bin); writeFileSync(log,'');
+ const real=execFileSync('which',['ps'],{encoding:'utf8'}).trim();
+ writeFileSync(join(bin,'ps'),`#!/bin/sh\necho x >> "${log}"\n[ -n "$PS_DELAY" ] && sleep "$PS_DELAY"\nexec ${real} "$@"\n`,{mode:0o755});
+ return {calls:()=>readFileSync(log,'utf8').split('\n').filter(Boolean).length, env:{PATH:`${bin}:${process.env.PATH}`}};
+}
+test('a waiter signalled while it holds the guard frees the guard, leaves no lock of its own and the holder releases normally', async t => {
+ const dir=fixture(t), lock=join(dir,'.git','triqual-test.lock'), guard=lock+'.guard';
+ const marker=join(dir,'ready'), release=join(dir,'release'), ran=join(dir,'ran');
+ const a=run(dir,hold(marker,release)); await until(()=>existsSync(marker)); await until(lockRunning(lock),'owner record');
+ const owner=readFileSync(lock,'utf8');
+ const ps=slowPs(dir);
+ const b=run(dir,`require('fs').writeFileSync(${JSON.stringify(ran)},'yes')`,'30000',{...ps.env,PS_DELAY:'0.6'});
+ await until(()=>ps.calls()>=2,'waiter inside the guard'); assert.equal(existsSync(guard),true);
+ b.kill('SIGTERM');
+ const result=await b.result;
+ assert.equal(existsSync(guard),false,'the guard was left behind');
+ assert.equal(result.code,143,result.stderr); assert.equal(existsSync(ran),false);
+ assert.equal(readFileSync(lock,'utf8'),owner);
+ writeFileSync(release,''); assert.equal((await a.result).code,0);
+ assert.equal(existsSync(lock),false); assert.equal(existsSync(guard),false);
+ assert.equal((await run(dir,'').result).code,0);
+});
+test('a waiter signalled while it waits for a held guard stops at once and never runs the command', async t => {
+ const dir=fixture(t), lock=join(dir,'.git','triqual-test.lock'), guard=lock+'.guard', ran=join(dir,'ran');
+ mkdirSync(guard);
+ const ps=slowPs(dir);
+ const b=run(dir,`require('fs').writeFileSync(${JSON.stringify(ran)},'yes')`,'8000',ps.env);
+ await until(()=>ps.calls()>=1,'waiter started');
+ b.kill('SIGTERM');
+ const begin=Date.now(), result=await b.result;
+ assert.equal(result.code,143,result.stderr); assert.ok(Date.now()-begin<4000,'it waited for the guard timeout');
+ assert.equal(existsSync(ran),false); assert.equal(existsSync(lock),false); assert.equal(existsSync(guard),true);
+});
+test('an interrupt reaches the child process group: no grandchild outlives the lock', async t => {
+ const dir=fixture(t), pidFile=join(dir,'grandchild-pid'), lock=join(dir,'.git','triqual-test.lock');
+ const code=`const g=require('child_process').spawn(process.execPath,['-e','setTimeout(()=>{},60000)'],{stdio:'ignore'});require('fs').writeFileSync(${JSON.stringify(pidFile)},String(g.pid));setInterval(()=>{},1000)`;
+ const a=run(dir,code); await until(()=>existsSync(pidFile)&&readFileSync(pidFile,'utf8')!=='','grandchild pid');
+ const pid=Number(readFileSync(pidFile,'utf8')); t.after(()=>killGroup(pid));
+ await until(lockRunning(lock),'owner record'); a.kill('SIGINT');
+ assert.equal((await a.result).code,130);
+ assert.equal(existsSync(lock),false);
+ await until(()=>{ try { process.kill(pid,0); return false; } catch(e) { if(e.code==='ESRCH') return true; throw e; } },'the grandchild outlived the lock');
 });

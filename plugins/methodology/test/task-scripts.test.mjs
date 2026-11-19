@@ -2277,13 +2277,15 @@ const withRigAsync = async (opts, fn) => {
 };
 // task-close in the background, its output collected.
 const closeAsync = (r, n, extraEnv) => {
-  const child = spawn(process.execPath, [join(SCRIPTS, 'task-close'), r.plan, String(n)], { cwd: r.dir, env: { ...r.env, ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [join(SCRIPTS, 'task-close'), r.plan, String(n)], { cwd: r.dir, env: { ...r.env, ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
   let stdout = '';
   let stderr = '';
   child.stdout.on('data', (b) => { stdout += b; });
   child.stderr.on('data', (b) => { stderr += b; });
   const result = new Promise((done) => child.on('close', (status) => done({ status, stdout, stderr })));
-  return { child, result };
+  // The close leads its own process group, so a failed test can end it and its test-lock and node --test with it.
+  const kill = () => { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ } };
+  return { child, result, kill };
 };
 
 test('a landing waits for a held test lock, then tests and closes', () => withRigAsync({ planText: WT_PLAN }, async (r) => {
@@ -2294,6 +2296,7 @@ test('a landing waits for a held test lock, then tests and closes', () => withRi
   wtReview(r, 1, { test: `import { writeFileSync } from 'node:fs';\nimport { test } from 'node:test';\ntest('stamp', () => { writeFileSync(${JSON.stringify(stamp)}, String(Date.now())); });\n` });
   const lock = await holdLock(r);
   let closing;
+  let finished = false;
   try {
     closing = closeAsync(r, 1, { TRIQUAL_TEST_LOCK_TIMEOUT_MS: '120000' });
     await until(() => landedOf(r, 1).length === 1, 'the Landed line did not appear');
@@ -2301,7 +2304,10 @@ test('a landing waits for a held test lock, then tests and closes', () => withRi
     assert.deepEqual(testedOf(r, 1), [], 'the Test files ran while the lock was held');
     assert.equal(existsSync(stamp), false, 'the Test files ran while the lock was held');
     noComplete(r);
+    finished = true;
   } finally {
+    // A failed assertion must not leave the landing waiting on, then running in, a rig that is about to be removed.
+    if (!finished) closing?.kill();
     await lock.release();
   }
   const res = await closing.result;
