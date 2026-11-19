@@ -1,0 +1,21 @@
+schema_version: "1.0"
+name: hunter-finds-off-by-one
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 8
+  allowed_tools: [Agent, Bash, Read, Write]
+  prompt: |
+    You are the controller of a plan run, working in the current directory. Dispatch the agent `roles:hunter` with the Agent tool: the category is `correctness`, the diff package is `diff.patch` here, the code is under `src/`, and it must write its candidates to `candidates-correctness.md` here. When it replies, run `cat candidates-correctness.md`, then give as your final message the hunter's reply followed by the file's content, word for word.
+runs: 3
+graders:
+  - type: llm
+    name: finds
+    weight: 3
+    criteria: >-
+      A candidate names `drain` in `src/queue.mjs` and the off-by-one in its loop (`i <= n` takes n + 1 items), with a concrete trigger such as `drain(2)` returning three items where two were expected.
+  - type: llm
+    name: shape
+    weight: 1
+    criteria: >-
+      The file lists at most 3 candidates, each with a file:line, and the hunter's reply ends with a count line such as `candidates-correctness.md: 1 candidates`.
