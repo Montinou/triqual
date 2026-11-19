@@ -999,3 +999,42 @@ test('store reconcile takes the plan from --plan and refuses an unknown one', ()
     refused(s.run(['reconcile', '--plan', 'nope']), /no ledger for nope in the store/);
   });
 });
+
+// ---- retier --redeclare: the CLI side (the plan declaration check, usage); the ledger rules live in ledger.test.mjs ----
+
+const REDECLARE_USAGE = 'retier T<N> <tier> --redeclare --reason "<text>" --plan <plan.md|ledger>';
+
+test('the usage lists retier --redeclare', () => {
+  for (const mode of ['store', 'committed']) withRepo(mode, (s) => {
+    assert.ok(ok(s.run(['--help'])).stdout.includes(REDECLARE_USAGE));
+  });
+});
+
+test('redeclare without --plan is refused and writes nothing', () => {
+  for (const mode of ['store', 'committed']) withRepo(mode, (s) => {
+    const path = s.plan('### Task 1: Alpha\n**Tier:** heavy\n');
+    ok(s.run(['init', path]));
+    const before = mode === 'store' ? ledgerOf(s) : readFileSync(path.replace(/\.md$/, '.tasks.json'), 'utf8');
+    refused(s.run(['retier', 'T1', 'light', '--redeclare', '--reason', 'recut']), /redeclare requires --plan/);
+    const after = mode === 'store' ? ledgerOf(s) : readFileSync(path.replace(/\.md$/, '.tasks.json'), 'utf8');
+    assert.deepEqual(after, before);
+  });
+});
+
+test('redeclare is refused when the plan does not declare the tier, with the ledger byte-identical', () => {
+  for (const mode of ['store', 'committed']) withRepo(mode, (s) => {
+    const path = s.plan('### Task 1: Alpha\n**Tier:** heavy\n');
+    ok(s.run(['init', path]));
+    const ledgerPath = path.replace(/\.md$/, '.tasks.json');
+    const snapshot = () => (mode === 'store' ? JSON.stringify(ledgerOf(s)) : readFileSync(ledgerPath, 'utf8'));
+    const before = snapshot();
+    const forms = [path, ...(mode === 'committed' ? [ledgerPath] : [])];
+    for (const plan of forms) {
+      refused(s.run(['retier', 'T1', 'light', '--redeclare', '--reason', 'recut', '--plan', plan]),
+        /T1: selected plan declaration must match tier light/);
+      refused(s.run(['retier', 'T9', 'light', '--redeclare', '--reason', 'recut', '--plan', plan]),
+        /T9: selected plan declaration must match tier light/);
+    }
+    assert.equal(snapshot(), before);
+  });
+});
