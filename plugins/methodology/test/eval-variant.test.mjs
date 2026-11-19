@@ -51,9 +51,7 @@ function tree(dir) {
 }
 const treeHash = (dir) => createHash('sha256').update(JSON.stringify(tree(dir))).digest('hex');
 
-// The marker file is the one file the variant adds; it is checked on its own.
-const MARKER = '.triqual-eval-variant';
-const differing = (a, b) => [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((k) => k !== MARKER && a[k] !== b[k]).sort();
+const differing = (a, b) => [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((k) => a[k] !== b[k]).sort();
 
 function run(cwd, argv) {
   let out = '';
@@ -162,12 +160,10 @@ test('the source plugin is untouched', () => withCheckout(async ({ root, roles }
   assert.equal(treeHash(roles), before);
 }));
 
-test('the output directory holds a .triqual-eval-variant marker: one line, the absolute source plugin directory', () => withCheckout(async ({ root, roles }) => {
+test('the output directory holds no file the source plugin lacks', () => withCheckout(async ({ root, roles }) => {
   const out = join(root, 'variant');
   assert.equal((await run(root, ['--role', 'alpha', '--out', out, '--model', 'opus'])).code, 0);
-  assert.equal(readFileSync(join(out, MARKER), 'utf8'), `${roles}\n`);
-  assert.equal(existsSync(join(roles, MARKER)), false, 'the source has no marker');
-  assert.deepEqual(Object.keys(tree(out)).filter((k) => !(k in tree(roles))), [MARKER]);
+  assert.deepEqual(Object.keys(tree(out)).filter((k) => !(k in tree(roles))), []);
 }));
 
 test('it prints the absolute output directory and nothing else', () => withCheckout(async ({ root }) => {
