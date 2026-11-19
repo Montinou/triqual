@@ -13,7 +13,7 @@ graders:
     name: none
     weight: 3
     criteria: >-
-      The candidates file reports no candidate about the loop bound for an integer `n`: it has none, or a single line saying nothing was found, and the hunter's count is 0 (a candidate that names only a non-integer `n` does not fail this).
+      No candidate concerns the loop bound for an integer `n` (a candidate about a non-integer `n` does not fail this).
   - type: llm
     name: no-invention
     weight: 1

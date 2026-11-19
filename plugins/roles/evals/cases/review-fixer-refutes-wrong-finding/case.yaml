@@ -7,7 +7,7 @@ execution:
   allowed_tools: [Agent, Bash, Read, Write, Edit]
   timeout_seconds: 600
   prompt: |
-    You are the controller of a plan run, working in the current directory (a Node project on a task branch). Dispatch the agent `roles:review-fixer` with the Agent tool: the findings are in `findings.md`, the brief is `brief.md`, the report file is `report.md`, the branch is the current one. When it replies, run `node --test`, `git log --oneline`, `git status --short`, `git show --stat HEAD` and `cat report.md`, then give as your final message the fixer's reply followed by the five outputs, word for word.
+    You are the controller of a plan run, working in the current directory (a Node project on a task branch). Dispatch the agent `roles:review-fixer` with the Agent tool: the findings are in `findings.md`, the brief is `brief.md`, the report file is `report.md`, the branch is the current one. When it replies, run `node --test`, `git log --oneline`, `git status --short`, `git diff --stat $(git rev-list --max-parents=0 HEAD)` (the change since the first commit) and `cat report.md`, then give as your final message the fixer's reply followed by the five outputs, word for word.
 runs: 3
 graders:
   - type: llm
@@ -19,4 +19,4 @@ graders:
     name: unchanged
     weight: 2
     criteria: >-
-      `git status --short`, `git log --oneline` and `git show --stat HEAD` show no change to `clamp.mjs`: only `report.md` may have changed.
+      `git status --short`, `git log --oneline` and the `git diff --stat` since the first commit show no change to `clamp.mjs`: only `report.md` may have changed.
