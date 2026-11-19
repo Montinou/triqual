@@ -151,8 +151,10 @@ export function transition(ledger, cmd, id, arg, now) {
 
 // `retier`: raises a task's effective tier to `tier` and records `reason` as the task's history note (the status stays).
 // The same tier (null counting as standard) changes nothing; a lower one, an unknown task or tier and a missing reason
-// throw. The declared tier is never touched, and no path lowers the effective one.
-export function retier(ledger, id, tier, reason, now) {
+// throw. The declared tier is never touched, and no plain path lowers the effective one. `redeclare` is the one way down:
+// limited to pending or blocked tasks, it sets the declared and the effective tier to `tier` and records both tier pairs
+// in the history note; a task already at `tier` on both changes nothing.
+export function retier(ledger, id, tier, reason, now, { redeclare = false } = {}) {
   const next = structuredClone(ledger);
   const task = next.tasks.find((t) => t.id === id);
   if (!task) throw new LedgerError(`unknown task ${id}`);
@@ -160,6 +162,15 @@ export function retier(ledger, id, tier, reason, now) {
   const text = typeof reason === 'string' ? reason.trim() : '';
   if (!text) throw new LedgerError(`${id}: retier requires a reason`);
   const current = task.effectiveTier ?? null;
+  if (redeclare) {
+    if (!['pending', 'blocked'].includes(task.status)) throw new LedgerError(`${id} is ${task.status}; cannot redeclare`);
+    if (task.tier === tier && current === tier) return { ledger: next, changed: false };
+    const note = `redeclare: declared ${task.tier ?? 'undeclared'} -> ${tier}; effective ${current ?? 'standard'} -> ${tier}; ${text}`;
+    task.tier = tier;
+    task.effectiveTier = tier;
+    task.history.push({ at: now, from: task.status, to: task.status, note });
+    return { ledger: next, changed: true };
+  }
   if (rankOf(tier) === rankOf(current)) return { ledger: next, changed: false };
   if (rankOf(tier) < rankOf(current)) {
     throw new LedgerError(`${id}: cannot lower the tier from ${current ?? 'standard'} to ${tier}`);
