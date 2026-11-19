@@ -12,7 +12,9 @@
 // that exists). Exit 0 clean, 1 any COLLISION, OUTSIDE, glob or unreadable plan, 2 bad arguments or an unreadable file.
 // `triqual plan lanes <plan.md> [--json]` (lib/plan-lanes.mjs): per phase `P<n> tasks <t> lanes <l> critical <c> parallelism
 // <x.xx>` (and ` sequential: <reason>`), then the plan's line, then `<code>: <message>` per violation of the lanes, parents
-// and dependencies; --json prints the object. Exit 0 clean, 1 any violation, 2 bad arguments or a file that is not a plan.
+// and dependencies and of the Eval line of the tasks that change a prompt file (eval-missing, eval-plugin, eval-case; a case
+// exists when the repository holding the current directory (git toplevel, else the directory itself) has
+// plugins/<plugin>/evals/cases/<case>, or a task at or before creates it); --json prints the object. Exit 0 clean, 1 any violation, 2 bad arguments or a file that is not a plan.
 // Importing this module runs nothing.
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
@@ -37,7 +39,10 @@ const COLLISIONS_USAGE = `usage: triqual plan check-collisions <plan.md…> [--d
 
 const LANES_USAGE = `usage: triqual plan lanes <plan.md> [--json]
   Checks the lanes, parents and dependencies of a plan's phases and prints each phase's critical path and parallelism, then the plan's,
-  then one line per violation with its fix. --json prints the object. Exit 1 on any violation.`;
+  then one line per violation with its fix. A task that changes a prompt file (plugins/*/skills/**/*.md, agents/*.md, rules/*.md) needs
+  an **Eval:** <plugin>/<case> line: eval-missing (no line), eval-plugin (a plugin whose prompt the task does not change),
+  eval-case (a malformed name, or a case that is neither under plugins/<plugin>/evals/cases/ of the repository nor created by this
+  or an earlier task). --json prints the object. Exit 1 on any violation.`;
 
 class UsageError extends Error {}
 
@@ -193,6 +198,15 @@ function checkCollisionsCommand(rest) {
   return result.collisions.length > 0 || outside.length > 0 ? 1 : 0;
 }
 
+// The repository of the current directory (git toplevel), else the directory itself.
+function repoRoot() {
+  try {
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: process.cwd(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || process.cwd();
+  } catch {
+    return process.cwd();
+  }
+}
+
 function lanesCommand(rest) {
   let parsed;
   try {
@@ -205,7 +219,10 @@ function lanesCommand(rest) {
   const text = readInput(file, 'plan');
   let result;
   try {
-    result = planLanes(text, basename(file).replace(/\.md$/, ''));
+    const top = repoRoot();
+    result = planLanes(text, basename(file).replace(/\.md$/, ''), {
+      caseExists: (plugin, name) => existsSync(join(top, 'plugins', plugin, 'evals', 'cases', name)),
+    });
   } catch (err) {
     if (!(err instanceof PlanError)) throw err;
     process.stderr.write(`${file}: ${err.message}\n`);

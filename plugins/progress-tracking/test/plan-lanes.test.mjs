@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +9,8 @@ import { planLanes } from '../lib/plan-lanes.mjs';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'cli', 'plan.mjs');
 
-// phases = [{ parent?, sequential?, tasks: [{ lane?, deps?, files?, role? }] }]; an omitted parent writes `trunk`, `parent: null`
+// phases = [{ parent?, sequential?, tasks: [{ lane?, deps?, files?, create?, eval?, role? }] }]; `files` are Modify: paths, `create` Create: paths,
+// `eval` the text after `**Eval:**`; an omitted parent writes `trunk`, `parent: null`
 // writes no **Parent:** line; task numbers are global.
 function planText(phases, header = []) {
   let n = 0;
@@ -25,7 +26,8 @@ function planText(phases, header = []) {
       if (t.lane) out.push(`**Lane:** ${t.lane}`);
       if (t.deps) out.push(`**Depends on:** ${t.deps.join(', ')}`);
       if (t.role) out.push(`**Role:** ${t.role}`);
-      if (t.files) out.push('**Files:**', ...t.files.map((f) => `- Modify: \`${f}\``));
+      if (t.eval !== undefined) out.push(`**Eval:** ${t.eval}`);
+      if (t.files || t.create) out.push('**Files:**', ...(t.create ?? []).map((f) => `- Create: \`${f}\``), ...(t.files ?? []).map((f) => `- Modify: \`${f}\``));
       out.push('');
     }
   });
@@ -342,4 +344,145 @@ test('--help lists the lanes usage after the other two', () => {
   const at = (s) => help.stdout.indexOf(s);
   assert.ok(at('usage: triqual plan check-collisions') > at('usage: triqual plan generate'));
   assert.ok(at('usage: triqual plan lanes <plan.md> [--json]') > at('usage: triqual plan check-collisions'));
+});
+
+// -- the Eval line of prompt tasks --
+
+const PROMPT = 'plugins/roles/agents/tdd-implementer.md';
+const CASE_FILE = 'plugins/roles/evals/cases/x/case.yaml';
+const evalLanes = (phases, opts) => planLanes(planText(phases), 'demo', opts);
+const one = (task) => evalLanes([{ tasks: [task] }]);
+
+test('a task that modifies a prompt file and names no case is eval-missing', () => {
+  const r = one({ files: [PROMPT] });
+  assert.deepEqual(codes(r), [['eval-missing', 1, 'T1']]);
+  assert.equal(r.violations[0].message, `T1 changes the prompt file ${PROMPT} but has no **Eval:** line: add **Eval:** roles/<case>`);
+  assert.deepEqual(codes(one({ create: ['plugins/methodology/skills/new/SKILL.md'] })), [['eval-missing', 1, 'T1']]);
+  assert.deepEqual(codes(one({ files: [PROMPT], eval: '' })), [['eval-missing', 1, 'T1']]);
+});
+
+test('the skills, agents and rules globs count, and plugins/roles/README.md, an evals/cases prompt.md and skills/x/scripts/lib/plan.mjs do not', () => {
+  for (const path of ['plugins/p/skills/a/SKILL.md', 'plugins/p/skills/a/b/c.md', 'plugins/p/agents/a.md', 'plugins/p/rules/a.md']) {
+    assert.deepEqual(codes(one({ files: [path] })), [['eval-missing', 1, 'T1']], path);
+  }
+  for (const path of ['plugins/roles/README.md', 'plugins/roles/evals/cases/x/prompt.md', 'plugins/p/skills/x/scripts/lib/plan.mjs', 'plugins/p/agents/sub/a.md', 'plugins/p/rules/sub/a.md', 'plugins/p/skills/a.md.bak']) {
+    assert.deepEqual(codes(one({ files: [path] })), [], path);
+  }
+});
+
+test('a case of another plugin is eval-plugin', () => {
+  const r = one({ files: [PROMPT], create: ['plugins/methodology/evals/cases/y/case.yaml'], eval: 'methodology/y' });
+  assert.deepEqual(codes(r), [['eval-plugin', 1, 'T1']]);
+  assert.equal(r.violations[0].message, 'T1 names methodology/y, but it changes no prompt file of plugin methodology: name a case of the plugin whose prompt it changes');
+  assert.deepEqual(codes(one({ eval: 'roles/x' })), [['eval-plugin', 1, 'T1']]);
+});
+
+test('a case that does not exist is eval-case, and so is a malformed entry (roles, Roles/A)', () => {
+  const r = one({ files: [PROMPT], eval: 'roles/x' });
+  assert.deepEqual(codes(r), [['eval-case', 1, 'T1']]);
+  assert.equal(r.violations[0].message, 'T1 names roles/x, which does not exist and is not created by this or an earlier task: create it first, or fix the name');
+  for (const bad of ['roles', 'Roles/A', 'roles/a/b', 'roles/a_b']) {
+    const m = one({ files: [PROMPT], eval: bad });
+    assert.deepEqual(codes(m), [['eval-case', 1, 'T1']], bad);
+    assert.equal(m.violations[0].message, `T1 names "${bad}", which is not <plugin>/<case>`);
+  }
+});
+
+test('a case created by this task or an earlier task exists, one created by a later task does not', () => {
+  assert.deepEqual(codes(one({ files: [PROMPT], create: [CASE_FILE], eval: 'roles/x' })), []);
+  const earlier = evalLanes([{ sequential: 'chain', tasks: [{ create: [CASE_FILE] }, { deps: ['T1'], files: [PROMPT], eval: 'roles/x' }] }]);
+  assert.deepEqual(codes(earlier), []);
+  const later = evalLanes([{ sequential: 'chain', tasks: [{ files: [PROMPT], eval: 'roles/x' }, { deps: ['T1'], create: [CASE_FILE] }] }]);
+  assert.deepEqual(codes(later), [['eval-case', 1, 'T1']]);
+  const otherCase = one({ files: [PROMPT], create: ['plugins/roles/evals/cases/xy/case.yaml'], eval: 'roles/x' });
+  assert.deepEqual(codes(otherCase), [['eval-case', 1, 'T1']]);
+});
+
+test('caseExists true makes an existing case pass, and is asked with the plugin and the case', () => {
+  const asked = [];
+  const r = one2({ files: [PROMPT], eval: 'roles/x' }, { caseExists: (p, c) => { asked.push([p, c]); return true; } });
+  assert.deepEqual(codes(r), []);
+  assert.deepEqual(asked, [['roles', 'x']]);
+  assert.deepEqual(codes(one2({ files: [PROMPT], eval: 'roles/x' }, { caseExists: () => false })), [['eval-case', 1, 'T1']]);
+});
+function one2(task, opts) { return evalLanes([{ tasks: [task] }], opts); }
+
+test('backticks, extra spaces, a duplicate entry and a :10-20 range on the modified path are read', () => {
+  const r = one({ files: [`${PROMPT}:10-20`], create: [CASE_FILE], eval: '`roles/x` ,   roles/x,  roles/x ' });
+  assert.deepEqual(r.violations, []);
+  const bad = one({ files: [`${PROMPT}:10-20`], eval: ' roles/y ,roles/y' });
+  assert.deepEqual(codes(bad), [['eval-case', 1, 'T1']]);
+});
+
+test('the Eval violations come after the lane violations, in plan order', () => {
+  const r = evalLanes([{ tasks: [{ files: [PROMPT] }, { files: ['plugins/roles/rules/r.md'], eval: 'roles/zz' }] }]);
+  assert.deepEqual(codes(r), [['no-lanes', 1, null], ['eval-missing', 1, 'T1'], ['eval-case', 1, 'T2']]);
+});
+
+test('the corrected plan has no violations', () => {
+  const r = evalLanes([{
+    tasks: [
+      { lane: 'A', create: [CASE_FILE] },
+      { lane: 'A', deps: ['T1'], files: [PROMPT, 'plugins/roles/rules/r.md'], eval: '`roles/x`' },
+      { lane: 'B', files: ['plugins/roles/README.md'] },
+      { lane: 'C', deps: ['T2', 'T3'], files: ['plugins/methodology/skills/s/SKILL.md'], create: ['plugins/methodology/evals/cases/m-1/case.yaml'], eval: 'methodology/m-1' },
+    ],
+  }]);
+  assert.deepEqual(r.violations, []);
+});
+
+test('a plan with no prompt file has the violations it had before', () => {
+  assert.deepEqual(codes(lanesOf(THREE_LANES)), []);
+  assert.deepEqual(codes(lanesOf([{ tasks: [{}, {}] }])), [['no-lanes', 1, null]]);
+  assert.deepEqual(codes(evalLanes(THREE_LANES, { caseExists: () => false })), []);
+});
+
+// -- the Eval check as the command runs it --
+
+const EVAL_PLAN = (name) => planText([{ tasks: [{ files: [PROMPT], eval: name }] }]);
+const lanesIn = (file, cwd) => spawnSync(process.execPath, [CLI, 'lanes', file], { encoding: 'utf8', cwd });
+
+function repoWithCase(t) {
+  const dir = mkdtempSync(join(tmpdir(), 'plan-lanes-repo-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(join(dir, 'plugins', 'roles', 'evals', 'cases', 'x'), { recursive: true });
+  return dir;
+}
+
+test('plan lanes run in a git repository holding plugins/roles/evals/cases/x/ accepts roles/x, and exits 1 naming eval-case for roles/y', (t) => {
+  const repo = repoWithCase(t);
+  const init = spawnSync('git', ['init', '-q'], { cwd: repo, encoding: 'utf8' });
+  assert.equal(init.status, 0, init.stderr);
+  const ok = setup(t, EVAL_PLAN('roles/x'));
+  const good = lanesIn(ok.file, repo);
+  assert.equal(good.status, 0, good.stdout + good.stderr);
+  const bad = lanesIn(setup(t, EVAL_PLAN('roles/y')).file, repo);
+  assert.equal(bad.status, 1);
+  assert.match(bad.stdout, /^eval-case: T1 names roles\/y, which does not exist/m);
+});
+
+test('the same plan run from a subdirectory of that repository gives the same result', (t) => {
+  const repo = repoWithCase(t);
+  assert.equal(spawnSync('git', ['init', '-q'], { cwd: repo, encoding: 'utf8' }).status, 0);
+  const sub = join(repo, 'plugins', 'roles');
+  const good = lanesIn(setup(t, EVAL_PLAN('roles/x')).file, sub);
+  assert.equal(good.status, 0, good.stdout + good.stderr);
+  const bad = lanesIn(setup(t, EVAL_PLAN('roles/y')).file, sub);
+  assert.equal(bad.status, 1);
+  assert.match(bad.stdout, /^eval-case: T1 names roles\/y/m);
+});
+
+test('outside a git repository the current directory is the root', (t) => {
+  const dir = repoWithCase(t);
+  const good = lanesIn(setup(t, EVAL_PLAN('roles/x')).file, dir);
+  assert.equal(good.status, 0, good.stdout + good.stderr);
+  const bad = lanesIn(setup(t, EVAL_PLAN('roles/y')).file, dir);
+  assert.equal(bad.status, 1);
+  assert.match(bad.stdout, /^eval-case: T1 names roles\/y/m);
+});
+
+test('the lanes help line mentions the three Eval codes', () => {
+  const help = spawnSync(process.execPath, [CLI, '--help'], { encoding: 'utf8' });
+  const lanes = help.stdout.slice(help.stdout.indexOf('usage: triqual plan lanes'));
+  for (const code of ['eval-missing', 'eval-plugin', 'eval-case']) assert.ok(lanes.includes(code), code);
 });
