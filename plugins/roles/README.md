@@ -84,6 +84,16 @@ The table is in [Codex and Grok](../../README.md#codex-and-grok) in the root REA
 hunter, task-review or final-escapes record to a local store, `summary` reports it per provider
 and `summary --by-tier` per review tier. See the [`methodology` README](../methodology/README.md).
 
+## Evals
+
+Each role has two replay cases in `evals/cases/<role>-<slug>/`, twenty in all: a `case.yaml` with a `scaffold_script`
+(or a `prompt.md` with `graders/`), named `<role>-<slug>`. Run them with
+`triqual eval cases plugins/roles [--case <name>]...` (one run per named case, three runs by default, a majority
+passes), and make a variant of a role to compare with `triqual eval variant --role <R> --out <dir> [--model] [--effort]
+[--prompt]`. `triqual eval cases` runs own-code plugins from a staged copy: own code is a directory inside the current
+repository, or one made by `eval variant` (it writes a `.triqual-eval-variant` marker); the copy has `dependencies`
+removed from `plugin.json` and runs with `--trust-plugin`. Any other directory is never trusted.
+
 ## Tests
 
 `test/agents.test.mjs` checks the frontmatter of each agent against the table above.
