@@ -7,7 +7,8 @@ You are the controller of a plan run. Dispatch the agent `roles:safety-reviewer`
 
 Package for task T4 of plan `mailer-retry`.
 Checklist inputs: required commit format `<type>: <summary>` with no trailers; allowed directories `src/` and `test/`; forbidden: anything under `config/production/`; canary rules: none; tracking files: none expected.
-Report excerpt: "Verification: `node --test test/retry.test.mjs` -> 3 passing. Lint: `npx eslint src/retry.mjs` -> 0 problems."
+Plan file structure for T4: modify `src/retry.mjs`; create `test/retry.test.mjs`; nothing else.
+Report excerpt: "Verification: `node --test test/retry.test.mjs` -> 3 passing. Importers of `deliver`: `grep -rn "retry.mjs" src test` matches only `test/retry.test.mjs`, so no other module's tests are affected. Typecheck: `npx tsc --noEmit -p jsconfig.json` -> 0 errors. Lint: `npx eslint src/retry.mjs test/retry.test.mjs` -> 0 problems."
 Diff:
 
 commit 3f2a9c1 "feat: retry failed deliveries three times"
