@@ -60,6 +60,8 @@ Subagent (<task role>):
     modules that import what changed, and typecheck and lint scoped to the
     touched files; never the full suite (CI runs it).
 
+    Keep one behavior and about 150 changed product lines per task. Before expanding outside the declared Files, adding a second behavior, or reaching about 300 changed lines (tests included), report NEEDS_CONTEXT; a finished, green, single-behavior task with a modest overage is reviewed normally.
+
     ## You Do Not Dispatch Subagents
 
     Do all of this task's work yourself. Never spawn a subagent to

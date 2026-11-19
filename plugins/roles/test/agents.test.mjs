@@ -224,3 +224,19 @@ test('planner.md states the four lanes-first rules and never registers', () => {
   assert.match(flat, /never register/i);
   assert.equal(body.split('## Denied by Policy').length, 2, 'one Denied by Policy heading');
 });
+
+// The size cap (Global Constraints U2), verbatim; compared whitespace-normalized.
+const SIZE_CAP =
+  'Keep one behavior and about 150 changed product lines per task. Before expanding outside the declared Files, adding a second behavior, or reaching about 300 changed lines (tests included), report NEEDS_CONTEXT; a finished, green, single-behavior task with a modest overage is reviewed normally.';
+const normalize = (s) => s.replace(/\s+/g, ' ');
+
+test('the three author agents carry the task size cap', () => {
+  for (const file of ['tdd-implementer.md', 'complex-implementer.md', 'review-fixer.md']) {
+    assert.ok(normalize(parseAgent(file).body).includes(SIZE_CAP), `${file}: body carries the size-cap sentence`);
+  }
+});
+
+test('implementer-prompt.md carries the task size cap', () => {
+  const prompt = join(AGENTS, '..', '..', 'methodology', 'skills', 'executing-plans', 'implementer-prompt.md');
+  assert.ok(normalize(readFileSync(prompt, 'utf8')).includes(SIZE_CAP), 'implementer-prompt.md carries the size-cap sentence');
+});
