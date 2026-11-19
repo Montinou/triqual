@@ -32,7 +32,7 @@ The workspace ledger, `sdd-ledger.md`, is append-only, one line per event, in th
 - `Round 1: P<n> — hunters <done>/<sent>`, `Round 2: P<n> — verdicts <n>/<n>` (the phase review)
 - `Round 2: final — verdicts <n>/<n>` (the seams review: no hunters, so no `Round 1: final`)
 - `Phase review: P<n> clean | fixed | blocked`
-- `Eval: P<n> <plugin> <k>/<n> passed <usd>` (written by the main session after a phase's cases ran, `<k>` the passed cases, `<n>` the cases run)
+- `Eval: P<n> <plugin> <k>/<m> passed <usd>` (written by the main session after a phase's cases ran, `<k>` the passed cases, `<m>` the cases run)
 - `Review: T<N> — no commits, nothing to review`
 - `Re-review: T<N> round <R> — applies Ruling verbatim, no security logic`
 - `Task <N>: fix round <R>/5 (<X> addressed, <Y> open — <finding one-liners>; commits <a7>..<b7>)`

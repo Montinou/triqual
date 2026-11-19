@@ -485,4 +485,5 @@ test('the lanes help line mentions the three Eval codes', () => {
   const help = spawnSync(process.execPath, [CLI, '--help'], { encoding: 'utf8' });
   const lanes = help.stdout.slice(help.stdout.indexOf('usage: triqual plan lanes'));
   for (const code of ['eval-missing', 'eval-plugin', 'eval-case']) assert.ok(lanes.includes(code), code);
+  assert.ok(/applies to plans written after this release, so an older plan may exit 1 with eval-missing/.test(lanes.replace(/\s+/g, ' ')));
 });

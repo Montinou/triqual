@@ -42,7 +42,8 @@ const LANES_USAGE = `usage: triqual plan lanes <plan.md> [--json]
   then one line per violation with its fix. A task that changes a prompt file (plugins/*/skills/**/*.md, agents/*.md, rules/*.md) needs
   an **Eval:** <plugin>/<case> line: eval-missing (no line), eval-plugin (a plugin whose prompt the task does not change),
   eval-case (a malformed name, or a case that is neither under plugins/<plugin>/evals/cases/ of the repository nor created by this
-  or an earlier task). --json prints the object. Exit 1 on any violation.`;
+  or an earlier task). The Eval rule applies to plans written after this release, so an older plan may exit 1 with eval-missing.
+  --json prints the object. Exit 1 on any violation.`;
 
 class UsageError extends Error {}
 

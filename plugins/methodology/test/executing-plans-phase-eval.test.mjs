@@ -28,11 +28,38 @@ test('SKILL.md step 7 has the Phase eval bullet', () => {
     'triqual eval cases plugins/<plugin> --case',
     'once per plugin',
     'no call',
-    'Eval: P<n> <plugin> <k>/<n> passed <usd>',
+    'Eval: P<n> <plugin> <k>/<m> passed <usd>',
     'latest-landed',
   ]) {
     assert.ok(b.includes(s), `the bullet contains ${s}`);
   }
+});
+
+test('a failing case reopens only the phase tip and any other task gets a plain fix commit', () => {
+  const b = bullet();
+  const reopen = /only when (?:that task|it) is the phase tip \(its squashed commit is the phase branch's HEAD\)/.exec(b);
+  assert.ok(reopen, 'the reopen is for the phase tip only, named by its squashed commit being HEAD');
+  for (const s of [
+    'reopened as in the Phase check',
+    'plain fix commit on top of the tip',
+    'no reopen and no squash',
+    'later tasks',
+    '`Ruling:` line naming the task and the case',
+  ]) {
+    assert.ok(b.includes(s), `the bullet contains ${s}`);
+  }
+  assert.ok(b.indexOf('only when') < b.indexOf('plain fix commit'), 'the tip rule comes first, the plain fix commit is the otherwise');
+});
+
+test('after either route the Phase check and the Phase eval run again before the phase review', () => {
+  const b = bullet();
+  assert.ok(b.includes('run the Phase check and the Phase eval again before the phase review'));
+  assert.ok(b.includes('after either route') || b.includes('After either route'));
+});
+
+test('the Eval ledger line uses <m> for the cases run, <n> only for the phase', () => {
+  assert.ok(!bullet().includes('<k>/<n>'));
+  assert.ok(bullet().includes('(`<k> of <m> cases passed, <usd> USD`)'));
 });
 
 test('the bullet comes after "A submitted phase is final" and before "### 8."', () => {
@@ -47,7 +74,7 @@ test('the bullet comes after "A submitted phase is final" and before "### 8."', 
 
 test('ledger-vocabulary.md has the Eval line', () => {
   const text = readFileSync(join(EP, 'references', 'ledger-vocabulary.md'), 'utf8');
-  assert.ok(text.includes('`Eval: P<n> <plugin> <k>/<n> passed <usd>`'));
+  assert.ok(text.includes('`Eval: P<n> <plugin> <k>/<m> passed <usd>`'));
 });
 
 test('SKILL.md stays under its byte budget', () => {
