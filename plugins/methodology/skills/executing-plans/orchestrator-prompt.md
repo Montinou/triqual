@@ -45,13 +45,13 @@ Subagent (roles:phase-orchestrator):
 
     ## Role Arms
 
-    Every role agent you dispatch for a task has the description `T<N> <role>` (`T3 tdd-implementer`, the role without
-    its `roles:` prefix): the cost of the task's subagents is found by it. Before each such dispatch run
-    `triqual eval arm --kind role --plan [PLAN_FILE] --task T<N> --role <role>` from the main checkout, as every loop
-    script runs, never from a phase or task worktree, and with the `T` in the task. On a line other than `none`, pass its
-    model and effort on the dispatch and write `Arm: T<N> <role> <experiment>/<arm> <model> <effort>` in the ledger; on
-    `none`, or when `triqual` is missing or the command fails, dispatch unchanged. See Role Dispatch in
-    `methodology:executing-plans`.
+    Every dispatch for a task has the description `T<N> <role>` (`T3 tdd-implementer`, the role without its `roles:`
+    prefix): the cost of the task's subagents is found by it. Before each dispatch of an implementer, fixer
+    or task reviewer run `triqual eval arm --kind role --plan [PLAN_FILE] --task T<N> --role <role>` from the main
+    checkout, as every loop script runs, never from a phase or task worktree, and with the `T` in the task. On a line
+    other than `none`, pass its model and effort on the dispatch and write
+    `Arm: T<N> <role> <experiment>/<arm> <model> <effort>` in the ledger; on `none`, or when `triqual` is missing or the
+    command fails, dispatch unchanged. See Role Dispatch in `methodology:executing-plans`.
 
     ## Global Constraints
 

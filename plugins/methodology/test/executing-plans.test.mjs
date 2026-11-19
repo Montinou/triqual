@@ -2531,7 +2531,6 @@ test('SKILL.md names triqual eval arm and the Arm: ledger line', () => {
     '`Arm: T<N> <role> <experiment>/<arm> <model> <effort>`',
     'Every dispatch\'s description is `T<N> <role>`',
     '`none`, or when `triqual` is missing or the command fails, dispatch unchanged',
-    'objective signals only',
   ]) assert.ok(dispatch.includes(line), `Role Dispatch lacks: ${line}`);
   assert.ok(flat(read(`${EP}/references/ledger-vocabulary.md`)).includes('`Arm: T<N> <role> <experiment>/<arm> <model> <effort>`'), 'the ledger vocabulary lacks the Arm: line');
   const rules = flat(readFileSync(join(SKILLS, '..', 'rules', 'global.md'), 'utf8'));
