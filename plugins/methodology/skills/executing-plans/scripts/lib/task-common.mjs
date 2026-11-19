@@ -304,6 +304,18 @@ export function landingTestTimeoutMs() {
   return Number(raw);
 }
 
+// The landing's tests run through `test-lock`, so one test run holds a repository at a time. How long the landing waits for the lock
+// before it gives up (exit 75 of the script, which task-close reads as a busy lock, not a failed test): the
+// TRIQUAL_TEST_LOCK_TIMEOUT_MS environment variable, else this default (milliseconds), kept equal to test-lock's own default.
+export const TEST_LOCK = join(SCRIPTS, 'test-lock');
+export const DEFAULT_TEST_LOCK_TIMEOUT_MS = 300000;
+export function testLockTimeoutMs() {
+  const raw = process.env.TRIQUAL_TEST_LOCK_TIMEOUT_MS;
+  if (raw === undefined || raw === '') return DEFAULT_TEST_LOCK_TIMEOUT_MS;
+  if (!/^[1-9]\d*$/.test(raw)) throw new ScriptError(EXIT_USAGE, `TRIQUAL_TEST_LOCK_TIMEOUT_MS must be a positive number of milliseconds, not ${raw}`);
+  return Number(raw);
+}
+
 // The plan phase that holds T<N> ({ n, branch, tasks, ... } from the shared reader; a plan with no phases is one phase of every task).
 function planPhaseOf(planFile, n) {
   let phases;

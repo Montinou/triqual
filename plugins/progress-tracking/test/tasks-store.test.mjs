@@ -999,3 +999,77 @@ test('store reconcile takes the plan from --plan and refuses an unknown one', ()
     refused(s.run(['reconcile', '--plan', 'nope']), /no ledger for nope in the store/);
   });
 });
+
+// ---- retier --redeclare: the CLI side (the plan declaration check, usage); the ledger rules live in ledger.test.mjs ----
+
+const REDECLARE_USAGE = 'retier T<N> <tier> --redeclare --reason "<text>" --plan <plan.md|ledger>';
+
+test('the usage lists retier --redeclare', () => {
+  for (const mode of ['store', 'committed']) withRepo(mode, (s) => {
+    assert.ok(ok(s.run(['--help'])).stdout.includes(REDECLARE_USAGE));
+  });
+});
+
+test('redeclare without --plan is refused and writes nothing', () => {
+  for (const mode of ['store', 'committed']) withRepo(mode, (s) => {
+    const path = s.plan('### Task 1: Alpha\n**Tier:** heavy\n');
+    ok(s.run(['init', path]));
+    const before = mode === 'store' ? ledgerOf(s) : readFileSync(path.replace(/\.md$/, '.tasks.json'), 'utf8');
+    refused(s.run(['retier', 'T1', 'light', '--redeclare', '--reason', 'recut']), /redeclare requires --plan/);
+    const after = mode === 'store' ? ledgerOf(s) : readFileSync(path.replace(/\.md$/, '.tasks.json'), 'utf8');
+    assert.deepEqual(after, before);
+  });
+});
+
+test('redeclare is refused when the plan does not declare the tier, with the ledger byte-identical', () => {
+  for (const mode of ['store', 'committed']) withRepo(mode, (s) => {
+    const path = s.plan('### Task 1: Alpha\n**Tier:** heavy\n');
+    ok(s.run(['init', path]));
+    const ledgerPath = path.replace(/\.md$/, '.tasks.json');
+    const snapshot = () => (mode === 'store' ? JSON.stringify(ledgerOf(s)) : readFileSync(ledgerPath, 'utf8'));
+    const before = snapshot();
+    const forms = [path, ...(mode === 'committed' ? [ledgerPath] : [])];
+    for (const plan of forms) {
+      refused(s.run(['retier', 'T1', 'light', '--redeclare', '--reason', 'recut', '--plan', plan]),
+        /T1: selected plan declaration must match tier light/);
+      refused(s.run(['retier', 'T9', 'light', '--redeclare', '--reason', 'recut', '--plan', plan]),
+        /T9: selected plan declaration must match tier light/);
+    }
+    assert.equal(snapshot(), before);
+  });
+});
+
+test('redeclare lowers a pending task, no-ops at the same tier and survives a re-init', () => {
+  for (const mode of ['store', 'committed']) withRepo(mode, (s) => {
+    const original = '### Task 1: Alpha\n**Tier:** heavy\n';
+    const path = s.plan(original);
+    ok(s.run(['init', path]));
+    s.plan(original.replace('heavy', 'light'));
+    const args = ['retier', 'T1', 'light', '--redeclare', '--reason', 'approved re-cut', '--plan', path];
+    const saved = () => (mode === 'store' ? ledgerOf(s) : JSON.parse(readFileSync(path.replace(/\.md$/, '.tasks.json'), 'utf8')));
+    assert.equal(ok(s.run(args)).stdout, 'T1: heavy -> light\n');
+    const first = saved().tasks[0];
+    assert.equal(first.tier, 'light');
+    assert.equal(first.effectiveTier, 'light');
+    assert.equal(first.history.at(-1).note, 'redeclare: declared heavy -> light; effective heavy -> light; approved re-cut');
+    assert.equal(ok(s.run(args)).stdout, 'T1: already light\n');
+    assert.equal(saved().tasks[0].history.length, first.history.length);
+    ok(s.run(['init', path]));
+    assert.equal(saved().tasks[0].tier, 'light');
+    assert.equal(saved().tasks[0].effectiveTier, 'light');
+    const [status] = JSON.parse(ok(s.run(['status', '--json'])).stdout);
+    assert.deepEqual(status.tiers, { T1: { tier: 'light', effectiveTier: 'light' } });
+  });
+});
+
+test('redeclare is refused for an in_progress task and plain retier still refuses a lowering', () => {
+  for (const mode of ['store', 'committed']) withRepo(mode, (s) => {
+    const original = '### Task 1: Alpha\n**Tier:** heavy\n';
+    const path = s.plan(original);
+    ok(s.run(['init', path]));
+    ok(s.run(['start', 'T1', '--plan', path]));
+    s.plan(original.replace('heavy', 'light'));
+    refused(s.run(['retier', 'T1', 'light', '--redeclare', '--reason', 'approved re-cut', '--plan', path]), /cannot redeclare/);
+    refused(s.run(['retier', 'T1', 'light', '--reason', 'x', '--plan', path]), /cannot lower the tier from heavy to light/);
+  });
+});

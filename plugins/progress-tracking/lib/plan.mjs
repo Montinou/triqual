@@ -27,6 +27,7 @@ const SKILLS = /^\*\*Skills:\*\*(.*)$/;
 const ROLE = /^\*\*Role:\*\*(.*)$/;
 const TIER = /^\*\*Tier:\*\*(.*)$/;
 const LANE = /^\*\*Lane:\*\*(.*)$/;
+const EVAL = /^\*\*Eval:\*\*(.*)$/;
 const PREFIX = /^\*\*Branch prefix:\*\*\s*(.+)$/;
 const SENSITIVE = /^\*\*Sensitive paths:\*\*\s*(.*)$/;
 const TEST_PATHS = /^\*\*Test paths:\*\*\s*(.*)$/;
@@ -102,12 +103,13 @@ function scan(text) {
   return { lines, total: all.length };
 }
 
-// Tasks of a plan: [{ id, title, deps, skills, role, tier, lane, files, start, end }]. `files` is { create, modify, test }, the
+// Tasks of a plan: [{ id, title, deps, skills, role, tier, lane, eval, files, start, end }]. `files` is { create, modify, test }, the
 // paths of the task's own `- Create:` / `- Modify:` / `- Test:` lines outside fences (three empty arrays without any). `start` is the 1-based line of the
 // `### Task N:` heading and `end` the last line of the task: the line before the next heading of level 1 to 3 outside
 // a fence (a `### ` heading that is no task, or a `## After Merge`), else the last line of the plan. `tier` is null when
 // the task declares none; a value outside TIERS throws. `lane` is the trimmed value of the task's `**Lane:**` line, null
-// without one or with an empty value.
+// without one or with an empty value. `eval` is the entries of the task's `**Eval:**` line (comma-separated, backticks removed,
+// empty entries dropped), `[]` without the line.
 export function readTasks(text) {
   const { lines, total } = scan(text);
   const tasks = [];
@@ -123,7 +125,7 @@ export function readTasks(text) {
       const id = `T${Number(h[1])}`;
       if (seen.has(id)) throw new PlanError(`duplicate task ${id} in plan`);
       seen.add(id);
-      current = { id, title: h[2].trim(), deps: [], skills: [], role: null, tier: null, lane: null, files: { create: [], modify: [], test: [] }, start: no, end: total };
+      current = { id, title: h[2].trim(), deps: [], skills: [], role: null, tier: null, lane: null, eval: [], files: { create: [], modify: [], test: [] }, start: no, end: total };
       tasks.push(current);
       continue;
     }
@@ -150,7 +152,9 @@ export function readTasks(text) {
       continue;
     }
     const l = LANE.exec(line);
-    if (l) current.lane = l[1].trim() || null;
+    if (l) { current.lane = l[1].trim() || null; continue; }
+    const e = EVAL.exec(line);
+    if (e) current.eval = list(e[1]).map(unquote).filter(Boolean);
   }
   return tasks;
 }

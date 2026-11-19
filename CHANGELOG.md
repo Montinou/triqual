@@ -3,6 +3,13 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## progress-tracking 0.11.0 / methodology 1.15.0 / roles 0.11.0
+
+- progress-tracking: `triqual tasks retier T<N> <tier> --redeclare --reason "<text>" --plan <plan>` lowers or raises the tier of a pending or blocked task after a plan re-cut, the plan file declaring the tier first. Plain `retier` is unchanged (raise-only).
+- methodology: `scripts/test-lock` serializes test runs per repository (exit 75 on a wait past `TRIQUAL_TEST_LOCK_TIMEOUT_MS`). `task-close` runs its landing tests through it, and a busy lock is rerun, never undone; the Phase check is run through it.
+- roles: the size cap and the test-lock sentence in the three author agents (`tdd-implementer`, `complex-implementer`, `review-fixer`), and one replay case.
+- Update the plugins and run `triqual sync --yes` and `triqual doctor`.
+
 ## methodology 1.14.2
 
 - methodology: `triqual role-eval escapes scan` is precise enough to keep its records. Files every release touches (`CHANGELOG.md`, `README.md`, `plugin.json`, `marketplace.json`, `package.json`, `package-lock.json`) no longer tie a fix to a task; a fix commit is one escape, of the task that shares the most files with it (then the latest shipped, then the lowest task number); and a fix that ships together with a task of the same plan is that plan's own work, not its escape. Over this repository's history the scan finds 35 escapes where it found 98.

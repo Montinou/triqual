@@ -167,17 +167,17 @@ test('README Tiers section documents the heavy-tier warning at registration', ()
     'README #### Tiers: the warning, its threshold, stderr, and that nothing else changes');
 });
 
-test('plugin.json, marketplace.json and the README table agree on 0.10.0', () => {
+test('plugin.json, marketplace.json and the README table agree on 0.11.0', () => {
   const root = join(PLUGIN, '..', '..');
   const plugin = JSON.parse(readFileSync(join(PLUGIN, '.claude-plugin', 'plugin.json'), 'utf8'));
   const market = JSON.parse(readFileSync(join(root, '.claude-plugin', 'marketplace.json'), 'utf8'));
-  assert.equal(plugin.version, '0.10.0');
-  assert.equal(market.plugins.find(p => p.name === 'progress-tracking').version, '0.10.0');
-  assert.match(readFileSync(join(root, 'README.md'), 'utf8'), /\| `progress-tracking` \| 0\.10\.0 \|/);
+  assert.equal(plugin.version, '0.11.0');
+  assert.equal(market.plugins.find(p => p.name === 'progress-tracking').version, '0.11.0');
+  assert.match(readFileSync(join(root, 'README.md'), 'utf8'), /\| `progress-tracking` \| 0\.11\.0 \|/);
 });
 
-test('the CHANGELOG has a 0.10.0 section', () => {
-  assert.match(readFileSync(join(PLUGIN, '..', '..', 'CHANGELOG.md'), 'utf8'), /^## progress-tracking 0\.10\.0( \/ .*)?$/m);
+test('the CHANGELOG has a 0.11.0 section', () => {
+  assert.match(readFileSync(join(PLUGIN, '..', '..', 'CHANGELOG.md'), 'utf8'), /^## progress-tracking 0\.11\.0( \/ .*)?$/m);
 });
 
 test('both READMEs document recording, compatibility cost and rollout', () => {
@@ -209,4 +209,14 @@ test('skill and store-mode.md describe TRIQUAL_TRACKING_ROOT, external commits a
     assert.match(text, /external commit|`ext:/, `${name} describes external commits`);
   }
   assert.ok(skill.length <= 10000, `SKILL.md is ${skill.length} characters, must be at most 10,000`);
+});
+
+test('tier redeclare is documented in a reference that SKILL.md links', () => {
+  const command = 'triqual tasks retier T<N> <tier> --redeclare --reason "<text>" --plan <plan.md|ledger>';
+  const ref = readFileSync(join(PLUGIN, 'skills', 'progress-tracking', 'references', 'tier-redeclare.md'), 'utf8');
+  assert.ok(ref.includes(command), 'reference names the full command');
+  assert.ok(ref.includes('pending or blocked'), 'reference limits it to pending or blocked tasks');
+  assert.ok(readFileSync(SKILL, 'utf8').includes('](references/tier-redeclare.md)'), 'SKILL.md links the reference');
+  assert.ok(readFileSync(join(PLUGIN, 'README.md'), 'utf8').includes('retier T<N> <tier> --redeclare --reason "<text>" --plan <plan.md|ledger>'),
+    'the plugin README documents the command');
 });

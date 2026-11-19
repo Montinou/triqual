@@ -147,6 +147,7 @@ triqual tasks <subcommand> [args]
   block|drop|reopen T<N> "<reason>" [--plan <plan.md|ledger>]
   retitle T<N> "<title>" [--plan <plan.md|ledger>]
   retier T<N> <tier> --reason "<text>" [--plan <plan.md|ledger>]
+  retier T<N> <tier> --redeclare --reason "<text>" --plan <plan.md|ledger>
   close [--plan <plan.md|ledger>]
   status [--json]
   next [--plan <plan.md|ledger>] [--json]
@@ -185,8 +186,12 @@ A task's review tier is its `**Tier:**` line, one of `heavy`, `standard` or `lig
   Reconciling copies a changed tier into pending tasks, and their effective tier becomes the higher of the old one and
   the new one.
 - **`retier T<N> <tier> --reason "<text>"`** raises the effective tier and logs the reason in the task's history. The
-  same tier prints `T<N>: already <tier>` and exits 0. A lower tier exits 2: no command lowers a tier. The reason is
-  required.
+  same tier prints `T<N>: already <tier>` and exits 0. A lower tier exits 2: only `--redeclare` lowers a tier. The
+  reason is required.
+- **`retier T<N> <tier> --redeclare --reason "<text>" --plan <plan.md|ledger>`** resets a pending or blocked task's
+  declared and effective tier to `<tier>` after an owner-approved plan re-cut, once the selected plan declares it. The
+  history note starts `redeclare:`; a mismatching plan, another status or a missing `--plan` exits 2. See
+  [tier-redeclare.md](skills/progress-tracking/references/tier-redeclare.md).
 - **Where tiers show.** `status` and `tasks line` show the effective tier, `status --json` and `next --json` carry both
   tiers, and `export --json` carries them for every task.
 
@@ -238,7 +243,8 @@ It prints `created <ledger>` or `reconciled <ledger>: added ...; missing ...; re
   one back as pending.
 - `retitle T<N> "<title>"` changes a task's title and logs it in the task history.
 - `retier T<N> <tier> --reason "<text>"` raises a task's effective tier. See [Tiers](#tiers). It prints
-  `T<N>: <from> -> <to>` and does not move the task's status.
+  `T<N>: <from> -> <to>` and does not move the task's status. `--redeclare` (with `--plan`) instead resets a pending or
+  blocked task's declared and effective tier to the plan's.
 - `close` ends the plan. It exits 2 while any task is not done or dropped. When every ledger is already done it
   prints `plan: already done` and exits 0.
 
@@ -690,8 +696,8 @@ The date an entry shows is the draft's heading date. The entry is ordered by the
   `tracking status|log`. The fix is any write, for example `triqual tracking add` (`--no-commit` if no commit follows);
   it upgrades the database in place. Do not restore a snapshot for this; since 0.5.4 the hooks no longer
   suggest one for it. An older progress-tracking refuses the migrated store and its `pre-commit` gate would block commits in store-mode repos, so do not downgrade below 0.5.0.
-- **No tier is ever lowered.** `retier` refuses it, reconciling keeps the higher tier, and importing a snapshot keeps
-  the higher effective tier.
+- **No tier is ever lowered, except by `--redeclare`.** `retier` refuses it, reconciling keeps the higher tier, and
+  importing a snapshot keeps the higher effective tier.
 - **Store mode fails closed.** A database that cannot be read blocks the Stop hook and the `pre-commit`, and both name
   `triqual tracking restore`. A disabled store (`TRIQUAL_TRACKING_DB` not absolute) blocks the same way.
   The one exception is a database written by a newer progress-tracking than the one running (error code

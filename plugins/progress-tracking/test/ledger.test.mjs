@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   LedgerError, parsePlan, createLedger, reconcile, transition, statusLine, checkSchema, checkLedger, renderSection, upsertStatusSection,
-  parseExternalCommit,
+  parseExternalCommit, retier,
 } from '../lib/ledger.mjs';
 import { TASK_ROLES, DEFAULT_ROLE, TIERS, roleOf } from '../lib/roles.mjs';
 import { TIERS as PLAN_TIERS } from '../lib/plan.mjs';
@@ -729,4 +729,78 @@ test('transition done stores an external commit string as given; a repeat of the
   assert.deepEqual(l2.ledger.tasks[0].commits, [commit]);
   assert.equal(transition(l2.ledger, 'done', 'T1', commit, T1).changed, false);
   assert.throws(() => transition(l2.ledger, 'done', 'T1', `ext:../other@${'b'.repeat(40)}`, T1), /is done; cannot done/);
+});
+
+// ---- retier --redeclare ----
+
+const tierLedger = (plan) => createLedger({ plan: 'p', tasks: parsePlan(plan), now: T0 });
+
+test('redeclare lowers a pending or blocked task and records both tier pairs', () => {
+  for (const status of ['pending', 'blocked']) {
+    const ledger = tierLedger('### Task 1: Alpha\n**Tier:** heavy\n### Task 2: Other');
+    ledger.tasks[0].status = status;
+    ledger.tasks[0].attempts = [{ evaluation: 'kept' }];
+    const before = structuredClone(ledger);
+    const r = retier(ledger, 'T1', 'light', 'approved re-cut', T1, { redeclare: true });
+    assert.equal(r.changed, true);
+    assert.deepEqual(ledger, before);
+    const task = r.ledger.tasks[0];
+    assert.equal(task.tier, 'light');
+    assert.equal(task.effectiveTier, 'light');
+    assert.deepEqual(task.history.at(-1), {
+      at: T1, from: status, to: status, note: 'redeclare: declared heavy -> light; effective heavy -> light; approved re-cut',
+    });
+    assert.deepEqual(task.attempts, before.tasks[0].attempts);
+    assert.deepEqual(r.ledger.tasks[1], before.tasks[1]);
+  }
+});
+
+test('redeclare raises too, and an undeclared task reads undeclared and standard', () => {
+  const ledger = tierLedger('### Task 1: Alpha');
+  const r = retier(ledger, 'T1', 'heavy', 'bigger than planned', T1, { redeclare: true });
+  assert.equal(r.changed, true);
+  assert.equal(r.ledger.tasks[0].tier, 'heavy');
+  assert.equal(r.ledger.tasks[0].effectiveTier, 'heavy');
+  assert.equal(r.ledger.tasks[0].history.at(-1).note,
+    'redeclare: declared undeclared -> heavy; effective standard -> heavy; bigger than planned');
+});
+
+test('redeclare to the tier both fields already hold changes nothing', () => {
+  const ledger = tierLedger('### Task 1: Alpha\n**Tier:** light');
+  const r = retier(ledger, 'T1', 'light', 'same', T1, { redeclare: true });
+  assert.equal(r.changed, false);
+  assert.deepEqual(r.ledger, ledger);
+});
+
+test('redeclare refuses in_progress, in_review, done and dropped, an unknown task or tier and an empty reason', () => {
+  const ledger = tierLedger('### Task 1: Alpha\n**Tier:** heavy');
+  for (const status of ['in_progress', 'in_review', 'done', 'dropped']) {
+    const input = structuredClone(ledger);
+    input.tasks[0].status = status;
+    const before = structuredClone(input);
+    assert.throws(() => retier(input, 'T1', 'light', 'recut', T1, { redeclare: true }),
+      new RegExp(`T1 is ${status}; cannot redeclare`));
+    assert.deepEqual(input, before);
+  }
+  const before = structuredClone(ledger);
+  assert.throws(() => retier(ledger, 'T9', 'light', 'recut', T1, { redeclare: true }), /unknown task T9/);
+  assert.throws(() => retier(ledger, 'T1', 'huge', 'recut', T1, { redeclare: true }), /unknown tier "huge"/);
+  assert.throws(() => retier(ledger, 'T1', 'light', ' ', T1, { redeclare: true }), /requires a reason/);
+  assert.deepEqual(ledger, before);
+});
+
+test('plain retier keeps its raise-only rule and its bare note', () => {
+  const heavy = tierLedger('### Task 1: Alpha\n**Tier:** heavy');
+  assert.throws(() => retier(heavy, 'T1', 'light', 'why', T1), /cannot lower the tier from heavy to light/);
+  const light = tierLedger('### Task 1: Alpha\n**Tier:** light');
+  const r = retier(light, 'T1', 'heavy', 'why', T1);
+  assert.equal(r.ledger.tasks[0].history.at(-1).note, 'why');
+});
+
+test('reconcile after a redeclare keeps the lowered tier', () => {
+  const ledger = tierLedger('### Task 1: Alpha\n**Tier:** heavy\n### Task 2: Other');
+  const { ledger: lowered } = retier(ledger, 'T1', 'light', 'approved re-cut', T1, { redeclare: true });
+  const r = reconcile(lowered, parsePlan('### Task 1: Alpha\n**Tier:** light\n### Task 2: Other'), T1);
+  assert.equal(r.ledger.tasks[0].tier, 'light');
+  assert.equal(r.ledger.tasks[0].effectiveTier, 'light');
 });

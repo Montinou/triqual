@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PlanError, readPhases, readTasks } from '../lib/plan.mjs';
+import { readTasks as readTasksCopy } from '../../methodology/skills/executing-plans/scripts/lib/plan.mjs';
 
 const throwsPlan = (fn, re) => assert.throws(fn, (e) => {
   assert.ok(e instanceof PlanError, `expected PlanError, got ${e && e.constructor && e.constructor.name}`);
@@ -268,4 +269,32 @@ test('a backticked branch holding a parenthesis is read whole', () => {
   const r = readPhases(plan(3, { 3: '`release/(x)`' }), 'demo');
   assert.deepEqual([r.phases[2].parents, r.phases[2].parent], [[], { kind: 'branch', value: 'release/(x)' }]);
   assert.deepEqual(parentsOf(plan(3, { 2: 'trunk', 3: 'P1, P2 (core, api)' }))[2], [1, 2]);
+});
+
+// The Eval task line (evals-every-change, task 10).
+const evalPlan = (lines) => ['# Demo Implementation Plan', '', '### Task 1: One', '', ...lines, '', '### Task 2: Two', ''].join('\n');
+
+test('eval is the list of the task\'s **Eval:** line', () => {
+  const [t1, t2] = readTasks(evalPlan(['**Eval:** roles/a-b, methodology/c']));
+  assert.deepEqual(t1.eval, ['roles/a-b', 'methodology/c']);
+  assert.deepEqual(t2.eval, []);
+});
+test('eval strips backticks and extra spaces and drops empty entries', () => {
+  assert.deepEqual(readTasks(evalPlan(['**Eval:**   `roles/a-b` ,  , methodology/c ,']))[0].eval, ['roles/a-b', 'methodology/c']);
+  assert.deepEqual(readTasks(evalPlan(['**Eval:**']))[0].eval, []);
+});
+test('a task without the line has eval []', () => {
+  assert.deepEqual(readTasks(evalPlan(['**Lane:** A'])).map((t) => t.eval), [[], []]);
+});
+test('each task reads its own line', () => {
+  const text = ['# Demo Implementation Plan', '', '### Task 1: One', '**Eval:** roles/a', '', '### Task 2: Two', '**Eval:** roles/b, roles/c', ''].join('\n');
+  assert.deepEqual(readTasks(text).map((t) => t.eval), [['roles/a'], ['roles/b', 'roles/c']]);
+});
+test('an **Eval:** line inside a code fence is not read', () => {
+  assert.deepEqual(readTasks(evalPlan(['```', '**Eval:** roles/a', '```']))[0].eval, []);
+});
+test('the methodology copy reads eval too', () => {
+  const text = evalPlan(['**Eval:** roles/a-b, `methodology/c`']);
+  assert.deepEqual(readTasksCopy(text).map((t) => t.eval), readTasks(text).map((t) => t.eval));
+  assert.deepEqual(readTasksCopy(text)[0].eval, ['roles/a-b', 'methodology/c']);
 });
