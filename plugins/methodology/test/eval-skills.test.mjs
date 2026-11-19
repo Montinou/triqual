@@ -171,7 +171,7 @@ test("toUnits maps the fixture's cases to pass and usd", () => {
   ]);
 });
 
-test('toUnits makes one unit per case: pass only when every run passed, usd the cost of all runs', () => {
+test('toUnits makes one unit per case: pass when more than half of the runs passed, usd the cost of all runs', () => {
   const agg = structuredClone(FIXTURE);
   const run = (passed, costUsd, judgeCostUsd) => ({ score: passed ? 1 : 0, passed, costUsd, judgeCostUsd, error: null });
   agg.cases[0].arms.with = [run(true, 0.5, 0.25), run(true, 0.5, 0.25)];
@@ -182,6 +182,16 @@ test('toUnits makes one unit per case: pass only when every run passed, usd the 
   ]);
   agg.cases[1].arms.with = [];
   assert.deepEqual(toUnits(agg)[1], { caseId: 'second-case', pass: false, usd: 0 });
+});
+
+test('toUnits: 2 of 3 runs passing passes the case, 1 of 3 fails it, 1 of 1 passes', () => {
+  const agg = structuredClone(FIXTURE);
+  const run = (passed) => ({ score: passed ? 1 : 0, passed, costUsd: 0, judgeCostUsd: 0, error: null });
+  agg.cases[0].arms.with = [run(true), run(false), run(true)];
+  agg.cases[1].arms.with = [run(false), run(true), run(false)];
+  assert.deepEqual(toUnits(agg).map((u) => u.pass), [true, false]);
+  agg.cases[1].arms.with = [run(true)];
+  assert.equal(toUnits(agg)[1].pass, true);
 });
 
 test('no --trust-plugin in the spawned argv', async () => {
@@ -208,7 +218,7 @@ test('no --trust-plugin in the spawned argv', async () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('--no-publish is in the spawned argv', async () => {
+test('--no-publish and the sonnet judge are in the spawned argv', async () => {
   const dir = tmp();
   try {
     const outDir = join(dir, 'out');
@@ -224,7 +234,7 @@ test('--no-publish is in the spawned argv', async () => {
     const { args } = spawned[0];
     assert.deepEqual(args, [
       'plugin', 'eval', '/work/example/plugin-a', '--eval-dir', 'evals/cases', '--ablation', 'none',
-      '--output-dir', outDir, '--no-publish',
+      '--output-dir', outDir, '--no-publish', '--judge-model', 'sonnet',
     ]);
     assert.equal(spawned[0].bin, 'claude');
     assert.equal(spawned[0].opts.env.PATH, '/bin');
