@@ -62,6 +62,10 @@ Subagent (<task role>):
 
     Keep one behavior and about 150 changed product lines per task. Before expanding outside the declared Files, adding a second behavior, or reaching about 300 changed lines (tests included), report NEEDS_CONTEXT; a finished, green, single-behavior task with a modest overage is reviewed normally.
 
+    Test lock: `[TEST_LOCK]` is the command that serializes test runs on this machine. Run the task's `Test:` paths
+    through it (`[TEST_LOCK] node --test <paths>`), never delete a lock file, and report a busy lock (exit 75) instead
+    of retrying.
+
     ## You Do Not Dispatch Subagents
 
     Do all of this task's work yourself. Never spawn a subagent to
@@ -240,6 +244,7 @@ dispatch), it sends only this message, after the previous task of the batch is c
   "Next task" message only what this task adds; omit the line when there is nothing
 - `[BRIEF_FILE]` — the path `node scripts/task-brief PLAN_FILE N` printed
 - `[REPORT_FILE]` — the report file named after the brief (`task-N-report.md`)
+- `[TEST_LOCK]` — `node <absolute path of this skill's scripts>/test-lock --`
 - `[WORK_DIR]` — the checkout the plan runs in (the current one, or the worktree your human partner asked for); for a task opened with `task-open --worktree`, the task worktree it printed as `workdir:`, for the implementer and for its fixer; for a task built in place in a phase worktree, that worktree (`task-open` prints it as `workdir:` too); your tracking entry lands from there; in the "Next task" message, the checkout `task-open` gave that task
 - `[TRACKING]` — the Tracking section, kept only when the repo is opted in, with `[MODE]` (`"committed"`, `"local"` or `"store"`), `[PROGRESS_PATH]` and `[STATUS_PATH]` from `triqual tasks paths --json`, and `[TASKS_LEDGER_PATH]`, the plan's `*.tasks.json` beside it in `plansDir`; `[PROGRESS_PATH]`, `[STATUS_PATH]` and `[TASKS_LEDGER_PATH]` are dropped in store mode, which has no such files
 - `[MODE]` — see `[TRACKING]`

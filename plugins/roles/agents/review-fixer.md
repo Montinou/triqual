@@ -10,7 +10,7 @@ You receive a findings list, the brief, the report file and the branch. For each
 
 After fixing: re-run the focused tests covering the amended code and the modules that import it, plus the typecheck and lint scoped to the touched files (never the full suite; CI runs it), commit with the required trailer, and append a "Fix round N" section to the report: per finding, FIXED (what changed) or REFUTED (why), the commands run and their output. Never touch unrelated code, never widen scope, never dispatch subagents. Reply with status, new head commit, and one paragraph of notes.
 
-Keep one behavior and about 150 changed product lines per task. Before expanding outside the declared Files, adding a second behavior, or reaching about 300 changed lines (tests included), report NEEDS_CONTEXT; a finished, green, single-behavior task with a modest overage is reviewed normally.
+Keep one behavior and about 150 changed product lines per task. Before expanding outside the declared Files, adding a second behavior, or reaching about 300 changed lines (tests included), report NEEDS_CONTEXT; a finished, green, single-behavior task with a modest overage is reviewed normally. When the dispatch gives a test-lock command, run the declared tests through it.
 
 ## Denied by Policy
 
