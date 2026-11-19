@@ -1038,3 +1038,38 @@ test('redeclare is refused when the plan does not declare the tier, with the led
     assert.equal(snapshot(), before);
   });
 });
+
+test('redeclare lowers a pending task, no-ops at the same tier and survives a re-init', () => {
+  for (const mode of ['store', 'committed']) withRepo(mode, (s) => {
+    const original = '### Task 1: Alpha\n**Tier:** heavy\n';
+    const path = s.plan(original);
+    ok(s.run(['init', path]));
+    s.plan(original.replace('heavy', 'light'));
+    const args = ['retier', 'T1', 'light', '--redeclare', '--reason', 'approved re-cut', '--plan', path];
+    const saved = () => (mode === 'store' ? ledgerOf(s) : JSON.parse(readFileSync(path.replace(/\.md$/, '.tasks.json'), 'utf8')));
+    assert.equal(ok(s.run(args)).stdout, 'T1: heavy -> light\n');
+    const first = saved().tasks[0];
+    assert.equal(first.tier, 'light');
+    assert.equal(first.effectiveTier, 'light');
+    assert.equal(first.history.at(-1).note, 'redeclare: declared heavy -> light; effective heavy -> light; approved re-cut');
+    assert.equal(ok(s.run(args)).stdout, 'T1: already light\n');
+    assert.equal(saved().tasks[0].history.length, first.history.length);
+    ok(s.run(['init', path]));
+    assert.equal(saved().tasks[0].tier, 'light');
+    assert.equal(saved().tasks[0].effectiveTier, 'light');
+    const [status] = JSON.parse(ok(s.run(['status', '--json'])).stdout);
+    assert.deepEqual(status.tiers, { T1: { tier: 'light', effectiveTier: 'light' } });
+  });
+});
+
+test('redeclare is refused for an in_progress task and plain retier still refuses a lowering', () => {
+  for (const mode of ['store', 'committed']) withRepo(mode, (s) => {
+    const original = '### Task 1: Alpha\n**Tier:** heavy\n';
+    const path = s.plan(original);
+    ok(s.run(['init', path]));
+    ok(s.run(['start', 'T1', '--plan', path]));
+    s.plan(original.replace('heavy', 'light'));
+    refused(s.run(['retier', 'T1', 'light', '--redeclare', '--reason', 'approved re-cut', '--plan', path]), /cannot redeclare/);
+    refused(s.run(['retier', 'T1', 'light', '--reason', 'x', '--plan', path]), /cannot lower the tier from heavy to light/);
+  });
+});
