@@ -31,11 +31,11 @@ const MAX_BYTES = 87040;
 // 1000-line heavy limit and the eval, fixture and dataset test paths, so its hash follows that text.
 // `setup`, `records` and `example` were edited again on 2026-11-12 (hunters disabled): no hunter skip rule in `setup`, no
 // phase `hunters` record in `records`, and no hunter in the worked `example`, so their hashes follow that text.
-// `ledger-vocabulary` was edited on 2026-11-19 (evals every change, T13): the `Eval:` line, so its hash follows it; edited again the same day (phase 3 fix round 1): `<k>/<m>` in that line, so its hash follows that too.
+// `ledger-vocabulary` was edited on 2026-11-19 (evals every change, T13): the `Eval:` line, so its hash follows it; edited again the same day (phase 3 fix round 1): `<k>/<m>` in that line, so its hash follows that too; and in round 2 the `Eval fix:` line, so its hash follows it again.
 const REFERENCES = [
   ['setup', '## Setup', '51bc3a449722c74cc7bc0fb6ac18956e27c1b26f563765d5440fd9da12916497'],
   ['records', '## Records', 'dac13854ef822a68ca7e2a19d608eb66bc0204f62577870a39bff8035239bfc1'],
-  ['ledger-vocabulary', '## Ledger vocabulary', 'cd07d13d00129aa233e1f0ca795de4f283384d37df7a78db4fdb306a1893a754'],
+  ['ledger-vocabulary', '## Ledger vocabulary', 'e4ffce35b02bb66fbdc234f1362a9db49e7b3b47ff227eeeefbe44aceb6f6f9e'],
   ['worktrees', '## Worktrees', '2dbcb950bdc7acb9d538d1e058e9f8f30b44d67ff224c27cc0a82ea10d821b45'],
   ['final-review', '## Final Review', 'b254407ad950af4ebd137befab8de091eacb29d1ab4b0942a9d27f6d1a7020d8'],
   ['example', '## Example', 'bca99f052e60ce47c544f813315c1e04b94149adb5c3178980845bb7d61430ce'],

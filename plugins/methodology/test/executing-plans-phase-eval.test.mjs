@@ -37,18 +37,53 @@ test('SKILL.md step 7 has the Phase eval bullet', () => {
 
 test('a failing case reopens only the phase tip and any other task gets a plain fix commit', () => {
   const b = bullet();
-  const reopen = /only when (?:that task|it) is the phase tip \(its squashed commit is the phase branch's HEAD\)/.exec(b);
-  assert.ok(reopen, 'the reopen is for the phase tip only, named by its squashed commit being HEAD');
+  assert.ok(
+    b.includes('only when it is the phase tip (its squashed commit, the sha of its `Task <N>: complete` line, is the phase branch tip, `git rev-parse <branch>`, never `HEAD`)'),
+    'the tip is the squashed commit being the branch tip by rev-parse, never HEAD',
+  );
   for (const s of [
     'reopened as in the Phase check',
-    'plain fix commit on top of the tip',
     'no reopen and no squash',
     'later tasks',
     '`Ruling:` line naming the task and the case',
   ]) {
     assert.ok(b.includes(s), `the bullet contains ${s}`);
   }
-  assert.ok(b.indexOf('only when') < b.indexOf('plain fix commit'), 'the tip rule comes first, the plain fix commit is the otherwise');
+  assert.ok(b.indexOf('only when') < b.indexOf('no reopen and no squash'), 'the tip rule comes first, the otherwise after');
+});
+
+test('the non-tip route has a maker, a subject, a record and a ledger line', () => {
+  const b = bullet();
+  for (const s of [
+    'dispatches `roles:review-fixer` with the task, the case and the failing output',
+    'one plain `fix(...)` commit on top of the phase branch',
+    'its own progress entry (Stage/task `Plan <name> · P<n> eval fix`)',
+    '`Eval fix: P<n> <sha> — T<N> <plugin>/<case>`',
+  ]) {
+    assert.ok(b.includes(s), `the bullet contains ${s}`);
+  }
+});
+
+test('a failure after an eval fix commit is the next fix round, as after a phase fix', () => {
+  const b = bullet();
+  assert.ok(b.includes('a failure after an eval fix commit is handled as a failure after a phase fix'));
+  assert.ok(b.includes('the next fix round, never a reopen'));
+});
+
+test('step 8 pins the Phase eval after each Phase check', () => {
+  const text = skill();
+  const i = text.indexOf('Order, pinned:');
+  assert.ok(i >= 0);
+  const order = text.slice(i, text.indexOf('. A phase never starts', i));
+  assert.ok(
+    order.includes('last task done, Phase check, Phase eval, phase review, fix (if any), Phase check, Phase eval, `stack.mjs done`'),
+    order,
+  );
+});
+
+test('ledger-vocabulary.md has the Eval fix line', () => {
+  const text = readFileSync(join(EP, 'references', 'ledger-vocabulary.md'), 'utf8');
+  assert.ok(text.includes('`Eval fix: P<n> <sha> — T<N> <plugin>/<case>`'));
 });
 
 test('after either route the Phase check and the Phase eval run again before the phase review', () => {
