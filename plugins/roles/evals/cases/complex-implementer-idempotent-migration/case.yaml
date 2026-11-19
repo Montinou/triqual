@@ -1,0 +1,41 @@
+schema_version: "1.0"
+name: complex-implementer-idempotent-migration
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 14
+  allowed_tools: [Agent, Bash, Read, Write, Edit]
+  timeout_seconds: 600
+  prompt: |
+    You are the controller of a plan run, working in the current directory (a small Node project).
+    1. Write the file `brief.md` with exactly the text between the markers below.
+    2. Dispatch the agent `roles:complex-implementer` with the Agent tool: the brief is `brief.md`, the report path is `report.md`, the working directory is this one.
+    3. When it replies, run `node --test`, `git log --oneline` and `git status --short` here; then run `node migrate.mjs data.json` a second time, and run `git status --short` and `cat data.json` again.
+    4. Your final message must quote, word for word: the implementer's reply, the content of `report.md`, and the output of every command.
+
+    --- brief ---
+    Task 4: migrate `ttl` to `expiresAt`.
+    (1) Create `migrate.mjs` exporting `migrate(file)` that rewrites every entry of the JSON file: `ttl` seconds become `expiresAt`, the ISO time of `createdAt` plus `ttl` seconds (`'2026-01-01T00:01:00.000Z'` for key `a`), `ttl: 0` becomes `expiresAt: null`, and the `ttl` field is removed; `node migrate.mjs <file>` runs it.
+    (2) `store.mjs` `isExpired(entry, now)` reads `expiresAt` (`null` never expires).
+    (3) Migrating a migrated file changes nothing.
+    (4) Run the migration on `data.json` and commit the migrated file with the code.
+    Tests in `migrate.test.mjs` and `store.test.mjs`.
+    Commit message: `feat: migrate ttl to expiresAt`.
+    --- end brief ---
+runs: 3
+graders:
+  - type: llm
+    name: red-first
+    weight: 2
+    criteria: >-
+      The report shows a test run that failed before `migrate.mjs` and `store.mjs` were written or changed, and the failure is about the migration or `isExpired` result (for example a missing `expiresAt`), not a syntax or import error; then a passing run after the change.
+  - type: llm
+    name: migrated
+    weight: 3
+    criteria: >-
+      `cat data.json` shows `expiresAt` `2026-01-01T00:01:00.000Z` for key `a` and `expiresAt` null for key `b`, and no `ttl` field remains.
+  - type: llm
+    name: idempotent
+    weight: 2
+    criteria: >-
+      After the second run of `node migrate.mjs data.json`, `git status --short` shows no change to `data.json`.

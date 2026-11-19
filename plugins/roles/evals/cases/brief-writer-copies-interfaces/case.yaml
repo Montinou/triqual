@@ -1,0 +1,26 @@
+schema_version: "1.0"
+name: brief-writer-copies-interfaces
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 8
+  allowed_tools: [Agent, Bash, Read, Write]
+  prompt: |
+    You are the controller of a plan run, working in the current directory. Dispatch the agent `roles:brief-writer` for task 3 of `plan.md`, pointing it at `src/units.mjs` as the code the task touches, and asking it to write the brief to `brief-t3.md`. When it replies, run `cat brief-t3.md`, then give as your final message the writer's reply followed by the file's content, word for word.
+runs: 3
+graders:
+  - type: llm
+    name: verbatim
+    weight: 3
+    criteria: >-
+      The brief repeats the task's text from the plan unchanged, including `parseDuration(text: string): number`, `5400` for `'1h30m'` and the exact message `invalid duration: <text>`.
+  - type: llm
+    name: context
+    weight: 3
+    criteria: >-
+      The 'Context from the code' section lists `UNIT_SECONDS` with the values `{ s: 1, m: 60, h: 3600 }` and `assertString(value)` as exported by `src/units.mjs`, with that path.
+  - type: llm
+    name: no-invention
+    weight: 1
+    criteria: >-
+      The brief adds no requirement that the task does not state.

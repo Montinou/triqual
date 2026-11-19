@@ -1,0 +1,21 @@
+schema_version: "1.0"
+name: hunter-clean-diff
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 8
+  allowed_tools: [Agent, Bash, Read, Write]
+  prompt: |
+    You are the controller of a plan run, working in the current directory. Dispatch the agent `roles:hunter` with the Agent tool: the category is `correctness`, the diff package is `diff.patch` here, the code is under `src/`, and it must write its candidates to `candidates-correctness.md` here. When it replies, run `cat candidates-correctness.md`, then give as your final message the hunter's reply followed by the file's content, word for word.
+runs: 3
+graders:
+  - type: llm
+    name: none
+    weight: 3
+    criteria: >-
+      No candidate concerns the loop bound for an integer `n` (a candidate about a non-integer `n` does not fail this).
+  - type: llm
+    name: no-invention
+    weight: 1
+    criteria: >-
+      No candidate is invented: nothing claims a defect in `drain` for an integer `n`, in `push` or in the constructor.

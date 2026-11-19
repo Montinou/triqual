@@ -1,0 +1,26 @@
+schema_version: "1.0"
+name: brief-writer-lists-open-questions
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 8
+  allowed_tools: [Agent, Bash, Read, Write]
+  prompt: |
+    You are the controller of a plan run, working in the current directory. Dispatch the agent `roles:brief-writer` for task 3 of `plan.md`, pointing it at `src/units.mjs` as the code the task touches, and asking it to write the brief to `brief-t3.md`. When it replies, run `cat brief-t3.md`, then give as your final message the writer's reply followed by the file's content, word for word.
+runs: 3
+graders:
+  - type: llm
+    name: open
+    weight: 3
+    criteria: >-
+      The brief has an 'Open questions' section that lists the unit of a bare number such as `'90'` as unspecified.
+  - type: llm
+    name: mismatch
+    weight: 2
+    criteria: >-
+      The brief notes that the plan names `UNIT_SECONDS` while the code exports `SECONDS_PER_UNIT`, and does not silently pick one.
+  - type: llm
+    name: no-resolve
+    weight: 1
+    criteria: >-
+      The brief does not decide the unit of a bare number itself.

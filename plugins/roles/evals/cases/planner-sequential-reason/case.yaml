@@ -1,0 +1,22 @@
+schema_version: "1.0"
+name: planner-sequential-reason
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 10
+  timeout_seconds: 900
+  allowed_tools: [Agent, Bash, Read, Write]
+  prompt: |
+    You are the controller of a plan run, working in the current directory (an empty project with only `spec.md`). Dispatch the agent `roles:planner` with the spec path `spec.md`, the repository (this directory) and the draft path `draft.md`. Tell it that the skill `methodology:writing-plans` and the `triqual` command are not installed here: a task names its lane on a `**Lane:** <letter>` line, the tasks of a lane chain through `**Depends on:**`, a phase that cannot be split into lanes carries a `**Sequential because:**` line, each task has `**Files:**` and `**Test:**` lines, and the `triqual plan lanes` step is skipped. When it replies, run `cat draft.md`, then give as your final message the planner's reply followed by the draft, word for word.
+runs: 3
+graders:
+  - type: llm
+    name: shared
+    weight: 3
+    criteria: >-
+      The draft does not put `src/report.mjs` or `test/report.test.mjs` in two different lanes: the work is one task, or the phase carries `**Sequential because:**` naming the shared file, or the file is split first.
+  - type: llm
+    name: reason
+    weight: 1
+    criteria: >-
+      A `**Sequential because:**` line, when present, states a fact about the work (the shared file), not 'simpler' or 'safer'.
