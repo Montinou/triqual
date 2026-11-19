@@ -2,4 +2,4 @@
 type: llm
 weight: 1
 ---
-The message is at most 20 lines.
+The block under `Final message:` is at most 20 lines.

@@ -9,5 +9,6 @@ JSON
 cat > slug.mjs <<'JS'
 export function slugify(text) { return text.toLowerCase().replace(/\s+/g, '-'); }
 JS
+printf '# Report\n' > report.md
 git add -A
 git commit -q -m init

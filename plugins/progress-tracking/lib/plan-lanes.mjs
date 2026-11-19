@@ -10,9 +10,17 @@ const names = (phases) => phases.map((k) => `P${k}`).join(', ');
 const pathsOf = (task) => [...task.files.create, ...task.files.modify, ...task.files.test];
 const ratio = (tasks, path) => (path === 0 ? 0 : tasks / path);
 
+// A prompt file: the skills, agents and rules of a plugin. The plugin is the first group.
+const PROMPT_FILES = [/^plugins\/([^/]+)\/skills\/.+\.md$/, /^plugins\/([^/]+)\/agents\/[^/]+\.md$/, /^plugins\/([^/]+)\/rules\/[^/]+\.md$/];
+const promptPlugin = (path) => PROMPT_FILES.map((re) => re.exec(path)?.[1]).find(Boolean) ?? null;
+const EVAL_ENTRY = /^([a-z0-9-]+)\/([a-z0-9-]+)$/;
+const CASE_DIR = /^plugins\/([^/]+)\/evals\/cases\/([^/]+)\//;
+
 // { plan, tasks, phases, parallelism, criticalPath, runnerOnly, landingTest, violations, phaseRows } (see the task brief for
-// the fields). Throws the parser's PlanError, and PlanError(NO_TASK) when the text has no task.
-export function planLanes(text, stem) {
+// the fields). Throws the parser's PlanError, and PlanError(NO_TASK) when the text has no task. The Eval line of the tasks
+// that change a prompt file is checked after the lanes; `caseExists(plugin, name)` tells whether a case exists already, and
+// without it a case counts only when a task at or before the one naming it creates it.
+export function planLanes(text, stem, { caseExists = () => false } = {}) {
   const tasks = readTasks(text);
   if (tasks.length === 0) throw new PlanError(NO_TASK);
   const { phases, landingTest } = readPhases(text, stem);
@@ -118,6 +126,27 @@ export function planLanes(text, stem) {
     const named = new Set(phases.flatMap((p) => p.parents));
     const tops = phases.map((p) => p.n).filter((k) => !named.has(k));
     if (tops.length > 1) add('several-tops', null, null, `${names(tops)} are the parent of no phase: a plan ends in one phase; make the last one a join (**Parent:** ${names(tops)})`);
+  }
+
+  const created = new Set(); // `<plugin>/<case>` of every case a task at or before the one being read creates
+  for (const task of tasks) {
+    const own = [...task.files.create, ...task.files.modify];
+    for (const path of task.files.create) {
+      const m = CASE_DIR.exec(path);
+      if (m) created.add(`${m[1]}/${m[2]}`);
+    }
+    const prompts = own.map((path) => [path, promptPlugin(path)]).filter(([, plugin]) => plugin);
+    const plugins = new Set(prompts.map(([, plugin]) => plugin));
+    const n = phaseOf.get(task.id);
+    if (prompts.length > 0 && task.eval.length === 0) {
+      add('eval-missing', n, task.id, `${task.id} changes the prompt file ${prompts[0][0]} but has no **Eval:** line: add **Eval:** ${prompts[0][1]}/<case>`);
+    }
+    for (const entry of new Set(task.eval)) {
+      const m = EVAL_ENTRY.exec(entry);
+      if (!m) add('eval-case', n, task.id, `${task.id} names "${entry}", which is not <plugin>/<case>`);
+      else if (!plugins.has(m[1])) add('eval-plugin', n, task.id, `${task.id} names ${entry}, but it changes no prompt file of plugin ${m[1]}: name a case of the plugin whose prompt it changes`);
+      else if (!created.has(entry) && !caseExists(m[1], m[2])) add('eval-case', n, task.id, `${task.id} names ${entry}, which does not exist and is not created by this or an earlier task: create it first, or fix the name`);
+    }
   }
 
   const best = new Map();

@@ -1,10 +1,10 @@
 // `triqual eval variant --role <R> --out <dir> [--model <m>] [--effort <e>] [--prompt <file>]`: copies <cwd>/plugins/roles to
 // <dir> (run it from the repository root) and changes only agents/<R>.md there: the `model:` and `effort:` lines of its front
 // matter (the lines between the first two `---` lines) and, with --prompt, everything after the closing `---` line, replaced by
-// the file's bytes, nothing re-parsed. Everything else stays byte for byte, line endings included. It prints the absolute <dir>
-// and exits 0. Exit 2, with nothing written, on a usage error or a refusal. The variant is what `claude plugin eval` is pointed
-// at as one arm of a role experiment. node: built-ins only. main() is exported for tests and runs only when this file is the
-// entry point.
+// the file's bytes, nothing re-parsed. Everything else stays byte for byte, line endings included. It writes nothing else. It prints
+// the absolute <dir> and exits 0. Exit 2, with nothing written, on a usage error or a refusal. The variant is what
+// `claude plugin eval` is pointed at as one arm of a role experiment; `triqual eval cases` never trusts it, so run it from a
+// terminal, where the first run asks to trust the directory. node: built-ins only. main() is exported for tests and runs only when this file is the entry point.
 import { cpSync, existsSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -21,6 +21,7 @@ const USAGE = [
   '      Run from the repository root. Copies plugins/roles to <dir> and changes only agents/<R>.md: its `model:` and',
   '      `effort:` front matter lines (--effort is one of low, medium, high, xhigh, max) and, with --prompt, everything after',
   '      the closing `---` line, replaced by the file. Prints the absolute <dir>. Exit 0, or 2 with nothing written.',
+  '      `triqual eval cases` never trusts the variant: evaluate it from a terminal, where the first run asks to trust it.',
   '  triqual eval variant --help',
   '',
 ].join('\n');

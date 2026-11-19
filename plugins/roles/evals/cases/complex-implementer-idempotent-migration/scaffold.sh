@@ -12,5 +12,6 @@ JSON
 cat > store.mjs <<'JS'
 export function isExpired(entry, now) { return entry.ttl > 0 && now >= Date.parse(entry.createdAt) + entry.ttl * 1000; }
 JS
+printf '# Report\n' > report.md
 git add -A
 git commit -q -m init

@@ -160,6 +160,12 @@ test('the source plugin is untouched', () => withCheckout(async ({ root, roles }
   assert.equal(treeHash(roles), before);
 }));
 
+test('the output directory holds no file the source plugin lacks', () => withCheckout(async ({ root, roles }) => {
+  const out = join(root, 'variant');
+  assert.equal((await run(root, ['--role', 'alpha', '--out', out, '--model', 'opus'])).code, 0);
+  assert.deepEqual(Object.keys(tree(out)).filter((k) => !(k in tree(roles))), []);
+}));
+
 test('it prints the absolute output directory and nothing else', () => withCheckout(async ({ root }) => {
   const r = await run(root, ['--role', 'alpha', '--out', 'rel/variant', '--model', 'opus']);
   assert.equal(r.code, 0);

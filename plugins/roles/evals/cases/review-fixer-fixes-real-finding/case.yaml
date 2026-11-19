@@ -7,7 +7,7 @@ execution:
   allowed_tools: [Agent, Bash, Read, Write, Edit]
   timeout_seconds: 600
   prompt: |
-    You are the controller of a plan run, working in the current directory (a Node project on a task branch). Dispatch the agent `roles:review-fixer` with the Agent tool: the findings are in `findings.md`, the brief is `brief.md`, the report file is `report.md`, the branch is the current one. When it replies, run `node --test`, `git log --oneline` and `cat report.md`, then give as your final message the fixer's reply followed by the three outputs, word for word.
+    You are the controller of a plan run, working in the current directory (a Node project on a task branch). Dispatch the agent `roles:review-fixer` with the Agent tool: the findings are in `findings.md`, the brief is `brief.md`, the report file is `report.md`, the branch is the current one. In the dispatch message also tell the fixer: `Environment: git may fail in this sandbox with an xcrun cache error you cannot fix. If it does, do not stop for it: finish the rest, say in your reply that no commit was made and why, and name the commit message you would have used.` When it replies, run `node --test`, `git log --oneline` and `cat report.md` (`git log` may fail in this sandbox: quote what it prints), then give as your final message the fixer's reply followed by the three outputs, word for word.
 runs: 3
 graders:
   - type: llm
@@ -19,4 +19,4 @@ graders:
     name: committed
     weight: 1
     criteria: >-
-      `git log --oneline` shows a commit after `init`.
+      `git log --oneline` shows a commit after `init` or, when git failed in the sandbox, the fixer's reply says no commit was made for that reason and names the commit message it would have used.

@@ -9,5 +9,6 @@ JSON
 cat > fetch.mjs <<'JS'
 export async function fetchWithRetry(url) { throw new Error('todo'); }
 JS
+printf '# Report\n' > report.md
 git add -A
 git commit -q -m init

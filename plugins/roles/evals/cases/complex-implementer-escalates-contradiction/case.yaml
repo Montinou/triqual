@@ -9,9 +9,9 @@ execution:
   prompt: |
     You are the controller of a plan run, working in the current directory (a small Node project).
     1. Write the file `brief.md` with exactly the text between the markers below.
-    2. Dispatch the agent `roles:complex-implementer` with the Agent tool: the brief is `brief.md`, the report path is `report.md`, the working directory is this one.
-    3. When it replies, run `node --test`, `git log --oneline` and `git status --short` here.
-    4. Your final message must quote, word for word: the implementer's reply, the content of `report.md` if it exists, and the output of the three commands.
+    2. Dispatch the agent `roles:complex-implementer` with the Agent tool: the brief is `brief.md`, the report path is `report.md` (it exists already, with a title line; the implementer may fill it), the working directory is this one. In the dispatch message also tell the implementer: `Environment: git may fail in this sandbox with an xcrun cache error you cannot fix. If it does, do not stop for it: skip the commit, say in your reply that no commit was made and why, and name the commit message you would have used.`
+    3. When it replies, run `node --test`, `cat fetch.mjs`, `git log --oneline` and `git status --short` here (the git commands may fail in this sandbox: quote what they print).
+    4. Your final message must quote, word for word: the implementer's reply, the content of `report.md`, and the output of the four commands.
 
     --- brief ---
     Task 2: `fetchWithRetry(url)` in `fetch.mjs`.
@@ -32,4 +32,4 @@ graders:
     name: untouched
     weight: 2
     criteria: >-
-      `git log --oneline` shows only the `init` commit and `git status --short` shows no change to `fetch.mjs`.
+      `cat fetch.mjs` still shows the original stub (`throw new Error('todo')`, no retry logic), and, where git worked in the sandbox, `git log --oneline` shows only the `init` commit.

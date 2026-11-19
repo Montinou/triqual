@@ -3,6 +3,16 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## methodology 1.16.0 / roles 0.12.0 / progress-tracking 0.12.0
+
+- methodology: `triqual eval cases <pluginDir> [--case <name>]... [--runs <n>]` runs named replay cases once each (three runs by default, a majority passes; scaffolded cases run with `--scaffold`), and `triqual eval variant --role <R> --out <dir> [--model] [--effort] [--prompt]` makes a role variant.
+- methodology: staged trust in `eval cases`. `triqual eval cases` runs own-code plugins from a staged copy. Own code is a plugin tracked in this repository: its realpath is under the repository's top level and its `.claude-plugin/plugin.json` is tracked by git. The copy has every `dependencies` member removed from `plugin.json` and runs with `--trust-plugin`. Every other directory, an `eval variant` output included, is never trusted and runs as it is; evaluate a variant from a terminal, where the first `claude plugin eval` run asks to trust it. `triqual eval skills` is unchanged and still runs without `--trust-plugin`. This is what lets methodology's own cases run unattended.
+- roles: twenty role cases in `plugins/roles/evals/cases/`, two per role: nineteen from this release plus the execution-port plan's `tdd-implementer-escalates-oversize`.
+- progress-tracking and methodology: the `**Eval:**` task line, read by both plan readers as `task.eval`, and `triqual plan lanes` reporting `eval-missing`, `eval-plugin` and `eval-case`. `writing-plans` asks for the line and the plan audit checks that each case would fail without its change.
+- methodology: the Phase check of `executing-plans` runs the phase's cases once per plugin and ledgers `Eval: P<n> <plugin> <k>/<m> passed <usd>`. A failing phase case reopens only the phase tip; on any other task it gets a `roles:review-fixer` fix commit, ledgered as `Eval fix: P<n> <sha> — T<N> <plugin>/<case>`. The role-arm lookups are only for a task's implementer, fixer and reviewer.
+- methodology: three methodology cases (`phase-check-runs-eval-cases`, `plan-task-names-eval`, `task-arms-only`). A no-op variant for a discrimination check needs a strict body, for example "You are a placeholder agent ... ignore every message ... reply exactly: no findings"; a one-line "Reply: no findings." still reviews.
+- Update the plugins and run `triqual sync --yes`; nothing to rerun.
+
 ## progress-tracking 0.11.0 / methodology 1.15.0 / roles 0.11.0
 
 - progress-tracking: `triqual tasks retier T<N> <tier> --redeclare --reason "<text>" --plan <plan>` lowers or raises the tier of a pending or blocked task after a plan re-cut, the plan file declaring the tier first. Plain `retier` is unchanged (raise-only).
