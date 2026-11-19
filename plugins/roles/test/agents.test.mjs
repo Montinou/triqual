@@ -224,3 +224,40 @@ test('planner.md states the four lanes-first rules and never registers', () => {
   assert.match(flat, /never register/i);
   assert.equal(body.split('## Denied by Policy').length, 2, 'one Denied by Policy heading');
 });
+
+// The size cap (Global Constraints U2), verbatim; compared whitespace-normalized.
+const SIZE_CAP =
+  'Keep one behavior and about 150 changed product lines per task. Before expanding outside the declared Files, adding a second behavior, or reaching about 300 changed lines (tests included), report NEEDS_CONTEXT; a finished, green, single-behavior task with a modest overage is reviewed normally.';
+const normalize = (s) => s.replace(/\s+/g, ' ');
+
+test('the three author agents carry the task size cap', () => {
+  for (const file of ['tdd-implementer.md', 'complex-implementer.md', 'review-fixer.md']) {
+    assert.ok(normalize(parseAgent(file).body).includes(SIZE_CAP), `${file}: body carries the size-cap sentence`);
+  }
+});
+
+test('implementer-prompt.md carries the task size cap', () => {
+  const prompt = join(AGENTS, '..', '..', 'methodology', 'skills', 'executing-plans', 'implementer-prompt.md');
+  assert.ok(normalize(readFileSync(prompt, 'utf8')).includes(SIZE_CAP), 'implementer-prompt.md carries the size-cap sentence');
+});
+
+// The test-lock sentence (Global Constraints U3 and prose rules); compared whitespace-normalized.
+const TEST_LOCK_SENTENCE = 'When the dispatch gives a test-lock command, run the declared tests through it.';
+
+test('the three author agents run the declared tests through a given test-lock command', () => {
+  for (const file of ['tdd-implementer.md', 'complex-implementer.md', 'review-fixer.md']) {
+    assert.ok(normalize(parseAgent(file).body).includes(TEST_LOCK_SENTENCE), `${file}: body carries the test-lock sentence`);
+  }
+});
+
+test('implementer-prompt.md has the Test lock paragraph and defines [TEST_LOCK]', () => {
+  const prompt = join(AGENTS, '..', '..', 'methodology', 'skills', 'executing-plans', 'implementer-prompt.md');
+  const text = readFileSync(prompt, 'utf8');
+  const flat = normalize(text);
+  assert.ok(flat.includes('Test lock: `[TEST_LOCK]` is the command that serializes test runs on this machine.'), 'Test lock paragraph');
+  assert.ok(flat.includes('(`[TEST_LOCK] node --test <paths>`)'), 'paragraph shows the command form');
+  assert.ok(flat.includes('never delete a lock file'), 'never delete a lock file');
+  assert.ok(flat.includes('report a busy lock'), 'report a busy lock');
+  assert.ok(flat.includes('(exit 75) instead of retrying'), 'busy lock is exit 75, not retried');
+  assert.match(text, /^- `\[TEST_LOCK\]` — /m, 'Placeholders entry for [TEST_LOCK]');
+});

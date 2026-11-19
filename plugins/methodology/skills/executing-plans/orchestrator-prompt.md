@@ -22,7 +22,12 @@ Subagent (roles:phase-orchestrator):
 
     Follow `methodology:executing-plans` for this phase only: its Task Loop for every task of phase [PHASE] in
     dependency order, its review tiers, its fix loop and its Ledger vocabulary (`references/ledger-vocabulary.md` of that skill), through the three scripts
-    (`task-open`, `task-prep`, `task-close`) run from the main checkout. When the phase is built in a phase worktree, every
+    (`task-open`, `task-prep`, `task-close`) run from the main checkout. Run every focused test through
+    `node <absolute scripts path>/test-lock -- <command argv>`, where the scripts path is the absolute path of this skill's
+    `scripts/test-lock`, and give every implementer and fixer you dispatch the same command; a test-lock wait that ends
+    `test lock busy` (exit 75) is a busy lock: never delete a lock file, and report a busy lock in your summary. The rerun
+    rule: a `task-close` that ends `test lock busy` is rerun as is once the lock is free; never undo it, and close no other
+    task of the phase first. When the phase is built in a phase worktree, every
     `HEAD` written in a `tier-check` or `review-package` command is the phase worktree's commit, passed as a sha
     (`git -C <workdir> rev-parse HEAD`), never the word `HEAD`. Read the plan's tasks of this phase, not the
     whole plan. The workspace ledger is [LEDGER_PATH]: trust it, and `git log`, over your own recollection; a task
