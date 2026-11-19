@@ -218,7 +218,7 @@ test('no --trust-plugin in the spawned argv', async () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('--no-publish is in the spawned argv', async () => {
+test('--no-publish and the sonnet judge are in the spawned argv', async () => {
   const dir = tmp();
   try {
     const outDir = join(dir, 'out');
@@ -234,7 +234,7 @@ test('--no-publish is in the spawned argv', async () => {
     const { args } = spawned[0];
     assert.deepEqual(args, [
       'plugin', 'eval', '/work/example/plugin-a', '--eval-dir', 'evals/cases', '--ablation', 'none',
-      '--output-dir', outDir, '--no-publish',
+      '--output-dir', outDir, '--no-publish', '--judge-model', 'sonnet',
     ]);
     assert.equal(spawned[0].bin, 'claude');
     assert.equal(spawned[0].opts.env.PATH, '/bin');

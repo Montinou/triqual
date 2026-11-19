@@ -8,6 +8,10 @@ import { spawnCapture } from './eval-judge.mjs';
 // A suite is many model runs (and judge calls) of one plugin: well over a judge call.
 export const SUITE_TIMEOUT_MS = 3_600_000;
 export const AGGREGATE_FILE = 'aggregate-result.json';
+// The model of the LLM graders. The command's default (haiku) failed long, nuanced replies that a reader would pass: on
+// 2026-11-19 the six cases scored 4/6 with haiku judges and 6/6 with sonnet, on the same replies' shape, for about 0.5 USD
+// more per arm.
+export const JUDGE_MODEL = 'sonnet';
 
 // Thrown when `claude plugin eval` leaves no readable aggregate. The message holds the exit code, never the child's output.
 export class SuiteError extends Error {
@@ -16,10 +20,10 @@ export class SuiteError extends Error {
 
 // Runs the suite of `pluginDir` into `outDir` and resolves the parsed aggregate result. The command exits non-zero when
 // a case fails or hits an API error, so the exit code is not read: the aggregate is. Never publishes (--no-publish: the
-// default publishes the HTML report to claude.ai) and never trusts the plugin (--trust-plugin).
+// default publishes the HTML report to claude.ai), never trusts the plugin (--trust-plugin) and grades with JUDGE_MODEL.
 export async function runSuite({ pluginDir, outDir, spawn = spawnCapture, env = process.env }) {
   const bin = env.TRIQUAL_CLAUDE_BIN || 'claude';
-  const args = ['plugin', 'eval', pluginDir, '--eval-dir', 'evals/cases', '--ablation', 'none', '--output-dir', outDir, '--no-publish'];
+  const args = ['plugin', 'eval', pluginDir, '--eval-dir', 'evals/cases', '--ablation', 'none', '--output-dir', outDir, '--no-publish', '--judge-model', JUDGE_MODEL];
   const out = await spawn(bin, args, { env, timeoutMs: SUITE_TIMEOUT_MS });
   let aggregate;
   try {
