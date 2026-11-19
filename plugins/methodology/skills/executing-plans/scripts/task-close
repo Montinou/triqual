@@ -61,7 +61,10 @@
 //     branch to it (`git reset --keep`), appends `Landed: T<N> <sha>` and, for the head check of a rerun after the close, `Prep: T<N> r<R>
 //     <sha>` (R: the round of the attempt's last `Prep:` line; none when the attempt has none), and runs the task's plan `Test:` files
 //     with `node --test` at that tip (a plan whose header has a `**Landing test:**` command runs `sh -c <command>` instead, {files} replaced by
-//     the Test paths each single-quoted, cwd the repository root; see references/landing-test.md)
+//     the Test paths each single-quoted, cwd the repository root; see references/landing-test.md); either runs through `test-lock` (one test
+//     run at a time per repository): a wait for the lock longer than TRIQUAL_TEST_LOCK_TIMEOUT_MS (default 300000, which the cut-off below
+//     adds to its own) is exit 1 `test lock busy: <lock path>` with nothing undone, `Landed:` standing and no `Tested:` line: the rerun is
+//     mandatory, and the other tasks of the phase are refused (exit 3) until then
 //     (a file that is not there fails, so zero files run is never a pass; the run is cut off after
 //     TRIQUAL_LANDING_TEST_TIMEOUT_MS, default 600000, and a timeout is a failure; the output goes to
 //     `<workspace>/task-<N>-landing-test.log`), then appends `Tested: T<N> <sha>`. A crash after the reset and before the `Landed:`
@@ -484,7 +487,7 @@
       const root = common.git(['rev-parse', '--show-toplevel'], inPhase);
       const problem = tests.map((t) => common.testPathProblem(root, t)).find((why) => why !== null);
       if (problem) throw new ScriptError(EXIT_REFUSED, `T${n}: ${problem}`);
-      return { tip, tests, root, timeout: common.landingTestTimeoutMs(), landingTest: common.landingTestOf(plan) };
+      return { tip, tests, root, timeout: common.landingTestTimeoutMs(), lockWait: common.testLockTimeoutMs(), landingTest: common.landingTestOf(plan) };
     };
     // The undo: the phase branch back to `before`, the fresh BASE and the undo line in ONE write, the marker that dates the undone
     // attempt's outputs, the task moved back, the worktree and its branch removed.
@@ -501,18 +504,23 @@
     // run; so are a non-zero exit and a run that outlives the timeout. A green run is ledgered: `Tested: T<N> <sha>`.
     // With a `**Landing test:**` command in the plan, that command is the run: `sh -c <command>` with {files} replaced by the Test paths
     // (each one single-quoted), at the repository root; else `node --test <the Test files>`.
+    // Either run goes through `test-lock`, and the exec timeout is the landing timeout plus the lock wait. An exit 75 that is not a timeout
+    // is a busy lock (test-lock maps a command's own 75 to 1): nothing is undone, the `Landed:` line stands with no `Tested:` line, and the
+    // rerun tests it.
     // `root` is the toplevel of the phase's checkout: the Test paths are looked up and run there.
-    const runTests = ({ tests, root, timeout, landingTest }, landedSha, before) => {
+    const runTests = ({ tests, root, timeout, lockWait, landingTest }, landedSha, before) => {
       const missing = tests.find((t) => !existsSync(resolve(root, t)));
       if (missing !== undefined) undo(`landing failed: the Test file ${missing} is not in the landed tree`, before);
       const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'NODE_TEST_CONTEXT'));
-      const ran = landingTest === null
-        ? common.exec(process.execPath, ['--test', ...tests.map((t) => resolve(root, t))], { cwd: root, env, timeout })
-        : common.exec('sh', ['-c', common.landingCommand(landingTest, tests)], { cwd: root, env, timeout });
+      const command = landingTest === null
+        ? [process.execPath, '--test', ...tests.map((t) => resolve(root, t))]
+        : ['sh', '-c', common.landingCommand(landingTest, tests)];
+      const ran = common.exec(process.execPath, [common.TEST_LOCK, '--', ...command], { cwd: root, env, timeout: timeout + lockWait });
       const what = landingTest === null ? 'node --test' : 'the Landing test';
       const log = join(workspace, `task-${n}-landing-test.log`);
       writeFileSync(log, `${ran.stdout}${ran.stderr}`);
-      if (ran.timedOut) undo(`landing failed: ${what} did not finish in ${timeout} ms at the landed tip (output so far in ${log})`, before);
+      if (ran.timedOut) undo(`landing failed: ${what} did not finish in ${timeout + lockWait} ms at the landed tip (output so far in ${log})`, before);
+      if (ran.status === 75) throw new ScriptError(EXIT_OTHER, common.firstLine(ran.stderr));
       if (ran.status !== 0) undo(`landing failed: ${what} exited ${ran.status} at the landed tip (output in ${log})`, before);
       common.appendLedger(workspace, `Tested: T${n} ${landedSha}`);
     };

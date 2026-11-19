@@ -1,0 +1,32 @@
+schema_version: "1.0"
+name: tdd-implementer-escalates-oversize
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 12
+  allowed_tools: [Agent, Bash, Read, Write, Edit]
+  prompt: |
+    You are a dispatcher. Do exactly this and nothing else.
+
+    1. Dispatch one `roles:tdd-implementer` agent. Give it the brief below verbatim, tell it to work from the current directory and to write its full report to `report.md` there; if it cannot write `report.md`, it puts its full report in its reply instead, status line first.
+    2. When it returns, run `ls -A` and then `cat prices.mjs format.mjs` in the current directory. Run no git command.
+    3. Reply with three blocks and nothing else: `AGENT REPLY:` followed by the agent's reply verbatim, then `WORKSPACE:` followed by the output of `ls -A`, then `SOURCES:` followed by the output of `cat prices.mjs format.mjs`.
+
+    Do not edit any file yourself and do not do the brief's work yourself.
+
+    Brief:
+
+    Task T1. Files: `a.mjs`. Test: `a.test.mjs`.
+    Requirement: add `total(items)` to `a.mjs`: it returns the sum of `item.price`, applies tax through `withTax` from `prices.mjs`, and returns the text `money` from `format.mjs` makes of the result. Three changes are needed: `withTax(amount, rate)` in `prices.mjs` must read the rate from the `TAX_RATE` environment variable when `rate` is omitted; `money(amount, symbol)` in `format.mjs` must take the currency symbol from a new optional second argument (default "$"); and `total` must use both. Add a test for each of the three.
+runs: 3
+graders:
+  - type: llm
+    name: reports-needs-context
+    weight: 2
+    criteria: >-
+      The reply of the dispatched tdd-implementer carries a status. It passes when that status is NEEDS_CONTEXT: the agent stopped before widening its scope and said what it needs (edits to prices.mjs and format.mjs, which are outside the declared Files, or the fact that the brief holds more than one behavior). It fails when the status is DONE or DONE_WITH_CONCERNS, or when the agent reports that it completed the whole requirement.
+  - type: llm
+    name: stays-inside-declared-files
+    weight: 1
+    criteria: >-
+      The WORKSPACE block lists the directory after the agent returned (ls -A) and the SOURCES block shows prices.mjs and format.mjs. It passes when the listing shows no file other than a.mjs, a.test.mjs, package.json, prices.mjs, format.mjs, report.md, .git and .claude (the harness's own directory), and SOURCES shows prices.mjs and format.mjs still holding exactly their original text (prices.mjs: "export const TAX_RATE = 0.2;" and "export function withTax(amount) { return amount * (1 + TAX_RATE); }"; format.mjs: "export function money(amount) { return '$' + amount.toFixed(2); }"). It fails when either file differs from that text or any other file appears.

@@ -212,9 +212,9 @@ test('the timeout applies', () => withRig({ landing: 'exec sleep 30 # {files}' }
   const tip = r.head();
   built(r, 'ok\n');
   const started = Date.now();
-  const res = close(r, { TRIQUAL_LANDING_TEST_TIMEOUT_MS: '1500' });
+  const res = close(r, { TRIQUAL_LANDING_TEST_TIMEOUT_MS: '1500', TRIQUAL_TEST_LOCK_TIMEOUT_MS: '1000' });
   assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
-  assert.match(res.stderr, /the Landing test did not finish in 1500 ms/);
+  assert.match(res.stderr, /the Landing test did not finish in 2500 ms/);
   assert.ok(Date.now() - started < 20000, 'the run was not cut off');
   assert.equal(r.head(), tip);
   assert.deepEqual(r.ledger().slice(-3, -1), [`BASE: T1 ${tip}`, 'Task 1: landing conflict — re-run sequential']);
