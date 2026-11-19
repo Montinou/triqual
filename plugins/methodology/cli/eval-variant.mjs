@@ -1,10 +1,11 @@
 // `triqual eval variant --role <R> --out <dir> [--model <m>] [--effort <e>] [--prompt <file>]`: copies <cwd>/plugins/roles to
 // <dir> (run it from the repository root) and changes only agents/<R>.md there: the `model:` and `effort:` lines of its front
 // matter (the lines between the first two `---` lines) and, with --prompt, everything after the closing `---` line, replaced by
-// the file's bytes, nothing re-parsed. Everything else stays byte for byte, line endings included. It prints the absolute <dir>
-// and exits 0. Exit 2, with nothing written, on a usage error or a refusal. The variant is what `claude plugin eval` is pointed
-// at as one arm of a role experiment. node: built-ins only. main() is exported for tests and runs only when this file is the
-// entry point.
+// the file's bytes, nothing re-parsed. Everything else stays byte for byte, line endings included. It also writes the marker
+// file `.triqual-eval-variant` at the root of <dir>: one line, the absolute source plugin directory, which tells
+// `triqual eval cases` that the directory is own code. It prints the absolute <dir> and exits 0. Exit 2, with nothing written,
+// on a usage error or a refusal. The variant is what `claude plugin eval` is pointed at as one arm of a role experiment.
+// node: built-ins only. main() is exported for tests and runs only when this file is the entry point.
 import { cpSync, existsSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -13,6 +14,7 @@ export const SUMMARY = 'copy the roles plugin with one agent changed (variant)';
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 const ROLE = /^[a-z][a-z-]*$/;
+export const MARKER_FILE = '.triqual-eval-variant';
 const FLAGS = ['role', 'out', 'model', 'effort', 'prompt'];
 
 const USAGE = [
@@ -20,7 +22,8 @@ const USAGE = [
   '  triqual eval variant --role <R> --out <dir> [--model <m>] [--effort <e>] [--prompt <file>]',
   '      Run from the repository root. Copies plugins/roles to <dir> and changes only agents/<R>.md: its `model:` and',
   '      `effort:` front matter lines (--effort is one of low, medium, high, xhigh, max) and, with --prompt, everything after',
-  '      the closing `---` line, replaced by the file. Prints the absolute <dir>. Exit 0, or 2 with nothing written.',
+  '      the closing `---` line, replaced by the file. Writes <dir>/.triqual-eval-variant, one line holding the absolute',
+  '      path of plugins/roles. Prints the absolute <dir>. Exit 0, or 2 with nothing written.',
   '  triqual eval variant --help',
   '',
 ].join('\n');
@@ -95,6 +98,7 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
   try {
     cpSync(src, dest, { recursive: true });
     writeFileSync(join(dest, 'agents', `${role}.md`), Buffer.from(next.text, 'latin1'));
+    writeFileSync(join(dest, MARKER_FILE), `${src}\n`);
   } catch (err) {
     rmSync(dest, { recursive: true, force: true });
     return refuse(`could not write the variant: ${err?.code ?? 'error'}`);

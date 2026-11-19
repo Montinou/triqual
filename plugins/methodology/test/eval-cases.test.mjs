@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync,
+  chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { CREDENTIAL_VARS, PAID_NOTE } from '../cli/lib/eval-auth.mjs';
 import { runSuite } from '../cli/lib/eval-skills.mjs';
@@ -33,7 +34,14 @@ const outIdx = argv.indexOf('--output-dir');
 const outDir = outIdx >= 0 ? argv[outIdx + 1] : null;
 const caseIdx = argv.indexOf('--case');
 const caseName = caseIdx >= 0 ? argv[caseIdx + 1] : null;
-appendFileSync(e.FAKE_LOG, JSON.stringify({ argv, outDir, cred: e.CLAUDE_CODE_OAUTH_TOKEN ?? null }) + '\\n');
+const readOr = (p) => { try { return readFileSync(p, 'utf8'); } catch { return null; } };
+appendFileSync(e.FAKE_LOG, JSON.stringify({
+  argv,
+  outDir,
+  cred: e.CLAUDE_CODE_OAUTH_TOKEN ?? null,
+  pluginJson: readOr(join(argv[2], '.claude-plugin', 'plugin.json')),
+  hasCases: readOr(join(argv[2], 'evals', 'cases', caseName ?? '', 'prompt.md')) !== null,
+}) + '\\n');
 const mode = e.FAKE_MODE || 'ok';
 if (outDir && mode !== 'no-aggregate') {
   mkdirSync(outDir, { recursive: true });
@@ -123,11 +131,12 @@ function listing(root) {
   return out.sort();
 }
 
-async function run(e, argv) {
+async function run(e, argv, { cwd } = {}) {
   let out = '';
   let err = '';
   const code = await main(argv, {
     env: e.env,
+    ...(cwd === undefined ? {} : { cwd }),
     stdout: { write: (s) => { out += s; } },
     stderr: { write: (s) => { err += s; } },
   });
@@ -160,12 +169,16 @@ test('runSuite: the new options append to the argv in order, the scaffold flags 
     await runSuite({ ...base, caseName: 'probe-case' });
     await runSuite({ ...base, runs: 2, caseName: 'probe-case', scaffold: true });
     await runSuite({ ...base, scaffold: true });
+    await runSuite({ ...base, trust: true });
+    await runSuite({ ...base, runs: 2, caseName: 'probe-case', trust: true, scaffold: true });
     const today = todayArgv('/work/example/plugin-a', outDir);
     assert.deepEqual(spawned[0].args, today);
     assert.deepEqual(spawned[1].args, [...today, '--runs', '3']);
     assert.deepEqual(spawned[2].args, [...today, '--case', 'probe-case']);
     assert.deepEqual(spawned[3].args, [...today, '--runs', '2', '--case', 'probe-case', '--scaffold', '--allow-tools', 'Bash', 'Write', 'Edit']);
     assert.deepEqual(spawned[4].args, [...today, '--scaffold', '--allow-tools', 'Bash', 'Write', 'Edit']);
+    assert.deepEqual(spawned[5].args, [...today, '--trust-plugin']);
+    assert.deepEqual(spawned[6].args, [...today, '--runs', '2', '--case', 'probe-case', '--trust-plugin', '--scaffold', '--allow-tools', 'Bash', 'Write', 'Edit']);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -419,5 +432,150 @@ test('--help exits 0 and says the scaffold runs the case author\'s bash as you',
       assert.match(r.out, /plugin directories you wrote/);
     }
     assert.equal(calls(e).length, 0);
+  } finally { rmSync(e.dir, { recursive: true, force: true }); }
+});
+
+// A plugin.json as the methodology plugin has it: one line, `dependencies` last.
+const PLUGIN_JSON = '{ "name": "example", "version": "1.0.0", "author": { "name": "x" }, "dependencies": ["a", "b"] }\n';
+const STAGED_JSON = '{ "name": "example", "version": "1.0.0", "author": { "name": "x" } }\n';
+
+function withPluginJson(e) {
+  mkdirSync(join(e.plugin, '.claude-plugin'), { recursive: true });
+  writeFileSync(join(e.plugin, '.claude-plugin', 'plugin.json'), PLUGIN_JSON);
+}
+
+const git = (cwd, ...args) => {
+  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+};
+
+const STAGED_LINE = (dir) => `triqual eval cases: staged ${dir} (own code: dependencies removed, --trust-plugin)\n`;
+
+test('a plugin directory inside the git repository of the cwd is staged: a copy without dependencies, --trust-plugin, removed afterwards', async () => {
+  const e = fixture();
+  try {
+    git(e.dir, 'init', '-q');
+    withPluginJson(e);
+    const r = await run(e, ['--case', 'probe-case', '--runs', '1', e.plugin], { cwd: e.dir });
+    assert.equal(r.code, 0, r.err);
+    const [c] = calls(e);
+    const copy = c.argv[2];
+    assert.notEqual(copy, e.plugin);
+    assert.equal(basename(copy), basename(e.plugin));
+    assert.equal(copy.startsWith(`${realpathSync(tmpdir())}/`) || copy.startsWith(`${tmpdir()}/`), true, copy);
+    assert.deepEqual(c.argv, [...todayArgv(copy, c.outDir), '--runs', '1', '--case', 'probe-case', '--trust-plugin']);
+    assert.equal(c.pluginJson, STAGED_JSON);
+    assert.equal(c.hasCases, true, 'the copy holds the case');
+    assert.equal(existsSync(dirname(copy)), false, 'the staged copy is gone after main returns');
+    assert.equal(readFileSync(join(e.plugin, '.claude-plugin', 'plugin.json'), 'utf8'), PLUGIN_JSON, 'the original is untouched');
+    assert.equal(r.err, STAGED_LINE(e.plugin));
+  } finally { rmSync(e.dir, { recursive: true, force: true }); }
+});
+
+test('a plugin directory outside any repository and with no marker runs as it is: no copy, no --trust-plugin', async () => {
+  const e = fixture();
+  const elsewhere = tmp();
+  try {
+    withPluginJson(e);
+    const r = await run(e, ['--case', 'probe-case', '--runs', '1', e.plugin], { cwd: elsewhere });
+    assert.equal(r.code, 0, r.err);
+    const [c] = calls(e);
+    assert.deepEqual(c.argv, [...todayArgv(e.plugin, c.outDir), '--runs', '1', '--case', 'probe-case']);
+    assert.equal(c.pluginJson, PLUGIN_JSON);
+    assert.equal(r.err, '');
+  } finally {
+    rmSync(e.dir, { recursive: true, force: true });
+    rmSync(elsewhere, { recursive: true, force: true });
+  }
+});
+
+test('a plugin directory outside the repository of the cwd is not own code', async () => {
+  const e = fixture();
+  const other = tmp();
+  try {
+    git(other, 'init', '-q');
+    withPluginJson(e);
+    const r = await run(e, ['--case', 'probe-case', '--runs', '1', e.plugin], { cwd: other });
+    const [c] = calls(e);
+    assert.equal(c.argv.includes('--trust-plugin'), false);
+    assert.equal(c.argv[2], e.plugin);
+    assert.equal(r.err, '');
+  } finally {
+    rmSync(e.dir, { recursive: true, force: true });
+    rmSync(other, { recursive: true, force: true });
+  }
+});
+
+test('a plugin directory with the .triqual-eval-variant marker is staged wherever it is', async () => {
+  const e = fixture();
+  const elsewhere = tmp();
+  try {
+    withPluginJson(e);
+    writeFileSync(join(e.plugin, '.triqual-eval-variant'), '/work/source/plugins/roles\n');
+    const r = await run(e, ['--case', 'probe-case', '--runs', '1', e.plugin], { cwd: elsewhere });
+    assert.equal(r.code, 0, r.err);
+    const [c] = calls(e);
+    assert.notEqual(c.argv[2], e.plugin);
+    assert.equal(c.argv.includes('--trust-plugin'), true);
+    assert.equal(c.pluginJson, STAGED_JSON);
+    assert.equal(existsSync(dirname(c.argv[2])), false);
+    assert.equal(r.err, STAGED_LINE(e.plugin));
+  } finally {
+    rmSync(e.dir, { recursive: true, force: true });
+    rmSync(elsewhere, { recursive: true, force: true });
+  }
+});
+
+test('staging leaves a plugin.json without dependencies, and a plugin without plugin.json, as they are', async () => {
+  const e = fixture();
+  const elsewhere = tmp();
+  try {
+    writeFileSync(join(e.plugin, '.triqual-eval-variant'), '/work/source\n');
+    mkdirSync(join(e.plugin, '.claude-plugin'), { recursive: true });
+    const plain = '{\n  "name": "example",\n  "version": "1.0.0"\n}\n';
+    writeFileSync(join(e.plugin, '.claude-plugin', 'plugin.json'), plain);
+    await run(e, ['--case', 'probe-case', '--runs', '1', e.plugin], { cwd: elsewhere });
+    assert.equal(calls(e)[0].pluginJson, plain);
+    rmSync(join(e.plugin, '.claude-plugin'), { recursive: true, force: true });
+    const r = await run(e, ['--case', 'second-case', '--runs', '1', e.plugin], { cwd: elsewhere });
+    assert.equal(calls(e)[1].pluginJson, null);
+    assert.equal(calls(e)[1].argv.includes('--trust-plugin'), true);
+    assert.match(r.err, /staged/);
+  } finally {
+    rmSync(e.dir, { recursive: true, force: true });
+    rmSync(elsewhere, { recursive: true, force: true });
+  }
+});
+
+test('dependencies are removed wherever the key sits, other bytes kept', async () => {
+  const e = fixture();
+  const elsewhere = tmp();
+  try {
+    writeFileSync(join(e.plugin, '.triqual-eval-variant'), '/work/source\n');
+    mkdirSync(join(e.plugin, '.claude-plugin'), { recursive: true });
+    const forms = [
+      ['{ "dependencies": ["a"], "name": "x" }\n', '{ "name": "x" }\n'],
+      ['{\n  "name": "x",\n  "dependencies": [\n    "a, \\"b\\" ]"\n  ],\n  "license": "MIT"\n}\n', '{\n  "name": "x",\n  "license": "MIT"\n}\n'],
+      ['{ "dependencies": ["a"] }', '{  }'],
+      ['{ "meta": { "dependencies": ["keep"] }, "name": "x" }', '{ "meta": { "dependencies": ["keep"] }, "name": "x" }'],
+    ];
+    for (const [i, [before, after]] of forms.entries()) {
+      writeFileSync(join(e.plugin, '.claude-plugin', 'plugin.json'), before);
+      await run(e, ['--case', 'probe-case', '--runs', '1', e.plugin], { cwd: elsewhere });
+      assert.equal(calls(e)[i].pluginJson, after, `form ${i}`);
+    }
+  } finally {
+    rmSync(e.dir, { recursive: true, force: true });
+    rmSync(elsewhere, { recursive: true, force: true });
+  }
+});
+
+test('--help says own code runs from a staged copy and other directories are never trusted', async () => {
+  const e = fixture();
+  try {
+    const r = await run(e, ['--help']);
+    assert.match(r.out, /inside this repository, or made by `eval variant`/);
+    assert.match(r.out, /staged copy with `dependencies` removed\s+and --trust-plugin/);
+    assert.match(r.out, /other directories are never trusted/);
   } finally { rmSync(e.dir, { recursive: true, force: true }); }
 });

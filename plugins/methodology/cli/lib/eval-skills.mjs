@@ -20,15 +20,17 @@ export class SuiteError extends Error {
 
 // Runs the suite of `pluginDir` into `outDir` and resolves the parsed aggregate result. The command exits non-zero when
 // a case fails or hits an API error, so the exit code is not read: the aggregate is. Never publishes (--no-publish: the
-// default publishes the HTML report to claude.ai), never trusts the plugin (--trust-plugin) and grades with JUDGE_MODEL.
+// default publishes the HTML report to claude.ai), does not trust the plugin unless `trust` is true (--trust-plugin; the caller
+// sets it only for a directory that is its own code) and grades with JUDGE_MODEL.
 // `runs` (--runs <n>) and `caseName` (--case <name>, one literal name: a repeated --case keeps only the last) narrow the suite;
 // `scaffold` runs the case author's bash and grants Bash, Write and Edit. The scaffold flags come last, because
-// --allow-tools is variadic. With the defaults the argv is the suite's own.
-export async function runSuite({ pluginDir, outDir, spawn = spawnCapture, env = process.env, caseName = null, runs = null, scaffold = false }) {
+// --allow-tools is variadic, so --trust-plugin goes before them. With the defaults the argv is the suite's own.
+export async function runSuite({ pluginDir, outDir, spawn = spawnCapture, env = process.env, caseName = null, runs = null, scaffold = false, trust = false }) {
   const bin = env.TRIQUAL_CLAUDE_BIN || 'claude';
   const args = ['plugin', 'eval', pluginDir, '--eval-dir', 'evals/cases', '--ablation', 'none', '--output-dir', outDir, '--no-publish', '--judge-model', JUDGE_MODEL];
   if (runs !== null) args.push('--runs', String(runs));
   if (caseName !== null) args.push('--case', caseName);
+  if (trust) args.push('--trust-plugin');
   if (scaffold) args.push('--scaffold', '--allow-tools', 'Bash', 'Write', 'Edit');
   const out = await spawn(bin, args, { env, timeoutMs: SUITE_TIMEOUT_MS });
   let aggregate;
