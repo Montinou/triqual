@@ -258,7 +258,7 @@ function validateArm(arm, path) {
   noUnknown(arm, ['role', 'experiment', 'arm', 'model', 'effort'], path);
   if (typeof arm.role !== 'string' || !ROLE_NAME.test(arm.role)) fail(join2(path, 'role'));
   for (const key of ['experiment', 'arm']) if (typeof arm[key] !== 'string' || !ARM_PART.test(arm[key])) fail(join2(path, key));
-  if (typeof arm.model !== 'string') fail(join2(path, 'model'));
+  model(arm, path);
   if (!EFFORTS.includes(arm.effort)) fail(join2(path, 'effort'));
 }
 

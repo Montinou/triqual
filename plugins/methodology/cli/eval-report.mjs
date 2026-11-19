@@ -144,10 +144,16 @@ export async function main(argv, {
           });
         } catch { /* storing is a convenience: a store that cannot be written never stops the report */ }
       };
-      const units = sessionUnits({
-        sessions, experiment: e, snapshot, judgments, home, platform, armRecords, onCode,
-        file: (s) => (typeof s.projectDir === 'string' ? join(root, s.projectDir, `${s.sessionId}.jsonl`) : null),
-      });
+      let units;
+      try {
+        units = sessionUnits({
+          sessions, experiment: e, snapshot, judgments, home, platform, armRecords, onCode,
+          file: (s) => (typeof s.projectDir === 'string' ? join(root, s.projectDir, `${s.sessionId}.jsonl`) : null),
+        });
+      } catch (err) {
+        // A check of the frozen snapshot that throws: only its error name is printed, never its message.
+        return fail(`${e.id}: a check of snapshot ${clip(e.evaluators)} could not be run (${err?.code ?? err?.name ?? 'error'})`);
+      }
       rows = buildRows(units, e);
     }
     // A role experiment that was started (it has evaluators, as a session experiment does), paused or not: its planner

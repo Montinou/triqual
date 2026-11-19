@@ -1,10 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { main } from '../cli/eval-experiments.mjs';
 import { main as evalMain } from '../cli/eval.mjs';
+import { validateExperiments } from '../cli/lib/eval-experiments.mjs';
 import { snapshot, usableSet } from '../cli/lib/eval-snapshot.mjs';
 import { loadJudgePrompt } from '../cli/lib/eval-judge.mjs';
 
@@ -270,5 +272,79 @@ test('snapshot throws on a corrupt validation.json instead of copying no entries
     writeFileSync(join(f.evals, 'validation.json'), '{ not json');
     assert.throws(() => snapshot(set, { evalsDir: f.evals, checksFile: f.checksFile, judgesDir: f.judgesDir }), /validation\.json: not JSON/);
     assert.equal(existsSync(join(f.evals, 'snapshots')), false);
+  } finally { cleanup(f); }
+});
+
+// Another process holds the experiments lock while it rewrites the file: `main` has already read the file by then, so
+// what it read before the lock is stale by the time it gets the lock.
+async function runWhileFileChanges(f, argv, change) {
+  const script = [
+    "const fs = require('node:fs');",
+    `const [lock, file, change] = ${JSON.stringify([`${f.file}.lock`, f.file, JSON.stringify(change)])};`,
+    "fs.closeSync(fs.openSync(lock, 'wx'));",
+    "process.stdout.write('locked\\n');",
+    'setTimeout(() => { fs.writeFileSync(file, JSON.stringify({ experiments: JSON.parse(change) })); fs.unlinkSync(lock); }, 400);',
+  ].join('\n');
+  const child = spawn(process.execPath, ['-e', script], { stdio: ['ignore', 'pipe', 'inherit'] });
+  await new Promise((resolve) => { child.stdout.once('data', resolve); });
+  const result = await run(f, argv);
+  await new Promise((resolve) => { child.on('close', resolve); });
+  return result;
+}
+
+const skillExp = (over = {}) => exp({ kind: 'skill', arms: { a: { skill: 's' }, b: { skill: 't' } }, ...over });
+
+test('stop finds the experiment by id again inside the lock', async () => {
+  const f = fixture({ experiments: [skillExp({ id: 'e1' }), skillExp({ id: 'e2' })] });
+  try {
+    // While the lock is held, e1 is removed: e2 moves from index 1 to index 0.
+    const r = await runWhileFileChanges(f, ['stop', 'e2'], [skillExp({ id: 'e2', status: 'active', evaluators: 'objective' })]);
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(saved(f).map((e) => [e.id, e.status]), [['e2', 'done']]);
+  } finally { cleanup(f); }
+});
+
+test('stop of an experiment that is gone once the lock is held is refused with exit 2 and writes nothing', async () => {
+  const f = fixture({ experiments: [skillExp({ id: 'e1' }), skillExp({ id: 'e2' })] });
+  try {
+    const gone = [skillExp({ id: 'e1' })];
+    const r = await runWhileFileChanges(f, ['stop', 'e2'], gone);
+    assert.equal(r.code, 2, r.err);
+    assert.match(r.err, /no experiment e2/);
+    assert.deepEqual(saved(f), gone, 'no hole or stray entry is written');
+  } finally { cleanup(f); }
+});
+
+test('start re-validates inside the lock: an experiment that became active meanwhile refuses the start', async () => {
+  const f = fixture({ experiments: [skillExp({ id: 'e1' }), skillExp({ id: 'e2' })] });
+  try {
+    const raced = [skillExp({ id: 'e1', status: 'active', evaluators: 'objective' }), skillExp({ id: 'e2' })];
+    const r = await runWhileFileChanges(f, ['start', 'e2'], raced);
+    assert.equal(r.code, 2, r.err);
+    assert.match(r.err, /another experiment is already active/);
+    assert.deepEqual(saved(f), raced, 'the file keeps one active experiment');
+    assert.equal(validateExperiments(saved(f)).ok, true);
+  } finally { cleanup(f); }
+});
+
+test('start of the experiment that became active meanwhile is refused as already active', async () => {
+  const f = fixture({ experiments: [skillExp({ id: 'e1' })] });
+  try {
+    const raced = [skillExp({ id: 'e1', status: 'active', start: '2026-11-16', evaluators: 'objective' })];
+    const r = await runWhileFileChanges(f, ['start', 'e1'], raced);
+    assert.equal(r.code, 2, r.err);
+    assert.match(r.err, /is already active/);
+    assert.deepEqual(saved(f), raced, 'start day and evaluators are not overwritten');
+  } finally { cleanup(f); }
+});
+
+test('start of an experiment that is gone once the lock is held is refused with exit 2', async () => {
+  const f = fixture({ experiments: [skillExp({ id: 'e1' }), skillExp({ id: 'e2' })] });
+  try {
+    const gone = [skillExp({ id: 'e1' })];
+    const r = await runWhileFileChanges(f, ['start', 'e2'], gone);
+    assert.equal(r.code, 2, r.err);
+    assert.match(r.err, /no experiment e2/);
+    assert.deepEqual(saved(f), gone);
   } finally { cleanup(f); }
 });

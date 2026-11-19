@@ -609,6 +609,30 @@ test('record accepts a plan-review file and stamps plan from --plan, overwriting
   assert.equal(lines(w.file).length, 1);
 }));
 
+test('a --plan whose base name is not a plan name is refused the same way for every stamped kind, and nothing is stored', () => withWorld((w) => {
+  const opts = { env: envFor(w), cwd: w.repo };
+  const records = {
+    'task-review': taskReviewRecord(), 'final-escapes': escapesRecord(), escape: escapeRecord(), 'plan-review': planReviewRecord(),
+  };
+  for (const plan of ['docs/plans/bad plan.md', 'docs/plans/-p.md', `docs/plans/${'x'.repeat(129)}.md`]) {
+    const results = Object.entries(records).map(([kind, rec]) => {
+      const res = run(['record', '--plan', plan, writeInput(w, rec, `${kind}.json`)], opts);
+      return [kind, res.code, res.err];
+    });
+    for (const [kind, code, err] of results) {
+      assert.equal(code, 2, `${kind} with ${plan}`);
+      assert.match(err, /invalid record: field plan\b/, `${kind} with ${plan}`);
+    }
+    assert.deepEqual(new Set(results.map(([, , err]) => err)).size, 1, 'one message for all four kinds');
+  }
+  assert.ok(!existsSync(w.file), 'nothing is stored');
+  // The same plan name is fine once it is a plan name.
+  for (const [kind, rec] of Object.entries(records)) {
+    assert.equal(run(['record', '--plan', 'docs/plans/good-plan.md', writeInput(w, rec, `${kind}.json`)], opts).code, 0, kind);
+  }
+  assert.ok(lines(w.file).every((l) => JSON.parse(l).plan === 'good-plan.md'), 'every stamped record carries --plan\'s base name');
+}));
+
 test('record: --help and the usage text name the plan-review kind', () => withWorld((w) => {
   const res = run(['--help'], { env: envFor(w), cwd: w.repo });
   assert.match(res.out, /plan-review/);
