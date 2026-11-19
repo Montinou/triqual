@@ -1,0 +1,123 @@
+#!/usr/bin/env node
+// Repository-wide test ownership. Ambiguous records fail closed; elapsed age never grants ownership.
+import { execFileSync, spawn } from 'node:child_process';
+import { readFileSync, writeFileSync, mkdirSync, rmdirSync, unlinkSync, renameSync } from 'node:fs';
+import { resolve, join } from 'node:path';
+import { hostname, constants } from 'node:os';
+import { randomUUID } from 'node:crypto';
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+// A wait past the timeout before the command starts: exit 75, so 75 always means the lock.
+class Busy extends Error {}
+const nonce = randomUUID();
+function identity(pid) {
+  try {
+    const value = execFileSync('ps', ['-p', String(pid), '-o', 'lstart=', '-o', 'stat='], { encoding: 'utf8' }).trim();
+    if (!value) return null;
+    return { pid, start: value.replace(/\s+\S+$/, ''), zombie: /\sZ\S*$/.test(value) };
+  } catch (error) { if (error.status === 1) return null; throw error; }
+}
+function alive(owner) {
+  if (!owner || !Number.isInteger(owner.pid) || typeof owner.start !== 'string') throw Error('ambiguous test lock identity');
+  const current = identity(owner.pid);
+  return current !== null && !current.zombie && current.start === owner.start;
+}
+// An inherited marker is advisory: only a real descendant of the recorded live owner may reuse it.
+function descendant(owner) {
+  if (!owner || !alive(owner)) return false;
+  let pid = process.ppid;
+  const seen = new Set();
+  while (pid > 1 && !seen.has(pid)) {
+    if (pid === owner.pid) return true;
+    seen.add(pid);
+    try { pid = Number(execFileSync('ps', ['-p', String(pid), '-o', 'ppid='], { encoding: 'utf8' }).trim()); }
+    catch (error) { if (error.status === 1) return false; throw error; }
+  }
+  return false;
+}
+const timeout = Number(process.env.TRIQUAL_TEST_LOCK_TIMEOUT_MS || 300000);
+let lock, guard;
+function read() { try { return JSON.parse(readFileSync(lock, 'utf8')); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } }
+// All publication, recovery and release mutations use this guard. A crashed guard is deliberately not stolen.
+async function mutate(fn, deadline, busy = false) {
+  for (;;) {
+    try { mkdirSync(guard); break; } catch (e) { if (e.code !== 'EEXIST') throw e; }
+    if (Date.now() >= deadline) throw busy ? new Busy('test lock mutation timeout') : Error('test lock mutation timeout');
+    await sleep(20);
+  }
+  try { return fn(); } finally { rmdirSync(guard); }
+}
+function publish(value) {
+  const draft = `${lock}.${nonce}`;
+  writeFileSync(draft, JSON.stringify(value), { flag: 'wx', mode: 0o600 });
+  renameSync(draft, lock);
+}
+try {
+  const args = process.argv.slice(2);
+  if (args.shift() !== '--' || !args.length) throw Error('usage: node test-lock -- COMMAND ARG...');
+  if (!Number.isSafeInteger(timeout) || timeout <= 0) throw Error('invalid TRIQUAL_TEST_LOCK_TIMEOUT_MS');
+  const common = execFileSync('git', ['rev-parse', '--git-common-dir'], { encoding: 'utf8' }).trim();
+  lock = join(resolve(common), 'triqual-test.lock'); guard = `${lock}.guard`;
+  const deadline = Date.now() + timeout;
+  const owner = { nonce, host: hostname(), parent: identity(process.pid), state: 'starting' };
+  let inherited = null;
+  for (;;) {
+    const acquired = await mutate(() => {
+      const old = read();
+      if (old && old.host === hostname() && process.env.TRIQUAL_TEST_LOCK_OWNER === `${lock}:${old.nonce}` && descendant(old.child || old.parent)) {
+        inherited = old.nonce; return true;
+      }
+      if (old) {
+        if (old.host !== hostname() || !old.nonce) return false;
+        if (alive(old.parent)) return false;
+        // Starting includes the spawn/publication window: child existence cannot be disproved.
+        if (old.state !== 'running' || (old.child && alive(old.child))) return false;
+      }
+      publish(owner); return true;
+    }, deadline, true);
+    if (acquired) break;
+    if (Date.now() >= deadline) throw new Busy(`test lock timeout: ${lock}`);
+    await sleep(20);
+  }
+  let child, interrupted, escalation;
+  const cancellationGraceMs = 1000;
+  const forward = signal => {
+    interrupted ||= signal;
+    process.exitCode = 128 + constants.signals[interrupted];
+    if (!child || child.exitCode !== null || child.signalCode !== null) return;
+    child.kill(signal);
+    // kill() sends a signal, not proof of termination. Keep ownership until close.
+    escalation ||= setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    }, cancellationGraceMs);
+  };
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, () => forward(signal));
+  try {
+    child = spawn(args[0], args.slice(1), { stdio: 'inherit', env: { ...process.env, TRIQUAL_TEST_LOCK_OWNER: `${lock}:${inherited || nonce}` } });
+    // Install completion listeners before any process inspection can observe an early exit.
+    const finished = new Promise(resolve => {
+      child.once('error', error => resolve({ error }));
+      child.once('close', (code, signal) => resolve({ code, signal }));
+    });
+    if (!inherited) await mutate(() => {
+      if (read()?.nonce !== nonce) throw Error('test lock ownership changed');
+      owner.child = child.pid ? identity(child.pid) : null;
+      owner.state = 'running'; publish(owner);
+    }, Date.now() + timeout);
+    if (interrupted) forward(interrupted);
+    const result = await finished;
+    if (result.error) console.error(result.error.message);
+    // The child's own 75 is reported as 1.
+    const code = result.code === 75 ? 1 : result.code;
+    process.exitCode = interrupted ? 128 + constants.signals[interrupted]
+      : code ?? (result.signal ? 128 + (constants.signals[result.signal] || 1) : 1);
+  } finally {
+    clearTimeout(escalation);
+    // Never release on an exception while a launched child may still execute.
+    if (!inherited && (!child || child.exitCode !== null || child.signalCode !== null || !child.pid)) {
+      await mutate(() => { if (read()?.nonce === nonce) unlinkSync(lock); }, Date.now() + timeout);
+    }
+  }
+} catch (error) {
+  if (error instanceof Busy) { console.error(`test lock busy: ${lock}`); process.exitCode = 75; }
+  else { console.error(error.message); process.exitCode = 1; }
+}
