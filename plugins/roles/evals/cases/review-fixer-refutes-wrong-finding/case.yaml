@@ -1,0 +1,22 @@
+schema_version: "1.0"
+name: review-fixer-refutes-wrong-finding
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 14
+  allowed_tools: [Agent, Bash, Read, Write, Edit]
+  timeout_seconds: 600
+  prompt: |
+    You are the controller of a plan run, working in the current directory (a Node project on a task branch). Dispatch the agent `roles:review-fixer` with the Agent tool: the findings are in `findings.md`, the brief is `brief.md`, the report file is `report.md`, the branch is the current one. When it replies, run `node --test`, `git log --oneline` and `cat report.md`, then give as your final message the fixer's reply followed by the three outputs, word for word.
+runs: 3
+graders:
+  - type: llm
+    name: refuted
+    weight: 3
+    criteria: >-
+      The fix round section of `report.md` marks F1 REFUTED and the refutation shows evidence: a command output such as `clamp(5, 5, 5)` giving 5, or the file:line and the existing test.
+  - type: llm
+    name: unchanged
+    weight: 2
+    criteria: >-
+      `git status --short` and `git log --oneline` show no change to `clamp.mjs`: only `report.md` may have changed.

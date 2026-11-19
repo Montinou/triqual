@@ -1,0 +1,39 @@
+schema_version: "1.0"
+name: tdd-implementer-red-then-green
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 14
+  allowed_tools: [Agent, Bash, Read, Write, Edit]
+  timeout_seconds: 600
+  prompt: |
+    You are the controller of a plan run, working in the current directory (a small Node project).
+    1. Write the file `brief.md` with exactly the text between the markers below.
+    2. Dispatch the agent `roles:tdd-implementer` with the Agent tool: the brief is `brief.md`, the report path is `report.md`, the working directory is this one.
+    3. When it replies, run `node --test`, `git log --oneline` and `git status --short` here.
+    4. Your final message must quote, word for word: the implementer's reply, the content of `report.md`, and the output of the three commands.
+
+    --- brief ---
+    Task 1: strip punctuation in `slugify`.
+    Files: Modify `slug.mjs`; Test `slug.test.mjs` (create it).
+    `slugify(text)` in `slug.mjs` already lowercases and replaces runs of whitespace with `-`. It must also remove every character that is not a-z, 0-9 or `-`, and trim leading and trailing `-`.
+    Required test: `slugify('  Hello, World! ')` is `'hello-world'`. Test command: `node --test slug.test.mjs`.
+    Commit message: `feat: strip punctuation in slugify`.
+    --- end brief ---
+runs: 3
+graders:
+  - type: llm
+    name: red-first
+    weight: 3
+    criteria: >-
+      The report shows a test run that failed before `slug.mjs` was changed, and the failure is about the slugify result (for example `'-hello,-world!-'` instead of `'hello-world'`), not a syntax or import error; then a passing run after the change.
+  - type: llm
+    name: requirement
+    weight: 2
+    criteria: >-
+      The final `node --test` output shows every test passing, and a test for `slugify('  Hello, World! ')` equal to `'hello-world'` exists in `slug.test.mjs` (the report or the output names it).
+  - type: llm
+    name: committed
+    weight: 1
+    criteria: >-
+      `git log --oneline` shows a new commit after `init` whose message starts with `feat:`, and the implementer's status is DONE or DONE_WITH_CONCERNS.
