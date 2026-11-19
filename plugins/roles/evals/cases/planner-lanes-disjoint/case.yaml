@@ -1,0 +1,27 @@
+schema_version: "1.0"
+name: planner-lanes-disjoint
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 10
+  timeout_seconds: 900
+  allowed_tools: [Agent, Bash, Read, Write]
+  prompt: |
+    You are the controller of a plan run, working in the current directory (an empty project with only `spec.md`). Dispatch the agent `roles:planner` with the spec path `spec.md`, the repository (this directory) and the draft path `draft.md`. When it replies, run `cat draft.md`, then give as your final message the planner's reply followed by the draft, word for word.
+runs: 3
+graders:
+  - type: llm
+    name: lanes
+    weight: 3
+    criteria: >-
+      The draft puts the CSV export and the JSON export in two different lanes of one phase (`**Lane:** A` and `**Lane:** B`) and has a closing task that depends on both.
+  - type: llm
+    name: disjoint
+    weight: 3
+    criteria: >-
+      No file path appears in the Files of two different lanes.
+  - type: llm
+    name: tests
+    weight: 1
+    criteria: >-
+      Each of the two lane tasks names exactly one `Test:` file ending in `.mjs`.
