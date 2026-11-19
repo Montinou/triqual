@@ -5,7 +5,7 @@
 // store mode, with TRIQUAL_TRACKING_DB pointing into the temp dir.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, join } from 'node:path';
@@ -2223,19 +2223,169 @@ test('a landing whose Test files outlive the timeout is a failure and is undone'
   const tip = r.head();
   wtOpen(r, 1);
   wtReview(r, 1, { test: "import { test } from 'node:test';\ntest('slow', async () => { await new Promise((done) => setTimeout(done, 6000)); });\n" });
-  const bad = closeWithEnv(r, 1, { TRIQUAL_LANDING_TEST_TIMEOUT_MS: 'soon' });
+  const bad = closeWithEnv(r, 1, { TRIQUAL_LANDING_TEST_TIMEOUT_MS: 'soon', TRIQUAL_TEST_LOCK_TIMEOUT_MS: '1000' });
   assert.equal(bad.status, 2, `${bad.stdout}\n${bad.stderr}`);
   assert.match(bad.stderr, /TRIQUAL_LANDING_TEST_TIMEOUT_MS/);
   assert.deepEqual(landedOf(r, 1), [], 'a bad timeout setting must be refused before the landing');
   assert.equal(r.head(), tip);
 
-  const res = closeWithEnv(r, 1, { TRIQUAL_LANDING_TEST_TIMEOUT_MS: '1500' });
+  // The exec timeout is the landing timeout plus the lock wait (1500 + 1000), below the 6 s test file.
+  const res = closeWithEnv(r, 1, { TRIQUAL_LANDING_TEST_TIMEOUT_MS: '1500', TRIQUAL_TEST_LOCK_TIMEOUT_MS: '1000' });
   assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
-  assert.match(res.stderr, /did not finish in 1500 ms/);
+  assert.match(res.stderr, /did not finish in 2500 ms/);
   assert.equal(r.head(), tip);
   assert.deepEqual(r.ledger().slice(-3, -1), [`BASE: T1 ${tip}`, 'Task 1: landing conflict — re-run sequential']);
   assert.equal(r.taskState(1).status, 'in_progress');
   noComplete(r);
+}));
+
+// ---- the landing runs through the test lock ----
+
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+// Poll for something a child writes: a bounded deadline, never a fixed wait or an immediate read.
+const until = async (fn, what) => {
+  const end = Date.now() + 120000;
+  while (!fn()) {
+    if (Date.now() >= end) throw new Error(`${what}: timeout`);
+    await sleep(25);
+  }
+};
+// A test run that holds the repository's test lock, as a landing's neighbour would: `test-lock -- node -e <hold>` in the rig's
+// repository, ready once it has written its marker, over once `release()` has written the release file and it has exited.
+const holdLock = async (r) => {
+  const marker = join(r.root, 'hold-ready');
+  const releaseFile = join(r.root, 'hold-release');
+  const code = `require('fs').writeFileSync(${JSON.stringify(marker)}, 'ready'); const t = setInterval(() => { if (require('fs').existsSync(${JSON.stringify(releaseFile)})) clearInterval(t); }, 10);`;
+  const child = spawn(process.execPath, [join(SCRIPTS, 'test-lock'), '--', process.execPath, '-e', code], { cwd: r.dir, env: { ...r.env, TRIQUAL_TEST_LOCK_TIMEOUT_MS: '60000' }, stdio: 'ignore' });
+  const closed = new Promise((done) => child.on('close', done));
+  let released;
+  try {
+    await until(() => existsSync(marker), 'the lock holder did not start');
+  } catch (e) {
+    child.kill('SIGKILL');
+    throw e;
+  }
+  return { releasedAt: () => released, release: async () => { released ??= Date.now(); writeFileSync(releaseFile, ''); await closed; } };
+};
+const withRigAsync = async (opts, fn) => {
+  const r = rig(opts);
+  try {
+    return await fn(r);
+  } finally {
+    r.cleanup();
+  }
+};
+// task-close in the background, its output collected.
+const closeAsync = (r, n, extraEnv) => {
+  const child = spawn(process.execPath, [join(SCRIPTS, 'task-close'), r.plan, String(n)], { cwd: r.dir, env: { ...r.env, ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (b) => { stdout += b; });
+  child.stderr.on('data', (b) => { stderr += b; });
+  const result = new Promise((done) => child.on('close', (status) => done({ status, stdout, stderr })));
+  return { child, result };
+};
+
+test('a landing waits for a held test lock, then tests and closes', () => withRigAsync({ planText: WT_PLAN }, async (r) => {
+  startStack(r);
+  wtOpen(r, 1);
+  // The Test file stamps the time it runs: a landing that tested while the lock was held would stamp before the release.
+  const stamp = join(r.root, 'test-ran-at');
+  wtReview(r, 1, { test: `import { writeFileSync } from 'node:fs';\nimport { test } from 'node:test';\ntest('stamp', () => { writeFileSync(${JSON.stringify(stamp)}, String(Date.now())); });\n` });
+  const lock = await holdLock(r);
+  let closing;
+  try {
+    closing = closeAsync(r, 1, { TRIQUAL_TEST_LOCK_TIMEOUT_MS: '120000' });
+    await until(() => landedOf(r, 1).length === 1, 'the Landed line did not appear');
+    await sleep(2000);
+    assert.deepEqual(testedOf(r, 1), [], 'the Test files ran while the lock was held');
+    assert.equal(existsSync(stamp), false, 'the Test files ran while the lock was held');
+    noComplete(r);
+  } finally {
+    await lock.release();
+  }
+  const res = await closing.result;
+  assert.equal(res.status, 0, `${res.stdout}\n${res.stderr}`);
+  assert.ok(Number(readFileSync(stamp, 'utf8')) >= lock.releasedAt(), 'the Test files ran before the lock was released');
+  assert.deepEqual(testedOf(r, 1), landedOf(r, 1));
+  assert.equal(r.ledger().filter((l) => l.startsWith('Task 1: complete')).length, 1);
+  assert.equal(r.taskState(1).status, 'done');
+}));
+
+test('a busy lock leaves Landed without Tested, undoes nothing and exits 1', () => withRigAsync({ planText: WT_PLAN }, async (r) => {
+  startStack(r);
+  const tip = r.head();
+  wtOpen(r, 1);
+  wtReview(r, 1);
+  const lock = await holdLock(r);
+  try {
+    const res = closeWithEnv(r, 1, { TRIQUAL_TEST_LOCK_TIMEOUT_MS: '300' });
+    assert.equal(res.status, 1, `${res.stdout}\n${res.stderr}`);
+    assert.match(res.stderr, /^test lock busy: /);
+    assert.match(r.ledger().at(-1), /^Error: task-close T1 — exit 1 — test lock busy/);
+    const [landed] = landedOf(r, 1);
+    assert.equal(landedOf(r, 1).length, 1);
+    assert.deepEqual(testedOf(r, 1), []);
+    assert.equal(r.ledger().filter((l) => l.startsWith('BASE: T1 ') && l !== `BASE: T1 ${tip}`).length, 0, 'a BASE line of an undo');
+    assert.equal(r.ledger().filter((l) => l.includes('landing conflict')).length, 0, 'the landing was undone');
+    assert.equal(r.head(), landed);
+    assert.ok(existsSync(wtPath(r, 1)), 'the task worktree was removed');
+    assert.notEqual(wtBranches(r), '', 'the task branch was removed');
+    assert.equal(r.taskState(1).status, 'in_review');
+    noComplete(r);
+  } finally {
+    await lock.release();
+  }
+}));
+
+test('after a busy exit another task is refused until the rerun, which tests and closes', () => withRigAsync({ planText: WT_PLAN }, async (r) => {
+  startStack(r);
+  wtOpen(r, 1);
+  wtReview(r, 1);
+  wtOpen(r, 2);
+  wtReview(r, 2);
+  const lock = await holdLock(r);
+  try {
+    const busy = closeWithEnv(r, 1, { TRIQUAL_TEST_LOCK_TIMEOUT_MS: '300' });
+    assert.equal(busy.status, 1, `${busy.stdout}\n${busy.stderr}`);
+    const refused = closeOf(r, 2);
+    assert.equal(refused.status, 3, `${refused.stdout}\n${refused.stderr}`);
+    assert.match(refused.stderr, /T2 cannot land while the landing of T1/);
+    assert.deepEqual(landedOf(r, 2), []);
+  } finally {
+    await lock.release();
+  }
+  const [landed] = landedOf(r, 1);
+  ok(closeOf(r, 1));
+  assert.deepEqual(testedOf(r, 1), [landed]);
+  assert.equal(r.ledger().filter((l) => l.startsWith('Task 1: complete')).length, 1);
+  ok(closeOf(r, 2));
+  assert.equal(r.ledger().filter((l) => l.startsWith('Task 2: complete')).length, 1);
+}));
+
+test('a Landing test that itself exits 75 is undone as a failure, not read as a busy lock', () => withRig({ planText: WT_PLAN.replace('# Worktree plan\n', '# Worktree plan\n\n**Landing test:** `exit 75 # {files}`\n') }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  wtOpen(r, 1);
+  wtReview(r, 1);
+  const res = closeOf(r, 1);
+  assert.equal(res.status, 3, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /the Landing test exited 1/);
+  assert.equal(r.head(), tip);
+  assert.deepEqual(r.ledger().slice(-3, -1), [`BASE: T1 ${tip}`, 'Task 1: landing conflict — re-run sequential']);
+  noComplete(r);
+}));
+
+test('an invalid TRIQUAL_TEST_LOCK_TIMEOUT_MS is refused with exit 2 before anything lands', () => withRig({ planText: WT_PLAN }, (r) => {
+  startStack(r);
+  const tip = r.head();
+  wtOpen(r, 1);
+  wtReview(r, 1);
+  const res = closeWithEnv(r, 1, { TRIQUAL_TEST_LOCK_TIMEOUT_MS: 'soon' });
+  assert.equal(res.status, 2, `${res.stdout}\n${res.stderr}`);
+  assert.match(res.stderr, /TRIQUAL_TEST_LOCK_TIMEOUT_MS must be a positive number of milliseconds, not soon/);
+  assert.deepEqual(landedOf(r, 1), []);
+  assert.equal(r.head(), tip);
 }));
 
 test('the reviewer outputs of an undone worktree attempt are not counted for the sequential re-run', () => withRig({ planText: WT_PLAN }, (r) => {
