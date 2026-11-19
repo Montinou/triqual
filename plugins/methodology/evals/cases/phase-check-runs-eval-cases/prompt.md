@@ -12,4 +12,4 @@ The plan `evals-demo` has two phases. Phase 2 is built and its last task is clos
 - T7 modifies `src/a.mjs`; `Test: test/a.test.mjs`, no `**Eval:**` line.
 Phase 3 has two tasks, T8 and T9, that modify only `src/b.mjs` and `src/c.mjs` and have `Test:` files.
 
-State, for phase 2 and then for phase 3, every command you run once the phase's last task is closed, in order, and the ledger line you write for each.
+State, for phase 2 and then for phase 3, every command you run once the phase's last task is closed, in order, and the ledger line you write for each. For phase 2, also say what you do when one of its cases fails.
