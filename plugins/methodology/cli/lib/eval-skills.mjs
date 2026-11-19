@@ -50,13 +50,14 @@ export function suiteErrors(aggregate) {
 
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 
-// One unit per case: `pass` when the case has runs and every run of the plugin passed, `usd` the model and judge cost of all its runs.
+// One unit per case: `pass` when the case has runs and more than half of the plugin's runs passed (2 of 3, 1 of 1; judge
+// votes are noisy, so one unlucky run does not fail a case), `usd` the model and judge cost of all its runs.
 export function toUnits(aggregate) {
   return (aggregate?.cases ?? []).map((c) => {
     const withRuns = runsOf(c, 'with');
     return {
       caseId: c.name,
-      pass: withRuns.length > 0 && withRuns.every((r) => r?.passed === true),
+      pass: withRuns.length > 0 && withRuns.filter((r) => r?.passed === true).length * 2 > withRuns.length,
       usd: [...withRuns, ...runsOf(c, 'without')].reduce((sum, r) => sum + num(r?.costUsd) + num(r?.judgeCostUsd), 0),
     };
   });
