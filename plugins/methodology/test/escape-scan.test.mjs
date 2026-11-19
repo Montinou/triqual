@@ -329,3 +329,60 @@ test('a revert of commits of two plans keeps one record per task', () => {
     assert.deepEqual(escapesOf(w).toSorted(), [['revert', revert, 'a-plan.md', 'T1'], ['revert', revert, 'b-plan.md', 'T1']]);
   }, { build: twoPlanWorld(shas, { first: ['x.txt'], second: ['y.txt'] }) });
 });
+
+test('a tie on everything but the task id goes to the lowest number (T2 before T10)', () => withWorld((w) => {
+  const snapshot = JSON.parse(readFileSync(join(w.root, 'tasks.json'), 'utf8'));
+  const task = (id) => ({ id, title: id, status: 'done', since: DONE_AT, effectiveTier: 'heavy', tier: 'heavy', commits: [w.taskSha] });
+  snapshot[0].plans[0].tasks = [task('T10'), task('T2')];
+  writeFileSync(join(w.root, 'tasks.json'), JSON.stringify(snapshot));
+  const fix = commitFiles(w.repo, ['x.txt'], 'fix(parser): handle the empty input', day(3));
+  assert.equal(run(['escapes', 'scan'], { env: w.env, cwd: w.repo }).out, '1 new\n');
+  assert.deepEqual(escapesOf(w), [['post-merge-fix', fix, 'demo-plan.md', 'T2']]);
+}, { build: (repo) => commitFiles(repo, ['x.txt'], 'feat: shared work', T0) }));
+
+// T1 ships in merge M1, then T2 and a review fix of T1's file ship together in merge M2.
+const reviewFixWorld = (shas) => (repo) => {
+  commit(repo, 'base.txt', 'chore: base', day(-1));
+  git(repo, ['checkout', '-q', '-b', 'p1']);
+  shas.t1 = commit(repo, 'a.txt', 'feat: the parser', T0);
+  git(repo, ['checkout', '-q', 'main']);
+  git(repo, ['merge', '--no-ff', '-q', '-m', 'merge: phase 1', 'p1'], day(0.3));
+  git(repo, ['checkout', '-q', '-b', 'p2']);
+  shas.t2 = commit(repo, 'b.txt', 'feat: the printer', day(0.4));
+  shas.fix = commit(repo, 'a.txt', 'fix(parser): phase 2 review round 1', day(0.5));
+  git(repo, ['checkout', '-q', 'main']);
+  git(repo, ['merge', '--no-ff', '-q', '-m', 'merge: phase 2', 'p2'], day(0.6));
+  return shas.t1;
+};
+
+test('a fix that ships with another task of the same plan is part of that plan\'s delivery, not an escape', () => {
+  const shas = {};
+  return withWorld((w) => {
+    const snapshot = JSON.parse(readFileSync(join(w.root, 'tasks.json'), 'utf8'));
+    snapshot[0].plans[0].tasks.push({
+      id: 'T2', title: 'printer', status: 'done', since: DONE_AT, effectiveTier: 'heavy', tier: 'heavy', commits: [shas.t2],
+    });
+    snapshot[0].plans[0].total = 2;
+    snapshot[0].plans[0].done = 2;
+    writeFileSync(join(w.root, 'tasks.json'), JSON.stringify(snapshot));
+    const r = run(['escapes', 'scan'], { env: w.env, cwd: w.repo });
+    assert.equal(r.code, 0, r.err);
+    assert.equal(r.out, '0 new\n');
+    assert.deepEqual(stored(w.store), []);
+  }, { build: reviewFixWorld(shas) });
+});
+
+test('that same fix is still an escape of another plan\'s task that shipped before it', () => {
+  const shas = {};
+  return withWorld((w) => {
+    const snapshot = JSON.parse(readFileSync(join(w.root, 'tasks.json'), 'utf8'));
+    const task = (id, sha) => ({ id, title: id, status: 'done', since: DONE_AT, effectiveTier: 'heavy', tier: 'heavy', commits: [sha] });
+    snapshot[0].plans = [
+      { name: 'demo-plan', state: 'done', done: 2, total: 2, tasks: [task('T1', shas.t1), task('T2', shas.t2)] },
+      { name: 'z-plan', state: 'done', done: 1, total: 1, tasks: [task('T1', shas.t1)] },
+    ];
+    writeFileSync(join(w.root, 'tasks.json'), JSON.stringify(snapshot));
+    assert.equal(run(['escapes', 'scan'], { env: w.env, cwd: w.repo }).out, '1 new\n');
+    assert.deepEqual(escapesOf(w), [['post-merge-fix', shas.fix, 'z-plan.md', 'T1']]);
+  }, { build: reviewFixWorld(shas) });
+});

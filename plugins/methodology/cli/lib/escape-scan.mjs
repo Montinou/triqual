@@ -4,7 +4,9 @@
 // (plan, ref), and never reads or returns message text: only shas, dates, plan and task names. Two rules keep a release
 // from counting as an escape of every task it touches: shared release files (SHARED_FILES: CHANGELOG.md, README.md, the
 // manifests) never count for the file overlap, and a fix commit yields one record across all plans, assigned to the task
-// with the most overlapping files (a tie goes to the latest ship point, then to the first plan name and task id).
+// with the most overlapping files (a tie goes to the latest ship point, then to the first plan name and task id, ids
+// compared by number). A fix that ships at the same point as any task of a plan (a review round merged with that task's
+// phase) is part of that plan's delivery, not an escape of its tasks; it can still be one of another plan's.
 //
 // Per done task (a plan snapshot of `triqual tasks export --json`: tasks with `status`, `since` as epoch ms and
 // `commits`), its files are the union of `git show --name-only` over its commits. An escape is a defect found after the
@@ -33,6 +35,7 @@ const RECORD = '\x1e';
 const SHARED_FILES = new Set(['CHANGELOG.md', 'README.md', 'plugin.json', 'marketplace.json', 'package.json', 'package-lock.json']);
 const isShared = (file) => SHARED_FILES.has(file.slice(file.lastIndexOf('/') + 1));
 const byName = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+const byId = (a, b) => String(a).localeCompare(String(b), 'en', { numeric: true }); // T2 before T10
 
 // The default branch: origin's HEAD when set, else main or master when one exists, else the current branch.
 export function defaultBranch(git, repo) {
@@ -134,10 +137,21 @@ export function scanEscapes({ repo, plans, git, gh, since, days = 14 }) {
     if (!fileCache.has(sha)) fileCache.set(sha, filesOf(git, repo, sha));
     return fileCache.get(sha);
   };
+  const shipCache = new Map(); // sha -> where it reached the default branch (sha of that commit) or null
+  const shipOf = (sha) => {
+    if (!shipCache.has(sha)) shipCache.set(sha, shippedAt(git, repo, sha, line));
+    return shipCache.get(sha);
+  };
   const ownFiles = (sha) => files(sha).filter((f) => !isShared(f)); // without the shared release files
   const fixes = new Map(); // fix sha -> every (plan, task) candidate for it: { plan, task, at, overlap, opens, stamp }
 
   for (const plan of plans) {
+    // Where each task of the plan shipped: a fix that ships at one of these points is part of the plan's delivery.
+    const planShips = new Set((plan.tasks ?? []).map((t) => {
+      const ships = (Array.isArray(t.commits) ? t.commits : []).filter((c) => typeof c === 'string' && /^[0-9a-f]{7,40}$/.test(c))
+        .map(shipOf).filter((m) => m !== null && dateOf.has(m));
+      return ships.length === 0 ? null : ships.reduce((a, b) => (dateOf.get(b) > dateOf.get(a) ? b : a));
+    }).filter((m) => m !== null));
     // Every commit of every task of the plan: a fix that is another task's work is planned, not an escape.
     const planCommits = new Set((plan.tasks ?? []).flatMap((t) => (Array.isArray(t.commits) ? t.commits : [])).filter((c) => typeof c === 'string' && /^[0-9a-f]{7,40}$/.test(c)));
     for (const task of plan.tasks ?? []) {
@@ -147,7 +161,7 @@ export function scanEscapes({ repo, plans, git, gh, since, days = 14 }) {
       const own = new Set(taskCommits);
       const taskFiles = new Set(taskCommits.flatMap(ownFiles));
       // The task's window opens at its latest ship point; with none on the default branch there is nothing to scan.
-      const starts = taskCommits.map((t) => shippedAt(git, repo, t, line)).filter((m) => m !== null && dateOf.has(m));
+      const starts = taskCommits.map(shipOf).filter((m) => m !== null && dateOf.has(m));
       if (starts.length === 0) continue;
       const start = starts.reduce((a, b) => (dateOf.get(b) > dateOf.get(a) ? b : a));
       const before = reachableFrom(start);
@@ -160,7 +174,7 @@ export function scanEscapes({ repo, plans, git, gh, since, days = 14 }) {
           add(plan, c.sha, c.at, { source: 'revert', ...stamp });
         } else if (FIX_SUBJECT.test(c.subject) && c.at >= opens && c.at <= opens + window) {
           const overlap = ownFiles(c.sha).filter((f) => taskFiles.has(f)).length;
-          if (overlap === 0) continue;
+          if (overlap === 0 || planShips.has(shipOf(c.sha))) continue;
           if (!fixes.has(c.sha)) fixes.set(c.sha, []);
           fixes.get(c.sha).push({ plan, task: task.id, at: c.at, overlap, opens, stamp });
         }
@@ -170,7 +184,7 @@ export function scanEscapes({ repo, plans, git, gh, since, days = 14 }) {
   // One record per fix commit: the most overlapping task, then the latest ship point, then the first plan name and task id.
   for (const [sha, candidates] of fixes) {
     const best = candidates.reduce((a, b) => (
-      b.overlap - a.overlap || b.opens - a.opens || byName(a.plan.name, b.plan.name) || byName(a.task, b.task)
+      b.overlap - a.overlap || b.opens - a.opens || byName(a.plan.name, b.plan.name) || byId(a.task, b.task)
     ) > 0 ? b : a);
     add(best.plan, sha, best.at, { source: 'post-merge-fix', ...best.stamp });
   }
