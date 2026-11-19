@@ -154,19 +154,35 @@ function storedLaunch(evals, sessionId) {
   return existsSync(file) ? { arm, launchId, file } : null;
 }
 
+// The owner passes their own settings: ours would come first and theirs after it, so theirs could override the arm
+// the session is recorded under.
+const hasOwnSettings = (argv) => argv.some((a) => a === '--settings' || a.startsWith('--settings='));
+
 // What to start claude with: { args, env }. Anything unexpected falls back to the owner's arguments and environment
-// unchanged: the launcher never stops claude from starting.
-function prepare(argv, { env, home, bin, run, randomUUID, now, cwd }) {
+// unchanged, with one stderr line saying why: the launcher never stops claude from starting.
+function prepare(argv, { env, home, bin, run, randomUUID, now, cwd, stderr }) {
   const unchanged = { args: argv, env };
+  const say = (m) => { try { stderr.write(`triqual eval launch: ${m}; starting claude unchanged\n`); } catch { /* nowhere to say it */ } };
   try {
-    const experiments = loadExperiments(experimentsPath(env, home));
-    if (!validateExperiments(experiments).ok) return unchanged;
+    let experiments;
+    try {
+      experiments = loadExperiments(experimentsPath(env, home));
+    } catch (err) {
+      say(`experiments file unreadable or invalid (${err?.code ?? err?.name ?? 'error'})`);
+      return unchanged;
+    }
+    const checked = validateExperiments(experiments);
+    if (!checked.ok) { say(`experiments file invalid (${checked.field})`); return unchanged; }
     if (!experiments.some((e) => e.status === 'active' && e.kind === 'session')) return unchanged;
     const evals = evalsDir(env, home);
     const help = helpCache({ bin, evalsDir: evals, run, env });
     if (help.subcommands.length === 0 && help.valueOptions.length === 0) return unchanged;
     const c = classify(argv, help);
     if (c.mode === 'pass') return unchanged;
+    if (hasOwnSettings(argv)) {
+      say('--settings was given, so no experiment arm is assigned');
+      return unchanged;
+    }
     if (c.mode === 'resume') {
       const stored = storedLaunch(evals, c.id);
       if (!stored) return unchanged;
@@ -189,7 +205,8 @@ function prepare(argv, { env, home, bin, run, randomUUID, now, cwd }) {
       args: ['--session-id', id, '--settings', file, ...argv],
       env: { ...env, TRIQUAL_EVAL_ARM: `${hit.experiment.id}/${hit.arm}`, TRIQUAL_EVAL_LAUNCH: id },
     };
-  } catch {
+  } catch (err) {
+    say(`could not assign an arm (${err?.code ?? err?.name ?? 'error'})`);
     return unchanged;
   }
 }
@@ -238,7 +255,7 @@ export async function launch(argv, deps = {}) {
     stderr.write('triqual eval launch: no claude found on PATH (set TRIQUAL_CLAUDE_BIN to its path)\n');
     return 127;
   }
-  const plan = prepare(argv, { env, home, bin, run, randomUUID, now, cwd });
+  const plan = prepare(argv, { env, home, bin, run, randomUUID, now, cwd, stderr });
   return runChild(spawn, bin, plan.args, plan.env, stderr);
 }
 

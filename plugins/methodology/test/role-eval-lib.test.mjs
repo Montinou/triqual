@@ -1058,6 +1058,16 @@ test('task-review with arms is valid; arms with an unknown key is rejected', () 
   assert.deepEqual(validateRecord(taskReviewRecord({ plan: 'bad plan' })), { ok: false, field: 'plan' });
 });
 
+test('a task-review arm model follows the model rule of the experiments file: empty and odd strings are refused', () => {
+  const inArms = (model) => validateRecord(taskReviewRecord({ arms: [{ ...ARM_ENTRY, model }] }));
+  for (const model of ['opus', 'sonnet', 'haiku', 'claude-opus-5', 'gpt-5-codex']) {
+    assert.deepEqual(inArms(model), { ok: true }, model);
+  }
+  for (const model of ['', ' ', 'Opus 5', 'opus\n', 'not a model', 'OPUS', 'a/b']) {
+    assert.deepEqual(inArms(model), { ok: false, field: 'arms.0.model' }, JSON.stringify(model));
+  }
+});
+
 test('arms and plan-review arm follow one name rule for experiment ids and arm names', () => {
   const inArms = (over) => validateRecord(taskReviewRecord({ arms: [{ ...ARM_ENTRY, ...over }] }));
   const inPlanReview = (arm) => validateRecord(planReviewRecord({ arm }));

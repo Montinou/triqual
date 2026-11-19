@@ -68,6 +68,35 @@ function writeDoc(file, doc) {
 
 const utcDay = (d) => new Date(d).toISOString().slice(0, 10);
 
+// Changes the experiment `id` under the file's lock. What was read before the lock may be stale, so the file is read
+// again and the experiment found again by id; `change(list, index)` returns a refusal message (nothing is written) or
+// null after changing the list. Returns the refusal, or null once the file is written.
+function update(file, id, change) {
+  ensureDir(dirname(file));
+  return withStoreLock(`${file}.lock`, () => {
+    const again = readDoc(file);
+    if (again.problem) throw new Error(again.problem);
+    const index = again.list.findIndex((e) => isObject(e) && e.id === id);
+    if (index < 0) return `no experiment ${clip(id)}`;
+    const refusal = change(again.list, index);
+    if (refusal) return refusal;
+    writeDoc(file, again.doc);
+    return null;
+  }, { waitMs: 30000 });
+}
+
+// The message refusing to start `list[index]` (already active, another one active for its target, an invalid file), or null.
+function startRefusal(list, index) {
+  const target = list[index];
+  if (target.status === 'active') return `experiment ${clip(target.id)} is already active`;
+  const probe = list.map((e, i) => (i === index ? { ...e, status: 'active', evaluators: 'pending' } : e));
+  const probed = validateExperiments(probe);
+  if (probed.ok) return null;
+  return probed.field === `experiments.${index}.status`
+    ? `${probed.field}: another experiment is already active for this ${target.kind === 'role' ? 'role' : target.kind}`
+    : `invalid experiments file: ${probed.field}`;
+}
+
 export async function main(argv, {
   env = process.env, stdout = process.stdout, stderr = process.stderr, now = () => new Date(),
   judgesDir = DEFAULT_JUDGES, checksFile = DEFAULT_CHECKS,
@@ -105,30 +134,20 @@ export async function main(argv, {
   const target = read.list[index];
 
   if (sub === 'stop') {
+    let refusal;
     try {
-      ensureDir(dirname(file));
-      withStoreLock(`${file}.lock`, () => {
-        const again = readDoc(file);
-        if (again.problem) throw new Error(again.problem);
-        again.list[index] = { ...again.list[index], status: 'done' };
-        writeDoc(file, again.doc);
-      }, { waitMs: 30000 });
+      refusal = update(file, id, (list, i) => { list[i] = { ...list[i], status: 'done' }; return null; });
     } catch (err) {
       return fail(`experiments file could not be written: ${err?.code ?? err?.message ?? 'error'}`);
     }
+    if (refusal) return refuse(refusal);
     stdout.write(`stopped ${id}\n`);
     return 0;
   }
 
   // start
-  if (target.status === 'active') return refuse(`experiment ${clip(id)} is already active`);
-  const probe = read.list.map((e, i) => (i === index ? { ...e, status: 'active', evaluators: 'pending' } : e));
-  const probed = validateExperiments(probe);
-  if (!probed.ok) {
-    return refuse(probed.field === `experiments.${index}.status`
-      ? `${probed.field}: another experiment is already active for this ${target.kind === 'role' ? 'role' : target.kind}`
-      : `invalid experiments file: ${probed.field}`);
-  }
+  const early = startRefusal(read.list, index);
+  if (early) return refuse(early);
 
   let evaluators = 'objective';
   let summary = 'objective evaluators';
@@ -159,17 +178,18 @@ export async function main(argv, {
     summary = `snapshot ${evaluators}: ${set.categories.length} categories${set.excluded.length > 0 ? `, excluded ${set.excluded.join(', ')}` : ''}`;
   }
 
+  let refusal;
   try {
-    ensureDir(dirname(file));
-    withStoreLock(`${file}.lock`, () => {
-      const again = readDoc(file);
-      if (again.problem) throw new Error(again.problem);
-      again.list[index] = { ...again.list[index], status: 'active', start: utcDay(now()), evaluators };
-      writeDoc(file, again.doc);
-    }, { waitMs: 30000 });
+    refusal = update(file, id, (list, i) => {
+      const again = startRefusal(list, i);
+      if (again) return again;
+      list[i] = { ...list[i], status: 'active', start: utcDay(now()), evaluators };
+      return null;
+    });
   } catch (err) {
     return fail(`experiments file could not be written: ${err?.code ?? err?.message ?? 'error'}`);
   }
+  if (refusal) return refuse(refusal);
   stdout.write(`started ${id}: ${summary}\n`);
   return 0;
 }
