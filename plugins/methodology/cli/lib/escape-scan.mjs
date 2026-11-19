@@ -1,7 +1,10 @@
 // scanEscapes: the post-merge escapes of closed plan tasks, found in git and CI (`triqual role-eval escapes scan`).
 // Pure over its inputs: `git(args, { cwd })` and `gh(args, { cwd })` return a command's stdout (`cwd` is `repo`; the
 // caller binds the environment), so a test feeds canned output. It returns the `escape` records of role-eval (spec 5), one per
-// (plan, ref), and never reads or returns message text: only shas, dates, plan and task names.
+// (plan, ref), and never reads or returns message text: only shas, dates, plan and task names. Two rules keep a release
+// from counting as an escape of every task it touches: shared release files (SHARED_FILES: CHANGELOG.md, README.md, the
+// manifests) never count for the file overlap, and a fix commit yields one record across all plans, assigned to the task
+// with the most overlapping files (a tie goes to the latest ship point, then to the first plan name and task id).
 //
 // Per done task (a plan snapshot of `triqual tasks export --json`: tasks with `status`, `since` as epoch ms and
 // `commits`), its files are the union of `git show --name-only` over its commits. An escape is a defect found after the
@@ -10,9 +13,10 @@
 // latest start of the task's commits counts). A task with no commit on the default branch has no window,
 // and a commit reachable from that start (the task's own work and its review fixes on the plan's branch) is no escape.
 // On the default branch, after the start:
-//   - a commit within `days` of the start whose subject starts `fix(` or `fix:` and touches one of those files is a
-//     `post-merge-fix`;
-//   - a commit whose message holds `This reverts commit <sha>` for one of the task's commits is a `revert`.
+//   - a commit within `days` of the start whose subject starts `fix(` or `fix:` and touches one of those files (shared
+//     files aside) is a `post-merge-fix`, recorded once for the best-overlapping task of all plans (see above);
+//   - a commit whose message holds `This reverts commit <sha>` for one of the task's commits is a `revert`, recorded for
+//     each task it reverts.
 // A plan whose tasks are all done or dropped also gets a `red-ci` record per failing default-branch run (`gh run list`)
 // created within `days` after the plan's last task `since`. A `gh` that throws leaves red CI out.
 // node: built-ins only.
@@ -24,6 +28,11 @@ const FIX_SUBJECT = /^fix[(:]/;
 const REVERTS = /This reverts commit ([0-9a-f]{7,40})/g;
 const FIELD = '\x1f';
 const RECORD = '\x1e';
+// Files every release touches (changelog, readme, version manifests): a fix commit or a task that touches one says nothing
+// about which task it belongs to, so they never count for the file-overlap match of a post-merge-fix.
+const SHARED_FILES = new Set(['CHANGELOG.md', 'README.md', 'plugin.json', 'marketplace.json', 'package.json', 'package-lock.json']);
+const isShared = (file) => SHARED_FILES.has(file.slice(file.lastIndexOf('/') + 1));
+const byName = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
 // The default branch: origin's HEAD when set, else main or master when one exists, else the current branch.
 export function defaultBranch(git, repo) {
@@ -125,6 +134,8 @@ export function scanEscapes({ repo, plans, git, gh, since, days = 14 }) {
     if (!fileCache.has(sha)) fileCache.set(sha, filesOf(git, repo, sha));
     return fileCache.get(sha);
   };
+  const ownFiles = (sha) => files(sha).filter((f) => !isShared(f)); // without the shared release files
+  const fixes = new Map(); // fix sha -> every (plan, task) candidate for it: { plan, task, at, overlap, opens, stamp }
 
   for (const plan of plans) {
     // Every commit of every task of the plan: a fix that is another task's work is planned, not an escape.
@@ -134,7 +145,7 @@ export function scanEscapes({ repo, plans, git, gh, since, days = 14 }) {
       const taskCommits = task.commits.filter((c) => typeof c === 'string' && /^[0-9a-f]{7,40}$/.test(c));
       if (taskCommits.length === 0) continue;
       const own = new Set(taskCommits);
-      const taskFiles = new Set(taskCommits.flatMap(files));
+      const taskFiles = new Set(taskCommits.flatMap(ownFiles));
       // The task's window opens at its latest ship point; with none on the default branch there is nothing to scan.
       const starts = taskCommits.map((t) => shippedAt(git, repo, t, line)).filter((m) => m !== null && dateOf.has(m));
       if (starts.length === 0) continue;
@@ -147,14 +158,21 @@ export function scanEscapes({ repo, plans, git, gh, since, days = 14 }) {
         if ([...planCommits].some((p) => c.sha.startsWith(p))) continue;
         if (c.reverts.some((r) => taskCommits.some((t) => t.startsWith(r) || r.startsWith(t)))) {
           add(plan, c.sha, c.at, { source: 'revert', ...stamp });
-        } else if (
-          FIX_SUBJECT.test(c.subject) && c.at >= opens && c.at <= opens + window
-          && files(c.sha).some((f) => taskFiles.has(f))
-        ) {
-          add(plan, c.sha, c.at, { source: 'post-merge-fix', ...stamp });
+        } else if (FIX_SUBJECT.test(c.subject) && c.at >= opens && c.at <= opens + window) {
+          const overlap = ownFiles(c.sha).filter((f) => taskFiles.has(f)).length;
+          if (overlap === 0) continue;
+          if (!fixes.has(c.sha)) fixes.set(c.sha, []);
+          fixes.get(c.sha).push({ plan, task: task.id, at: c.at, overlap, opens, stamp });
         }
       }
     }
+  }
+  // One record per fix commit: the most overlapping task, then the latest ship point, then the first plan name and task id.
+  for (const [sha, candidates] of fixes) {
+    const best = candidates.reduce((a, b) => (
+      b.overlap - a.overlap || b.opens - a.opens || byName(a.plan.name, b.plan.name) || byName(a.task, b.task)
+    ) > 0 ? b : a);
+    add(best.plan, sha, best.at, { source: 'post-merge-fix', ...best.stamp });
   }
 
   // Red CI: one `gh` call; a plan counts once all its tasks are closed (done or dropped), from its last task's `since`.
