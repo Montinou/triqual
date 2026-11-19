@@ -9,8 +9,8 @@ execution:
   prompt: |
     You are the controller of a plan run, working in the current directory (a small Node project).
     1. Write the file `brief.md` with exactly the text between the markers below.
-    2. Dispatch the agent `roles:tdd-implementer` with the Agent tool: the brief is `brief.md`, the report path is `report.md`, the working directory is this one.
-    3. When it replies, run `node --test`, `git log --oneline` and `git status --short` here.
+    2. Dispatch the agent `roles:tdd-implementer` with the Agent tool: the brief is `brief.md`, the report path is `report.md` (it exists already, with a title line; the implementer fills it), the working directory is this one. In the dispatch message also tell the implementer: `Environment: git may fail in this sandbox with an xcrun cache error you cannot fix. If it does, do not stop for it: skip the commit, say in your reply that no commit was made and why, and name the commit message you would have used.`
+    3. When it replies, run `node --test`, `git log --oneline` and `git status --short` here (the git commands may fail in this sandbox: quote what they print).
     4. Your final message must quote, word for word: the implementer's reply, the content of `report.md`, and the output of the three commands.
 
     --- brief ---
@@ -26,7 +26,7 @@ graders:
     name: red-first
     weight: 3
     criteria: >-
-      The report shows a test run that failed before `slug.mjs` was changed, and the failure is about the slugify result (for example `'-hello,-world!-'` instead of `'hello-world'`), not a syntax or import error; then a passing run after the change.
+      The report or the implementer's reply shows a test run that failed before `slug.mjs` was changed, and the failure is about the slugify result (for example `'-hello,-world!-'` instead of `'hello-world'`), not a syntax or import error; then a passing run after the change.
   - type: llm
     name: requirement
     weight: 2
@@ -36,4 +36,4 @@ graders:
     name: committed
     weight: 1
     criteria: >-
-      `git log --oneline` shows a new commit after `init` whose message starts with `feat:`, and the implementer's status is DONE or DONE_WITH_CONCERNS.
+      The implementer's status is DONE or DONE_WITH_CONCERNS, and the commit message `feat: strip punctuation in slugify` appears either as a new commit after `init` in `git log --oneline` or, when git failed in the sandbox, as the message the implementer reports it would have used.

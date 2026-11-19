@@ -9,8 +9,8 @@ execution:
   prompt: |
     You are the controller of a plan run, working in the current directory (a small Node project).
     1. Write the file `brief.md` with exactly the text between the markers below.
-    2. Dispatch the agent `roles:complex-implementer` with the Agent tool: the brief is `brief.md`, the report path is `report.md`, the working directory is this one.
-    3. When it replies, run `node --test`, `git log --oneline` and `git status --short` here; then run `node migrate.mjs data.json` a second time, and run `git status --short` and `cat data.json` again.
+    2. Dispatch the agent `roles:complex-implementer` with the Agent tool: the brief is `brief.md`, the report path is `report.md` (it exists already, with a title line; the implementer fills it), the working directory is this one. In the dispatch message also tell the implementer: `Environment: git may fail in this sandbox with an xcrun cache error you cannot fix. If it does, do not stop for it: skip the commit, say in your reply that no commit was made and why, and name the commit message you would have used.`
+    3. When it replies, run `node --test`, `cat data.json`, `git log --oneline` and `git status --short` here; then run `node migrate.mjs data.json` a second time, and run `cat data.json` and `git status --short` again (the git commands may fail in this sandbox: quote what they print).
     4. Your final message must quote, word for word: the implementer's reply, the content of `report.md`, and the output of every command.
 
     --- brief ---
@@ -28,7 +28,7 @@ graders:
     name: red-first
     weight: 2
     criteria: >-
-      The report shows a test run that failed before `migrate.mjs` and `store.mjs` were written or changed, and the failure is about the migration or `isExpired` result (for example a missing `expiresAt`), not a syntax or import error; then a passing run after the change.
+      The report or the implementer's reply shows a test run that failed before `store.mjs` was changed, and the failure is an `isExpired` result (the old code reads `ttl`, so an entry with `expiresAt` is not reported expired), not a syntax or import error; then a passing run after the change.
   - type: llm
     name: migrated
     weight: 3
@@ -38,4 +38,4 @@ graders:
     name: idempotent
     weight: 2
     criteria: >-
-      After the second run of `node migrate.mjs data.json`, `git status --short` shows no change to `data.json`.
+      The `cat data.json` output after the second run of `node migrate.mjs data.json` is identical to the output before it, and, where git worked in the sandbox, `git status --short` after it shows no change to `data.json` beyond the first migration.
