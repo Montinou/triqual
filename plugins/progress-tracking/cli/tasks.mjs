@@ -56,6 +56,7 @@ const USAGE = `usage: triqual tasks <subcommand> [args]
   block|drop|reopen T<N> "<reason>" [--plan <plan.md|ledger>]
   retitle T<N> "<title>" [--plan <plan.md|ledger>]
   retier T<N> <tier> --reason "<text>" [--plan <plan.md|ledger>]
+  retier T<N> <tier> --redeclare --reason "<text>" --plan <plan.md|ledger>
   close [--plan <plan.md|ledger>]
   reconcile [--plan <plan.md|ledger>] [--apply] [--json]
   status [--json]
@@ -506,12 +507,23 @@ function storeTransition(cmd) {
   };
 }
 
+// Checks the selected plan's declaration for a redeclare at the same mutation boundary as the ledger write.
+function validateRedeclaration(values, id, tier, planPath) {
+  if (!values.redeclare) return;
+  if (!values.plan) throw new LedgerError('redeclare requires --plan');
+  const declaration = parsePlan(readFileSync(planPath, 'utf8')).find((task) => task.id === id);
+  if (!declaration || declaration.tier !== tier) {
+    throw new LedgerError(`${id}: selected plan declaration must match tier ${tier}`);
+  }
+}
+
 // `retier T<N> <tier> --reason <text>` on the store: read again inside the transaction, like a transition.
 function storeRetier(st, values, [id, tier]) {
   const selected = selectStoreLedger(st, values.plan);
   const done = st.store.tx(() => {
     const fresh = st.store.ledgerOf(selected.planId);
-    const result = retier(fresh, id, tier, values.reason, now());
+    validateRedeclaration(values, id, tier, join(st.plansDir, basename(selected.path)));
+    const result = retier(fresh, id, tier, values.reason, now(), { redeclare: values.redeclare === true });
     if (result.changed) st.store.saveLedger(selected.planId, result.ledger);
     return { before: fresh.tasks.find((x) => x.id === id), ...result };
   });
@@ -636,7 +648,8 @@ function cmdRetier(t, values, [id, tier]) {
   const before = Array.isArray(selected.ledger.tasks) ? selected.ledger.tasks.find((x) => x.id === id) : undefined;
   let result;
   try {
-    result = retier(selected.ledger, id, tier, values.reason, now());
+    validateRedeclaration(values, id, tier, selected.path.replace(/\.tasks\.json$/, '.md'));
+    result = retier(selected.ledger, id, tier, values.reason, now(), { redeclare: values.redeclare === true });
   } catch (err) {
     if (err instanceof LedgerError) throw err;
     throw new LedgerError(`${selected.path} cannot be updated: ${err.message}`);
@@ -1075,7 +1088,7 @@ const COMMANDS = {
   reopen: move('reopen', 2),
   retitle: move('retitle', 2),
   retier: {
-    positionals: [2, 2], options: { ...PLAN, reason: { type: 'string' } }, writes: true, run: cmdRetier, access: 'write', store: storeRetier,
+    positionals: [2, 2], options: { ...PLAN, reason: { type: 'string' }, redeclare: { type: 'boolean' } }, writes: true, run: cmdRetier, access: 'write', store: storeRetier,
   },
   close: {
     positionals: [0, 0], options: PLAN, writes: true, run: cmdTransition('close'), access: 'write', store: storeTransition('close'),

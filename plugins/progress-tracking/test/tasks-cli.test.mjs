@@ -1195,6 +1195,29 @@ test('retier and next --json are listed in the usage', () => withRepo(({ repo, r
   const r = ok(run(['--help']));
   assert.match(r.stdout, /retier T<N> <tier> --reason "<text>" \[--plan <plan\.md\|ledger>\]/);
   assert.match(r.stdout, /next \[--plan <plan\.md\|ledger>\] \[--json\]/);
+  assert.ok(r.stdout.includes('retier T<N> <tier> --redeclare --reason "<text>" --plan <plan.md|ledger>'));
+}));
+
+test('redeclare in local mode lowers a blocked task and requires --plan', () => withRepo(({ repo, run }) => {
+  const root = join(repo, '.git', 'methodology');
+  mkdirSync(join(root, 'plans'), { recursive: true });
+  writeFileSync(join(root, 'progress.md'), '# Progress\n');
+  const path = join(root, 'plans', `${NAME}.md`);
+  writeFileSync(path, '### Task 1: Alpha\n**Tier:** heavy\n');
+  ok(run(['init', path]));
+  ok(run(['block', 'T1', 'needs recut']));
+  writeFileSync(path, '### Task 1: Alpha\n**Tier:** light\n');
+  const args = ['retier', 'T1', 'light', '--redeclare', '--reason', 'approved re-cut'];
+  const bare = run(args);
+  assert.equal(bare.status, 2);
+  assert.match(bare.stderr, /requires --plan/);
+  assert.equal(ok(run([...args, '--plan', path])).stdout, 'T1: heavy -> light\n');
+  ok(run(['init', path]));
+  const task = readJson(path.replace(/\.md$/, '.tasks.json')).tasks[0];
+  assert.equal(task.status, 'blocked');
+  assert.equal(task.tier, 'light');
+  assert.equal(task.effectiveTier, 'light');
+  assert.equal(task.history.at(-1).note, 'redeclare: declared heavy -> light; effective heavy -> light; approved re-cut');
 }));
 
 // ---- done --repo: a commit from another repository ----

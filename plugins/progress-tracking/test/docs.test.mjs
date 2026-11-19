@@ -210,3 +210,13 @@ test('skill and store-mode.md describe TRIQUAL_TRACKING_ROOT, external commits a
   }
   assert.ok(skill.length <= 10000, `SKILL.md is ${skill.length} characters, must be at most 10,000`);
 });
+
+test('tier redeclare is documented in a reference that SKILL.md links', () => {
+  const command = 'triqual tasks retier T<N> <tier> --redeclare --reason "<text>" --plan <plan.md|ledger>';
+  const ref = readFileSync(join(PLUGIN, 'skills', 'progress-tracking', 'references', 'tier-redeclare.md'), 'utf8');
+  assert.ok(ref.includes(command), 'reference names the full command');
+  assert.ok(ref.includes('pending or blocked'), 'reference limits it to pending or blocked tasks');
+  assert.ok(readFileSync(SKILL, 'utf8').includes('](references/tier-redeclare.md)'), 'SKILL.md links the reference');
+  assert.ok(readFileSync(join(PLUGIN, 'README.md'), 'utf8').includes('retier T<N> <tier> --redeclare --reason "<text>" --plan <plan.md|ledger>'),
+    'the plugin README documents the command');
+});
