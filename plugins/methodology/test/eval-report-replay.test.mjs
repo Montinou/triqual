@@ -31,11 +31,27 @@ test('a case recorded in one arm only is left out of d and c', () => {
   assert.deepEqual(arm.discordant, { armOnly: 0, controlOnly: 1 });
 });
 
-test('a tie of runs fails the case; setup-failed and agent-error are not counted', () => {
-  const results = [run('haiku-high', 'a', 'pass', 1, 1), run('haiku-high', 'a', 'tests-failed', 1, 2), run('haiku-high', 'a', 'agent-error', 1, 3)];
+test('a tie of runs fails the case', () => {
+  const results = [run('haiku-high', 'a', 'pass', 1, 1), run('haiku-high', 'a', 'tests-failed', 1, 2)];
   const arm = replayRows({ experiment, results })[1];
   assert.equal(arm.n, 1);
   assert.equal(arm.rate, 0);
+});
+
+test('setup-failed and agent-error runs are not counted, so they can flip a case', () => {
+  // Counted, each case is one pass of one run: passes. Counting the excluded runs would be one pass of three: fails.
+  const results = [
+    run('haiku-high', 'a', 'pass', 1, 1), run('haiku-high', 'a', 'agent-error', 1, 2), run('haiku-high', 'a', 'agent-error', 1, 3),
+    run('haiku-high', 'b', 'pass', 1, 1), run('haiku-high', 'b', 'setup-failed', 1, 2), run('haiku-high', 'b', 'setup-failed', 1, 3),
+  ];
+  const arm = replayRows({ experiment, results })[1];
+  assert.equal(arm.n, 2);
+  assert.equal(arm.rate, 1);
+});
+
+test('only setup-failed and agent-error runs of the experiment give []', () => {
+  const results = [run('haiku-high', 'a', 'setup-failed', 1), run('sonnet-high', 'a', 'agent-error', 1)];
+  assert.deepEqual(replayRows({ experiment, results }), []);
 });
 
 test('below 30 paired cases the verdict is insufficient data', () => {
