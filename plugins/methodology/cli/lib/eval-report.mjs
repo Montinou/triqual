@@ -6,7 +6,7 @@ import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { loadJudgePrompt } from './eval-judge.mjs';
 import { planUnits } from './eval-plans.mjs';
-import { bootstrapMedian, bootstrapMedianDiff, median, newcombe, requiredN, wilson } from './eval-stats.mjs';
+import { bootstrapMeanPaired, bootstrapMedian, bootstrapMedianDiff, median, newcombe, requiredN, wilson } from './eval-stats.mjs';
 import { judgeExcluded } from './eval-taxonomy.mjs';
 import { planDescriptives, taskUnits } from './eval-tasks.mjs';
 
@@ -256,4 +256,82 @@ export function skillUnits({ evalsDir, experiment }) {
     }
   }
   return units;
+}
+
+// The per-case figures of an arm in a replay: Map case -> { pass, usd }. `runs` are the arm's counted runs (setup-failed
+// and agent-error left out). A case passes when more than half of its counted runs pass (a tie fails); its usd is the
+// median of its runs' finite usd, null when it has none.
+function replayCases(runs) {
+  const by = new Map();
+  for (const r of runs) {
+    if (!by.has(r.case)) by.set(r.case, []);
+    by.get(r.case).push(r);
+  }
+  return new Map([...by].map(([id, rs]) => {
+    const usds = rs.map((r) => r.usd).filter(finite);
+    return [id, { pass: rs.filter((r) => r.outcome === 'pass').length > rs.length / 2, usd: usds.length === 0 ? null : median(usds) }];
+  }));
+}
+
+// The rows of a role experiment's replay over `results` (the parsed lines of <evals>/replay/results.jsonl): [control row,
+// arm row ...], or [] when no counted run of the experiment exists. Rows of another experiment, of an arm the experiment
+// does not have or whose v is not 1 are ignored; a run counts unless its outcome is setup-failed or agent-error. n and
+// rate count cases (see replayCases), usdMedian is the median usd per counted run, perRepo the pass rate per repoName
+// (`repoOf`: case id -> repoName; a case missing from it is "unknown"). The comparison with the control is paired: only
+// cases counted in both arms enter it. d is the mean over them of (arm pass - control pass) with its bootstrap interval,
+// c the median of (arm usd - control usd) over those with a usd on both sides, discordant the paired cases only one side
+// passed. The verdict takes the paired count as both arm sizes and no required sample size (the unpaired requiredN does
+// not apply), so MIN_N is the only floor. The control row carries null from paired on; required is always null.
+export function replayRows({ experiment, results, repoOf = new Map() }) {
+  const runs = results.filter((r) => isObject(r) && r.v === 1 && r.experiment === experiment.id && typeof r.case === 'string'
+    && Object.hasOwn(experiment.arms, r.arm) && r.outcome !== 'setup-failed' && r.outcome !== 'agent-error');
+  if (runs.length === 0) return [];
+  const ordered = [experiment.control, ...Object.keys(experiment.arms).filter((a) => a !== experiment.control)];
+  const control = replayCases(runs.filter((r) => r.arm === experiment.control));
+  return ordered.map((name) => {
+    const own = runs.filter((r) => r.arm === name);
+    const cases = replayCases(own);
+    const n = cases.size;
+    const k = [...cases.values()].filter((c) => c.pass).length;
+    const repos = new Map();
+    for (const [id, c] of cases) {
+      const repo = repoOf.get(id) ?? 'unknown';
+      const t = repos.get(repo) ?? { n: 0, k: 0 };
+      repos.set(repo, { n: t.n + 1, k: t.k + (c.pass ? 1 : 0) });
+    }
+    const row = {
+      experiment: experiment.id,
+      kind: 'replay',
+      arm: name,
+      control: name === experiment.control,
+      n,
+      rate: n === 0 ? null : k / n,
+      rateCI: n === 0 ? null : wilson(k, n),
+      usdMedian: median(own.map((r) => r.usd).filter(finite)),
+      perRepo: Object.fromEntries([...repos].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([repo, t]) => [repo, { n: t.n, rate: t.k / t.n }])),
+      paired: null, discordant: null, d: null, dCI: null, c: null, cCI: null, required: null, verdict: null,
+    };
+    if (row.control) return row;
+    const both = [...cases].filter(([id]) => control.has(id));
+    const pass = (c) => (c.pass ? 1 : 0);
+    const mean = bootstrapMeanPaired(both.map(([id, c]) => pass(c) - pass(control.get(id))));
+    const costs = both.filter(([id, c]) => c.usd !== null && control.get(id).usd !== null).map(([id, c]) => c.usd - control.get(id).usd);
+    row.paired = both.length;
+    row.discordant = {
+      armOnly: both.filter(([id, c]) => c.pass && !control.get(id).pass).length,
+      controlOnly: both.filter(([id, c]) => !c.pass && control.get(id).pass).length,
+    };
+    if (mean !== null) { row.d = mean.mean; row.dCI = [mean.lower, mean.upper]; }
+    if (costs.length > 0) { row.c = median(costs); row.cCI = bootstrapMedian(costs); }
+    row.verdict = verdict({
+      nArm: row.paired,
+      nControl: row.paired,
+      required: null,
+      lower: row.dCI?.[0] ?? null,
+      upper: row.dCI?.[1] ?? null,
+      cUpper: row.cCI?.[1] ?? null,
+      margin: experiment.margin,
+    });
+    return row;
+  });
 }

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Z90, bootstrapMedian, bootstrapMedianDiff, median, mulberry32, newcombe, quantile, requiredN, wilson } from '../cli/lib/eval-stats.mjs';
+import { Z90, bootstrapMeanPaired, bootstrapMedian, bootstrapMedianDiff, median, mulberry32, newcombe, quantile, requiredN, wilson } from '../cli/lib/eval-stats.mjs';
 
 const near = (a, b, msg) => assert.equal(a.toFixed(4), b.toFixed(4), msg);
 const Z95 = 1.959963984540054;
@@ -102,4 +102,17 @@ test('empty arm gives null, never NaN', () => {
   assert.equal(bootstrapMedian([]), null);
   assert.equal(bootstrapMedianDiff([], [1, 2]), null);
   assert.equal(bootstrapMedianDiff([1, 2], []), null);
+});
+
+test('bootstrapMeanPaired: empty is null, constant diffs give a point interval', () => {
+  assert.equal(bootstrapMeanPaired([]), null);
+  assert.deepEqual(bootstrapMeanPaired([0, 0, 0]), { mean: 0, lower: 0, upper: 0 });
+});
+
+test('bootstrapMeanPaired is seeded and brackets the mean', () => {
+  const diffs = [1, 0, 0, -1, 0, 1, 0, 0, 1, 0];
+  const a = bootstrapMeanPaired(diffs);
+  assert.deepEqual(a, bootstrapMeanPaired(diffs, { seed: 1 }));
+  near(a.mean, 0.2);
+  assert.ok(a.lower <= 0.2 && a.upper >= 0.2 && a.lower < a.upper);
 });

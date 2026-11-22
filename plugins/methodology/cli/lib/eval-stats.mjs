@@ -92,3 +92,19 @@ export function bootstrapMedianDiff(arm, control, { B = 2000, seed = 1 } = {}) {
   const [lower, upper] = interval90(diffs);
   return { c: median(arm) - median(control), lower, upper };
 }
+
+// The mean of a with-replacement resample of xs drawn with `rng`.
+function resampleMean(xs, rng) {
+  let sum = 0;
+  for (let i = 0; i < xs.length; i++) sum += xs[Math.floor(rng() * xs.length)];
+  return sum / xs.length;
+}
+
+// The mean of paired differences `diffs` with its bootstrap 90% interval (B resamples, seeded); null for an empty array.
+export function bootstrapMeanPaired(diffs, { B = 2000, seed = 1 } = {}) {
+  if (diffs.length === 0) return null;
+  const mean = diffs.reduce((s, x) => s + x, 0) / diffs.length;
+  const rng = mulberry32(seed);
+  const [lower, upper] = interval90(Array.from({ length: B }, () => resampleMean(diffs, rng)));
+  return { mean, lower, upper };
+}

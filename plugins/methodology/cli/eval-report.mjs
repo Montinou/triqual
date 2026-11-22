@@ -2,16 +2,18 @@
 // rows of its arms: units counted, healthy rate with its Wilson interval, cost median, the difference with the control
 // and the non-inferiority verdict. A session experiment is scored by its frozen evaluator snapshot
 // (<evals>/snapshots/<hash>/), never by the live taxonomy or checks. `--json` prints
-// { experiments: [{ id, kind, status, margin, evaluators, rows }] }, the row format later role and skill rows share; the
+// { experiments: [{ id, kind, status, margin, evaluators, rows, replay? }] }, the row format later role and skill rows share; the
 // text form prints the same rows. A role experiment that was started (paused or not) has rows too: a planner experiment per plan
 // (the parallelism figures, cleanTaskRate, wallClockHours), any other role per task (clean-task rate, cost per task),
 // from the role-eval store, <evals>/role-assignments.jsonl and the subagent transcripts. A skill experiment has one row per arm
 // from the suite runs of `triqual eval skills` (<evals>/skill-runs/<id>/<arm>.json), a case being a unit (pass = healthy, usd = cost). Prints counts, ids, model names and project names, never transcript text. It also stores, once per session and
 // check version, the code verdict it computes for an assigned session whose transcript is still there
-// (<evals>/judgments/<category>.jsonl, the line `triqual eval check` writes). Exit codes: 0 done; 1 a snapshot or the store that cannot be read; 2 usage, an
+// (<evals>/judgments/<category>.jsonl, the line `triqual eval check` writes). A role experiment with replay results (<evals>/replay/results.jsonl,
+// the rows of replayRows) has a `replay` key (absent when empty) and a replay block after its live rows; the live rows of a review-fixer experiment
+// are task-level, and the text says so. Exit codes: 0 done; 1 a snapshot or the store that cannot be read; 2 usage, an
 // invalid experiments file or an unknown experiment id.
 // node: built-ins only. main() is exported for tests and runs only when this file is the entry point.
-import { realpathSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -20,7 +22,7 @@ import { SESSION_ARMS_FILE } from './lib/eval-arms.mjs';
 import { appendPrivate } from './lib/eval-ask.mjs';
 import { loadExperiments, validateExperiments } from './lib/eval-experiments.mjs';
 import { ensureDir, evalsDir, experimentsPath, transcriptsRoot } from './lib/eval-paths.mjs';
-import { buildRows, loadSnapshot, roleRows, sessionUnits, skillUnits } from './lib/eval-report.mjs';
+import { buildRows, loadSnapshot, replayRows, roleRows, sessionUnits, skillUnits } from './lib/eval-report.mjs';
 import { readJsonl } from './lib/eval-store.mjs';
 import { loadRoleRecords, taskSnapshots } from './lib/eval-tasks.mjs';
 import { storePath, withStoreLock } from './lib/role-eval.mjs';
@@ -39,6 +41,11 @@ const USAGE = [
   '      project whose dispatch prompt names the plan. The report never refreshes the sessions store: when a session was',
   '      assigned after its newest session it says so on stderr (run `triqual eval sessions`). --json prints',
   '      { experiments: [{ id, kind, status, margin, evaluators, rows }] }.',
+  '      A role experiment with replay results (<evals>/replay/results.jsonl) also prints a replay block per arm after its',
+  '      live rows: cases, pass rate with its interval, usd median; for each arm but the control, the paired difference d',
+  '      and cost c, the discordant cases and the verdict; then the pass rate per repo (repoName of <evals>/replay/cases/',
+  '      <case>/case.json). --json adds the same rows as a replay key (absent when empty). The live rows of a review-fixer',
+  '      experiment are task-level, and the text says so.',
   '  triqual eval report --help',
   '',
 ].join('\n');
@@ -62,7 +69,33 @@ const pct = (v) => (v === null ? '-' : `${(v * 100).toFixed(1)}%`);
 const num = (v) => (v === null ? '-' : String(Math.round(v * 10000) / 10000));
 const pair = (ci, f) => (ci === null ? '-' : `[${f(ci[0])}, ${f(ci[1])}]`);
 
-function textOf(e) {
+// The replay block of an experiment's rows (see replayRows): the lines after its live rows.
+function replayText(rows) {
+  const lines = ['  replay'];
+  for (const r of rows) {
+    lines.push(`  ${r.arm}${r.control ? ' (control)' : ''}  cases ${r.n}  pass ${pct(r.rate)} ${pair(r.rateCI, pct)}  usd median ${num(r.usdMedian)}`);
+    if (!r.control) {
+      lines.push(`    d ${num(r.d)} ${pair(r.dCI, num)}  c ${num(r.c)} ${pair(r.cCI, num)}  paired ${r.paired}  discordant arm-only ${r.discordant.armOnly}, control-only ${r.discordant.controlOnly}  verdict: ${r.verdict}`);
+    }
+    for (const [repo, p] of Object.entries(r.perRepo)) lines.push(`    ${repo}  n ${p.n}  pass ${pct(p.rate)}`);
+  }
+  return lines;
+}
+
+// The case id -> repoName of each case a replay result names (<evals>/replay/cases/<id>/case.json); a case whose file cannot be
+// read, or has no repoName, is left out of the map.
+function replayRepos(evals, results) {
+  const repoOf = new Map();
+  for (const id of new Set(results.map((r) => r.case).filter((c) => typeof c === 'string'))) {
+    try {
+      const repoName = JSON.parse(readFileSync(join(evals, 'replay', 'cases', id, 'case.json'), 'utf8')).repoName;
+      if (typeof repoName === 'string') repoOf.set(id, repoName);
+    } catch { /* unreadable: the case is left out of the map */ }
+  }
+  return repoOf;
+}
+
+function textOf(e, experiment) {
   const lines = [`${e.id}  ${e.kind}  ${e.status}  margin ${e.margin}  evaluators ${e.evaluators ?? '-'}`];
   if (e.rows.length === 0) lines.push('  no rows');
   for (const r of e.rows) {
@@ -77,6 +110,11 @@ function textOf(e) {
       lines.push(`    ${project}  n ${p.n}  healthy ${pct(p.rate)}  cost median ${num(p.costMedian)}`);
     }
   }
+  // A review-fixer's live rows count its task-level outcomes, which do not attribute a result to the review-fixer.
+  if (experiment.kind === 'role' && Object.values(experiment.arms).some((a) => a.role === 'review-fixer')) {
+    lines.push('  task-level: not attributable to review-fixer');
+  }
+  if (e.replay) lines.push(...replayText(e.replay));
   return `${lines.join('\n')}\n`;
 }
 
@@ -114,6 +152,9 @@ export async function main(argv, {
   let roleRecords = null;
   let assignments = null;
   let snapshots = null;
+  // The replay results are read once, with the repoName of each case they name.
+  let replayResults = null;
+  let repoOf = null;
   const root = transcriptsRoot(env, home);
   for (const e of chosen) {
     let rows = [];
@@ -185,11 +226,23 @@ export async function main(argv, {
       const units = skillUnits({ evalsDir: evals, experiment: e });
       if (units.length > 0) rows = buildRows(units, e);
     }
-    out.push({ id: e.id, kind: e.kind, status: e.status, margin: e.margin, evaluators: e.evaluators ?? null, rows });
+    // A role experiment's replay rows (none when it has no counted run in the results).
+    let replay = [];
+    if (e.kind === 'role') {
+      if (replayResults === null) {
+        replayResults = readJsonl(join(evals, 'replay', 'results.jsonl')).rows;
+        repoOf = replayRepos(evals, replayResults);
+      }
+      replay = replayRows({ experiment: e, results: replayResults, repoOf });
+    }
+    out.push({
+      id: e.id, kind: e.kind, status: e.status, margin: e.margin, evaluators: e.evaluators ?? null, rows,
+      ...(replay.length > 0 ? { replay } : {}),
+    });
   }
 
   if (opts.json) stdout.write(`${JSON.stringify({ experiments: out }, null, 2)}\n`);
-  else stdout.write(out.length === 0 ? 'no experiments\n' : out.map(textOf).join(''));
+  else stdout.write(out.length === 0 ? 'no experiments\n' : out.map((e, i) => textOf(e, chosen[i])).join(''));
   return 0;
 }
 
