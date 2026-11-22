@@ -565,6 +565,23 @@ test('a hook input with no session_id writes no record', () => {
   });
 });
 
+// A replayed agent runs this hook inside its own session: TRIQUAL_REPLAY=1 means no arm record and no evals notice.
+test('TRIQUAL_REPLAY=1: the hook writes no arm record and prints no evals notice', () => {
+  withHome((home) => {
+    const evals = join(home, 'evals');
+    mkdirSync(join(evals, 'rounds'), { recursive: true });
+    writeFileSync(join(evals, 'rounds', '2026-11-22.json'), JSON.stringify({ failed: ['step-x'], revise: [] }));
+    const input = JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'sess-1', source: 'startup', cwd: join(PLUGIN_ROOT, '..', '..') });
+    const normal = runHook(PLUGIN_ROOT, home, input, { TRIQUAL_EVALS_DIR: evals });
+    assert.match(contextOf(normal), /evals: the last round had failed steps \(step-x\)/);
+    assert.equal(existsSync(join(evals, 'session-arms.jsonl')), true);
+    rmSync(join(evals, 'session-arms.jsonl'));
+    const replay = runHook(PLUGIN_ROOT, home, input, { TRIQUAL_EVALS_DIR: evals, TRIQUAL_REPLAY: '1' });
+    assert.equal(contextOf(replay).includes('the last round had failed steps'), false);
+    assert.equal(existsSync(join(evals, 'session-arms.jsonl')), false);
+  });
+});
+
 // Last in the file: every hook above ran with XDG_DATA_HOME and TRIQUAL_EVALS_DIR set to the decoys in this process.
 test('no spawned hook reached the caller\'s XDG_DATA_HOME or TRIQUAL_EVALS_DIR', () => {
   try {

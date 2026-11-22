@@ -139,6 +139,7 @@ function wrappedSkill(pluginRoot, dataDir) {
 // else, or one without a directory, never gets it.
 function evalsLine(env, home, dataDir, cwd) {
   try {
+    if (env.TRIQUAL_REPLAY === '1') return null; // a replayed agent's session (lib/eval-replay-run.mjs) is not told about the evals
     if (evalsCheckout(cwd, home) === null) return null;
     return evalsNotice({ evals: evalsDir(env, home) });
   } catch (err) {
@@ -191,7 +192,7 @@ async function main() {
   const { source, sessionId, cwd } = await readInput();
   const dataDir = process.env.CLAUDE_PLUGIN_DATA || null;
   try { // the arm record (evals) never changes what the hook prints, or whether it exits 0
-    recordSessionArm({ input: { sessionId, source }, env: process.env, home: homedir(), onError: (err) => logError(dataDir, err) });
+    if (process.env.TRIQUAL_REPLAY !== '1') recordSessionArm({ input: { sessionId, source }, env: process.env, home: homedir(), onError: (err) => logError(dataDir, err) });
   } catch (err) {
     logError(dataDir, err);
   }

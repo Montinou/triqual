@@ -70,3 +70,24 @@ test('an unknown sha throws "clone failed" and leaves no directory', () => {
   assert.throws(() => cloneAt(repo, 'f'.repeat(40)), /^Error: clone failed$/);
   assert.equal(replayDirs(), before);
 });
+
+test('the clone holds no history beyond the base: no refs, no alternates, the later commit is unreachable', () => {
+  const later = git(repo, 'rev-parse', 'HEAD').trim();
+  assert.notEqual(later, firstSha);
+  const dir = cloneAt(repo, firstSha);
+  try {
+    assert.equal(git(dir, 'for-each-ref').trim(), '');
+    assert.equal(git(dir, 'rev-list', '--all').trim(), firstSha); // the detached HEAD only
+    assert.equal(git(dir, 'rev-list', 'HEAD').trim(), firstSha);
+    assert.equal(git(dir, 'cat-file', '-e', later, { allowFail: true }).status === 0, false);
+    assert.equal(git(dir, 'show', 'main:b.txt', { allowFail: true }).status === 0, false);
+    assert.equal(existsSync(join(dir, '.git/objects/info/alternates')), false);
+    assert.equal(git(dir, 'remote').trim(), '');
+    assert.equal(git(dir, 'rev-parse', 'HEAD').trim(), firstSha);
+  } finally { removeClone(dir); }
+});
+
+test('a sha that is not a full hex object name throws "clone failed"', () => {
+  assert.throws(() => cloneAt(repo, '--upload-pack=true'), /^Error: clone failed$/);
+  assert.throws(() => cloneAt(repo, 'main'), /^Error: clone failed$/);
+});

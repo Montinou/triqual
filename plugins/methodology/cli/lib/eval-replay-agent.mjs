@@ -47,7 +47,8 @@ export function claudeArgs({ role, agents, model, effort, pluginDir }) {
   ];
 }
 
-// Every `{{WORK}}` becomes the work directory and every `{{CASE}}` the case directory, in one pass so that a value
+// Every `{{WORK}}` becomes the work directory and every `{{CASE}}` the directory that holds a copy of the case's files
+// (never the case directory itself, which holds the hidden tests and the original sha), in one pass so that a value
 // containing a placeholder is never substituted again.
 export function fillPrompt(text, { work, caseDir }) {
   return text.replace(/\{\{(WORK|CASE)\}\}/g, (_, key) => (key === 'WORK' ? work : caseDir));

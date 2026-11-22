@@ -27,19 +27,28 @@ const write = (cwd, path, body) => {
 };
 
 const STUB = `#!/usr/bin/env node
-const { spawnSync } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const mode = process.env.STUB_MODE;
 const login = process.env.CLAUDE_CODE_OAUTH_TOKEN ?? null;
 const stdin = fs.readFileSync(0, 'utf8');
 const argv = process.argv.slice(2);
-fs.appendFileSync(process.env.STUB_LOG, JSON.stringify({ argv, stdin, token: login, cwd: process.cwd(), hasB: fs.existsSync('src/b.mjs') }) + '\\n');
+const casePath = /\\(case (\\S+)\\)/.exec(stdin)?.[1] ?? null;
+fs.appendFileSync(process.env.STUB_LOG, JSON.stringify({
+  argv, stdin, token: login, cwd: process.cwd(), hasB: fs.existsSync('src/b.mjs'),
+  replay: process.env.TRIQUAL_REPLAY ?? null, evalsDir: process.env.TRIQUAL_EVALS_DIR ?? null,
+  caseJson: casePath !== null && fs.existsSync(casePath + '/case.json'), caseNote: casePath !== null && fs.existsSync(casePath + '/files/note.txt'),
+}) + '\\n');
 const model = argv[argv.indexOf('--model') + 1];
 const done = (extra = {}) => process.stdout.write(JSON.stringify({
   type: 'result', is_error: false, result: 'done', total_cost_usd: 0.5, modelUsage: { ['claude-' + model + '-5-0']: {} }, ...extra,
 }));
 const original = () => fs.writeFileSync('src/b.mjs', 'export function mul(a, b) { return a * b; }\\n');
-if (mode === 'dirty-limit-first' && login === 'tok-a') {
+if (mode === 'hang') {
+  const sleeper = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  fs.writeFileSync(process.env.STUB_PID_FILE, String(sleeper.pid));
+  setInterval(() => {}, 1000);
+} else if (mode === 'dirty-limit-first' && login === 'tok-a') {
   fs.writeFileSync('src/b.mjs', 'export const mul = () => 0;\\n');
   process.stdout.write(JSON.stringify({ type: 'result', is_error: true, api_error: 'usage_limit_reached', result: "You've hit your limit" }));
 } else if (mode === 'dirty-limit-first') done();
@@ -77,7 +86,7 @@ const experiment = {
 };
 
 let tmp; let home; let evals; let repo; let base; let original; let bin; let stubLog; let marker; let fakeBin; let chainFile; let env;
-let checkout; let version; let pluginDir; let seq = 0;
+let pidFile; let checkout; let version; let pluginDir; let seq = 0;
 
 before(() => {
   tmp = mkdtempSync(join(tmpdir(), 'replay-run-'));
@@ -103,6 +112,7 @@ before(() => {
   chmodSync(bin, 0o755);
   stubLog = join(tmp, 'stub.log');
   marker = join(tmp, 'marker');
+  pidFile = join(tmp, 'sleeper.pid');
   fakeBin = join(tmp, 'fake-bin');
   mkdirSync(fakeBin);
   writeFileSync(join(fakeBin, 'triqual'), '#!/bin/sh\ntouch "$MARKER"\n');
@@ -123,6 +133,8 @@ const writeChain = (names) => {
 const addCase = (id) => {
   const dir = join(casesDir(evals), id);
   ensureDir(dir);
+  ensureDir(join(dir, 'files'));
+  writeFileSync(join(dir, 'files', 'note.txt'), 'a case file\n');
   writeFileSync(join(dir, 'case.json'), JSON.stringify({
     v: 1,
     id,
@@ -148,7 +160,7 @@ beforeEach(() => {
   rmSync(marker, { force: true });
   chainFile = writeChain(['a', 'b']);
   const { NODE_TEST_CONTEXT: _, ...rest } = process.env;
-  env = { ...rest, PATH: `${fakeBin}${delimiter}${process.env.PATH}`, STUB_LOG: stubLog, MARKER: marker, TRIQUAL_EVAL_AUTH_FILE: chainFile };
+  env = { ...rest, PATH: `${fakeBin}${delimiter}${process.env.PATH}`, STUB_LOG: stubLog, STUB_PID_FILE: pidFile, MARKER: marker, TRIQUAL_EVAL_AUTH_FILE: chainFile };
 });
 
 const stub = () => (existsSync(stubLog) ? readFileSync(stubLog, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
@@ -204,7 +216,7 @@ test('the arm model reaches the agents JSON and --model, and the prompt is fille
   assert.equal(argv[argv.indexOf('--model') + 1], 'haiku');
   assert.equal(JSON.parse(argv[argv.indexOf('--agents') + 1])['tdd-implementer'].model, 'haiku');
   assert.equal(argv[argv.indexOf('--plugin-dir') + 1], pluginDir);
-  assert.match(stdin, /^Implement mul in \S*triqual-replay-\S+ \(case \S+case-a\)\.$/);
+  assert.match(stdin, /^Implement mul in \S*triqual-replay-\S+ \(case \S+triqual-replay-\S+\)\.$/);
 });
 
 test('a usage limit on the first entry is retried on the second and recorded with its account', async () => {
@@ -241,7 +253,6 @@ test('a limit retry whose setup fails is setup-failed and runs no second agent',
 });
 
 test('an agent that cannot start aborts the run and writes no line for the unit', async () => {
-  // A failed spawn leaves spawnCapture's timeout armed (Node clears it only on exit), so the test uses a 1 s one.
   const shortTimeout = (b, a, o) => spawnCapture(b, a, { ...o, timeoutMs: 1000 });
   const missing = join(tmp, 'no-such-claude');
   await assert.rejects(go('original', { bin: missing, spawn: shortTimeout }), /could not be started: .*no-such-claude \(ENOENT\)/);
@@ -328,4 +339,71 @@ test('planReplay: sample, run count and estimate; spawns nothing', () => {
   assert.equal(stub().length, 0);
   assert.throws(() => planReplay({ experiment: { ...experiment, status: 'done' }, evals, checkout, n: 1, seed: 1, runs: 1 }), /^Error: experiment exp1: /);
   assert.throws(() => planReplay({ experiment: { ...experiment, kind: 'skill' }, evals, checkout, n: 1, seed: 1, runs: 1 }), /^Error: experiment exp1: /);
+});
+
+// The replayed agent must not read the answer: the prompt names a copy of the case's files, not the case directory.
+test('{{CASE}} names a copy of the case files with no case.json, and it is removed afterwards', async () => {
+  const count = () => readdirSync(tmpdir()).filter((n) => n.startsWith('triqual-replay-')).length;
+  const before = count();
+  await one('original');
+  const [{ stdin, caseJson, caseNote }] = stub();
+  assert.equal(caseJson, false);
+  assert.equal(caseNote, true);
+  assert.equal(stdin.includes(join(casesDir(evals), 'case-a')), false);
+  assert.equal(count(), before);
+});
+
+test('the agent env marks a replay and points the evals dir at a private temp dir, removed afterwards', async () => {
+  await one('original');
+  const [{ replay, evalsDir }] = stub();
+  assert.equal(replay, '1');
+  assert.ok(evalsDir && evalsDir !== evals && !evalsDir.startsWith(evals));
+  assert.equal(existsSync(evalsDir), false);
+  assert.equal(existsSync(join(evals, 'session-arms.jsonl')), false);
+});
+
+test('an agent that hits its timeout is recorded as timeout, is not graded or retried, and leaves no survivor', async () => {
+  rmSync(pidFile, { force: true });
+  const shortTimeout = (b, a, o) => spawnCapture(b, a, { ...o, timeoutMs: 1500 });
+  const { lines, summary } = await go('hang', { arms: [ARM_CTRL], spawn: shortTimeout });
+  assert.deepEqual(lines.map((l) => [l.account, l.outcome, l.usd]), [['a', 'timeout', null]]);
+  assert.equal(stub().length, 1);
+  assert.equal(summary[ARM_CTRL].counted, 1);
+  assert.equal(summary[ARM_CTRL].passes, 0);
+  const pid = Number(readFileSync(pidFile, 'utf8'));
+  const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  for (let i = 0; i < 50 && alive(); i += 1) await new Promise((r) => setTimeout(r, 100));
+  assert.equal(alive(), false, 'the grandchild survived the timeout');
+});
+
+test('spawnCapture reports timedOut and kills the process group when detached', async () => {
+  rmSync(pidFile, { force: true });
+  const script = `const p = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+    require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(p.pid)); setInterval(() => {}, 1000);`;
+  const r = await spawnCapture(process.execPath, ['-e', script], { input: '', env: process.env, cwd: tmp, timeoutMs: 1000, detached: true });
+  assert.equal(r.timedOut, true);
+  const pid = Number(readFileSync(pidFile, 'utf8'));
+  const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  for (let i = 0; i < 50 && alive(); i += 1) await new Promise((res) => setTimeout(res, 100));
+  assert.equal(alive(), false);
+  const ok = await spawnCapture(process.execPath, ['-e', 'process.stdout.write("hi")'], { input: '', env: process.env, cwd: tmp, timeoutMs: 20_000 });
+  assert.deepEqual([ok.code, ok.stdout, ok.timedOut], [0, 'hi', undefined]);
+});
+
+test('spawnCapture clears its timer when the spawn fails', () => {
+  const script = `import { spawnCapture } from ${JSON.stringify(new URL('../cli/lib/eval-judge.mjs', import.meta.url).href)};
+    const r = await spawnCapture('/no/such/bin', [], { input: '', env: process.env, cwd: process.cwd(), timeoutMs: 120000 });
+    process.stdout.write(r.spawnError);`;
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 20_000 });
+  assert.equal(r.error, undefined, 'the process stayed alive on the armed timer');
+  assert.equal(r.stdout, 'ENOENT');
+});
+
+test('runReplay without concurrency runs the units one at a time', async () => {
+  addCase('case-a');
+  const plan = planReplay({ experiment, evals, checkout, n: 40, seed: 1, runs: 1 });
+  const e = { ...env, STUB_MODE: 'original' };
+  const chains = armChains({ experiment, authFiles: {}, env: e, home, paid: false }).chains;
+  await runReplay({ experiment, plan, chains, runs: 1, evals, checkout, pluginDir, repos, bin, env: e, home, now: () => new Date() });
+  assert.equal(resultsLines().length, 2);
 });

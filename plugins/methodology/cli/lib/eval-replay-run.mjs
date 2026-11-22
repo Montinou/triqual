@@ -2,7 +2,7 @@
 // units in isolated clones, appending one line per finished unit to <evals>/replay/results.jsonl. It prints nothing and
 // never uses the ambient login. node: built-ins only.
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, chmodSync, mkdtempSync, rmSync } from 'node:fs';
+import { appendFileSync, chmodSync, cpSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import {
@@ -107,13 +107,29 @@ const resetClone = (clone, base) => gitOk(['-C', clone, 'reset', '--hard', '-q',
 // The attempt result of a retry whose reset or setup failed: the chain stops there and the unit is setup-failed.
 const SETUP_FAILED = Object.freeze({ setupFailed: true });
 
+// The prompt's `{{CASE}}`: a private temp dir holding a copy of the case's files/ (what the prompt may point at), so the
+// agent never sees the case directory with case.json (the original sha, the hidden tests and their command).
+function copyCaseFiles(caseDir) {
+  const dir = mkdtempSync(join(tmpdir(), 'triqual-replay-'));
+  try {
+    if (existsSync(join(caseDir, 'files'))) cpSync(join(caseDir, 'files'), join(dir, 'files'), { recursive: true });
+  } catch (err) {
+    rmSync(dir, { recursive: true, force: true });
+    throw err;
+  }
+  return dir;
+}
+
+// The attempt result of an agent that hit its timeout: the unit is recorded as `timeout` (a fail in every rate).
+const TIMED_OUT = Object.freeze({ timedOut: true });
+
 const unitKey = (e, arm, id, run) => `${e}\0${arm}\0${id}\0${run}`;
 
 // Runs the plan's cases for every arm of the experiment and appends one line per finished unit. Units that are already in
 // results.jsonl are skipped. Returns the figures of the units finished by this call, per arm. A ChainExhausted or AuthError
 // stops the run after the units in flight finish.
 export async function runReplay({
-  experiment, plan, chains, runs, concurrency, evals, checkout, pluginDir, repos, bin, env, home, now = () => new Date(), spawn = spawnCapture,
+  experiment, plan, chains, runs, concurrency = 1, evals, checkout, pluginDir, repos, bin, env, home, now = () => new Date(), spawn = spawnCapture,
 }) {
   const role = roleOf(experiment);
   if (typeof pluginDir !== 'string' || pluginDir === '') throw new Error('the methodology plugin is not installed: no plugin directory');
@@ -139,6 +155,8 @@ export async function runReplay({
     const started = Date.now();
     let clone = null;
     let shim = null;
+    let caseCopy = null;
+    let evalsTmp = null;
     let outcome;
     let account = null;
     let usd = null;
@@ -150,7 +168,10 @@ export async function runReplay({
         else {
           shim = mkdtempSync(join(tmpdir(), 'triqual-replay-'));
           writeShim(shim);
-          const prompt = fillPrompt(kase.prompt, { work: clone, caseDir: kase.dir });
+          caseCopy = copyCaseFiles(kase.dir);
+          // The agent's SessionStart hooks must not write the real evals store: they get a private one, and a replay marker.
+          evalsTmp = mkdtempSync(join(tmpdir(), 'triqual-replay-'));
+          const prompt = fillPrompt(kase.prompt, { work: clone, caseDir: caseCopy });
           const args = claudeArgs({ role, agents: agents[arm], model: spec.model, effort: spec.effort, pluginDir });
           let attempts = 0;
           const attempt = async (_unit, e) => {
@@ -160,26 +181,29 @@ export async function runReplay({
               setupPaths = resetClone(clone, kase.base) ? prepare(clone, kase, repos, baseEnv) : null;
               if (setupPaths === null) return SETUP_FAILED;
             }
-            const childEnvironment = { ...childEnv(e, env, { home }), PATH: `${shim}${delimiter}${env.PATH ?? ''}` };
+            const childEnvironment = {
+              ...childEnv(e, env, { home }), PATH: `${shim}${delimiter}${env.PATH ?? ''}`, TRIQUAL_REPLAY: '1', TRIQUAL_EVALS_DIR: evalsTmp,
+            };
             let out = null;
-            try { out = await spawn(bin, args, { input: prompt, env: childEnvironment, cwd: clone, timeoutMs: AGENT_TIMEOUT_MS }); } catch { /* agent-error */ }
+            try { out = await spawn(bin, args, { input: prompt, env: childEnvironment, cwd: clone, timeoutMs: AGENT_TIMEOUT_MS, detached: true }); } catch { /* agent-error */ }
             // The agent did not start (a wrong bin): not a unit's outcome, so the run stops and nothing is recorded for it.
             if (out?.spawnError) throw new Error(`the agent could not be started: ${bin} (${out.spawnError})`);
-            return parseResult(out?.stdout);
+            return out?.timedOut === true ? TIMED_OUT : parseResult(out?.stdout);
           };
           const { result, entry: used } = await chainFor[arm].run({ arm, kase, run }, attempt);
           if (result === SETUP_FAILED) outcome = 'setup-failed';
           else {
             account = used.name;
             if (typeof result?.total_cost_usd === 'number') usd = result.total_cost_usd;
-            if (result === null || result.is_error === true || !modelOk(result.modelUsage ?? {}, spec.model)) outcome = 'agent-error';
+            if (result === TIMED_OUT) outcome = 'timeout';
+            else if (result === null || result.is_error === true || !modelOk(result.modelUsage ?? {}, spec.model)) outcome = 'agent-error';
             else outcome = gradeRun({ repo: kase.repo, clone, kase: { ...kase, setupPaths }, env: baseEnv }).outcome;
           }
         }
       }
     } finally {
       if (clone !== null) removeClone(clone);
-      if (shim !== null) rmSync(shim, { recursive: true, force: true });
+      for (const dir of [shim, caseCopy, evalsTmp]) if (dir !== null) rmSync(dir, { recursive: true, force: true });
     }
     const line = {
       v: 1, at: now().toISOString(), experiment: experiment.id, arm, role, case: kase.id, run, model: spec.model, effort: spec.effort,

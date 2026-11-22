@@ -87,3 +87,15 @@ test('row shape: control row nulls from paired on, a case missing from repoOf gr
   assert.equal(arm.c, null);
   assert.equal(arm.cCI, null);
 });
+
+test('a timeout counts as a fail, while setup-failed and agent-error are left out', () => {
+  const results = [
+    run('sonnet-high', 'a', 'pass', 1), run('haiku-high', 'a', 'timeout', null),
+    run('sonnet-high', 'b', 'pass', 1), run('haiku-high', 'b', 'agent-error', 1),
+    run('sonnet-high', 'c', 'pass', 1), run('haiku-high', 'c', 'setup-failed', null),
+  ];
+  const arm = replayRows({ experiment, results })[1];
+  assert.equal(arm.paired, 1);
+  assert.equal(arm.d, -1);
+  assert.deepEqual(arm.discordant, { armOnly: 0, controlOnly: 1 });
+});
