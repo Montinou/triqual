@@ -34,8 +34,11 @@ const USAGE = [
   '      contaminated, undecided), healthy rate with its 90% interval, cost median, the difference with the control and',
   '      the verdict (insufficient data, worse, propose, non-inferior, not cheaper, inconclusive). A session experiment is',
   '      scored by its frozen evaluator snapshot; a role experiment that was started is scored per plan (planner) or per',
-  '      task (clean-task rate, cost per task). --json prints { experiments: [{ id, kind, status, margin, evaluators,',
-  '      rows }] }.',
+  '      task (clean-task rate, cost per task). A task\'s cost is the subagents described `T<N> <role>` from its arm',
+  '      assignment to its last review, in the assignment\'s project directory or, for a plan run from a worktree, any',
+  '      project whose dispatch prompt names the plan. The report never refreshes the sessions store: when a session was',
+  '      assigned after its newest session it says so on stderr (run `triqual eval sessions`). --json prints',
+  '      { experiments: [{ id, kind, status, margin, evaluators, rows }] }.',
   '  triqual eval report --help',
   '',
 ].join('\n');
@@ -105,6 +108,7 @@ export async function main(argv, {
 
   const out = [];
   let sessions = null;
+  let staleNoted = false;
   let judgments = null;
   let armRecords = null;
   let roleRecords = null;
@@ -155,6 +159,18 @@ export async function main(argv, {
         return fail(`${e.id}: a check of snapshot ${clip(e.evaluators)} could not be run (${err?.code ?? err?.name ?? 'error'})`);
       }
       rows = buildRows(units, e);
+      // The report reads the sessions store and never refreshes it (`eval sessions` and `eval improve` do): a session
+      // assigned after the store's newest session is not counted yet, so say so once.
+      if (!staleNoted) {
+        staleNoted = true;
+        const latest = (rows2, key) => rows2.map((r) => r?.[key]).filter((v) => typeof v === 'string' && !Number.isNaN(Date.parse(v)))
+          .reduce((a, b) => (a === null || Date.parse(b) > Date.parse(a) ? b : a), null);
+        const storeEnd = latest(sessions, 'end');
+        const assigned = latest(armRecords, 'at');
+        if (assigned !== null && (storeEnd === null || Date.parse(assigned) > Date.parse(storeEnd))) {
+          stderr.write(`triqual eval report: the sessions store ends ${storeEnd ?? 'empty'}; a session was assigned ${assigned}: run \`triqual eval sessions\` to refresh it\n`);
+        }
+      }
     }
     // A role experiment that was started (it has evaluators, as a session experiment does), paused or not: its planner
     // or task rows.

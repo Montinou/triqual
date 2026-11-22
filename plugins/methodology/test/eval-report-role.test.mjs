@@ -347,6 +347,29 @@ test('taskCost takes the rows of the assignment project and task from its time t
   assert.equal(taskCost(assignmentRow({ cwd: '/home/x/Client.v2' }), costs, '2026-11-17T10:20:00.000Z'), null);
 });
 
+test('a task run from a worktree takes the cost of the subagents whose dispatch names its plan, in any project directory', async () => {
+  // The controller's session (and so its subagent transcripts) lives under the main checkout's project directory, while
+  // `eval arm` ran from the plan's worktree: the assignment cwd names another directory, in another letter case too.
+  const userLine = (text) => JSON.stringify({ type: 'user', timestamp: '2026-11-17T10:04:00Z', message: { role: 'user', content: text } });
+  const w = world({
+    assignments: [assignmentRow({ task: 'T1', cwd: '/home/x/client-plan-e1', at: '2026-11-17T10:00:00.000Z' })],
+    records: [taskReview({ task: 'T1', at: '2026-11-17T10:20:00Z' })],
+    subagents: [
+      implementer('named', '2026-11-17T10:05:00Z', 100_000, 'claude-opus-5-5', {
+        lines: [userLine(`Brief: /home/x/client-plan-e1/.methodology/sdd/${PLAN_A_BASE}/task-1-brief.md`), assistantLine({ id: 'named', at: '2026-11-17T10:05:00Z', model: 'claude-opus-5-5', output: 100_000 })],
+      }),
+      // Same task id and window, another plan's dispatch: not this task's cost.
+      implementer('other-plan', '2026-11-17T10:06:00Z', 450_000, 'claude-opus-5-5', {
+        lines: [userLine(`Brief: /home/x/other/.methodology/sdd/${PLAN_B_BASE}/task-1-brief.md`), assistantLine({ id: 'other-plan', at: '2026-11-17T10:06:00Z', model: 'claude-opus-5-5', output: 450_000 })],
+      }),
+    ],
+  });
+  try {
+    const rows = await rowsOf(w, 'r1');
+    assert.deepEqual(rows.map((r) => [r.arm, r.n, r.costMedian]), [['off', 1, 2], ['on', 0, null]]);
+  } finally { rmSync(w.base, { recursive: true, force: true }); }
+});
+
 // ---- the command ----------------------------------------------------------------------------------------------------
 
 test('fixture plan with an active experiment yields one task row per arm with cost per task', async () => {

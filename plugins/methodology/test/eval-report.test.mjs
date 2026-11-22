@@ -536,6 +536,19 @@ test('eval.mjs dispatches the report command', async () => {
   } finally { rmSync(w.base, { recursive: true, force: true }); }
 });
 
+test('a session assigned after the newest session of the store is named on stderr: the store needs a refresh', async () => {
+  const w = world([...mk(2, 'off'), ...mk(2, 'on')]);
+  try {
+    const fresh = await run(['--json'], w.env);
+    assert.doesNotMatch(fresh.err, /sessions store/);
+    writeFileSync(join(w.evals, 'session-arms.jsonl'), `${JSON.stringify({ sessionId: 'later', source: 'startup', arm: 'e1/on', launchId: null, at: '2026-11-20T09:00:00.000Z' })}\n`);
+    const stale = await run(['--json'], w.env);
+    assert.equal(stale.code, 0);
+    assert.match(stale.err, /sessions store ends 2026-11-05T11:00:00.000Z; a session was assigned 2026-11-20T09:00:00.000Z: run `triqual eval sessions` to refresh it/);
+    assert.doesNotThrow(() => JSON.parse(stale.out), 'stdout stays the JSON report');
+  } finally { rmSync(w.base, { recursive: true, force: true }); }
+});
+
 test('the report is written to stdout only, and the data it reads stays unchanged', async () => {
   const w = world([...mk(6, 'off'), ...mk(6, 'on')]);
   try {

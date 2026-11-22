@@ -3,6 +3,12 @@
 What changed in each plugin, newest first. The plugin version in each entry is the one the release sets in its
 `plugin.json`; the plugins table in the [README](README.md) shows what the marketplace carries now.
 
+## methodology 1.16.1
+
+- methodology: role experiments get their cost per task. `triqual eval report` joined a task's subagent cost on the project directory of the arm assignment, but a plan run from a worktree records the worktree as its cwd while the controller's subagent transcripts live under the main checkout's project directory, so every role row showed no cost and no verdict could be reached. A task's cost now also counts the `T<N> <role>` subagents in any project whose dispatch prompt names the plan. The subagent runs are read once per report. On this machine the report went from no cost to cost on 184 of 184 decided tdd-implementer tasks and 49 of 53 review-fixer tasks.
+- methodology: `triqual eval report` says on stderr when a session was assigned after the newest session of the sessions store (the report reads the store and never refreshes it; `triqual eval sessions` and `triqual eval improve` do). A stale store had shown a session experiment with n 0.
+- Update the plugin; nothing to rerun.
+
 ## methodology 1.16.0 / roles 0.12.0 / progress-tracking 0.12.0
 
 - methodology: `triqual eval cases <pluginDir> [--case <name>]... [--runs <n>]` runs named replay cases once each (three runs by default, a majority passes; scaffolded cases run with `--scaffold`), and `triqual eval variant --role <R> --out <dir> [--model] [--effort] [--prompt]` makes a role variant.
