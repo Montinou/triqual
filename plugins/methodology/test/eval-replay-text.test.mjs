@@ -164,57 +164,22 @@ test('commitRefsOf takes every sha one command prints and ignores a command that
   assert.deepEqual(commitRefsOf([{ command: 'git commit -m one && git commit -m two', ok: true, output }]), [{ sha: 'aaa1111' }, { sha: 'bbb2222' }]);
   assert.deepEqual(commitRefsOf([{ command: 'echo "run git commit later"', ok: true, output: '' }]), []);
 });
-test('commitRefsOf reads the sha a quiet commit has echoed, in the same command or the next one', () => {
+test('commitRefsOf never takes a sha another command echoed: a quiet commit has only its subject', () => {
   const sha = 'abc1234def5678abc1234def5678abc1234def56';
-  const same = (command, output) => commitRefsOf([{ command, ok: true, output }]);
-  assert.deepEqual(same('git commit -q -m "fix: x" && git rev-parse --short HEAD', 'abc1234\n'), [{ sha: 'abc1234' }]);
-  assert.deepEqual(same('git commit -q -F $m && git log --oneline -1', 'abc1234 fix: x\n'), [{ sha: 'abc1234' }]);
-  assert.deepEqual(same('git commit -q -F $m && git show --stat HEAD', `commit ${sha}\nAuthor: t\n`), [{ sha }]);
-  assert.deepEqual(commitRefsOf([
-    { command: 'git commit -q -F $m', ok: true, output: '' },
-    { command: 'git status --short', ok: true, output: '' },
-    { command: 'git -C /wt rev-parse HEAD', ok: true, output: `${sha}\n` },
-  ]), [{ sha }]);
-  assert.deepEqual(commitRefsOf([
-    { command: 'git commit -q -F $m', ok: true, output: '' },
-    { command: 'git commit -q -F $m', ok: true, output: '' },
-    { command: 'git rev-parse HEAD', ok: true, output: `${sha}\n` },
-  ]), [{ sha }]);
-  assert.deepEqual(same('git commit -q -F $m && echo done', 'done\n'), []);
-});
-test('commitRefsOf takes no echoed sha that is not the commit: an earlier command, another ref, another branch', () => {
-  const sha = 'abc1234def5678abc1234def5678abc1234def56';
-  const msg = (subject) => `git commit -q -m "${subject}"`;
   const run = (steps) => commitRefsOf(steps.map(([command, output = '']) => ({ command, ok: true, output })));
-  // The echo runs before the commit in the same command: it names the previous commit.
-  assert.deepEqual(run([[`git log --oneline -1 && ${msg('fix: x')}`, 'f00dfee prior\n']]), [{ subject: 'fix: x' }]);
-  // The echo runs after the commit but names another ref.
-  assert.deepEqual(run([[msg('fix: x')], ['git log --oneline -1 main', 'f00dfee main tip\n']]), [{ subject: 'fix: x' }]);
-  assert.deepEqual(run([[`${msg('fix: x')} && git rev-parse origin/main`, 'f00dfee\n']]), [{ subject: 'fix: x' }]);
-  assert.deepEqual(run([[msg('fix: x')], ['git rev-parse HEAD~1', `${sha}\n`]]), [{ subject: 'fix: x' }]);
-  assert.deepEqual(run([[msg('fix: x')], ['git log -1 -- src/a.mjs', `commit ${sha}\n`]]), [{ subject: 'fix: x' }]);
-  assert.deepEqual(run([[msg('fix: x')], ['git log --all -1', `commit ${sha}\n`]]), [{ subject: 'fix: x' }]);
-  assert.deepEqual(run([[msg('fix: x')], ['git rev-parse --abbrev-ref HEAD', 'main\n']]), [{ subject: 'fix: x' }]);
-  // Another commit, checkout, reset or rebase in between moves HEAD: the later echo is not this commit's.
-  for (const mover of ['git checkout other', 'git reset --hard HEAD~1', 'git rebase main', 'git switch other']) {
-    assert.deepEqual(run([[msg('fix: x')], [mover], ['git rev-parse HEAD', `${sha}\n`]]), [{ subject: 'fix: x' }], mover);
-    assert.deepEqual(run([[`${msg('fix: x')} && ${mover} && git rev-parse HEAD`, `${sha}\n`]]), [{ subject: 'fix: x' }], mover);
-  }
-  assert.deepEqual(run([[`${msg('fix: a')} && ${msg('fix: b')} && git rev-parse HEAD`, 'abc1234\n']]), [{ subject: 'fix: a' }, { sha: 'abc1234' }]);
-});
-test('commitRefsOf accepts an echo that names HEAD after the commit', () => {
-  const sha = 'abc1234def5678abc1234def5678abc1234def56';
-  const after = (echo, output) => commitRefsOf([{ command: 'git commit -q -F $m', ok: true, output: '' }, { command: echo, ok: true, output }]);
-  for (const echo of [
-    'git rev-parse HEAD', 'git rev-parse --short HEAD', 'git rev-parse --short=8 HEAD', 'git rev-parse --verify HEAD', 'git -C /wt rev-parse HEAD',
-    'git log -1', 'git log -n1', 'git log -n 1', 'git log --max-count=1', 'git log --oneline -1', 'git log --oneline -1 HEAD', 'git log -1 --format=%H',
-    'git log -1 --pretty=format:%h', 'git show', 'git show HEAD', 'git show --stat', 'git show --stat HEAD', 'git show --format=%H --no-patch',
-    'git show --name-only HEAD', 'cd /wt && git rev-parse HEAD', 'git status --short && git log --oneline -1',
-  ]) {
-    assert.deepEqual(after(echo, `${sha}\n`), [{ sha }], echo);
-  }
-  assert.deepEqual(after('git show --stat HEAD', `commit ${sha}\nAuthor: t\n\n    fix: x\n\n a.mjs | 1 +\n`), [{ sha }]);
-  assert.deepEqual(after('git log --oneline -1', `${sha.slice(0, 7)} fix: x\n`), [{ sha: sha.slice(0, 7) }]);
+  const quiet = 'git commit -q -m "x"';
+  // The echo in the same command, in a later command, with -C or --git-dir: the sha is never taken.
+  assert.deepEqual(run([[`${quiet} && git -C /repo rev-parse HEAD`, `${sha}\n`]]), [{ subject: 'x' }]);
+  assert.deepEqual(run([[quiet], ['cd /repo && git log --oneline -1', `${sha.slice(0, 7)} x\n`]]), [{ subject: 'x' }]);
+  assert.deepEqual(run([[quiet], ['git --git-dir=/o/.git rev-parse HEAD', `${sha}\n`]]), [{ subject: 'x' }]);
+  assert.deepEqual(run([[`${quiet} && git rev-parse --short HEAD`, 'abc1234\n']]), [{ subject: 'x' }]);
+  assert.deepEqual(run([[`${quiet} && git show --stat HEAD`, `commit ${sha}\nAuthor: t\n`]]), [{ subject: 'x' }]);
+  assert.deepEqual(run([[`${quiet} && git log --oneline -1 main`, 'f00dfee main tip\n']]), [{ subject: 'x' }]);
+  // A quiet commit with no readable subject has no ref at all.
+  assert.deepEqual(run([['git commit -q -F $m && git rev-parse HEAD', `${sha}\n`]]), []);
+  assert.deepEqual(run([['git commit -q -F $m'], ['git rev-parse HEAD', `${sha}\n`]]), []);
+  // The sha the commit command prints itself is kept.
+  assert.deepEqual(run([['git commit -m x', '[main abc1234] x\n']]), [{ sha: 'abc1234' }]);
 });
 test('commitRefsOf finds the message file an earlier command wrote', () => {
   assert.deepEqual(commitRefsOf([

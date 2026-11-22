@@ -93,6 +93,35 @@ test('a dispatch carries the briefs its dispatcher wrote before it: the latest W
   });
 });
 
+test('a brief a later successful Bash wrote (>, >>, tee, relative to its cwd) is dropped; a failed or earlier one is not', () => {
+  const bash = (id, command, opts) => step(id, 'Bash', { command }, opts);
+  const lines = [
+    ...step('w1', 'Write', { file_path: '/b/redir.md', content: 'v1' }),
+    ...bash('b1', 'echo more > /b/redir.md'),
+    ...step('w2', 'Write', { file_path: '/b/append.md', content: 'v1' }),
+    ...bash('b2', 'echo more >> "/b/append.md"'),
+    ...step('w3', 'Write', { file_path: '/b/tee.md', content: 'v1' }),
+    ...bash('b3', 'echo more | tee -a /b/tee.md'),
+    ...step('w4', 'Write', { file_path: '/b/rel.md', content: 'v1' }),
+    ...bash('b4', "cat >> rel.md <<'EOF'\nmore\nEOF", { cwd: '/b' }),
+    ...step('w5', 'Write', { file_path: '/b/cd.md', content: 'v1' }),
+    ...bash('b5', 'cd /b && echo more > cd.md', { cwd: '/elsewhere' }),
+    ...step('w6', 'Write', { file_path: '/b/failed.md', content: 'v1' }),
+    ...bash('b6', 'echo more > /b/failed.md', { error: true }),
+    ...step('w7', 'Write', { file_path: '/b/read.md', content: 'v1' }),
+    ...bash('b7', 'cat /b/read.md > /tmp/copy.md; echo x 2>&1 | tee /dev/null'),
+    ...step('w8', 'Write', { file_path: '/b/quoted.md', content: 'v1' }),
+    ...bash('b8', 'echo "a > /b/quoted.md" && grep "tee /b/quoted.md" x'),
+    ...bash('b9', 'echo first > /b/before.md'),
+    ...step('w9', 'Write', { file_path: '/b/before.md', content: 'after the Bash' }),
+    ...dispatch('toolu_1', 'Read /b/redir.md /b/append.md /b/tee.md /b/rel.md /b/cd.md /b/failed.md /b/read.md /b/quoted.md /b/before.md', '2026-11-20T10:05:00Z'),
+  ];
+  withTranscripts({ 'proj/sess.jsonl': lines }, (root) => {
+    const [d] = findDispatches(root, 'tdd-implementer');
+    assert.deepEqual(d.writes.map((w) => w.path), ['/b/failed.md', '/b/read.md', '/b/quoted.md', '/b/before.md']);
+  });
+});
+
 test('briefs written by a phase-orchestrator subagent are carried by the dispatch it makes', () => {
   const lines = [...step('w1', 'Write', { file_path: '/b/T7.md', content: 'v1' }), ...dispatch('toolu_n', 'Read /b/T7.md', '2026-11-20T10:05:00Z')];
   withTranscripts({ 'proj/sess/subagents/agent-aa11.jsonl': lines, 'proj/sess.jsonl': [] }, (root) => {

@@ -248,100 +248,63 @@ function subjectOf(args, commands) {
   return null;
 }
 
-// Quiet commits: the sha is taken from a command that runs after the commit and names HEAD, never from one that names another
-// commit. A heredoc body is dropped before a command is split, so a message line cannot pass for a command.
+// The absolute paths a Bash command writes: the target of `>` or `>>` (a fd prefix such as `2>` included) and the files `tee` takes,
+// outside quotes and heredoc bodies. A relative path resolves against the cwd of the call, or the last `cd` before it in the same
+// command. A target with a variable, command substitution or glob is unknown and left out.
 const HEREDOC_BODY = /(<<-?\s*(['"]?)(\w+)\2[^\n]*)\n[\s\S]*?\n[ \t]*\3[ \t]*(?=\n|$)/g;
-const HEAD_MOVERS = new Set(['commit', 'checkout', 'switch', 'reset', 'rebase', 'cherry-pick', 'merge', 'am', 'pull', 'revert']);
-const REV_PARSE_OPTION = /^(?:--short(?:=\d+)?|--verify|-q|--quiet)$/;
-const DISPLAY_OPTION = /^(?:--oneline|--abbrev-commit|--no-abbrev-commit|--abbrev=\d+|--format=.*|--pretty(?:=.*)?|--decorate(?:=.*)?|--no-decorate|--stat|--name-only|--name-status|--no-patch|-s|--color(?:=.*)?|--no-color)$/;
-const COUNT_ONE = /^(?:-1|-n1|--max-count=1)$/;
-
-const segmentsOf = (command) => {
+const REDIRECT = /^\d*>>?(.*)$/s;
+export function bashWritesOf(command, cwd) {
   const text = command.replace(HEREDOC_BODY, '$1');
-  return splitOutsideQuotes(text, (i) => separatorLength(text, i));
-};
-
-// `git <global options> <subcommand> <arguments>` of one segment, else null.
-function gitCall(segment) {
-  const ws = words(segment.replace(/^[({\s]+/, '')).map((w) => unquote(w.raw));
-  if (ws[0] !== 'git') return null;
-  let i = 1;
-  while (ws[i] === '-C' || ws[i] === '-c' || ws[i]?.startsWith('--')) i += ws[i].startsWith('--') ? 1 : 2;
-  return ws[i] === undefined ? null : { sub: ws[i], args: ws.slice(i + 1) };
-}
-
-// True for `git rev-parse [--short[=n]] [--verify] HEAD` and for `git log` (limited to one commit) or `git show` with no ref or
-// HEAD, display options only: any other ref, path limit or ref selection names another commit.
-function namesHead({ sub, args }) {
-  if (sub !== 'rev-parse' && sub !== 'log' && sub !== 'show') return false;
-  const refs = [];
-  let limited = false;
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i];
-    if (!arg.startsWith('-')) refs.push(arg);
-    else if (sub === 'log' && COUNT_ONE.test(arg)) limited = true;
-    else if (sub === 'log' && arg === '-n' && args[i + 1] === '1') {
-      limited = true;
-      i += 1;
-    } else if (!(sub === 'rev-parse' ? REV_PARSE_OPTION : DISPLAY_OPTION).test(arg)) return false;
+  const out = new Set();
+  let dir = typeof cwd === 'string' && posix.isAbsolute(cwd) ? cwd : null;
+  const add = (raw) => {
+    const target = unquote(raw);
+    if (target === '' || /[$`*?]/.test(target) || target.startsWith('&') || target === '/dev/null') return;
+    if (posix.isAbsolute(target)) out.add(posix.normalize(target));
+    else if (dir !== null) out.add(posix.resolve(dir, target));
+  };
+  for (const segment of splitOutsideQuotes(text, (i) => separatorLength(text, i))) {
+    const ws = words(segment.replace(/^[({\s]+/, ''));
+    let i = 0;
+    while (i < ws.length && ENV_WORD.test(ws[i].raw)) i += 1;
+    const head = ws[i] === undefined ? '' : unquote(ws[i].raw);
+    if (head === 'cd' && ws[i + 1] !== undefined) {
+      const to = unquote(ws[i + 1].raw);
+      if (posix.isAbsolute(to)) dir = posix.normalize(to);
+      else if (dir !== null) dir = posix.resolve(dir, to);
+      continue;
+    }
+    for (let j = i; j < ws.length; j += 1) {
+      const m = REDIRECT.exec(ws[j].raw);
+      if (m === null) {
+        if (head === 'tee' && j > i && !ws[j].raw.startsWith('-')) add(ws[j].raw);
+      } else if (m[1] !== '') add(m[1]);
+      else if (ws[j + 1] !== undefined) { add(ws[j + 1].raw); j += 1; }
+    }
   }
-  if (refs.length > 1 || (refs.length === 1 && refs[0] !== 'HEAD')) return false;
-  return sub === 'rev-parse' ? refs.length === 1 : sub === 'show' || limited;
+  return [...out];
 }
 
-// The last sha an echo printed: a `commit <sha>` line, else a line that starts with one.
-function printedSha(output) {
-  const text = output ?? '';
-  const last = (re) => [...text.matchAll(re)].at(-1)?.[1] ?? null;
-  return last(/^commit\s+([0-9a-f]{7,40})\b/gm) ?? last(/^([0-9a-f]{7,40})\b/gm);
-}
-
-// Looks through the segments that run after a commit: the first that names HEAD gives `echo`, one that moves HEAD gives `moved`.
-function afterCommit(segments) {
-  for (const segment of segments) {
-    const call = gitCall(segment);
-    if (call === null) continue;
-    if (HEAD_MOVERS.has(call.sub)) return 'moved';
-    if (namesHead(call)) return 'echo';
-  }
-  return null;
-}
-
-// The sha of the last commit call of `b` (its arguments start at `from`) from a command that runs after it and names HEAD: later
-// in the same command, else in a later command, each up to the first command that moves HEAD. Null when there is none.
-function echoedAfter(b, from, later) {
-  const same = afterCommit(segmentsOf(b.command.slice(from)).slice(1));
-  if (same !== null) return same === 'echo' ? printedSha(b.output) : null;
-  for (const next of later) {
-    if (!next.ok) continue;
-    const found = afterCommit(segmentsOf(next.command));
-    if (found !== null) return found === 'echo' ? printedSha(next.output) : null;
-  }
-  return null;
-}
-
-// Per successful `git commit` command: the shas the commit prints, else the sha a later command named HEAD printed, else the
-// subject of the commit's message.
+// Per successful `git commit` command: the shas the commit's own output prints (`[branch abc1234] msg`), else the subject of the
+// commit's message. A sha another command echoed (`git rev-parse HEAD`) is never taken: it may name another commit.
 export function commitRefsOf(bashes) {
   const refs = [];
   const commands = bashes.filter((b) => b.ok).map((b) => b.command);
-  bashes.forEach((b, i) => {
-    if (!b.ok) return;
+  for (const b of bashes) {
+    if (!b.ok) continue;
     const calls = [...b.command.matchAll(COMMIT_CALL)];
-    if (calls.length === 0) return;
+    if (calls.length === 0) continue;
     const printed = [...(b.output ?? '').matchAll(COMMIT_SHAS)].map((m) => ({ sha: m[1] }));
     if (printed.length > 0) {
       refs.push(...printed);
-      return;
+      continue;
     }
     calls.forEach((call, n) => {
       const from = call.index + call[0].length;
-      const sha = n === calls.length - 1 ? echoedAfter(b, from, bashes.slice(i + 1)) : null;
-      if (sha !== null) { refs.push({ sha }); return; }
       const subject = subjectOf(b.command.slice(from, calls[n + 1]?.index ?? b.command.length), commands);
       if (subject !== null) refs.push({ subject });
     });
-  });
+  }
   return refs;
 }
 

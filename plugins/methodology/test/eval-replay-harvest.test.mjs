@@ -149,7 +149,7 @@ before(() => {
   const gamma = commit(repo, 'feat: gamma');
   write(repo, 'src/d.mjs', fn('delta', "'d'"));
   write(repo, 'test/d.test.mjs', bindingTest('delta', '../src/d.mjs'));
-  const delta = commit(repo, 'feat: delta');
+  commit(repo, 'feat: delta');
   // Gitignored in real repositories: on disk, never tracked, so it never exists in a clone.
   write(repo, '.methodology/sdd/p/task-g.md', '# T21 brief\nAdd gamma() in the file at ' + join(repo, 'src', 'g.mjs') + '.\n');
 
@@ -221,12 +221,12 @@ before(() => {
       ],
     },
     {
-      // The agent started in a directory that is no repository and worked in the repository through cd; its commit prints no sha.
+      // The agent started in a directory that is no repository and worked in the repository through cd; its commit prints no sha, so it resolves by its subject.
       id: 'toolu_cdrepo', cwd: join(root, 'work'), description: 'T23 tdd-implementer',
       prompt: `Implement T23: add delta() in ${join(repo, 'src', 'd.mjs')}. Run the test command.`,
       steps: [
         { bash: `cd ${repo} && node --test test/d.test.mjs` },
-        { bash: `cd ${repo} && git add -A && git commit -q -m "feat: delta" && git rev-parse HEAD`, out: `${delta}\n` },
+        { bash: `cd ${repo} && git add -A && git commit -q -m "feat: delta"`, out: '' },
       ],
     },
     {
@@ -235,8 +235,7 @@ before(() => {
       prompt: `Implement T24: add delta() in ${join(repo, '.claude', 'worktrees', 'gone', 'src', 'd.mjs')}. Run the test command.`,
       steps: [
         { bash: 'node --test test/d.test.mjs' },
-        { bash: 'git commit -q -F $m', out: '' },
-        { bash: 'git rev-parse --short HEAD', out: `${delta.slice(0, 7)}\n` },
+        { bash: 'git commit -q -m "feat: delta"', out: '' },
       ],
     },
     {
@@ -485,6 +484,7 @@ before(() => {
     write: add('c2', 'dee', 'feat: brief by write'),
     kappa: add('k', 'kappa', 'feat: kappa', AT, 'pkg/src'),
     lambda: add('l', 'lambda', 'feat: lambda', AT, 'pkg2/src'),
+    mu: add('m', 'mu', 'feat: mu', AT, 'pkg3/inner/src'),
     twinOld: add('t1', 'ta', 'fix: twin', OLD),
     twin: add('t2', 'tb', 'fix: twin'),
     dup1: add('t3', 'tc', 'fix: dup'),
@@ -534,6 +534,11 @@ before(() => {
       id: 'toolu_lambda', cwd: join(repo, 'wt-gone'), description: 'T8 tdd-implementer', prompt: `Implement T8: add lambda() in ${join(repo, 'wt-gone', 'pkg2', 'src', 'l.mjs')}.`,
       steps: [{ bash: `cd ${join(repo, 'wt-gone', 'pkg2')} && node --test test/l.test.mjs` }, { bash: 'git commit -m "feat: lambda"', out: printed('main', shas.lambda, 'feat: lambda') }],
     },
+    {
+      // Three nested deleted directories are known: the shallowest is the checkout top, not the nearest one above the package.
+      id: 'toolu_mu', cwd: join(repo, 'wt-gone2'), description: 'T14 tdd-implementer', prompt: `Implement T14: add mu() in ${join(repo, 'wt-gone2', 'pkg3', 'inner', 'src', 'm.mjs')}.`,
+      steps: [{ bash: `cd ${join(repo, 'wt-gone2', 'pkg3')} && ls` }, { bash: `cd ${join(repo, 'wt-gone2', 'pkg3', 'inner')} && node --test test/m.test.mjs` }, { bash: 'git commit -m "feat: mu"', out: printed('main', shas.mu, 'feat: mu') }],
+    },
     { id: 'toolu_twin', cwd: repo, description: 'T9 tdd-implementer', prompt: 'Implement T9: add tb() in src/t2.mjs.', steps: [{ bash: 'node --test test/t2.test.mjs' }, quiet('fix: twin')] },
     { id: 'toolu_dup', cwd: repo, description: 'T10 tdd-implementer', prompt: 'Implement T10: add tc() in src/t3.mjs.', steps: [{ bash: 'node --test test/t3.test.mjs' }, quiet('fix: dup')] },
     { id: 'toolu_stale', cwd: repo, description: 'T11 tdd-implementer', prompt: 'Implement T11: add te() in src/t5.mjs.', steps: [{ bash: 'node --test test/t5.test.mjs' }, quiet('fix: stale')] },
@@ -581,6 +586,13 @@ test('a deleted subdirectory resolves to its checkout root, with or without a .w
   assert.equal(kappa.validated && lambda.validated, true);
 });
 
+test('of several nested deleted directories the shallowest known one is the checkout top', () => {
+  const mu = readExCase('toolu_mu');
+  assert.equal(mu.prompt, 'Implement T14: add mu() in {{WORK}}/pkg3/inner/src/m.mjs.');
+  assert.equal(mu.testCommand, 'cd {{WORK}}/pkg3/inner && node --test test/m.test.mjs');
+  assert.equal(mu.validated, true);
+});
+
 test('a subject shared by several commits is taken only when one is in the dispatch window or one repository ran the commit', () => {
   assert.equal(readExCase('toolu_twin').original, ex.shas.twin);
   assert.equal(readExCase('toolu_prefer').repo, ex.other);
@@ -588,5 +600,5 @@ test('a subject shared by several commits is taken only when one is in the dispa
   assert.equal(exCaseExists('toolu_stale'), false);
   assert.equal(exCaseExists('toolu_both'), false);
   assert.equal(ex.first.excluded.unreachable, 3);
-  assert.equal(ex.first.kept, 7);
+  assert.equal(ex.first.kept, 8);
 });

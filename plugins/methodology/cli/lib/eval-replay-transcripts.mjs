@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { mainTranscripts, sessionSignals } from './eval-sessions.mjs';
 import { PRICES, subagentTranscripts } from './eval-plans.mjs';
+import { bashWritesOf } from './eval-replay-text.mjs';
 
 const DISPATCH_TOOLS = new Set(['Agent', 'Task']);
 const AGENT_ID = /^[0-9a-f]+$/;
@@ -57,12 +58,18 @@ function indexTranscript(recs) {
 const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'NotebookEdit']);
 
 // The files the transcript wrote before its use number `before` that the prompt names: for each path the latest successful Write,
-// unless a successful Edit of the path followed it. A path the prompt does not name is not kept.
+// unless a successful Edit, or a successful Bash command that writes it (`>`, `>>`, `tee`), followed it. A path the prompt does not
+// name is not kept.
 function writesBefore(uses, results, before, prompt) {
   const latest = new Map();
   for (const u of uses.slice(0, before)) {
+    if (results.get(u.id)?.isError !== false) continue;
+    if (u.name === 'Bash' && typeof u.input.command === 'string') {
+      for (const written of bashWritesOf(u.input.command, u.cwd)) latest.delete(written);
+      continue;
+    }
     const path = u.input.file_path ?? u.input.notebook_path;
-    if (typeof path !== 'string' || results.get(u.id)?.isError !== false) continue;
+    if (typeof path !== 'string') continue;
     if (u.name === 'Write' && typeof u.input.content === 'string') latest.set(path, { path, content: u.input.content });
     else if (EDIT_TOOLS.has(u.name)) latest.delete(path);
   }

@@ -120,13 +120,14 @@ function isCheckoutTop(dir) {
 }
 
 // The root of the checkout a directory belongs to, spelled as the directory is: the top level while the directory exists. For a
-// deleted directory: the worktree a .claude/worktrees or .worktrees path names, else the nearest other directory of the
-// transcript (`known`) above it that is a checkout top, else the directory itself.
+// deleted directory: the worktree a .claude/worktrees or .worktrees path names, else the shallowest other directory of the
+// transcript (`known`) above it that is a checkout top (a deleted one counts), else the directory itself: a deleted directory is
+// a top only when no known directory above it on its path is one.
 function checkoutRoot(dir, known) {
   if (!existsSync(dir)) {
     const named = WORKTREE_ROOT.exec(dir)?.[1];
     if (named) return named;
-    const above = known.filter((k) => k !== dir && dir.startsWith(`${k.replace(/\/$/, '')}/`)).sort((a, b) => b.length - a.length);
+    const above = known.filter((k) => k !== dir && dir.startsWith(`${k.replace(/\/$/, '')}/`)).sort((a, b) => a.length - b.length);
     return above.find(isCheckoutTop) ?? dir;
   }
   const r = git(dir, ['rev-parse', '--show-toplevel']);
