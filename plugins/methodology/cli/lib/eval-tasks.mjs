@@ -61,29 +61,72 @@ export function cleanTask({ plan, task }, records) {
   return !mine.some((r) => r.kind === 'escape' && r.task === task);
 }
 
-// The cost of the subagents described `T<N> <role>` under the transcripts `root`: one row per (project, task, role),
-// { project (the project directory name), task ("T<N>"), role, runs, usd (an estimate at the list prices of prices.json),
-// firstAt (the first timestamp of its earliest run) }. A run counts when its first timestamp lies in since..until (ISO
-// instants, both ends included, either may be undefined); `project` keeps one project directory only.
-export function subagentTaskCosts(root, { since, until, project } = {}) {
-  const from = since === undefined ? -Infinity : ms(since);
-  const to = until === undefined ? Infinity : ms(until);
-  const windowed = from !== -Infinity || to !== Infinity;
-  const groups = new Map();
+// The subagent runs described `T<N> <role>` under the transcripts `root`, read once per process and root:
+// { dir (project directory name), task, role, transcript, signals (lazy sessionSignals), prompt (lazy first user
+// message text, the dispatch prompt) }. Memoized because a report joins every assignment against the same runs.
+const RUNS = new Map();
+function taskRuns(root) {
+  if (RUNS.has(root)) return RUNS.get(root);
+  const runs = [];
   for (const transcript of subagentTranscripts(root, false, [])) {
-    const dir = relative(root, transcript).split(sep)[0];
-    if (project !== undefined && dir !== project) continue;
     let description;
     try { description = JSON.parse(readFileSync(transcript.replace(/\.jsonl$/, '.meta.json'), 'utf8'))?.description; } catch { continue; }
     const found = typeof description === 'string' ? TASK_DESCRIPTION.exec(description) : null;
     if (found === null) continue;
-    const signals = sessionSignals(transcript, { prices: PRICES });
+    let signals;
+    let prompt;
+    runs.push({
+      dir: relative(root, transcript).split(sep)[0],
+      task: `T${found[1]}`,
+      role: found[2],
+      get signals() { signals ??= sessionSignals(transcript, { prices: PRICES }); return signals; },
+      get prompt() { prompt ??= firstUserText(transcript); return prompt; },
+    });
+  }
+  RUNS.set(root, runs);
+  return runs;
+}
+
+// The text of the first user message of a transcript (the dispatch prompt of a subagent); '' when there is none.
+function firstUserText(transcript) {
+  let text = '';
+  try { text = readFileSync(transcript, 'utf8'); } catch { return ''; }
+  for (const line of text.split('\n')) {
+    if (!line.includes('"user"')) continue;
+    let d;
+    try { d = JSON.parse(line); } catch { continue; }
+    if (d?.type !== 'user') continue;
+    const c = d.message?.content;
+    if (typeof c === 'string') return c;
+    return asArray(c).map((x) => (typeof x?.text === 'string' ? x.text : '')).join('\n');
+  }
+  return '';
+}
+
+// The cost of the subagents described `T<N> <role>` under the transcripts `root`: one row per (project, task, role),
+// { project (the project directory name), task ("T<N>"), role, runs, usd (an estimate at the list prices of prices.json),
+// firstAt (the first timestamp of its earliest run) }. A run counts when its first timestamp lies in since..until (ISO
+// instants, both ends included, either may be undefined); `project` keeps one project directory only. With `mentions`
+// (a plan's base name), a run in another project directory also counts when its dispatch prompt names `mentions`: a plan
+// run from a worktree records the worktree as its cwd while the controller's transcripts live under the main checkout's
+// project directory. Rows from such runs carry `mentioned: true` and are grouped apart from the project's own. `task`
+// keeps one task id only.
+export function subagentTaskCosts(root, { since, until, project, mentions, task: onlyTask } = {}) {
+  const from = since === undefined ? -Infinity : ms(since);
+  const to = until === undefined ? Infinity : ms(until);
+  const windowed = from !== -Infinity || to !== Infinity;
+  const groups = new Map();
+  for (const run of taskRuns(root)) {
+    if (onlyTask !== undefined && run.task !== onlyTask) continue;
+    const inProject = project === undefined || run.dir === project;
+    if (!inProject && !mentions) continue;
+    const { signals } = run;
     const start = ms(signals.start);
     if (windowed && !(start >= from && start <= to)) continue;
-    const task = `T${found[1]}`;
-    const role = found[2];
-    const key = `${dir}\0${task}\0${role}`;
-    const row = groups.get(key) ?? { project: dir, task, role, runs: 0, usd: 0, firstAt: null };
+    const mentioned = !inProject;
+    if (mentioned && !run.prompt.includes(mentions)) continue;
+    const key = `${run.dir}\0${run.task}\0${run.role}\0${mentioned}`;
+    const row = groups.get(key) ?? { project: run.dir, task: run.task, role: run.role, runs: 0, usd: 0, firstAt: null, ...(mentioned ? { mentioned: true } : {}) };
     row.runs += 1;
     row.usd += signals.usd;
     if (signals.start !== null && (row.firstAt === null || start < ms(row.firstAt))) row.firstAt = signals.start;
@@ -95,15 +138,15 @@ export function subagentTaskCosts(root, { since, until, project } = {}) {
 // The project directory of a working directory: every non-alphanumeric character becomes "-".
 const projectDirOf = (cwd) => (typeof cwd === 'string' ? cwd.replace(/[^A-Za-z0-9]/g, '-') : null);
 
-// The USD of the assignment's task: the sum over the `costs` rows (subagentTaskCosts) of the assignment's project
-// directory and task whose `firstAt` is from the assignment's `at` to `until` (the task's `task-review` `at`; open at
-// the end when undefined). null when no row matches.
+// The USD of the assignment's task: the sum over the `costs` rows (subagentTaskCosts) of the assignment's task, of its
+// project directory or `mentioned` (the dispatch named the plan), whose `firstAt` is from the assignment's `at` to
+// `until` (the task's `task-review` `at`; open at the end when undefined). null when no row matches.
 export function taskCost(assignment, costs, until) {
   const dir = projectDirOf(assignment?.cwd);
   const from = ms(assignment?.at);
   const to = until === undefined ? Infinity : ms(until);
   if (dir === null || Number.isNaN(from)) return null;
-  const rows = asArray(costs).filter((c) => c?.project === dir && c.task === assignment.task && finite(ms(c.firstAt)) && ms(c.firstAt) >= from && ms(c.firstAt) <= to);
+  const rows = asArray(costs).filter((c) => (c?.project === dir || c?.mentioned === true) && c.task === assignment.task && finite(ms(c.firstAt)) && ms(c.firstAt) >= from && ms(c.firstAt) <= to);
   return rows.length === 0 ? null : rows.reduce((sum, c) => sum + (finite(c.usd) ? c.usd : 0), 0);
 }
 
@@ -130,7 +173,7 @@ export function taskUnits({ experiment, assignments, records, root }) {
     if (clean !== null) {
       const reviews = asArray(records).filter((r) => r?.kind === 'task-review' && r.task === a.task && planBase(r.plan) === planBase(a.plan));
       const until = reviews.map((r) => r.at).reduce((latest, at) => (ms(at) > ms(latest) ? at : latest));
-      cost = taskCost(a, subagentTaskCosts(root, { since: a.at, until, project: projectDirOf(a.cwd) }), until);
+      cost = taskCost(a, subagentTaskCosts(root, { since: a.at, until, project: projectDirOf(a.cwd), mentions: planBase(a.plan), task: a.task }), until);
     }
     units.push({
       arm: a.arm,
