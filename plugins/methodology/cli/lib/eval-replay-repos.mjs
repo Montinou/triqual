@@ -43,19 +43,36 @@ export function loadReplayRepos(file) {
   return out;
 }
 
-// Runs `/bin/sh -c command` in `dir` with output discarded and a timeout in seconds.
+// Launcher run by node: starts `/bin/sh -c <argv[1]>` as the leader of its own process group, and on timeout
+// (argv[2] ms) SIGKILLs the whole group. Prints {code, timedOut} as JSON on stdout.
+const LAUNCHER = `
+const { spawn } = require('node:child_process');
+const [command, ms] = [process.argv[1], Number(process.argv[2])];
+const child = spawn('/bin/sh', ['-c', command], { detached: true, stdio: 'ignore' });
+let timedOut = false;
+const timer = setTimeout(() => {
+  timedOut = true;
+  try { process.kill(-child.pid, 'SIGKILL'); } catch {}
+}, ms);
+child.on('error', () => { clearTimeout(timer); process.stdout.write(JSON.stringify({ code: null, timedOut: false })); });
+child.on('exit', (code) => { clearTimeout(timer); process.stdout.write(JSON.stringify({ code, timedOut })); });
+`;
+
+// Runs `/bin/sh -c command` in `dir` (in its own process group, killed whole on timeout) with output discarded and a timeout in seconds.
 export function runShell(dir, command, { timeoutSeconds, env }) {
   const start = Date.now();
-  const r = spawnSync('/bin/sh', ['-c', command], {
+  const r = spawnSync(process.execPath, ['-e', LAUNCHER, command, String(timeoutSeconds * 1000)], {
     cwd: dir,
     env,
-    stdio: 'ignore',
-    timeout: timeoutSeconds * 1000,
-    killSignal: 'SIGKILL',
+    stdio: ['ignore', 'pipe', 'ignore'],
+    encoding: 'utf8',
   });
   const seconds = (Date.now() - start) / 1000;
-  const timedOut = r.error?.code === 'ETIMEDOUT';
-  const code = r.status ?? null;
+  let result = { code: null, timedOut: false };
+  try {
+    result = JSON.parse(r.stdout);
+  } catch {}
+  const { code, timedOut } = result;
   return { ok: code === 0 && !timedOut && !r.error, code, timedOut, seconds };
 }
 
