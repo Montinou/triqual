@@ -1,0 +1,11 @@
+{"type":"user","timestamp":"2026-11-20T10:00:01Z","cwd":"/work/a","sessionId":"sess1","message":{"role":"user","content":"Implement T7 from the brief"}}
+{"type":"assistant","timestamp":"2026-11-20T10:00:10Z","cwd":"/work/a","sessionId":"sess1","message":{"role":"assistant","content":[{"type":"tool_use","id":"r_full","name":"Read","input":{"file_path":"/tmp/briefs/T7.md"}}]}}
+{"type":"user","timestamp":"2026-11-20T10:00:11Z","cwd":"/work/a","sessionId":"sess1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"r_full","content":"     1\t# Brief\n     2\tline two\n"}]}}
+{"type":"assistant","timestamp":"2026-11-20T10:00:20Z","cwd":"/work/a","sessionId":"sess1","message":{"role":"assistant","content":[{"type":"tool_use","id":"r_offset","name":"Read","input":{"file_path":"/tmp/briefs/T7.md","offset":3}}]}}
+{"type":"user","timestamp":"2026-11-20T10:00:21Z","cwd":"/work/a","sessionId":"sess1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"r_offset","content":"     3\tpartial read\n"}]}}
+{"type":"assistant","timestamp":"2026-11-20T10:00:30Z","cwd":"/work/a","sessionId":"sess1","message":{"role":"assistant","content":[{"type":"tool_use","id":"r_err","name":"Read","input":{"file_path":"/tmp/briefs/missing.md"}}]}}
+{"type":"user","timestamp":"2026-11-20T10:00:31Z","cwd":"/work/a","sessionId":"sess1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"r_err","is_error":true,"content":"File does not exist."}]}}
+{"type":"assistant","timestamp":"2026-11-20T10:01:00Z","cwd":"/work/a","sessionId":"sess1","message":{"role":"assistant","content":[{"type":"tool_use","id":"b_fail","name":"Bash","input":{"command":"npm test"}}]}}
+{"type":"user","timestamp":"2026-11-20T10:01:30Z","cwd":"/work/a","sessionId":"sess1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"b_fail","is_error":true,"content":"exit 1"}]}}
+{"type":"assistant","timestamp":"2026-11-20T10:02:00Z","cwd":"/work/a","sessionId":"sess1","message":{"role":"assistant","content":[{"type":"tool_use","id":"b_ok","name":"Bash","input":{"command":"node --test test/a.test.mjs"}}]}}
+{"type":"user","timestamp":"2026-11-20T10:02:30Z","cwd":"/work/a","sessionId":"sess1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"b_ok","content":"ok 1\n"}]}}

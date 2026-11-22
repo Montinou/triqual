@@ -259,7 +259,7 @@ export function skillUnits({ evalsDir, experiment }) {
 }
 
 // The per-case figures of an arm in a replay: Map case -> { pass, usd }. `runs` are the arm's counted runs (setup-failed
-// and agent-error left out). A case passes when more than half of its counted runs pass (a tie fails); its usd is the
+// and agent-error left out; a timeout stays in and counts as a fail). A case passes when more than half of its counted runs pass (a tie fails); its usd is the
 // median of its runs' finite usd, null when it has none.
 function replayCases(runs) {
   const by = new Map();
@@ -275,7 +275,7 @@ function replayCases(runs) {
 
 // The rows of a role experiment's replay over `results` (the parsed lines of <evals>/replay/results.jsonl): [control row,
 // arm row ...], or [] when no counted run of the experiment exists. Rows of another experiment, of an arm the experiment
-// does not have or whose v is not 1 are ignored; a run counts unless its outcome is setup-failed or agent-error. n and
+// does not have or whose v is not 1 are ignored; a run counts unless its outcome is setup-failed or agent-error (a timeout is a counted fail). n and
 // rate count cases (see replayCases), usdMedian is the median usd per counted run, perRepo the pass rate per repoName
 // (`repoOf`: case id -> repoName; a case missing from it is "unknown"). The comparison with the control is paired: only
 // cases counted in both arms enter it. d is the mean over them of (arm pass - control pass) with its bootstrap interval,

@@ -103,15 +103,22 @@ const SCHEMA = JSON.stringify({
 });
 
 // The default spawn: runs bin with args, `input` on stdin, resolves { code, stdout, stderr } (never rejects on a non-zero exit).
-export function spawnCapture(bin, args, { input, env, cwd, timeoutMs = JUDGE_TIMEOUT_MS }) {
+// After timeoutMs the child is killed and the result carries timedOut: true. With `detached` the child leads its own
+// process group and the whole group is killed (SIGKILL), so a grandchild does not outlive the timeout.
+export function spawnCapture(bin, args, { input, env, cwd, timeoutMs = JUDGE_TIMEOUT_MS, detached = false }) {
   return new Promise((resolve) => {
-    const child = nodeSpawn(bin, args, { env, cwd, stdio: ['pipe', 'pipe', 'pipe'], timeout: timeoutMs });
+    const child = nodeSpawn(bin, args, { env, cwd, stdio: ['pipe', 'pipe', 'pipe'], detached });
     let stdout = '';
     let stderr = '';
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try { if (detached) process.kill(-child.pid, 'SIGKILL'); else child.kill(); } catch { /* already gone */ }
+    }, timeoutMs);
     child.stdout.on('data', (d) => { stdout += d; });
     child.stderr.on('data', (d) => { stderr += d; });
-    child.on('error', (err) => resolve({ code: null, stdout, stderr, spawnError: err?.code ?? 'error' }));
-    child.on('close', (code) => resolve({ code, stdout, stderr }));
+    child.on('error', (err) => { clearTimeout(timer); resolve({ code: null, stdout, stderr, spawnError: err?.code ?? 'error' }); });
+    child.on('close', (code) => { clearTimeout(timer); resolve(timedOut ? { code, stdout, stderr, timedOut } : { code, stdout, stderr }); });
     child.stdin.on('error', () => { /* the child may exit before reading its stdin */ });
     child.stdin.end(input);
   });
