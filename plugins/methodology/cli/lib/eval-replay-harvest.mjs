@@ -7,7 +7,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync
 import { basename, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureDir } from './eval-paths.mjs';
-import { cloneAt, removeClone } from './eval-replay-clone.mjs';
+import { cloneForValidation, removeClone } from './eval-replay-clone.mjs';
 import { findDispatches, subagentActivity } from './eval-replay-transcripts.mjs';
 import {
   caseFiles, countUnnamedLiterals, existsAt, firstParent, isMerged, mainCheckout, resolveRef, restoreFiles, unnamedSymbols,
@@ -91,7 +91,7 @@ function checkoutDetached(dir, sha) {
 function validate({ repo, base, original, hiddenTests, supportFiles, testCommand, entry, env }) {
   let clone;
   try {
-    clone = cloneAt(repo, base);
+    clone = cloneForValidation(repo, base, original);
   } catch {
     return 'clone-failed';
   }

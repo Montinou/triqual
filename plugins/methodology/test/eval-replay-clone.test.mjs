@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { cloneAt, removeClone } from '../cli/lib/eval-replay-clone.mjs';
+import { cloneAt, cloneForValidation, removeClone } from '../cli/lib/eval-replay-clone.mjs';
 
 // Invented repo, commits and author only. Runs git with an args array and a timeout; `{ allowFail: true }` returns the raw result.
 function git(cwd, ...args) {
@@ -90,4 +90,27 @@ test('the clone holds no history beyond the base: no refs, no alternates, the la
 test('a sha that is not a full hex object name throws "clone failed"', () => {
   assert.throws(() => cloneAt(repo, '--upload-pack=true'), /^Error: clone failed$/);
   assert.throws(() => cloneAt(repo, 'main'), /^Error: clone failed$/);
+});
+
+test('cloneForValidation holds base and original, checks out base, and can move to original; no remote or alternates', () => {
+  const later = git(repo, 'rev-parse', 'HEAD').trim();
+  const dir = cloneForValidation(repo, firstSha, later);
+  try {
+    assert.equal(git(dir, 'rev-parse', 'HEAD').trim(), firstSha);
+    assert.equal(existsSync(join(dir, 'b.txt')), false);
+    assert.equal(git(dir, 'remote').trim(), '');
+    assert.equal(existsSync(join(dir, '.git/objects/info/alternates')), false);
+    git(dir, 'checkout', '-q', '-f', '--detach', later);
+    assert.equal(git(dir, 'rev-parse', 'HEAD').trim(), later);
+    assert.equal(existsSync(join(dir, 'b.txt')), true);
+  } finally { removeClone(dir); }
+});
+
+test('cloneForValidation throws "clone failed" and leaves no directory for a bad or unknown sha', () => {
+  const before = replayDirs();
+  const later = git(repo, 'rev-parse', 'HEAD').trim();
+  assert.throws(() => cloneForValidation(repo, firstSha, 'f'.repeat(40)), /^Error: clone failed$/);
+  assert.throws(() => cloneForValidation(repo, 'main', later), /^Error: clone failed$/);
+  assert.throws(() => cloneForValidation(repo, firstSha, '--upload-pack=true'), /^Error: clone failed$/);
+  assert.equal(replayDirs(), before);
 });

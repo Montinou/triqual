@@ -18,20 +18,31 @@ function git(args) {
   return r.status === 0 && !r.error;
 }
 
-// Creates a new temp dir (prefix triqual-replay-) holding only the commit `sha` of `repo`, checked out detached.
-// Throws Error('clone failed') with no git output when `sha` is not a full object name or the fetch or checkout fails;
-// the partial dir is removed first.
-export function cloneAt(repo, sha) {
+// A new temp dir (prefix triqual-replay-) holding only the given commits of `repo` (a depth-1 fetch of each into a fresh
+// repository), the first checked out detached. Throws Error('clone failed') with no git output when a sha is not a full
+// object name or the fetch or checkout fails; the partial dir is removed first.
+function cloneCommits(repo, shas) {
   const dir = mkdtempSync(join(tmpdir(), 'triqual-replay-'));
-  const ok = FULL_SHA.test(sha)
+  const ok = shas.every((sha) => FULL_SHA.test(sha))
     && git(['init', '-q', '--', dir])
-    && git(['-C', dir, 'fetch', '-q', '--depth', '1', '--no-tags', '--', pathToFileURL(resolve(repo)).href, sha])
-    && git(['-C', dir, 'checkout', '-q', '--detach', 'FETCH_HEAD']);
+    && git(['-C', dir, 'fetch', '-q', '--depth', '1', '--no-tags', '--', pathToFileURL(resolve(repo)).href, ...shas])
+    && git(['-C', dir, 'checkout', '-q', '--detach', shas[0]]);
   if (!ok) {
     removeClone(dir);
     throw new Error('clone failed');
   }
   return dir;
+}
+
+// The runner's clone: only the commit `sha`, so a replayed agent cannot read anything later from git.
+export function cloneAt(repo, sha) {
+  return cloneCommits(repo, [sha]);
+}
+
+// The harvest's clone: `base` checked out, and `original` fetched too (never given to an agent), so validation can move the
+// clone to original. Same boundary otherwise: no refs, remote, alternates or other history.
+export function cloneForValidation(repo, base, original) {
+  return cloneCommits(repo, [base, original]);
 }
 
 // Deletes a clone; a missing dir is fine.
