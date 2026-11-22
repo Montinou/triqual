@@ -54,6 +54,21 @@ function indexTranscript(recs) {
   return { uses, results };
 }
 
+const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'NotebookEdit']);
+
+// The files the transcript wrote before its use number `before` that the prompt names: for each path the latest successful Write,
+// unless a successful Edit of the path followed it. A path the prompt does not name is not kept.
+function writesBefore(uses, results, before, prompt) {
+  const latest = new Map();
+  for (const u of uses.slice(0, before)) {
+    const path = u.input.file_path ?? u.input.notebook_path;
+    if (typeof path !== 'string' || results.get(u.id)?.isError !== false) continue;
+    if (u.name === 'Write' && typeof u.input.content === 'string') latest.set(path, { path, content: u.input.content });
+    else if (EDIT_TOOLS.has(u.name)) latest.delete(path);
+  }
+  return [...latest.values()].filter((w) => prompt.includes(w.path));
+}
+
 // Dispatches of `roles:<role>` (an `Agent` or `Task` tool use) in the main transcripts and in every subagent transcript
 // under `root`, with a line timestamp at or after `since`. A tool_use id is kept once: its first occurrence wins.
 export function findDispatches(root, role, { since } = {}) {
@@ -70,7 +85,7 @@ export function findDispatches(root, role, { since } = {}) {
     const { uses, results } = indexTranscript(parseLines(file));
     // A main transcript keeps its subagents in <session>/subagents/; a subagent transcript is already in one.
     const subagentsDir = main ? join(dirname(file), basename(file, '.jsonl'), 'subagents') : dirname(file);
-    for (const u of uses) {
+    for (const [index, u] of uses.entries()) {
       if (!DISPATCH_TOOLS.has(u.name) || u.input.subagent_type !== wanted || seen.has(u.id)) continue;
       seen.add(u.id);
       const at = typeof u.at === 'string' ? Date.parse(u.at) : NaN;
@@ -87,6 +102,7 @@ export function findDispatches(root, role, { since } = {}) {
         cwd: typeof u.cwd === 'string' ? u.cwd : null,
         agentId,
         subagentFile: candidate !== null && existsSync(candidate) ? candidate : null,
+        writes: writesBefore(uses, results, index, typeof u.input.prompt === 'string' ? u.input.prompt : ''),
       });
     }
   }
@@ -94,7 +110,8 @@ export function findDispatches(root, role, { since } = {}) {
 }
 
 // What one subagent transcript did: the distinct cwds, the whole successful Reads (no offset, no limit; the line-number
-// prefixes stripped), each Bash command with its result, and the USD estimate of the transcript.
+// prefixes stripped), each Bash command with its cwd and result, the time span of its lines ({ from, to } in ms, null when no line
+// has a timestamp) and the USD estimate of the transcript.
 export function subagentActivity(file) {
   const recs = parseLines(file);
   const { uses, results } = indexTranscript(recs);
@@ -110,8 +127,10 @@ export function subagentActivity(file) {
       const content = r.text.split('\n').map((line) => line.replace(LINE_NUMBER, '')).join('\n');
       reads.push({ path: u.input.file_path, content });
     } else if (u.name === 'Bash' && typeof u.input.command === 'string') {
-      bashes.push({ command: u.input.command, ok: !r.isError, output: r.text });
+      bashes.push({ command: u.input.command, ok: !r.isError, output: r.text, cwd: typeof u.cwd === 'string' ? u.cwd : undefined });
     }
   }
-  return { cwds: [...cwds], reads, bashes, usd: sessionSignals(file, { prices: PRICES }).usd };
+  const times = recs.map((rec) => (typeof rec.timestamp === 'string' ? Date.parse(rec.timestamp) : NaN)).filter((t) => !Number.isNaN(t));
+  const span = times.length === 0 ? null : { from: times.reduce((a, t) => Math.min(a, t)), to: times.reduce((a, t) => Math.max(a, t)) };
+  return { cwds: [...cwds], reads, bashes, span, usd: sessionSignals(file, { prices: PRICES }).usd };
 }

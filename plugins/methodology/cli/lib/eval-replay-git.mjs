@@ -56,22 +56,39 @@ export function mainCheckout(cwd) {
 
 // Last ref first. A sha must be a commit; a subject is the newest fixed-string match on any ref.
 export function resolveOriginal(repo, refs) {
+  return resolveRef(repo, refs)?.sha ?? null;
+}
+
+// Like resolveOriginal, with what it knows about the match: { sha, bySubject, ambiguous }, null when no ref resolves. A sha is
+// never ambiguous. A subject several commits share is ambiguous unless exactly one of them was committed inside `window`
+// ({ from, to } in ms); with one commit only, the window is not consulted (a rebase may have moved its date). The sha of an
+// ambiguous match is the newest one.
+export function resolveRef(repo, refs, window = null) {
   const list = Array.isArray(refs) ? refs : [];
   for (let i = list.length - 1; i >= 0; i--) {
     const ref = list[i] || {};
-    let sha = null;
-    if (ref.sha != null) sha = verify(repo, `${ref.sha}^{commit}`);
-    else if (ref.subject != null) sha = subjectSha(repo, ref.subject);
-    if (sha) return sha;
+    if (ref.sha != null) {
+      const sha = verify(repo, `${ref.sha}^{commit}`);
+      if (sha) return { sha, bySubject: false, ambiguous: false };
+    } else if (ref.subject != null) {
+      const found = subjectMatches(repo, ref.subject);
+      if (found.length === 0) continue;
+      const inWindow = window === null ? found : found.filter((c) => c.at >= window.from && c.at <= window.to);
+      const pick = found.length === 1 ? found[0] : inWindow.length === 1 ? inWindow[0] : null;
+      return { sha: (pick ?? found[0]).sha, bySubject: true, ambiguous: pick === null };
+    }
   }
   return null;
 }
 
-function subjectSha(repo, subject) {
-  const text = gitText(repo, ['log', '--all', '-F', `--grep=${subject}`, '--format=%H']);
-  if (text == null) return null;
-  const line = text.split('\n').map((s) => s.trim()).find(Boolean);
-  return line || null;
+// The commits on any ref whose message holds the subject, newest first, with their committer time in ms. Those whose subject is
+// exactly the wanted one win when there are any: a longer subject that merely contains it (a squash suffix, a sibling) is no match.
+function subjectMatches(repo, subject) {
+  const text = gitText(repo, ['log', '--all', '-F', `--grep=${subject}`, '--format=%H %ct %s']);
+  if (text == null) return [];
+  const found = text.split('\n').map((line) => line.trim().split(' ')).filter(([sha, at]) => sha && at)
+    .map(([sha, at, ...words]) => ({ sha, at: Number(at) * 1000, exact: words.join(' ') === subject.trim() }));
+  return found.some((c) => c.exact) ? found.filter((c) => c.exact) : found;
 }
 
 // True when `path` (relative to the repo root) is a file of the commit `sha`.
@@ -94,12 +111,13 @@ export function isMerged(repo, sha) {
   return gitOk(repo, ['merge-base', '--is-ancestor', sha, branch]) || landedOn(repo, sha, branch);
 }
 
-// Every path the commit changed has the commit's blob on `branch` (a deleted path is absent there); false for no paths.
+// Every path the commit changed has the commit's blob on `branch` (a deleted path is absent there), and at least one of them is
+// not a deletion: a path that is absent is no sign that the commit landed. False for no paths.
 function landedOn(repo, sha, branch) {
   const parent = firstParent(repo, sha);
   const text = parent === null ? null : gitText(repo, ['diff', '--name-status', '--no-renames', parent, sha]);
   const rows = text === null ? [] : parseNameStatus(text);
-  return rows.length > 0 && rows.every((row) => {
+  return rows.some((row) => row.status !== 'D') && rows.every((row) => {
     const landed = verify(repo, `${branch}:${row.path}`);
     return row.status === 'D' ? landed === null : landed === verify(repo, `${sha}:${row.path}`);
   });

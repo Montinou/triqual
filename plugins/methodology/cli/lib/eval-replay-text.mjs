@@ -170,12 +170,47 @@ export function rewritePrompt(prompt, { workDirs, reads, exists, tracked = exist
   return { prompt: rewriteWorkPaths(text, workDirs), files: [...files.values()], lost };
 }
 
+// The harness replaces a long Bash output with a preview behind one of these markers (never a whole file).
+const TRUNCATED_OUTPUT = /<persisted-output>|^Output too large|\.\.\. \[\d+ (?:characters|chars|lines) truncated\] \.\.\./m;
+const UNSAFE_PATH = /[*?[\]$`~{}!<>]/;
+
+// The path a command prints whole: `cat <path>`, optionally after `cd <dir> &&`. Both may be relative (to dir, to cwd). Null for
+// anything else: options, several files, a pipe, a redirection, a glob or a variable.
+function catPath(command, cwd) {
+  const segments = splitOutsideQuotes(command, (i) => separatorLength(command, i));
+  if (segments.length === 0 || segments.length > 2) return null;
+  const resolve = (path, base) => {
+    if (UNSAFE_PATH.test(path)) return null;
+    if (posix.isAbsolute(path)) return posix.normalize(path);
+    return typeof base === 'string' && posix.isAbsolute(base) ? posix.resolve(base, path) : null;
+  };
+  let dir = cwd;
+  if (segments.length === 2) {
+    const cd = words(segments[0]);
+    if (cd.length !== 2 || cd[0].raw !== 'cd') return null;
+    dir = resolve(unquote(cd[1].raw), cwd);
+  }
+  const cat = words(segments.at(-1));
+  if (cat.length !== 2 || cat[0].raw !== 'cat' || cat[1].raw.startsWith('-')) return null;
+  return resolve(unquote(cat[1].raw), dir);
+}
+
+// The files the agent printed whole with `cat`: { path, content } of each successful, untruncated `cat <path>` call.
+export function catReadsOf(bashes) {
+  const reads = [];
+  for (const b of bashes) {
+    if (!b.ok || typeof b.output !== 'string' || b.output === '' || TRUNCATED_OUTPUT.test(b.output)) continue;
+    const path = catPath(b.command, b.cwd);
+    if (path !== null) reads.push({ path, content: b.output });
+  }
+  return reads;
+}
+
 // A `git commit` call: `git`, any global options (-C <dir>, -c k=v, --no-pager...), `commit`; at the start of a command or after a separator.
 const COMMIT_CALL = /(?:^|[;&|(]\s*|\n\s*)git(?:\s+(?:-[Cc]\s+(?:"[^"]*"|'[^']*'|\S+)|--[\w-]+(?:=\S+)?))*\s+commit\b/g;
 const MESSAGE_FLAG = /(?:^|\s)(?:-[a-zA-Z]*m|--message)(?:\s+|=)/;
 const FILE_FLAG = /(?:^|\s)(?:-F|--file)(?:\s+|=)(\S+)/;
 const HEREDOC_SUBSTITUTION = /^"?\$\(\s*cat\s*<<-?\s*['"]?(\w+)['"]?[^\n]*\n/;
-const HAS_COMMIT = new RegExp(COMMIT_CALL.source);
 const COMMIT_SHAS = new RegExp(COMMIT_SHA.source, 'g');
 
 const firstLine = (text) => text.split('\n').map((l) => l.trim()).find(Boolean) ?? null;
@@ -213,12 +248,80 @@ function subjectOf(args, commands) {
   return null;
 }
 
-// The sha a quiet commit's own command echoed afterwards (`git rev-parse HEAD`, `git log --oneline -1`, `git show`), else null.
-const ECHOED_SHA = /^(?:commit\s+)?([0-9a-f]{7,40})\b/m;
-const ECHOES_HEAD = /\bgit\b(?:\s+-C\s+\S+)?\s+(?:rev-parse|log|show)\b/;
+// Quiet commits: the sha is taken from a command that runs after the commit and names HEAD, never from one that names another
+// commit. A heredoc body is dropped before a command is split, so a message line cannot pass for a command.
+const HEREDOC_BODY = /(<<-?\s*(['"]?)(\w+)\2[^\n]*)\n[\s\S]*?\n[ \t]*\3[ \t]*(?=\n|$)/g;
+const HEAD_MOVERS = new Set(['commit', 'checkout', 'switch', 'reset', 'rebase', 'cherry-pick', 'merge', 'am', 'pull', 'revert']);
+const REV_PARSE_OPTION = /^(?:--short(?:=\d+)?|--verify|-q|--quiet)$/;
+const DISPLAY_OPTION = /^(?:--oneline|--abbrev-commit|--no-abbrev-commit|--abbrev=\d+|--format=.*|--pretty(?:=.*)?|--decorate(?:=.*)?|--no-decorate|--stat|--name-only|--name-status|--no-patch|-s|--color(?:=.*)?|--no-color)$/;
+const COUNT_ONE = /^(?:-1|-n1|--max-count=1)$/;
 
-// Per successful `git commit` command: the shas the commit prints, else the sha the command or a later `git rev-parse HEAD`
-// printed, else the subject of the commit's message. A later command is only looked at up to the next commit.
+const segmentsOf = (command) => {
+  const text = command.replace(HEREDOC_BODY, '$1');
+  return splitOutsideQuotes(text, (i) => separatorLength(text, i));
+};
+
+// `git <global options> <subcommand> <arguments>` of one segment, else null.
+function gitCall(segment) {
+  const ws = words(segment.replace(/^[({\s]+/, '')).map((w) => unquote(w.raw));
+  if (ws[0] !== 'git') return null;
+  let i = 1;
+  while (ws[i] === '-C' || ws[i] === '-c' || ws[i]?.startsWith('--')) i += ws[i].startsWith('--') ? 1 : 2;
+  return ws[i] === undefined ? null : { sub: ws[i], args: ws.slice(i + 1) };
+}
+
+// True for `git rev-parse [--short[=n]] [--verify] HEAD` and for `git log` (limited to one commit) or `git show` with no ref or
+// HEAD, display options only: any other ref, path limit or ref selection names another commit.
+function namesHead({ sub, args }) {
+  if (sub !== 'rev-parse' && sub !== 'log' && sub !== 'show') return false;
+  const refs = [];
+  let limited = false;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (!arg.startsWith('-')) refs.push(arg);
+    else if (sub === 'log' && COUNT_ONE.test(arg)) limited = true;
+    else if (sub === 'log' && arg === '-n' && args[i + 1] === '1') {
+      limited = true;
+      i += 1;
+    } else if (!(sub === 'rev-parse' ? REV_PARSE_OPTION : DISPLAY_OPTION).test(arg)) return false;
+  }
+  if (refs.length > 1 || (refs.length === 1 && refs[0] !== 'HEAD')) return false;
+  return sub === 'rev-parse' ? refs.length === 1 : sub === 'show' || limited;
+}
+
+// The last sha an echo printed: a `commit <sha>` line, else a line that starts with one.
+function printedSha(output) {
+  const text = output ?? '';
+  const last = (re) => [...text.matchAll(re)].at(-1)?.[1] ?? null;
+  return last(/^commit\s+([0-9a-f]{7,40})\b/gm) ?? last(/^([0-9a-f]{7,40})\b/gm);
+}
+
+// Looks through the segments that run after a commit: the first that names HEAD gives `echo`, one that moves HEAD gives `moved`.
+function afterCommit(segments) {
+  for (const segment of segments) {
+    const call = gitCall(segment);
+    if (call === null) continue;
+    if (HEAD_MOVERS.has(call.sub)) return 'moved';
+    if (namesHead(call)) return 'echo';
+  }
+  return null;
+}
+
+// The sha of the last commit call of `b` (its arguments start at `from`) from a command that runs after it and names HEAD: later
+// in the same command, else in a later command, each up to the first command that moves HEAD. Null when there is none.
+function echoedAfter(b, from, later) {
+  const same = afterCommit(segmentsOf(b.command.slice(from)).slice(1));
+  if (same !== null) return same === 'echo' ? printedSha(b.output) : null;
+  for (const next of later) {
+    if (!next.ok) continue;
+    const found = afterCommit(segmentsOf(next.command));
+    if (found !== null) return found === 'echo' ? printedSha(next.output) : null;
+  }
+  return null;
+}
+
+// Per successful `git commit` command: the shas the commit prints, else the sha a later command named HEAD printed, else the
+// subject of the commit's message.
 export function commitRefsOf(bashes) {
   const refs = [];
   const commands = bashes.filter((b) => b.ok).map((b) => b.command);
@@ -231,23 +334,13 @@ export function commitRefsOf(bashes) {
       refs.push(...printed);
       return;
     }
-    const echoed = ECHOES_HEAD.test(b.command) ? ECHOED_SHA.exec(b.output ?? '') : null;
-    if (echoed) {
-      refs.push({ sha: echoed[1] });
-      return;
-    }
-    for (const next of bashes.slice(i + 1)) {
-      if (HAS_COMMIT.test(next.command)) break;
-      const sha = next.ok && ECHOES_HEAD.test(next.command) ? ECHOED_SHA.exec(next.output ?? '') : null;
-      if (sha) {
-        refs.push({ sha: sha[1] });
-        return;
-      }
-    }
-    refs.push(...calls.map((call, n) => {
+    calls.forEach((call, n) => {
       const from = call.index + call[0].length;
-      return subjectOf(b.command.slice(from, calls[n + 1]?.index ?? b.command.length), commands);
-    }).filter((subject) => subject !== null).map((subject) => ({ subject })));
+      const sha = n === calls.length - 1 ? echoedAfter(b, from, bashes.slice(i + 1)) : null;
+      if (sha !== null) { refs.push({ sha }); return; }
+      const subject = subjectOf(b.command.slice(from, calls[n + 1]?.index ?? b.command.length), commands);
+      if (subject !== null) refs.push({ subject });
+    });
   });
   return refs;
 }
@@ -261,6 +354,26 @@ export function dirsOf(bashes) {
     for (const m of b.command.matchAll(DIR_ARG)) {
       const dir = unquote(m[1]);
       if (posix.isAbsolute(dir)) dirs.add(dir.replace(/(.)\/$/, '$1'));
+    }
+  }
+  return [...dirs];
+}
+
+// The directories the successful `git commit` calls ran in, in first-use order: its `git -C` target, else the last `cd` before it in
+// the same command, else the cwd of the bash call. A relative directory is resolved against that cwd.
+const CD_ARG = /(?:^|[;&|(]\s*|\n\s*)cd\s+("[^"\n]+"|'[^'\n]+'|[^\s;&|)"']+)/g;
+export function commitDirsOf(bashes) {
+  const dirs = new Set();
+  for (const b of bashes) {
+    if (!b.ok) continue;
+    for (const call of b.command.matchAll(COMMIT_CALL)) {
+      const named = /(?:^|\s)-C\s+("[^"]*"|'[^']*'|\S+)/.exec(call[0])?.[1] ?? null;
+      const cd = [...b.command.slice(0, call.index).matchAll(CD_ARG)].at(-1)?.[1] ?? null;
+      const dir = named ?? cd;
+      if (dir === null) {
+        if (typeof b.cwd === 'string' && posix.isAbsolute(b.cwd)) dirs.add(b.cwd);
+      } else if (posix.isAbsolute(unquote(dir))) dirs.add(posix.normalize(unquote(dir)).replace(/(.)\/$/, '$1'));
+      else if (typeof b.cwd === 'string' && posix.isAbsolute(b.cwd)) dirs.add(posix.resolve(b.cwd, unquote(dir)));
     }
   }
   return [...dirs];

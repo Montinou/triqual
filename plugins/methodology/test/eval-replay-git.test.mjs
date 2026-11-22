@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
-  mainCheckout, resolveOriginal, firstParent, isMerged, existsAt, caseFiles,
+  mainCheckout, resolveOriginal, resolveRef, firstParent, isMerged, existsAt, caseFiles,
   unnamedSymbols, countUnnamedLiterals, restoreFiles,
 } from '../cli/lib/eval-replay-git.mjs';
 
@@ -165,6 +165,80 @@ test('isMerged counts a commit whose changed files landed on main unchanged (squ
     write(dir, 'src/m.mjs', 'export const m = 3;\n');
     commitAll(dir, 'feat: m later');
     assert.equal(isMerged(dir, second), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('isMerged does not count a deletion-only commit as merged just because the file is gone from main', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'replay-del-'));
+  try {
+    git(dir, 'init', '-q', '-b', 'main');
+    write(dir, 'src/old.mjs', 'export const old = 1;\n');
+    write(dir, 'src/keep.mjs', 'export const keep = 1;\n');
+    commitAll(dir, 'feat: base');
+    git(dir, 'checkout', '-q', '-b', 'wt/del');
+    git(dir, 'rm', '-q', 'src/old.mjs');
+    const onlyDelete = commitAll(dir, 'chore: drop old');
+    write(dir, 'src/new.mjs', 'export const added = 1;\n');
+    git(dir, 'rm', '-q', 'src/keep.mjs');
+    const deleteAndAdd = commitAll(dir, 'feat: add new, drop keep');
+    git(dir, 'checkout', '-q', 'main');
+    git(dir, 'rm', '-q', 'src/old.mjs');
+    commitAll(dir, 'chore: drop old on main');
+    assert.equal(isMerged(dir, onlyDelete), false);
+    // With one added file that is on main byte-identical, the deletions count as landed.
+    git(dir, 'rm', '-q', 'src/keep.mjs');
+    write(dir, 'src/new.mjs', 'export const added = 1;\n');
+    commitAll(dir, 'feat: same content by another route');
+    assert.equal(isMerged(dir, deleteAndAdd), true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('resolveRef: a subject shared by several commits is ambiguous unless exactly one falls in the time window', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'replay-ref-'));
+  const commitAt = (subject, at) => {
+    git(dir, 'add', '-A');
+    const r = spawnSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', subject], {
+      encoding: 'utf8', timeout: 60_000, env: { ...process.env, GIT_COMMITTER_DATE: at, GIT_AUTHOR_DATE: at },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    return git(dir, 'rev-parse', 'HEAD').trim();
+  };
+  try {
+    git(dir, 'init', '-q', '-b', 'main');
+    write(dir, 'a.txt', '1\n');
+    commitAt('feat: base', '2026-11-01T10:00:00Z');
+    write(dir, 'a.txt', '2\n');
+    const old = commitAt('fix: twin', '2026-11-10T10:00:00Z');
+    write(dir, 'a.txt', '3\n');
+    const recent = commitAt('fix: twin', '2026-11-20T10:00:00Z');
+    const window = { from: Date.parse('2026-11-20T09:00:00Z'), to: Date.parse('2026-11-20T11:00:00Z') };
+    assert.deepEqual(resolveRef(dir, [{ subject: 'fix: twin' }], window), { sha: recent, bySubject: true, ambiguous: false });
+    assert.equal(resolveRef(dir, [{ subject: 'fix: twin' }]).ambiguous, true);
+    assert.equal(resolveRef(dir, [{ subject: 'fix: twin' }], { from: Date.parse('2026-11-05T00:00:00Z'), to: Date.parse('2026-11-25T00:00:00Z') }).ambiguous, true);
+    assert.equal(resolveRef(dir, [{ subject: 'fix: twin' }], { from: Date.parse('2026-12-01T00:00:00Z'), to: Date.parse('2026-12-02T00:00:00Z') }).ambiguous, true);
+    // One match is taken whether or not it is in the window; a sha is never ambiguous.
+    assert.equal(resolveRef(dir, [{ subject: 'feat: base' }], window).ambiguous, false);
+    assert.equal(resolveRef(dir, [{ subject: 'feat: base' }]).bySubject, true);
+    assert.deepEqual(resolveRef(dir, [{ sha: old }], window), { sha: old, bySubject: false, ambiguous: false });
+    assert.equal(resolveRef(dir, [{ subject: 'no such subject' }], window), null);
+    assert.equal(resolveOriginal(dir, [{ subject: 'fix: twin' }]), recent);
+    // A longer subject that contains the wanted one (a squash suffix, a sibling commit) is no second match while one commit has exactly it.
+    write(dir, 'a.txt', '4\n');
+    commitAt('fix: twin again', '2026-11-20T10:01:00Z');
+    write(dir, 'a.txt', '5\n');
+    const squash = commitAt('fix: lone (#7)', '2026-11-20T10:02:00Z');
+    write(dir, 'a.txt', '6\n');
+    const exact = commitAt('fix: lone', '2026-11-20T10:03:00Z');
+    assert.deepEqual(resolveRef(dir, [{ subject: 'fix: lone' }], window), { sha: exact, bySubject: true, ambiguous: false });
+    assert.deepEqual(resolveRef(dir, [{ subject: 'fix: lone' }]), { sha: exact, bySubject: true, ambiguous: false });
+    assert.deepEqual(resolveRef(dir, [{ subject: 'fix: twin' }], window), { sha: recent, bySubject: true, ambiguous: false });
+    assert.equal(resolveRef(dir, [{ subject: 'fix: twin' }]).ambiguous, true);
+    // With no commit that has exactly the subject, the one that contains it is taken.
+    assert.deepEqual(resolveRef(dir, [{ subject: 'fix: lone (#' }], window), { sha: squash, bySubject: true, ambiguous: false });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

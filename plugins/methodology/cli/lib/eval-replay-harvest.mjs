@@ -10,9 +10,11 @@ import { ensureDir } from './eval-paths.mjs';
 import { cloneAt, removeClone } from './eval-replay-clone.mjs';
 import { findDispatches, subagentActivity } from './eval-replay-transcripts.mjs';
 import {
-  caseFiles, countUnnamedLiterals, existsAt, firstParent, isMerged, mainCheckout, resolveOriginal, restoreFiles, unnamedSymbols,
+  caseFiles, countUnnamedLiterals, existsAt, firstParent, isMerged, mainCheckout, resolveRef, restoreFiles, unnamedSymbols,
 } from './eval-replay-git.mjs';
-import { commitRefsOf, dirsOf, planOf, rewritePrompt, rewriteWorkPaths, taskOf, testCommandOf } from './eval-replay-text.mjs';
+import {
+  catReadsOf, commitDirsOf, commitRefsOf, dirsOf, planOf, rewritePrompt, rewriteWorkPaths, taskOf, testCommandOf,
+} from './eval-replay-text.mjs';
 import { runSetup, runShell } from './eval-replay-repos.mjs';
 
 export const REASONS = [
@@ -23,6 +25,8 @@ export const REASONS = [
 const GIT_TIMEOUT_MS = 60_000;
 // The test command's cap, fixed for both runs; the repo's setup timeout applies to setup only (runSetup).
 const TEST_TIMEOUT_SECONDS = 600;
+// A commit made by the agent is dated inside its transcript; the slack covers the clock of the committer date (whole seconds).
+const WINDOW_SLACK_MS = 60_000;
 const BLOCKING = ['critical', 'important'];
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const asArray = (v) => (Array.isArray(v) ? v : []);
@@ -104,12 +108,27 @@ function validate({ repo, base, original, hiddenTests, supportFiles, testCommand
   }
 }
 
-const WORKTREE_ROOT = /^(.*\/\.claude\/worktrees\/[^/]+)(?:\/.*)?$/;
+// A worktree path names its root: <anything>/.claude/worktrees/<name> or <anything>/.worktrees/<name>.
+const WORKTREE_ROOT = /^(.*\/\.(?:claude\/)?worktrees\/[^/]+)(?:\/.*)?$/;
 
-// The root of the checkout a directory belongs to, spelled as the directory is: the top level while the directory exists, the
-// worktree a .claude/worktrees path names once it is deleted, else the directory itself.
-function checkoutRoot(dir) {
-  if (!existsSync(dir)) return WORKTREE_ROOT.exec(dir)?.[1] ?? dir;
+// Whether dir is the top level of a git checkout; a directory that no longer exists is taken as one (it cannot be asked).
+function isCheckoutTop(dir) {
+  if (!existsSync(dir)) return true;
+  const r = git(dir, ['rev-parse', '--show-toplevel']);
+  if (r.error || r.status !== 0) return false;
+  try { return realpathSync(r.stdout.trim()) === realpathSync(dir); } catch { return false; }
+}
+
+// The root of the checkout a directory belongs to, spelled as the directory is: the top level while the directory exists. For a
+// deleted directory: the worktree a .claude/worktrees or .worktrees path names, else the nearest other directory of the
+// transcript (`known`) above it that is a checkout top, else the directory itself.
+function checkoutRoot(dir, known) {
+  if (!existsSync(dir)) {
+    const named = WORKTREE_ROOT.exec(dir)?.[1];
+    if (named) return named;
+    const above = known.filter((k) => k !== dir && dir.startsWith(`${k.replace(/\/$/, '')}/`)).sort((a, b) => b.length - a.length);
+    return above.find(isCheckoutTop) ?? dir;
+  }
   const r = git(dir, ['rev-parse', '--show-toplevel']);
   if (r.error || r.status !== 0) return dir;
   let below = '';
@@ -131,22 +150,37 @@ function deriveCase(d, { role, id, version, records, repos, env }) {
   const act = subagentActivity(d.subagentFile);
   // The directories the work happened in: the cwds and every directory a command cd'd or git -C'd into (an agent's cwd is reset
   // between commands). The repository is the first of them that holds the commit.
-  const workDirs = [...new Set([d.cwd, ...act.cwds, ...dirsOf(act.bashes)].filter(Boolean).map(checkoutRoot))];
+  const known = [...new Set([d.cwd, ...act.cwds, ...dirsOf(act.bashes)].filter(Boolean))];
+  const workDirs = [...new Set(known.map((dir) => checkoutRoot(dir, known)))];
   const prompt = d.prompt ?? '';
   // Resolved before the prompt is rewritten: a brief under a work dir exists in a clone only when it is tracked at original.
   const refs = commitRefsOf(act.bashes);
-  const checkouts = [...new Set(workDirs.map((dir) => mainCheckout(nearestExisting(dir))).filter(Boolean))];
+  const repoOf = (dir) => mainCheckout(nearestExisting(checkoutRoot(dir, known)));
+  const preferred = [...new Set(commitDirsOf(act.bashes).map(repoOf).filter(Boolean))];
+  const checkouts = [...new Set([...preferred, ...workDirs.map((dir) => mainCheckout(nearestExisting(dir))).filter(Boolean)])];
   let repo = checkouts[0] ?? null;
   let original = null;
-  for (const candidate of refs.length === 0 ? [] : checkouts) {
-    original = resolveOriginal(candidate, refs);
-    if (original !== null) { repo = candidate; break; }
+  const times = [Date.parse(d.dispatchedAt ?? ''), act.span?.from, act.span?.to].filter(Number.isFinite);
+  const window = times.length === 0 ? null : { from: Math.min(...times) - WINDOW_SLACK_MS, to: Math.max(...times) + WINDOW_SLACK_MS };
+  // The repositories of the commit's directories come first. A repository that holds the commit by sha is the one; a subject is
+  // taken only when exactly one repository of the group has exactly one such commit (in the window when several share it).
+  for (const group of refs.length === 0 ? [] : [preferred, checkouts.filter((c) => !preferred.includes(c))]) {
+    const hits = group.map((candidate) => ({ candidate, found: resolveRef(candidate, refs, window) })).filter((hit) => hit.found !== null);
+    if (hits.length === 0) continue;
+    const chosen = hits.find((hit) => !hit.found.bySubject) ?? (hits.length === 1 && !hits[0].found.ambiguous ? hits[0] : null);
+    if (chosen !== null) {
+      repo = chosen.candidate;
+      original = chosen.found.sha;
+    }
+    break;
   }
   const tracked = (p) => {
     if (original === null) return existsSync(p);
     return workDirs.some((dir) => p.startsWith(`${dir}/`) && existsAt(repo, original, p.slice(dir.length + 1)));
   };
-  const rewritten = rewritePrompt(prompt, { workDirs, reads: act.reads, exists: (p) => existsSync(p), tracked });
+  // A brief is recovered from a whole Read, a whole `cat` or a Write of the dispatching transcript, in that order.
+  const reads = [...act.reads, ...catReadsOf(act.bashes), ...d.writes];
+  const rewritten = rewritePrompt(prompt, { workDirs, reads, exists: (p) => existsSync(p), tracked });
   if (rewritten.lost) return { reason: 'brief-lost' };
   if (refs.length === 0) return { reason: 'no-commit' };
   const base = original === null ? null : firstParent(repo, original);

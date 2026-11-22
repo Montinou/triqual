@@ -34,6 +34,16 @@ function commit(cwd, subject) {
   return git(cwd, 'rev-parse', 'HEAD').trim();
 }
 
+// Like commit, with both git dates fixed: the dispatch window is read from them.
+function commitAt(cwd, subject, at) {
+  git(cwd, 'add', '-A');
+  const r = spawnSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', subject], {
+    encoding: 'utf8', timeout: 60_000, env: { ...process.env, GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at },
+  });
+  if (r.status !== 0) throw new Error(`git commit failed: ${r.stderr}`);
+  return git(cwd, 'rev-parse', 'HEAD').trim();
+}
+
 const fn = (name, value) => `export function ${name}() { return ${value}; }\n`;
 // A test that imports one symbol from a source file and checks it is a function.
 const bindingTest = (symbol, from) => `import { test } from 'node:test';\nimport assert from 'node:assert/strict';\nimport { ${symbol} } from '${from}';\n\ntest('${symbol}', () => {\n  assert.equal(typeof ${symbol}, 'function');\n});\n`;
@@ -60,6 +70,12 @@ function writeTranscripts(transcripts, dispatches) {
   mkdirSync(subagents, { recursive: true });
   const main = [];
   for (const d of dispatches) {
+    // What the dispatching session did before the dispatch: Write or Edit tool calls (all successful).
+    for (const [i, step] of (d.before ?? []).entries()) {
+      const id = `${d.id}_before${i}`;
+      main.push({ type: 'assistant', timestamp: AT, cwd: d.cwd, message: { role: 'assistant', content: [{ type: 'tool_use', id, name: step.tool, input: step.input }] } });
+      main.push({ type: 'user', timestamp: AT, cwd: d.cwd, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] }, toolUseResult: {} });
+    }
     main.push({ type: 'assistant', timestamp: AT, cwd: d.cwd, message: { role: 'assistant', content: [{ type: 'tool_use', id: d.id, name: 'Agent', input: { subagent_type: `roles:${ROLE}`, description: d.description, prompt: d.prompt } }] } });
     const agentId = d.steps ? agentIdOf(d.id) : undefined;
     main.push({ type: 'user', timestamp: AT, cwd: d.cwd, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: d.id, content: 'done' }] }, toolUseResult: agentId ? { agentId } : {} });
@@ -439,4 +455,138 @@ test('an interrupted write leaves no case a rerun would skip', () => {
   mkdirSync(join(casesDir(evals), `.tmp-${caseId(ROLE, 'toolu_brief')}-999`), { recursive: true });
   harvest({ ...fx.opts, evals });
   assert.equal(readCase('toolu_brief', evals).validated, true);
+});
+
+// A second fixture for brief recovery, the work directory of a deleted checkout and the repository a subject resolves in. Every
+// commit is dated: the dispatches run at AT, so a commit dated OLD is outside their time window.
+const OLD = '2026-11-01T10:00:00Z';
+let ex;
+const readExCase = (toolUseId) => JSON.parse(readFileSync(join(casesDir(ex.evals), caseId(ROLE, toolUseId), 'case.json'), 'utf8'));
+const exCaseExists = (toolUseId) => existsSync(join(casesDir(ex.evals), caseId(ROLE, toolUseId), 'case.json'));
+
+before(() => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'replay-harvest2-')));
+  const repo = join(root, 'work', 'ex-repo');
+  const other = join(root, 'work', 'ex-other');
+  const evals = join(root, 'evals');
+  const brief = (name) => join(root, 'briefs', name);
+  mkdirSync(repo, { recursive: true });
+  git(repo, 'init', '-q', '-b', 'main');
+  write(repo, 'src/a.mjs', BASE_SRC);
+  commitAt(repo, 'feat: base', AT);
+  const add = (file, symbol, subject, at = AT, dir = 'src') => {
+    const parent = dir === 'src' ? '' : `${dir.replace(/\/src$/, '')}/`;
+    write(repo, `${dir}/${file}.mjs`, fn(symbol, "'x'"));
+    write(repo, `${parent}test/${file}.test.mjs`, bindingTest(symbol, `../src/${file}.mjs`));
+    return commitAt(repo, subject, at);
+  };
+  const shas = {
+    cat: add('c1', 'cee', 'feat: brief by cat'),
+    write: add('c2', 'dee', 'feat: brief by write'),
+    kappa: add('k', 'kappa', 'feat: kappa', AT, 'pkg/src'),
+    lambda: add('l', 'lambda', 'feat: lambda', AT, 'pkg2/src'),
+    twinOld: add('t1', 'ta', 'fix: twin', OLD),
+    twin: add('t2', 'tb', 'fix: twin'),
+    dup1: add('t3', 'tc', 'fix: dup'),
+    dup2: add('t4', 'td', 'fix: dup'),
+    stale1: add('t5', 'te', 'fix: stale', OLD),
+    stale2: add('t6', 'tf', 'fix: stale', OLD),
+    shared: add('s1', 'sone', 'feat: shared'),
+    shared2: add('s2', 'stwo', 'feat: shared2'),
+  };
+  mkdirSync(other, { recursive: true });
+  git(other, 'init', '-q', '-b', 'main');
+  write(other, 'src/base.mjs', '// The test files import assert and test.\n');
+  commitAt(other, 'feat: other base', AT);
+  write(other, 'src/o1.mjs', fn('oone', '1'));
+  write(other, 'test/o1.test.mjs', bindingTest('oone', '../src/o1.mjs'));
+  commitAt(other, 'feat: shared', AT);
+  write(other, 'src/o2.mjs', fn('otwo', '2'));
+  write(other, 'test/o2.test.mjs', bindingTest('otwo', '../src/o2.mjs'));
+  commitAt(other, 'feat: shared2', AT);
+
+  const quiet = (subject) => ({ bash: `git commit -q -m "${subject}"`, out: '' });
+  const catSteps = (name, test, sha, subject, command, out) => [{ bash: command ?? `cat ${brief(name)}`, out }, { bash: `node --test test/${test}.test.mjs` }, { bash: `git commit -m "${subject}"`, out: printed('main', sha, subject) }];
+  const text = '# Brief\nAdd cee() in src/c1.mjs. Run the test command.\n';
+  const dispatches = [
+    { id: 'toolu_cat', cwd: repo, description: 'T1 tdd-implementer', prompt: `Implement T1 from ${brief('cat.md')}. Run the test command. Add cee().`, steps: catSteps('cat.md', 'c1', shas.cat, 'feat: brief by cat', undefined, text) },
+    { id: 'toolu_catcd', cwd: repo, description: 'T1b tdd-implementer', prompt: `Implement T1 from ${brief('catcd.md')}. Add cee().`, steps: catSteps('catcd.md', 'c1', shas.cat, 'feat: brief by cat', `cd ${brief('')} && cat catcd.md`, text) },
+    { id: 'toolu_cattrunc', cwd: repo, description: 'T2 tdd-implementer', prompt: `Implement T2 from ${brief('trunc.md')}. Add cee().`, steps: catSteps('trunc.md', 'c1', shas.cat, 'feat: brief by cat', undefined, '<persisted-output>\nOutput too large (53.8KB). Full output saved to: /tmp/x\n</persisted-output>') },
+    { id: 'toolu_cathead', cwd: repo, description: 'T3 tdd-implementer', prompt: `Implement T3 from ${brief('head.md')}. Add cee().`, steps: catSteps('head.md', 'c1', shas.cat, 'feat: brief by cat', `head -50 ${brief('head.md')}`, text) },
+    { id: 'toolu_catmulti', cwd: repo, description: 'T4 tdd-implementer', prompt: `Implement T4 from ${brief('multi.md')}. Add cee().`, steps: catSteps('multi.md', 'c1', shas.cat, 'feat: brief by cat', `cat ${brief('multi.md')} ${brief('other.md')}`, text) },
+    {
+      id: 'toolu_write', cwd: repo, description: 'T5 tdd-implementer', prompt: `Implement T5 from ${brief('written.md')}. Add dee().`,
+      before: [{ tool: 'Write', input: { file_path: brief('written.md'), content: 'draft' } }, { tool: 'Write', input: { file_path: brief('written.md'), content: '# T5 brief\nAdd dee() in src/c2.mjs.\n' } }],
+      steps: [{ bash: 'node --test test/c2.test.mjs' }, { bash: 'git commit -m "feat: brief by write"', out: printed('main', shas.write, 'feat: brief by write') }],
+    },
+    {
+      id: 'toolu_writeedit', cwd: repo, description: 'T6 tdd-implementer', prompt: `Implement T6 from ${brief('edited.md')}. Add dee().`,
+      before: [{ tool: 'Write', input: { file_path: brief('edited.md'), content: '# T6 brief\n' } }, { tool: 'Edit', input: { file_path: brief('edited.md'), old_string: 'T6', new_string: 'T6b' } }],
+      steps: [{ bash: 'node --test test/c2.test.mjs' }, { bash: 'git commit -m "feat: brief by write"', out: printed('main', shas.write, 'feat: brief by write') }],
+    },
+    {
+      // The checkout is deleted, and so is the package directory the command ran in; the checkout is a .worktrees/<name> path.
+      id: 'toolu_kappa', cwd: repo, description: 'T7 tdd-implementer', prompt: `Implement T7: add kappa() in ${join(repo, '.worktrees', 'gone', 'pkg', 'src', 'k.mjs')}.`,
+      steps: [{ bash: `cd ${join(repo, '.worktrees', 'gone', 'pkg')} && node --test test/k.test.mjs` }, { bash: 'git commit -m "feat: kappa"', out: printed('main', shas.kappa, 'feat: kappa') }],
+    },
+    {
+      // The checkout path has no .worktrees segment; the cwd of the transcript names it.
+      id: 'toolu_lambda', cwd: join(repo, 'wt-gone'), description: 'T8 tdd-implementer', prompt: `Implement T8: add lambda() in ${join(repo, 'wt-gone', 'pkg2', 'src', 'l.mjs')}.`,
+      steps: [{ bash: `cd ${join(repo, 'wt-gone', 'pkg2')} && node --test test/l.test.mjs` }, { bash: 'git commit -m "feat: lambda"', out: printed('main', shas.lambda, 'feat: lambda') }],
+    },
+    { id: 'toolu_twin', cwd: repo, description: 'T9 tdd-implementer', prompt: 'Implement T9: add tb() in src/t2.mjs.', steps: [{ bash: 'node --test test/t2.test.mjs' }, quiet('fix: twin')] },
+    { id: 'toolu_dup', cwd: repo, description: 'T10 tdd-implementer', prompt: 'Implement T10: add tc() in src/t3.mjs.', steps: [{ bash: 'node --test test/t3.test.mjs' }, quiet('fix: dup')] },
+    { id: 'toolu_stale', cwd: repo, description: 'T11 tdd-implementer', prompt: 'Implement T11: add te() in src/t5.mjs.', steps: [{ bash: 'node --test test/t5.test.mjs' }, quiet('fix: stale')] },
+    {
+      // The commit ran in ex-other, so its repository is preferred although ex-repo holds a commit of the same subject.
+      id: 'toolu_prefer', cwd: join(root, 'work'), description: 'T12 tdd-implementer', prompt: 'Implement T12: add oone() in src/o1.mjs.',
+      steps: [{ bash: `cd ${repo} && ls` }, { bash: `cd ${other} && node --test test/o1.test.mjs` }, { bash: `cd ${other} && git commit -q -m "feat: shared"`, out: '' }],
+    },
+    {
+      // No command ran a commit in either repository: the subject matches both, so the dispatch is ambiguous.
+      id: 'toolu_both', cwd: join(root, 'work'), description: 'T13 tdd-implementer', prompt: 'Implement T13: add stwo() in src/s2.mjs.',
+      steps: [{ bash: `cd ${repo} && node --test test/s2.test.mjs` }, { bash: `cd ${other} && ls` }, { bash: 'git commit -q -m "feat: shared2"', out: '' }],
+    },
+  ];
+  const transcripts = join(root, 'transcripts');
+  writeTranscripts(transcripts, dispatches);
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'NODE_TEST_CONTEXT'));
+  const opts = { role: ROLE, since: SINCE, root: transcripts, evals, version: { sha: 'f00dfeed' }, records: [], repos: { 'ex-repo': { setup: 'true', timeoutSeconds: 30 }, 'ex-other': { setup: 'true', timeoutSeconds: 30 } }, env };
+  ex = { root, repo, other, evals, shas, first: harvest(opts) };
+});
+
+after(() => {
+  if (ex) rmSync(ex.root, { recursive: true, force: true });
+});
+
+test('a brief the agent printed whole with cat, or the dispatcher wrote with Write, is recovered; partial and truncated ones stay lost', () => {
+  const cat = readExCase('toolu_cat');
+  assert.equal(cat.prompt, 'Implement T1 from {{CASE}}/files/cat.md. Run the test command. Add cee().');
+  assert.equal(readFileSync(join(casesDir(ex.evals), cat.id, 'files', 'cat.md'), 'utf8'), '# Brief\nAdd cee() in src/c1.mjs. Run the test command.\n');
+  assert.equal(readFileSync(join(casesDir(ex.evals), caseId(ROLE, 'toolu_catcd'), 'files', 'catcd.md'), 'utf8'), '# Brief\nAdd cee() in src/c1.mjs. Run the test command.\n');
+  const written = readExCase('toolu_write');
+  assert.equal(written.prompt, 'Implement T5 from {{CASE}}/files/written.md. Add dee().');
+  assert.equal(readFileSync(join(casesDir(ex.evals), written.id, 'files', 'written.md'), 'utf8'), '# T5 brief\nAdd dee() in src/c2.mjs.\n');
+  for (const id of ['toolu_cattrunc', 'toolu_cathead', 'toolu_catmulti', 'toolu_writeedit']) assert.equal(exCaseExists(id), false, id);
+  assert.equal(ex.first.excluded['brief-lost'], 4);
+});
+
+test('a deleted subdirectory resolves to its checkout root, with or without a .worktrees segment', () => {
+  const kappa = readExCase('toolu_kappa');
+  assert.equal(kappa.prompt, 'Implement T7: add kappa() in {{WORK}}/pkg/src/k.mjs.');
+  assert.equal(kappa.testCommand, 'cd {{WORK}}/pkg && node --test test/k.test.mjs');
+  const lambda = readExCase('toolu_lambda');
+  assert.equal(lambda.prompt, 'Implement T8: add lambda() in {{WORK}}/pkg2/src/l.mjs.');
+  assert.equal(lambda.testCommand, 'cd {{WORK}}/pkg2 && node --test test/l.test.mjs');
+  assert.equal(kappa.validated && lambda.validated, true);
+});
+
+test('a subject shared by several commits is taken only when one is in the dispatch window or one repository ran the commit', () => {
+  assert.equal(readExCase('toolu_twin').original, ex.shas.twin);
+  assert.equal(readExCase('toolu_prefer').repo, ex.other);
+  assert.equal(exCaseExists('toolu_dup'), false);
+  assert.equal(exCaseExists('toolu_stale'), false);
+  assert.equal(exCaseExists('toolu_both'), false);
+  assert.equal(ex.first.excluded.unreachable, 3);
+  assert.equal(ex.first.kept, 7);
 });
