@@ -134,7 +134,9 @@ export const isLimit = (result) => result !== null && typeof result === 'object'
 
 // Runs units through the chain: `attempt(unit, entry)` returns a result; on a limit (isLimit, or a `{ limit: true }`
 // outcome of a caller that already classified it) the current entry moves to the next one for every later unit and
-// the unit is attempted again; after the last entry run() throws ChainExhausted.
+// the unit is attempted again; after the last entry run() throws ChainExhausted. Units may run concurrently: a limit moves
+// the chain only when it is still on the entry that unit attempted, so two in-flight limits on one entry advance it once,
+// and a run in flight on an old entry finishes there.
 export function withChain(chain, attempt) {
   let at = 0;
   const counts = {};
@@ -142,10 +144,11 @@ export function withChain(chain, attempt) {
   return {
     async run(unit) {
       for (;;) {
-        if (at >= chain.length) throw new ChainExhausted(tried());
-        const entry = chain[at];
+        const i = at;
+        if (i >= chain.length) throw new ChainExhausted(tried());
+        const entry = chain[i];
         const result = await attempt(unit, entry);
-        if (isLimit(result) || result?.limit === true) { at += 1; continue; }
+        if (isLimit(result) || result?.limit === true) { if (at === i) at = i + 1; continue; }
         counts[entry.name] = (counts[entry.name] ?? 0) + 1;
         return { result, entry };
       }

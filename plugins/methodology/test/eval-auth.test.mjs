@@ -155,6 +155,21 @@ test('withChain also treats { limit: true } as a limit', async () => {
   assert.equal((await w.run('u')).entry.name, 'b');
 });
 
+test('two concurrent limits on one entry advance withChain once', async () => {
+  const chain = [{ name: 'a', env: {} }, { name: 'b', env: {} }, { name: 'c', env: {} }];
+  const seen = [];
+  const w = withChain(chain, async (unit, entry) => {
+    seen.push(`${unit}:${entry.name}`);
+    await new Promise((r) => setTimeout(r, 5));
+    return entry.name === 'a' ? OBSERVED : { is_error: false, result: 'ok' };
+  });
+  const [x, y] = await Promise.all([w.run('u1'), w.run('u2')]);
+  assert.equal(x.entry.name, 'b');
+  assert.equal(y.entry.name, 'b');
+  assert.deepEqual(seen.sort(), ['u1:a', 'u1:b', 'u2:a', 'u2:b']);
+  assert.deepEqual(w.counts(), { b: 2 });
+});
+
 test('the fixture secret appears in no error text of the auth module', () => {
   const home = tmp();
   const f = join(home, 'tok');
