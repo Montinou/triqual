@@ -6,6 +6,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cloneAt, cloneForValidation, removeClone } from '../cli/lib/eval-replay-clone.mjs';
 
+// A private temp root: the triqual-replay-* counts below must see only this file's dirs,
+// not the clones of test files running concurrently (os.tmpdir() reads TMPDIR on each call).
+const privateTmp = mkdtempSync(join(tmpdir(), 'replay-clone-tmp-'));
+process.env.TMPDIR = privateTmp;
+
 // Invented repo, commits and author only. Runs git with an args array and a timeout; `{ allowFail: true }` returns the raw result.
 function git(cwd, ...args) {
   const last = args.at(-1);
@@ -37,6 +42,7 @@ before(() => {
 
 after(() => {
   rmSync(repo, { recursive: true, force: true });
+  rmSync(privateTmp, { recursive: true, force: true });
 });
 
 test('a clone has no remote and its HEAD is the sha', () => {

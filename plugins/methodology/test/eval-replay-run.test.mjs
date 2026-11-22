@@ -9,6 +9,11 @@ import { ensureDir } from '../cli/lib/eval-paths.mjs';
 import { spawnCapture } from '../cli/lib/eval-judge.mjs';
 import { RESULTS_FILE, armChains, planReplay, runReplay } from '../cli/lib/eval-replay-run.mjs';
 
+// A private temp root: the triqual-replay-* counts below must see only this file's dirs,
+// not the clones of test files running concurrently (os.tmpdir() reads TMPDIR on each call).
+const privateTmp = mkdtempSync(join(tmpdir(), 'replay-run-tmp-'));
+process.env.TMPDIR = privateTmp;
+
 // Invented repo, invented chain entries and a stub `claude`; nothing reads the real ~/.claude, ~/.config or evals directory.
 function git(cwd, ...args) {
   const r = spawnSync('git', args, { cwd, encoding: 'utf8', timeout: 60_000 });
@@ -122,7 +127,10 @@ before(() => {
   checkout = resolveCheckout({ cwd: process.cwd() });
   version = roleVersion('tdd-implementer', checkout);
 });
-after(() => rmSync(tmp, { recursive: true, force: true }));
+after(() => {
+  rmSync(tmp, { recursive: true, force: true });
+  rmSync(privateTmp, { recursive: true, force: true });
+});
 
 const writeChain = (names) => {
   const file = join(tmp, `chain-${names.join('')}-${seq++}.json`);
