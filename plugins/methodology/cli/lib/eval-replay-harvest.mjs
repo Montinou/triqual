@@ -3,16 +3,16 @@
 // git; writes only the case store. node: built-ins and the eval libraries only.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { existsSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureDir } from './eval-paths.mjs';
 import { cloneAt, removeClone } from './eval-replay-clone.mjs';
 import { findDispatches, subagentActivity } from './eval-replay-transcripts.mjs';
 import {
-  caseFiles, countUnnamedLiterals, firstParent, isMerged, mainCheckout, resolveOriginal, restoreFiles, unnamedSymbols,
+  caseFiles, countUnnamedLiterals, existsAt, firstParent, isMerged, mainCheckout, resolveOriginal, restoreFiles, unnamedSymbols,
 } from './eval-replay-git.mjs';
-import { commitRefsOf, planOf, rewritePrompt, rewriteWorkPaths, taskOf, testCommandOf } from './eval-replay-text.mjs';
+import { commitRefsOf, dirsOf, planOf, rewritePrompt, rewriteWorkPaths, taskOf, testCommandOf } from './eval-replay-text.mjs';
 import { runSetup, runShell } from './eval-replay-repos.mjs';
 
 export const REASONS = [
@@ -104,18 +104,51 @@ function validate({ repo, base, original, hiddenTests, supportFiles, testCommand
   }
 }
 
+const WORKTREE_ROOT = /^(.*\/\.claude\/worktrees\/[^/]+)(?:\/.*)?$/;
+
+// The root of the checkout a directory belongs to, spelled as the directory is: the top level while the directory exists, the
+// worktree a .claude/worktrees path names once it is deleted, else the directory itself.
+function checkoutRoot(dir) {
+  if (!existsSync(dir)) return WORKTREE_ROOT.exec(dir)?.[1] ?? dir;
+  const r = git(dir, ['rev-parse', '--show-toplevel']);
+  if (r.error || r.status !== 0) return dir;
+  let below = '';
+  try { below = relative(realpathSync(r.stdout.trim()), realpathSync(dir)); } catch { return dir; }
+  const depth = below === '' ? 0 : below.split('/').length;
+  return depth === 0 ? dir : dir.split('/').slice(0, -depth).join('/') || '/';
+}
+
+// The nearest ancestor of dir (itself included) that exists, so the repository of a deleted worktree can still be asked.
+function nearestExisting(dir) {
+  let d = dir;
+  while (d !== '/' && !existsSync(d)) d = dirname(d);
+  return d;
+}
+
 // The case of one dispatch, or the reason it is excluded. Checks run in REASONS order; the first that applies excludes.
 function deriveCase(d, { role, id, version, records, repos, env }) {
   if (d.subagentFile === null) return { reason: 'no-subagent-transcript' };
   const act = subagentActivity(d.subagentFile);
-  const workDirs = [d.cwd, ...act.cwds].filter(Boolean);
+  // The directories the work happened in: the cwds and every directory a command cd'd or git -C'd into (an agent's cwd is reset
+  // between commands). The repository is the first of them that holds the commit.
+  const workDirs = [...new Set([d.cwd, ...act.cwds, ...dirsOf(act.bashes)].filter(Boolean).map(checkoutRoot))];
   const prompt = d.prompt ?? '';
-  const rewritten = rewritePrompt(prompt, { workDirs, reads: act.reads, exists: (p) => existsSync(p) });
-  if (rewritten.lost) return { reason: 'brief-lost' };
+  // Resolved before the prompt is rewritten: a brief under a work dir exists in a clone only when it is tracked at original.
   const refs = commitRefsOf(act.bashes);
+  const checkouts = [...new Set(workDirs.map((dir) => mainCheckout(nearestExisting(dir))).filter(Boolean))];
+  let repo = checkouts[0] ?? null;
+  let original = null;
+  for (const candidate of refs.length === 0 ? [] : checkouts) {
+    original = resolveOriginal(candidate, refs);
+    if (original !== null) { repo = candidate; break; }
+  }
+  const tracked = (p) => {
+    if (original === null) return existsSync(p);
+    return workDirs.some((dir) => p.startsWith(`${dir}/`) && existsAt(repo, original, p.slice(dir.length + 1)));
+  };
+  const rewritten = rewritePrompt(prompt, { workDirs, reads: act.reads, exists: (p) => existsSync(p), tracked });
+  if (rewritten.lost) return { reason: 'brief-lost' };
   if (refs.length === 0) return { reason: 'no-commit' };
-  const repo = workDirs.map((dir) => mainCheckout(dir)).find(Boolean) ?? null;
-  const original = repo === null ? null : resolveOriginal(repo, refs);
   const base = original === null ? null : firstParent(repo, original);
   if (base === null) return { reason: 'unreachable' };
   if (!isMerged(repo, original)) return { reason: 'not-merged' };
@@ -123,7 +156,7 @@ function deriveCase(d, { role, id, version, records, repos, env }) {
   const named = [rewritten.prompt, ...rewritten.files.map((f) => f.content)].join('\n');
   const { hiddenTests, supportFiles } = caseFiles(repo, base, original, named);
   if (hiddenTests.length === 0) return { reason: 'no-tests' };
-  const command = testCommandOf(act.bashes);
+  const command = testCommandOf(act.bashes, workDirs);
   if (command === null) return { reason: 'no-test-command' };
   const symbols = unnamedSymbols(repo, base, original, hiddenTests, named);
   if (symbols.names.length > 0) return { reason: 'symbols-unnamed' };
@@ -150,7 +183,8 @@ function deriveCase(d, { role, id, version, records, repos, env }) {
   const validation = validate({
     repo, base, original, hiddenTests, supportFiles, testCommand: doc.testCommand, entry: repos[repoName], env,
   });
-  return { doc: { ...doc, validated: validation === 'pass', validation }, files: rewritten.files };
+  if (validation !== 'pass') return { reason: 'validation-failed' };
+  return { doc: { ...doc, validated: true, validation }, files: rewritten.files };
 }
 
 function isValidated(file) {
@@ -176,8 +210,10 @@ function writeCase(cases, id, doc, files) {
   renameSync(tmp, join(cases, id));
 }
 
-// Harvests the role's dispatches under root into the case store of evals. An existing case is never rewritten; it counts as
-// kept when validated, else as validation-failed. Returns the dispatch count, the kept count and a count per exclusion reason.
+// Harvests the role's dispatches under root into the case store of evals. Only a validated case is stored, and a stored validated
+// case is never rewritten (it counts as kept). A dispatch that fails validation is an exclusion, not a case, so a later harvest
+// retries it; a stored case that is not validated (an older harvest kept them) is removed and rebuilt. Returns the dispatch
+// count, the kept count and a count per exclusion reason.
 export function harvest({ role, since, root, evals, version, records = [], repos = {}, env = process.env }) {
   const excluded = Object.fromEntries(REASONS.map((reason) => [reason, 0]));
   const dispatches = findDispatches(root, role, { since });
@@ -187,17 +223,18 @@ export function harvest({ role, since, root, evals, version, records = [], repos
   for (const d of dispatches) {
     const id = caseId(role, d.toolUseId);
     if (existsSync(join(cases, id))) {
-      if (isValidated(join(cases, id, 'case.json'))) kept += 1;
-      else excluded['validation-failed'] += 1;
-      continue;
+      if (isValidated(join(cases, id, 'case.json'))) {
+        kept += 1;
+        continue;
+      }
+      rmSync(join(cases, id), { recursive: true, force: true });
     }
     const got = deriveCase(d, { role, id, version, records, repos, env });
     if (got.reason) {
       excluded[got.reason] += 1;
       continue;
     }
-    if (got.doc.validated) kept += 1;
-    else excluded['validation-failed'] += 1;
+    kept += 1;
     writeCase(cases, id, got.doc, got.files);
   }
   return { found: dispatches.length, kept, excluded };

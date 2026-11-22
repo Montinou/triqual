@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
-  mainCheckout, resolveOriginal, firstParent, isMerged, caseFiles,
+  mainCheckout, resolveOriginal, firstParent, isMerged, existsAt, caseFiles,
   unnamedSymbols, countUnnamedLiterals, restoreFiles,
 } from '../cli/lib/eval-replay-git.mjs';
 
@@ -132,6 +132,42 @@ test('firstParent and isMerged', () => {
   assert.equal(firstParent(repo, original), base);
   assert.equal(isMerged(repo, original), true);
   assert.equal(isMerged(repo, sideSha), false);
+});
+
+test('existsAt tells whether a path is a file of the commit', () => {
+  assert.equal(existsAt(repo, original, 'src/b.mjs'), true);
+  assert.equal(existsAt(repo, base, 'src/b.mjs'), false);
+  assert.equal(existsAt(repo, original, '.methodology/x.md'), false);
+});
+
+test('isMerged counts a commit whose changed files landed on main unchanged (squash merge, branch deleted)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'replay-squash-'));
+  try {
+    git(dir, 'init', '-q', '-b', 'main');
+    write(dir, 'src/a.mjs', 'export const a = 1;\n');
+    commitAll(dir, 'feat: base');
+    git(dir, 'checkout', '-q', '-b', 'wt/x');
+    write(dir, 'src/n.mjs', 'export const n = 1;\n');
+    write(dir, 'test/n.test.mjs', "import { n } from '../src/n.mjs';\n");
+    const first = commitAll(dir, 'feat: n');
+    write(dir, 'src/m.mjs', 'export const m = 1;\n');
+    const second = commitAll(dir, 'feat: m');
+    write(dir, 'src/n.mjs', 'export const n = 2;\n');
+    const third = commitAll(dir, 'fix: n again');
+    git(dir, 'checkout', '-q', 'main');
+    git(dir, 'merge', '--squash', 'wt/x');
+    commitAll(dir, 'feat: squashed');
+    git(dir, 'branch', '-D', 'wt/x');
+    assert.equal(isMerged(dir, third), true);
+    assert.equal(isMerged(dir, second), true);
+    // n.mjs was changed again after the first commit, so its content did not land as committed.
+    assert.equal(isMerged(dir, first), false);
+    write(dir, 'src/m.mjs', 'export const m = 3;\n');
+    commitAll(dir, 'feat: m later');
+    assert.equal(isMerged(dir, second), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('caseFiles: hidden tests and unnamed support files', () => {

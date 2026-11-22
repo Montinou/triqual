@@ -92,12 +92,15 @@ before(() => {
   const repo = join(root, 'work', 'fixture-repo');
   const other = join(root, 'work', 'other-fixture');
   const briefPath = join(root, 'briefs', 'T7.md');
+  const workBrief = join(repo, '.methodology', 'sdd', 'p', 'task-g.md');
+  const workLost = join(repo, '.methodology', 'sdd', 'p', 'task-missing.md');
   const lostPath = join(root, 'briefs', 'T16.md');
   const evals = join(root, 'evals');
 
   mkdirSync(repo, { recursive: true });
   git(repo, 'init', '-q', '-b', 'main');
   write(repo, 'src/a.mjs', BASE_SRC);
+  write(repo, 'docs/guide.md', '# Guide\n');
   const baseSha = commit(repo, 'feat: base');
   git(repo, 'checkout', '-q', '-b', 'side');
   write(repo, 'src/s.mjs', fn('side', '1'));
@@ -124,6 +127,15 @@ before(() => {
   write(repo, 'src/w.mjs', fn('wait', "'w'"));
   write(repo, 'test/w.test.mjs', "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\nimport { wait } from '../src/w.mjs';\n\ntest('wait', async () => {\n  await new Promise((resolve) => setTimeout(resolve, 2000));\n  assert.equal(typeof wait, 'function');\n});\n");
   const slow = commit(repo, 'feat: slow wait');
+
+  write(repo, 'src/g.mjs', fn('gamma', "'g'"));
+  write(repo, 'test/g.test.mjs', bindingTest('gamma', '../src/g.mjs'));
+  const gamma = commit(repo, 'feat: gamma');
+  write(repo, 'src/d.mjs', fn('delta', "'d'"));
+  write(repo, 'test/d.test.mjs', bindingTest('delta', '../src/d.mjs'));
+  const delta = commit(repo, 'feat: delta');
+  // Gitignored in real repositories: on disk, never tracked, so it never exists in a clone.
+  write(repo, '.methodology/sdd/p/task-g.md', '# T21 brief\nAdd gamma() in the file at ' + join(repo, 'src', 'g.mjs') + '.\n');
 
   mkdirSync(other, { recursive: true });
   git(other, 'init', '-q', '-b', 'main');
@@ -173,6 +185,42 @@ before(() => {
       steps: [
         { bash: 'node --test test/zed.test.mjs' },
         { bash: 'git commit -m "feat: zed helper"', out: printed('main', zed, 'feat: zed helper') },
+      ],
+    },
+    {
+      id: 'toolu_workbrief', cwd: repo, description: 'T21 tdd-implementer',
+      prompt: `Implement T21: read ${workBrief} and ${join(repo, 'docs', 'guide.md')}, then add gamma(). Run the test command.`,
+      steps: [
+        { read: workBrief, text: `# T21 brief\nAdd gamma() in the file at ${join(repo, 'src', 'g.mjs')}.\n` },
+        { bash: `cd ${repo} && GAMMA= timeout 600 node /x/scripts/test-lock -- node --test test/g.test.mjs` },
+        { bash: 'git commit -m "feat: gamma"', out: printed('main', gamma, 'feat: gamma') },
+      ],
+    },
+    {
+      id: 'toolu_worklost', cwd: repo, description: 'T22 tdd-implementer',
+      prompt: `Implement T22: read ${workLost} first. Run the test command.`,
+      steps: [
+        { bash: 'node --test test/b.test.mjs' },
+        { bash: 'git commit -m "feat: bee"', out: printed('main', bee, 'feat: bee') },
+      ],
+    },
+    {
+      // The agent started in a directory that is no repository and worked in the repository through cd; its commit prints no sha.
+      id: 'toolu_cdrepo', cwd: join(root, 'work'), description: 'T23 tdd-implementer',
+      prompt: `Implement T23: add delta() in ${join(repo, 'src', 'd.mjs')}. Run the test command.`,
+      steps: [
+        { bash: `cd ${repo} && node --test test/d.test.mjs` },
+        { bash: `cd ${repo} && git add -A && git commit -q -m "feat: delta" && git rev-parse HEAD`, out: `${delta}\n` },
+      ],
+    },
+    {
+      // Its worktree is deleted; the repository holds the commit and the worktree path is below it.
+      id: 'toolu_gonewt', cwd: join(repo, '.claude', 'worktrees', 'gone'), description: 'T24 tdd-implementer',
+      prompt: `Implement T24: add delta() in ${join(repo, '.claude', 'worktrees', 'gone', 'src', 'd.mjs')}. Run the test command.`,
+      steps: [
+        { bash: 'node --test test/d.test.mjs' },
+        { bash: 'git commit -q -F $m', out: '' },
+        { bash: 'git rev-parse --short HEAD', out: `${delta.slice(0, 7)}\n` },
       ],
     },
     {
@@ -326,24 +374,56 @@ test('a quiet commit is found by subject', () => {
 });
 
 test('exclusions carry their reasons', () => {
-  assert.equal(fx.first.found, 14);
-  assert.equal(fx.first.kept, 3);
-  // One dispatch per reason: the escape, the unnamed symbol and the other repo each stop at their own check.
-  assert.deepEqual(fx.first.excluded, Object.fromEntries(REASONS.map((reason) => [reason, 1])));
+  assert.equal(fx.first.found, 18);
+  assert.equal(fx.first.kept, 6);
+  // One dispatch per reason: the escape, the unnamed symbol and the other repo each stop at their own check; a brief under
+  // the work dir that is neither tracked nor read is lost like one outside it.
+  assert.deepEqual(fx.first.excluded, { ...Object.fromEntries(REASONS.map((reason) => [reason, 1])), 'brief-lost': 2 });
 });
 
-test('a case whose tests pass at base is validation-failed', () => {
-  const c = readCase('toolu_passes_at_base');
-  assert.equal(c.validated, false);
-  assert.equal(c.validation, 'passes-at-base');
+test('a brief under the work dir is recovered and the case.json carries no real checkout path in its prompt', () => {
+  const c = readCase('toolu_workbrief');
+  assert.equal(c.prompt, 'Implement T21: read {{CASE}}/files/task-g.md and {{WORK}}/docs/guide.md, then add gamma(). Run the test command.');
+  assert.equal(readFileSync(join(casesDir(fx.evals), c.id, 'files', 'task-g.md'), 'utf8'), '# T21 brief\nAdd gamma() in the file at {{WORK}}/src/g.mjs.\n');
+  assert.equal(c.validated, true);
+  assert.equal(c.testCommand, 'GAMMA= node --test test/g.test.mjs');
+});
+
+test('a repository is found through cd and through a deleted worktree path', () => {
+  for (const id of ['toolu_cdrepo', 'toolu_gonewt']) {
+    const c = readCase(id);
+    assert.equal(c.validated, true, id);
+    assert.equal(c.repo, fx.repo, id);
+    assert.equal(c.testCommand.replace(/^cd \{\{WORK\}\} && /, ''), 'node --test test/d.test.mjs', id);
+  }
+  assert.equal(readCase('toolu_cdrepo').prompt, 'Implement T23: add delta() in {{WORK}}/src/d.mjs. Run the test command.');
+  assert.equal(readCase('toolu_gonewt').prompt, 'Implement T24: add delta() in {{WORK}}/src/d.mjs. Run the test command.');
+});
+
+test('a case whose tests pass at base is validation-failed and is not stored, so a later harvest retries it', () => {
+  assert.equal(existsSync(join(casesDir(fx.evals), caseId(ROLE, 'toolu_passes_at_base'))), false);
+  assert.equal(fx.first.excluded['validation-failed'], 1);
 });
 
 test('a second harvest writes nothing new', () => {
   const before = snapshotTree(casesDir(fx.evals));
   const s = harvest(fx.opts);
   assert.deepEqual(snapshotTree(casesDir(fx.evals)), before);
-  assert.equal(s.kept, 3);
+  assert.equal(s.kept, 6);
   assert.equal(s.excluded['validation-failed'], 1);
+});
+
+test('a stored case that did not validate is rebuilt by the next harvest; a validated one is never rewritten', () => {
+  const evals = mkdtempSync(join(fx.root, 'evals-'));
+  const dir = join(casesDir(evals), caseId(ROLE, 'toolu_brief'));
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'case.json'), JSON.stringify({ v: 1, validated: false, validation: 'passes-at-base' }));
+  const s = harvest({ ...fx.opts, evals });
+  assert.equal(readCase('toolu_brief', evals).validated, true);
+  assert.equal(s.kept, 6);
+  const before = snapshotTree(casesDir(evals));
+  harvest({ ...fx.opts, evals });
+  assert.deepEqual(snapshotTree(casesDir(evals)), before);
 });
 
 test('a slow test command is not cut short by the setup timeout', () => {

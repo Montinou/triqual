@@ -74,18 +74,35 @@ function subjectSha(repo, subject) {
   return line || null;
 }
 
+// True when `path` (relative to the repo root) is a file of the commit `sha`.
+export function existsAt(repo, sha, path) {
+  return gitOk(repo, ['cat-file', '-e', `${sha}:${path}`]);
+}
+
 export function firstParent(repo, sha) {
   return verify(repo, `${sha}^`);
 }
 
-// origin/HEAD, else main, else master. True only when sha is an ancestor of that branch.
+// origin/HEAD, else main, else master. True when sha is an ancestor of that branch, or when every file the commit changed is on
+// that branch exactly as the commit left it: a squash merge or a rebase rewrote the commit, but its content landed.
 export function isMerged(repo, sha) {
   let branch = null;
   for (const ref of ['origin/HEAD', 'main', 'master']) {
     if (verify(repo, ref)) { branch = ref; break; }
   }
   if (!branch) return false;
-  return gitOk(repo, ['merge-base', '--is-ancestor', sha, branch]);
+  return gitOk(repo, ['merge-base', '--is-ancestor', sha, branch]) || landedOn(repo, sha, branch);
+}
+
+// Every path the commit changed has the commit's blob on `branch` (a deleted path is absent there); false for no paths.
+function landedOn(repo, sha, branch) {
+  const parent = firstParent(repo, sha);
+  const text = parent === null ? null : gitText(repo, ['diff', '--name-status', '--no-renames', parent, sha]);
+  const rows = text === null ? [] : parseNameStatus(text);
+  return rows.length > 0 && rows.every((row) => {
+    const landed = verify(repo, `${branch}:${row.path}`);
+    return row.status === 'D' ? landed === null : landed === verify(repo, `${sha}:${row.path}`);
+  });
 }
 
 export function isJsTest(path) {

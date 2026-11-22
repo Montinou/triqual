@@ -3,42 +3,138 @@ import { posix } from 'node:path';
 
 export const TEST_RUNNERS = ['node --test', 'npm test', 'npm run test', 'pnpm test', 'yarn test', 'bun test', 'vitest', 'jest', 'pytest', 'go test', 'cargo test'];
 
-// Separators: && || ; newline | and a background &; a & inside a redirection (2>&1, &>) is not a separator.
-const SEGMENT_SPLIT = /\s*(?:&&|\|\||;|\n|\||(?<![<>])&)\s*/;
 // Command substitution, backticks and redirections in the kept runner segment; fd duplications (2>&1) are allowed.
 const UNSAFE_RUNNER = /`|\$\(|[<>]/;
 const FD_DUP = /\d*>&\d+/g;
-const TEST_LOCK = /^((?:env\s+|\w+=\S+\s+)*)node\s+\S*test-lock\s+--\s+(.+)$/;
+const SHELLS = new Set(['sh', 'bash', 'zsh']);
+const ENV_WORD = /^\w+=/;
+const SAFE_DIR = /^[\w@+./-]+$/;
 const SEG = '\\.?[\\w@+-](?:[\\w@+.-]*[\\w@+-])?';
 // An absolute path token; the lookbehind keeps it from starting inside a relative path or after a {{PLACEHOLDER}}.
 const ABS_PATH = new RegExp(`(?<![\\w@+./}-])\\/(?:${SEG}\\/)*${SEG}`, 'g');
 const COMMIT_SHA = /\[[^\]\s]+(?: \([^)]*\))? ([0-9a-f]{7,40})\]/;
-const MESSAGE = /\s-[a-zA-Z]*m\s+(?:"([^"]*)"|'([^']*)'|(\S+))/;
 
-// True when the segment, past any `env` and VAR=value prefix, starts with a test runner.
-function isRunner(segment) {
-  const words = segment.split(/\s+/);
-  let i = 0;
-  while (i < words.length && (words[i] === 'env' || /^\w+=/.test(words[i]))) i += 1;
-  const rest = words.slice(i).join(' ');
+// Splits text at the positions where `at(i)` returns a separator length (> 0) outside single and double quotes. A backslash
+// outside single quotes escapes the next character. The pieces are trimmed and the empty ones dropped.
+function splitOutsideQuotes(text, at) {
+  const pieces = [];
+  let quote = '';
+  let from = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quote === "'") { if (ch === "'") quote = ''; continue; }
+    if (ch === '\\') { i += 1; continue; }
+    if (quote === '"') { if (ch === '"') quote = ''; continue; }
+    if (ch === "'" || ch === '"') { quote = ch; continue; }
+    const len = at(i);
+    if (len > 0) {
+      pieces.push(text.slice(from, i));
+      i += len - 1;
+      from = i + 1;
+    }
+  }
+  pieces.push(text.slice(from));
+  return pieces.map((p) => p.trim()).filter(Boolean);
+}
+
+// Separators: && || ; newline | and a background &; a & inside a redirection (2>&1, &>) is not a separator.
+function separatorLength(text, i) {
+  const ch = text[i];
+  if ((ch === '&' || ch === '|') && text[i + 1] === ch) return 2;
+  if (ch === ';' || ch === '\n' || ch === '|') return 1;
+  if (ch === '&' && text[i - 1] !== '<' && text[i - 1] !== '>') return 1;
+  return 0;
+}
+
+// The words of a segment with their start offsets; a quoted part stays inside its word, quotes included.
+function words(segment) {
+  const out = [];
+  let start = -1;
+  let quote = '';
+  for (let i = 0; i <= segment.length; i += 1) {
+    const ch = segment[i];
+    const space = ch === undefined || (quote === '' && /\s/.test(ch));
+    if (space) {
+      if (start >= 0) out.push({ raw: segment.slice(start, i), start });
+      start = -1;
+      continue;
+    }
+    if (start < 0) start = i;
+    if (quote === "'") { if (ch === "'") quote = ''; } else if (quote === '"') {
+      if (ch === '\\') i += 1; else if (ch === '"') quote = '';
+    } else if (ch === '\\') i += 1;
+    else if (ch === "'" || ch === '"') quote = ch;
+  }
+  return out;
+}
+
+// One shell word without its quotes: a single-quoted word is literal, a double-quoted one keeps \" and \\ unescaped.
+function unquote(raw) {
+  if (raw.length >= 2 && raw[0] === "'" && raw.endsWith("'")) return raw.slice(1, -1);
+  if (raw.length >= 2 && raw[0] === '"' && raw.endsWith('"')) return raw.slice(1, -1).replace(/\\(["\\])/g, '$1');
+  return raw;
+}
+
+// True when the text starts with a test runner.
+function startsWithRunner(text) {
+  const rest = text.trim();
   return TEST_RUNNERS.some((runner) => rest === runner || rest.startsWith(`${runner} `));
 }
 
-// The runner segment of a command, with its env prefix; test-lock wrappers are removed first. Null when none, or when that segment substitutes or redirects.
-export function unwrapTestCommand(command) {
-  const segments = String(command).split(SEGMENT_SPLIT).map((s) => s.trim()).filter(Boolean)
-    .map((s) => {
-      const m = TEST_LOCK.exec(s);
-      return m ? `${m[1]}${m[2]}` : s;
-    });
-  const runner = segments.find(isRunner);
-  if (runner === undefined || UNSAFE_RUNNER.test(runner.replace(FD_DUP, ''))) return null;
-  return runner;
+// The runner of one segment: its env prefix and the runner command, with a test-lock wrapper, a `timeout N` prefix and an
+// `sh -c '<command>'` wrapper removed. Null when the segment holds no runner. `cd` is the directory of an inner `cd`.
+function runnerOf(segment, workDirs) {
+  const ws = words(segment);
+  const env = [];
+  let i = 0;
+  for (;;) {
+    const w = ws[i]?.raw;
+    if (w === 'env' || (w !== undefined && ENV_WORD.test(w))) { env.push(w); i += 1; continue; }
+    if (w === 'timeout' && /^\d+[smhd]?$/.test(ws[i + 1]?.raw ?? '')) { i += 2; continue; }
+    break;
+  }
+  const tail = ws[i] ? segment.slice(ws[i].start) : '';
+  const withEnv = (runner) => (runner === null ? null : { ...runner, runner: [...env, runner.runner].join(' ') });
+  const [head, second, third] = [ws[i]?.raw, ws[i + 1]?.raw, ws[i + 2]?.raw];
+  if (head === 'node' && /(^|\/)test-lock$/.test(second ?? '') && third === '--') return withEnv(runnerOf(segment.slice(ws[i + 3]?.start ?? segment.length), workDirs));
+  if (SHELLS.has(head) && second === '-c' && ws.length === i + 3) return withEnv(commandRunner(unquote(third), workDirs));
+  return startsWithRunner(tail) ? { runner: [...env, tail].join(' '), cd: null } : null;
+}
+
+// What a `cd` segment keeps: false when the segment is no cd; null when the cd is dropped (not strictly below a work dir);
+// the directory when kept; undefined when a directory below a work dir has characters a command cannot carry safely.
+function cdTarget(segment, workDirs) {
+  const ws = words(segment);
+  if (ws[0]?.raw !== 'cd' || ws.length !== 2) return false;
+  const dir = posix.normalize(unquote(ws[1].raw)).replace(/(.)\/$/, '$1');
+  if (!posix.isAbsolute(dir) || !workDirs.some((w) => dir.startsWith(`${w.replace(/\/$/, '')}/`))) return null;
+  return SAFE_DIR.test(dir) ? dir : undefined;
+}
+
+// The first runner of a compound command and the kept `cd` before it. Null when there is none or a kept cd is unsafe.
+function commandRunner(command, workDirs) {
+  let cd = null;
+  for (const segment of splitOutsideQuotes(command, (i) => separatorLength(command, i))) {
+    const target = cdTarget(segment, workDirs);
+    if (target === undefined) return null;
+    if (target !== false) { cd = target; continue; }
+    const found = runnerOf(segment, workDirs);
+    if (found !== null) return { runner: found.runner, cd: found.cd ?? cd };
+  }
+  return null;
+}
+
+// The runner segment of a command with its env prefix; test-lock, `timeout N` and `sh -c` wrappers are removed first, and the
+// `cd <dir> &&` before it stays when <dir> is below one of the work dirs. Null when none, or when that segment substitutes or redirects.
+export function unwrapTestCommand(command, workDirs = []) {
+  const found = commandRunner(String(command), workDirs.filter(Boolean));
+  if (found === null || UNSAFE_RUNNER.test(found.runner.replace(FD_DUP, ''))) return null;
+  return found.cd ? `cd ${found.cd} && ${found.runner}` : found.runner;
 }
 
 // The unwrapped command of the last successful bash whose unwrapped form is a test runner. Null when none.
-export function testCommandOf(bashes) {
-  return bashes.filter((b) => b.ok).map((b) => unwrapTestCommand(b.command)).filter((c) => c !== null).at(-1) ?? null;
+export function testCommandOf(bashes, workDirs = []) {
+  return bashes.filter((b) => b.ok).map((b) => unwrapTestCommand(b.command, workDirs)).filter((c) => c !== null).at(-1) ?? null;
 }
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -51,14 +147,17 @@ export function rewriteWorkPaths(text, workDirs) {
   return text.replace(re, '{{WORK}}');
 }
 
-// Maps report paths to {{WORK}}/replay-report.md, recovers deleted .md briefs from their whole read, and flags the rest as lost.
-export function rewritePrompt(prompt, { workDirs, reads, exists }) {
-  let text = prompt.replace(ABS_PATH, (p) => (posix.basename(p).endsWith('report.md') ? '{{WORK}}/replay-report.md' : p));
-  text = rewriteWorkPaths(text, workDirs);
+// Maps report paths to {{WORK}}/replay-report.md, recovers deleted .md briefs from their whole read, and flags the rest as lost; the
+// work paths are rewritten last, so a brief under a work dir is judged by its real path. A path under a work dir exists in a clone
+// only when it is tracked at the original commit (tracked(p), else exists(p)); any other path counts as present when exists(p).
+export function rewritePrompt(prompt, { workDirs, reads, exists, tracked = exists }) {
+  const dirs = workDirs.filter(Boolean).map((d) => d.replace(/(.)\/$/, '$1'));
+  const underWork = (p) => dirs.some((d) => p === d || p.startsWith(`${d}/`));
   const files = new Map();
   let lost = false;
-  text = text.replace(ABS_PATH, (p) => {
-    if (!p.endsWith('.md') || exists(p) !== false) return p;
+  const text = prompt.replace(ABS_PATH, (p) => {
+    if (posix.basename(p).endsWith('report.md')) return '{{WORK}}/replay-report.md';
+    if (!p.endsWith('.md') || (underWork(p) ? tracked(p) : exists(p)) !== false) return p;
     const read = reads.find((r) => r.path === p);
     if (!read) {
       lost = true;
@@ -68,29 +167,103 @@ export function rewritePrompt(prompt, { workDirs, reads, exists }) {
     files.set(p, { name, content: rewriteWorkPaths(read.content, workDirs) });
     return `{{CASE}}/files/${name}`;
   });
-  return { prompt: text, files: [...files.values()], lost };
+  return { prompt: rewriteWorkPaths(text, workDirs), files: [...files.values()], lost };
 }
 
-// Per successful `git commit`: the sha printed by the commit, else its -m subject, else the first line after a `-F -` heredoc.
+// A `git commit` call: `git`, any global options (-C <dir>, -c k=v, --no-pager...), `commit`; at the start of a command or after a separator.
+const COMMIT_CALL = /(?:^|[;&|(]\s*|\n\s*)git(?:\s+(?:-[Cc]\s+(?:"[^"]*"|'[^']*'|\S+)|--[\w-]+(?:=\S+)?))*\s+commit\b/g;
+const MESSAGE_FLAG = /(?:^|\s)(?:-[a-zA-Z]*m|--message)(?:\s+|=)/;
+const FILE_FLAG = /(?:^|\s)(?:-F|--file)(?:\s+|=)(\S+)/;
+const HEREDOC_SUBSTITUTION = /^"?\$\(\s*cat\s*<<-?\s*['"]?(\w+)['"]?[^\n]*\n/;
+const HAS_COMMIT = new RegExp(COMMIT_CALL.source);
+const COMMIT_SHAS = new RegExp(COMMIT_SHA.source, 'g');
+
+const firstLine = (text) => text.split('\n').map((l) => l.trim()).find(Boolean) ?? null;
+
+// The message value that starts at `text`: a quoted string, a `$(cat <<EOF ... EOF)` substitution, or a bare word.
+function messageValue(text) {
+  const heredoc = HEREDOC_SUBSTITUTION.exec(text);
+  if (heredoc) return firstLine(text.slice(heredoc[0].length));
+  const quote = text[0];
+  if (quote === '"' || quote === "'") {
+    for (let i = 1; i < text.length; i += 1) {
+      if (quote === '"' && text[i] === '\\') i += 1;
+      else if (text[i] === quote) return firstLine(text.slice(1, i).replace(/\\(["\\$`])/g, '$1'));
+    }
+    return null;
+  }
+  return /^\S+/.exec(text)?.[0] ?? null;
+}
+
+// The subject of the commit call whose arguments are `args`: the first line of the message `-F -` reads from the heredoc that
+// follows, else its first -m value, else the first line of the heredoc a command of the dispatch wrote to the -F file. Null when unknown.
+function subjectOf(args, commands) {
+  const nl = args.indexOf('\n');
+  const file = FILE_FLAG.exec(nl >= 0 ? args.slice(0, nl) : args);
+  if (file?.[1] === '-') return nl >= 0 ? firstLine(args.slice(nl + 1)) : null;
+  const message = MESSAGE_FLAG.exec(args);
+  if (message) return messageValue(args.slice(message.index + message[0].length));
+  if (!file) return null;
+  const path = file[1].replace(/^["']|["']$/g, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const writer = new RegExp(`>\\s*["']?${path}["']?\\s*<<-?\\s*['"]?(\\w+)['"]?[^\\n]*\\n`);
+  for (const command of commands) {
+    const written = writer.exec(command);
+    if (written) return firstLine(command.slice(written.index + written[0].length));
+  }
+  return null;
+}
+
+// The sha a quiet commit's own command echoed afterwards (`git rev-parse HEAD`, `git log --oneline -1`, `git show`), else null.
+const ECHOED_SHA = /^(?:commit\s+)?([0-9a-f]{7,40})\b/m;
+const ECHOES_HEAD = /\bgit\b(?:\s+-C\s+\S+)?\s+(?:rev-parse|log|show)\b/;
+
+// Per successful `git commit` command: the shas the commit prints, else the sha the command or a later `git rev-parse HEAD`
+// printed, else the subject of the commit's message. A later command is only looked at up to the next commit.
 export function commitRefsOf(bashes) {
   const refs = [];
-  for (const b of bashes) {
-    if (!b.ok || !b.command.includes('git commit')) continue;
-    const sha = COMMIT_SHA.exec(b.output ?? '');
-    if (sha) {
-      refs.push({ sha: sha[1] });
-      continue;
+  const commands = bashes.filter((b) => b.ok).map((b) => b.command);
+  bashes.forEach((b, i) => {
+    if (!b.ok) return;
+    const calls = [...b.command.matchAll(COMMIT_CALL)];
+    if (calls.length === 0) return;
+    const printed = [...(b.output ?? '').matchAll(COMMIT_SHAS)].map((m) => ({ sha: m[1] }));
+    if (printed.length > 0) {
+      refs.push(...printed);
+      return;
     }
-    const firstLine = b.command.split('\n')[0];
-    const m = MESSAGE.exec(firstLine);
-    if (m) {
-      refs.push({ subject: m[1] ?? m[2] ?? m[3] });
-      continue;
+    const echoed = ECHOES_HEAD.test(b.command) ? ECHOED_SHA.exec(b.output ?? '') : null;
+    if (echoed) {
+      refs.push({ sha: echoed[1] });
+      return;
     }
-    const nl = b.command.indexOf('\n');
-    if (/-F\s+-/.test(firstLine) && nl >= 0) refs.push({ subject: b.command.slice(nl + 1).split('\n')[0].trim() });
-  }
+    for (const next of bashes.slice(i + 1)) {
+      if (HAS_COMMIT.test(next.command)) break;
+      const sha = next.ok && ECHOES_HEAD.test(next.command) ? ECHOED_SHA.exec(next.output ?? '') : null;
+      if (sha) {
+        refs.push({ sha: sha[1] });
+        return;
+      }
+    }
+    refs.push(...calls.map((call, n) => {
+      const from = call.index + call[0].length;
+      return subjectOf(b.command.slice(from, calls[n + 1]?.index ?? b.command.length), commands);
+    }).filter((subject) => subject !== null).map((subject) => ({ subject })));
+  });
   return refs;
+}
+
+// The absolute directories the commands `cd` or `git -C` into, in first-use order. A directory the transcript's cwd never named
+// (an agent's cwd is reset between commands) is still where the work happened.
+const DIR_ARG = /(?:^|[;&|(]\s*|\n\s*)(?:cd|git\s+-C)\s+("[^"\n]+"|'[^'\n]+'|[^\s;&|)"']+)/g;
+export function dirsOf(bashes) {
+  const dirs = new Set();
+  for (const b of bashes) {
+    for (const m of b.command.matchAll(DIR_ARG)) {
+      const dir = unquote(m[1]);
+      if (posix.isAbsolute(dir)) dirs.add(dir.replace(/(.)\/$/, '$1'));
+    }
+  }
+  return [...dirs];
 }
 
 // The plan task id of a task description, e.g. "T7 fix round 1 fixer" -> "T7".
